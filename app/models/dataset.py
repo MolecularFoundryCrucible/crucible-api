@@ -1,0 +1,93 @@
+from typing import Optional, List
+from sqlalchemy import JSON, Column,BigInteger
+from sqlmodel import Field, SQLModel,Relationship
+from models.sample import Sample, DatasetSampleLink
+from models.user import AccessGroup
+
+
+class DatasetKeywordLink(SQLModel, table=True):
+    keyword_id: Optional[int] = Field(
+        default=None, foreign_key="keyword.id", primary_key=True,
+        index=True
+    )
+    dataset_id: Optional[int] = Field(
+        default=None, foreign_key="dataset.id", primary_key=True
+    )
+
+class Keyword(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    keyword: str
+    datasets: List["Dataset"] = Relationship(back_populates="keywords", link_model=DatasetKeywordLink)
+    num_datasets: Optional[int]
+
+
+class Thumbnail(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    thumbnail_name: str
+    thumbnail_b64str: str
+    dataset_id: int = Field(foreign_key = "dataset.id")
+    dataset: "Dataset" = Relationship(back_populates="thumbnails", link_model=DatasetThumbnailLink)
+    
+
+class AssociatedFile(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    filename: str
+    size: int = Field(sa_column=Column(BigInteger())) 
+    sha256_hash: str
+    dataset_id: int = Field(foreign_key = "dataset.id")
+    dataset: "Dataset" = Relationship(back_populates = 'associated_files')
+
+
+class DatasetCollectionLink(SQLModel, table=True):
+    collection_id: Optional[int] = Field(
+        default=None, foreign_key="datasetcollection.id", primary_key=True, index=True
+    )
+    dataset_id: Optional[int] = Field(
+        default=None, foreign_key="dataset.id", primary_key=True
+    )
+
+
+class DatasetCollection(SQLModel, table = True):
+    unique_id: str = Field(default = None, primary_key = True, index = True)
+    date_created: Optional[str] = None
+    description: Optional[str]
+    datasets: List["Dataset"] = Relationship(back_populates="collections", link_model=DatasetCollectionLink)
+
+
+class DatasetACL(SQLModel, table=True):
+    accessgroup_id: Optional[int] = Field(
+        default=None, foreign_key="accessgroup.id", primary_key=True
+    )
+    dataset_id: Optional[int] = Field(
+        default=None, foreign_key="dataset.id", primary_key=True
+    )
+    read:  bool = Field(index=True)
+    write: bool = Field(index=True)
+
+    dataset: "Dataset" = Relationship(back_populates="acl")
+    accessgroup: "AccessGroup" = Relationship(back_populates="acl")
+
+
+class Dataset(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    unique_id: str = Field(index=True, unique=True, primary_key = True)
+    public: bool = Field(index = True)
+    dataset_name: Optional[str] = Field(default = "") 
+    file_to_upload: Optional[str] = Field(default = None)  
+    owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
+    proposal_id: Optional[str] = Field(default=None, index=True, foreign_key="proposal.id")
+    instrument_id: Optional[int]  = Field(default = None, index = True, foreign_key = "instrument.id")
+    source_folder: Optional[str] # folder where the data was synced from (on instrument PC)
+    creation_time: Optional[str]
+    size: Optional[int] = Field(sa_column=Column(BigInteger())) 
+    data_format: Optional[str]
+    measurement: Optional[str]
+    session_name: Optional[str]
+    json_link: Optional[str] 
+    sha256_hash_file_to_upload: str
+    samples: List[Sample] = Relationship(back_populates="datasets", link_model = DatasetSampleLink)
+    collections: List[DatasetCollection] = Relationship(back_populates = "datasets", link_model = DatasetCollectionLink)
+    keywords: List[Keyword] = Relationship(back_populates="datasets", link_model=DatasetKeywordLink)
+    thumbnails: List[Thumbnail] = Relationship(back_populates = "dataset")
+    associated_files: List[AssociatedFile] = Relationship(back_populates = "dataset")
+    acl: List[DatasetACL] = Relationship(back_populates="dataset")

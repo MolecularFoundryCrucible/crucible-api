@@ -5,28 +5,26 @@ import subprocess as sp
 from jose import jwt, JWTError
 import urllib.parse
 import datetime
+import pytz
 
-from pydantic import BaseModel
-from fastapi import Depends, FastAPI, HTTPException, status, Request,File, UploadFile, Form
+from fastapi import Depends, FastAPI, HTTPException, Request
 from starlette.requests import Request
 from fastapi.responses import RedirectResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPBearer
 from pycrucible.general_functions import  get_secret_2
 
 
 from sqlmodel import Session, select
-from sqlalchemy.orm import  defer
-from sqlalchemy.sql import and_
-from sqlalchemy import select, join, func
+from sqlalchemy import join, func
 
 from utils.auth_utils import authorize_user, is_admin
 from utils.sql_utils import setup_engine, add_or_update
-from app.schemas.schema import Owner, FormData
 from app.schemas.schema import EmptyDataset
 from app.models.dataset import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile
 from app.models.instrument import Instrument
 from app.models.user import User, AccessGroup, Proposal
 from app.models.misc import IdType
+from app.models.tasks import TransferRequest
 
 
 # ======================= APP
@@ -218,6 +216,31 @@ def create_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dataset: Emp
 
         session.commit()
         return ds
+
+@app.post("/datasets/{dsid}/transfer")
+def transfer_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, source_path: str, destination_path: str):
+    '''
+    This concept is fairly different from what we currently have ..
+
+    Here you could put the logic from the CrucibleDatasetTransfer Object in pycrucible into an actual python client. 
+    Then the client supplies the transfer info to the API. 
+    This endpoint uploads the dsid and destination info to a database record which causes a RMQ message to be routed to a downstream consumer. 
+    The downstream consumer then has the majority of the info it needs and can do the transfer (maybe without reading the json)
+
+    **you could also replace source/destination "paths" with some sort of schema that tells what type of path this is / what type of program should interpret it? 
+    Will it always be rclone? I guess so..... 
+
+    Also worth noting --- the endpoint will need to be called multiple times per dataset (x4 prob)
+    User Drive, Prop Drive x Organized, Flat
+    '''
+
+    with Session(engine) as session:
+        pst= pytz.timezone("America/Los_Angeles")
+        creation_time = datetime.datetime.now(pst).isoformat()
+        transfer_request = TransferRequest({"dataset_id": dsid, "time_created": creation_time, "source_path": source_path, "destination_path": destination_path})
+        session.add(transfer_request)
+        session.commit()
+        return(transfer_request)
 
 
 @app.patch("/datasets/{dsid}")

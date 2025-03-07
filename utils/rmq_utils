@@ -1,0 +1,22 @@
+import pika
+from pycrucible.general_functions import get_secret_2
+
+
+def connect_and_publish(message, routing_key, exchange):
+    # get_password
+    rmq_pw = get_secret_2("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
+
+    # connect to RMQ server
+    credentials = pika.PlainCredentials('admin', rmq_pw)
+    parameters = pika.ConnectionParameters('10.128.0.31', 5672, '/', credentials)
+
+    connection = pika.BlockingConnection(parameters)
+    channel = connection.channel()
+
+    # send the messsage based on input from CLI args
+    channel.basic_publish(exchange=exchange,
+                            routing_key=routing_key,
+                            body=message)
+
+    # close connection to server
+    connection.close()

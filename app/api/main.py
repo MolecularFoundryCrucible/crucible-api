@@ -25,7 +25,7 @@ from app.models.instrument import Instrument
 from app.models.user import User, AccessGroup, Proposal
 from app.models.misc import IdType
 from app.models.tasks import TransferRequest
-
+import pika
 
 # ======================= APP
 app = FastAPI()
@@ -213,8 +213,12 @@ def create_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dataset: Emp
             update_acl(inst_name, ds, session, read = True, write = False)
         
         add_or_update(session, IdType, where=(IdType.unique_id == dataset.unique_id), unique_id = dataset.unique_id, type = "dataset")
-
         session.commit()
+
+        # send rabbitMQ message that a new dataset record has been created
+        message = json.dumps({})
+        connect_and_publish(message, "uploaded-data", "ingest-request")
+
         return ds
 
 @app.post("/datasets/{dsid}/transfer")
@@ -240,6 +244,11 @@ def transfer_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str,
         transfer_request = TransferRequest({"dataset_id": dsid, "time_created": creation_time, "source_path": source_path, "destination_path": destination_path})
         session.add(transfer_request)
         session.commit()
+
+        # send rabbitMQ message to transfer
+        message = json.dumps({"dsid": dsid, "source_bucket": source_path, "destination_path": destination_path, "request_id": transfer_request.id})
+        connect_and_publish(message, "ingested-data", "transfer-request")
+
         return(transfer_request)
 
 

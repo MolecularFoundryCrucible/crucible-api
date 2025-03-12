@@ -26,7 +26,6 @@ from app.models.instrument import Instrument
 from app.models.user import User, AccessGroup, Proposal
 from app.models.misc import IdType, DataDriveLocation
 from app.models.tasks import TransferRequest
-
 from app.utils.rmq_utils import send_pika_message
 
 # ======================= APP
@@ -268,7 +267,6 @@ def create_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dataset: Emp
         
         add_or_update(session, IdType, where=(IdType.unique_id == dataset.unique_id), unique_id = dataset.unique_id, type = "dataset")
         session.commit()
-
         # kick off ingestion for file to upload
         if dataset.file_to_upload is not None:
             rmq_pw = get_secret_2("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
@@ -335,6 +333,12 @@ def transfer_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str,
         # channel.queue_bind(exchange='raw-data-processing', queue=transfer_queue.method.queue, routing_key = '#.transfer-request.#')
 
         send_pika_message(message, exchange = "raw-data-processing", routing_key= "#.transfer-request.#", user = 'admin', rmq_pw= rmq_pw)
+
+        # send rabbitMQ message to transfer
+        #message = json.dumps({"dsid": dsid, "source_bucket": source_path, "destination_path": destination_path, "request_id": transfer_request.id})
+        #connect_and_publish(message, "ingested-data", "transfer-request")
+
+
         return(transfer_request)
 
 

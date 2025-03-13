@@ -23,8 +23,8 @@ from utils.sql_utils import setup_engine, add_or_update
 from app.schemas.schema import EmptyDataset
 from app.models.dataset import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile
 from app.models.instrument import Instrument
-from app.models.user import User, AccessGroup, Proposal
-from app.models.misc import IdType, DataDriveLocation
+from app.models.user import User, AccessGroup, Proposal, UserAccessGroupLink, UserProposalLink
+from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import TransferRequest
 from app.utils.rmq_utils import send_pika_message
 
@@ -45,15 +45,6 @@ connect_args = {"check_same_thread": False}
 engine = setup_engine("cloud_config.yaml")
 
 
-# where to put this?
-def update_acl(group_name, ds, session, read, write):
-    ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
-    curr_acl = session.exec(select(DatasetACL).where(DatasetACL.accessgroup == ag).where(DatasetACL.dataset == ds)).one_or_none()
-    if not curr_acl:
-        acl = DatasetACL(accessgroup=ag, dataset=ds)
-        acl.read = read
-        acl.write = write
-        session.add(acl)
 
 
 # ======================= AUTH AND ACCOUNT SET UP ENDPOINTS
@@ -216,18 +207,6 @@ def read_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
         return ds
     
 
-
-
-@app.get("/datasets/{dsid}/drive_location")
-def read_dataset_drive_location(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
-    '''
-    Returns a list of DataDriveLocation objects with one object for each location in google drive where the dataset is currently located.
-    '''
-    with Session(engine) as session:
-        ds_locs = session.exec(select(DataDriveLocation).where(and_(DataDriveLocation.dataset_id == pid, DataDriveLocation.status == 'current'))).all()
-    return(ds_locs)
-
-
 @app.post("/datasets")
 def create_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dataset: EmptyDataset):
     '''
@@ -244,29 +223,49 @@ def create_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dataset: Emp
     # 2) A user wants to create a dataset record from a raw file (ingest data) (dataset_upload endpoint)
     # 3) A user wants to create a datatset record directly from json (current endpoint here / variation on upload_with_metadata)
 
+    apikey = get_secret_2() # TODO: fill this out
     with Session(engine) as session:
 
         # add any existing information about the dataset to the SQL database
         ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id, **dataset)
+        session.commit()
 
         # set appropriate access controls
-        update_acl('readonly', ds, session, read = True, write = False)
-        update_acl('admin', ds, session, read = True, write = True)
-
+        ro = requests.request("post",
+                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            params = {"group_name": "readonly", "read": True, "write": False}, 
+                            headers = {"apikey": apikey})
+        
+        admin = requests.request("post",
+                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            params = {"group_name": "admin", "read": True, "write": True}, 
+                            headers = {"apikey": apikey})
+        
+        
         if dataset.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id))
-            update_acl(user_orcid, ds, session, read = True, write = True)
+            user_ag = requests.request("post",
+                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            params = {"group_name": user_orcid, "read": True, "write": True}, 
+                            headers = {"apikey": apikey})
 
         if dataset.proposal_id is not None:
             prop_name = session.exec(select(Proposal.name).where(Proposal.id == dataset.proposal_id))
-            update_acl(prop_name, ds, session, read = True, write = False)
+            prop_ag = requests.request("post",
+                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            params = {"group_name": prop_name, "read": True, "write": False}, 
+                            headers = {"apikey": apikey})
 
         if dataset.instrument_id is not None:
             inst_name = session.exec(select(Instrument.name).where(Instrument.id == dataset.instrument_id))
-            update_acl(inst_name, ds, session, read = True, write = False)
-        
+            inst_ag = requests.request("post",
+                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            params = {"group_name": inst_name, "read": True, "write": False}, 
+                            headers = {"apikey": apikey})
+            
         add_or_update(session, IdType, where=(IdType.unique_id == dataset.unique_id), unique_id = dataset.unique_id, type = "dataset")
         session.commit()
+
         # kick off ingestion for file to upload
         if dataset.file_to_upload is not None:
             rmq_pw = get_secret_2("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
@@ -362,6 +361,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
         pass
     
     with Session(engine) as session:
+        #TODO
         ds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **updated_dataset)
         if updated_dataset.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == updated_dataset.owner_user_id))
@@ -393,27 +393,23 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
         return ds
 
 
-# delete?
 @app.delete("/datasets/{dsid}")
 def delete_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid = str):
+    # TODO: DEFINE THIS
     pass
-
-
-
 
 
 @app.get("/datasets/{dsid}/thumbnails")
 def read_thumbnails(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     '''
-    
+    Returns a list of thumbnail objects associated with the dataset ID provided
     '''
     # TODO: define this 
     pass
 
 
-
 @app.post("/datasets/{dsid}/thumbnails")
-def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)], thumbnail: str):
+def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)], dsid = str, thumbnail: str):
     '''
     Adds a thumbnail to a dataset. If the thumbnail exists, it will simply add the existing thumbnail to the dataset object. 
     Otherwise, the thumbnail will be created and then added to the dataset. 
@@ -423,8 +419,10 @@ def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)], thumbnail: st
                         thumbnail_name = thumbnail['caption'], 
                         thumbnail_b64str = thumbnail['thumbnail'])
         
-
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -436,19 +434,17 @@ def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)], thumbnail: st
         return(tn_obj)
 
 
-
 @app.get("/datasets/{dsid}/associated_files")
 def read_associated_files(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     '''
-    
+    Returns a list of the files associated with the dataset ID provided. 
     '''
     # TODO: define this 
     pass
 
 
-
 @app.post("/datasets/{dsid}/associated_files")
-def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)],  associated_file: AssociatedFile):
+def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, associated_file: AssociatedFile):
     '''
     Adds an associated file to a dataset. 
     Creates the AF object if it doesn't already exist.
@@ -457,8 +453,8 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)],  associ
         af_obj = add_or_update(session, AssociatedFile, where=(AssociatedFile.filename == associated_file.filename),
                                        **associated_file)
 
-
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -471,6 +467,18 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)],  associ
         return(af_obj)
  
  # I think change these to /datasets/{dsid}/keywords
+
+
+
+@app.get("/datasets/{dsid}/keywords")
+def list_keywords_for_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+    with Session(engine) as session:
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds = session.exec(ds_cmd).one_or_none()
+        ds_keywords = session.exec(select(Keyword).select_from(join(DatasetKeywordLink, DatasetKeywordLink.keyword_id == Keyword.id)).where(DatasetKeywordLink.dataset_id == ds.id)).all()
+        return ds_keywords
+
+
 
 @app.get("/keywords/{keyword}")
 def read_keyword(keyword: str, permissive: bool = True):
@@ -488,17 +496,19 @@ def read_keyword(keyword: str, permissive: bool = True):
         K = session.exec(cmd).all()
     return(K)
 
-
+# TODO: Move /keywords to /datasets/keywords
 @app.post("/keywords")
 def add_keyword(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, keyword: str):
     '''
     Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object. 
     Otherwise, the keyword will be created and then added to the dataset. 
     '''
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    
     with Session(engine) as session:
         kw_obj = add_or_update(session, Keyword, where=(Keyword.keyword == keyword), keyword=keyword)
 
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -516,10 +526,110 @@ def add_keyword(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, keyw
         return(kw_obj)
 
 
+@app.get("/datasets/{dsid}/drive_location")
+def read_dataset_drive_location(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+    '''
+    Returns a list of DataDriveLocation objects with one object for each location in google drive where the dataset is currently located.
+    '''
+    with Session(engine) as session:
+        ds_locs = session.exec(select(DataDriveLocation).where(and_(DataDriveLocation.dataset_id == dsid, DataDriveLocation.status == 'current'))).all()
+    return(ds_locs)
 
 
-@app.post("/instrument", response_model = Instrument)
-def add_instrument(ag_ids:  Annotated[str, Depends(authorize_user)], instrument: Instrument):   
+@app.post("/datasets/{dsid}/drive_location")
+def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user)], dsid: str, drive_info: DataDriveLocation):   
+    """
+    Add a Google Drive location record to the database.
+    
+    Args:
+        ag_ids: List of access group IDs the user belongs to 
+        dsid: Dataset ID
+        D: Google Drive information to be added as DataDriveLocation object 
+        
+    Returns:
+        Added DataDriveLocation object
+
+    """
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    
+    with Session(engine) as session:
+        ds_list = session.exec(ds_cmd).all()
+
+    if ds_list is None:
+        raise HTTPException(status_code=402, detail="Dataset not found")
+    elif len(ds_list) == 0:
+        raise HTTPException(status_code=402, detail="Dataset not found")
+    else:
+        add_or_update(session, 
+                      DataDriveLocation,
+                      DataDriveLocation.folder_id == drive_info.folder_id,
+                      dataset_id = dsid, 
+                      **drive_info)
+        session.commit()
+
+    return(drive_info)
+
+
+@app.get("/datasets/{dsid}/access_groups")
+def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
+    with Session(engine) as session:
+        ds_acl = session.exec(select(AccessGroup).select_from(join(AccessGroup, join(DatasetACL, 
+                                                                                     Dataset, DatasetACL.dataset_id == Dataset.id),
+                                                                                     AccessGroup.id == DatasetACL.accessgroup_id)).where(Dataset.unique_id == dsid)).all()
+        return ds_acl
+
+
+@app.post("/datasets/{dsid}/access_groups")
+def create_dataset_acl(group_name: str, dsid: str, read: str, write: str, admin_acct: Annotated[str, Depends(is_admin)]):
+    with Session(engine) as session:
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
+
+        curr_acl = session.exec(select(DatasetACL).where(DatasetACL.accessgroup == ag).where(DatasetACL.dataset == ds)).one_or_none()
+    if not curr_acl:
+        acl = DatasetACL(accessgroup=ag, dataset=ds)
+        acl.read = read
+        acl.write = write
+        session.add(acl)
+        session.commit()
+
+
+
+@app.get("/instruments", response_model = List)
+def list_instrument(ag_ids: Annotated[str, Depends(authorize_user)], request = Request):
+    '''
+    Returns a list of instruments filtered by any provided search terms that are attributes of the instrument Class. 
+    If no instruments matching the search criteria are found, an empty list is returned.  
+    Search parameters include these Instrument attributes (Note: not case sensitive, but otherwise must be exact match): 
+        other_id: str
+        other_id_source: str
+        instrument_name: str
+        manufacturer: str
+        model: str
+        owner: str
+        location: str
+        description: str
+        instrument_type: str
+    '''
+    query_params = request.query_params
+    params_dict = dict(query_params)
+
+    for k,v, in params_dict.items():
+        if hasattr(Instrument, k):
+            statement = statement.where(getattr(Instrument, k) == v.lower().strip())
+    with Session(engine) as session: 
+        all_inst = session.exec(statement).all()
+
+        return(all_inst)
+
+# TODO: get single instrument
+@app.get("instruments/{instrument_id}")
+def read_instrument():
+    pass
+
+
+@app.post("/instruments", response_model = Instrument)
+def create_instrument(ag_ids:  Annotated[str, Depends(authorize_user)], instrument: Instrument):   
     """
     Add a new instrument record to the database.
     
@@ -535,3 +645,275 @@ def add_instrument(ag_ids:  Annotated[str, Depends(authorize_user)], instrument:
         session.commit()
     
     return(instrument)
+
+
+@app.get("/google_drives}")
+def list_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], request = Request):
+    """
+    Returns a list of google drive information
+    """
+    query_params = request.query_params
+    params_dict = dict(query_params)
+
+    search_cmd = select(GoogleDrives)
+
+    for k, v in params_dict.items():
+        if hasattr(GoogleDrives, k):
+            search_cmd = search_cmd.where(getattr(GoogleDrives, k) == v)
+
+    with Session(engine) as session:
+        drives = session.exec(search_cmd).all()
+
+    return(drives)
+
+
+@app.get("/google_drives/{drive_id}")
+def read_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], drive_id: str):
+    """
+    Add or update a Google Drive record in the database.
+    
+    Args:
+        ag_ids: List of access group IDs the user belongs to ** should update to is_admin
+        drive_id: Google Drive ID to query
+        
+    Returns:
+        Google Drive object if found, otherwise None
+    """
+    with Session(engine) as session:
+        drive = session.exec(select(GoogleDrives).where(GoogleDrives.drive_id == drive_id)).one_or_none()
+
+    return(drive)
+
+
+@app.post("/google_drives")
+def create_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], D: Dict):
+    """
+    Add or update a Google Drive record in the database.
+    
+    Args:
+        ag_ids: List of access group IDs the user belongs to ** should update to is_admin
+        D: Google Drive information to be added or updated
+        
+    Returns:
+        Added or updated Google Drive object
+    """
+    with Session(engine) as session:
+        if True:
+            try:
+                dr = add_or_update(session, 
+                                   GoogleDrives, 
+                                   GoogleDrives.drive_id == D['drive_id'], 
+                                   **D)
+                
+                session.commit()
+                    
+            except Exception as err:
+                print(err)
+
+    return(D)
+
+# ===============================================================================================================================================================
+
+# TODO: Dict should be a schema or model
+
+@app.get("/users", response_model = List[Tuple])
+def list_users(admin_acct:  Annotated[str, Depends(is_admin)], request: Request, permissive = True):
+
+    query_params = request.query_params
+    params_dict = dict(query_params)
+    search_cmd = select(User)
+
+    # this replaces get_users_by_name and users_by_email ---- need to specify lbl_email or email in parameters now --- won't check both
+    # need to specify first_name and last_name not just "name"
+
+    if permissive:
+        for k, v in params_dict.items():
+            if hasattr(User, k):
+                search_cmd = search_cmd.where(getattr(User, k).ilike(f"%{v.lower()}%"))
+               
+    else:
+        for k, v in params_dict.items():
+            if hasattr(User, k):
+                search_cmd = search_cmd.where(getattr(User, k) == v)
+                
+    with Session(engine) as session:
+        users = session.exec(search_cmd).all()
+        return users
+
+
+@app.get("/users/{orcid}")
+def read_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
+    from sqlmodel import select
+    with Session(engine) as session:
+        users = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        return users
+
+
+@app.post("/users")
+def create_user(ag_ids:  Annotated[str, Depends(authorize_user)], user_info: Dict):  
+    """
+    Add or update a user record in the database.
+    Add the user to an Access Group with their ORCID
+    Add the user to Access Groups for any proposal they are a USER on // DOES NOT ADD Users to access groups for the proposals on which they are the assigned scientist
+    Create a link to the proposals that the User is a USER on
+
+    Args:
+        ag_ids: List of access group IDs the user belongs to ** should update to is_admin
+        user_info: User information to be added or updated
+        
+    Returns:
+        Added or updated user object
+    """
+    props = user_info.pop("proposals")
+    
+    with Session(engine) as session:
+        if True:
+            # add user to user table
+            user = add_or_update(session, User, User.orcid == user_info['orcid'], **user_info)
+            session.commit()
+        
+            # TODO: make /access_groups endpoint?
+            # add an access group named by the users orcid, containing the orcid as a user
+            ag = add_or_update(session, AccessGroup, AccessGroup.group_name == user_info['orcid'], group_name = user_info['orcid'], users = [user])
+        
+            # for each proposal that the user is a USER on: 
+            # 1. get the proposal object from the database
+            # 2. add the proposal to the user object
+            # 3. add an access group for the proposal, named by the proposal and add the user to the access group
+            for pname in props:
+                propid = pname
+                prop = session.get(Proposal, propid)
+                
+                # some proposals don't exist!
+                if prop:
+                    # add proposal to user
+                    if prop not in user.proposals:
+                        user.proposals.append(prop)
+                    
+                    # add user to access group
+                    ag = add_or_update(session, AccessGroup, AccessGroup.group_name==pname, group_name=pname)
+                    if not (user in ag.users):
+                        ag.users.append(user)
+        
+            session.add(user)
+            session.commit()
+
+    return(user_info)
+
+
+@app.get("/users/{orcid}/datasets")
+def read_user_datasets(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
+    '''
+    Returns a list of all the datasets the user has access to based on the ORCID provided. 
+    '''
+    with Session(engine) as session:
+        ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.orcid == orcid)).all()
+        ag_ids = [x.accessgroup_id for x in ag]
+        ds_list =session.exec(select(Dataset).select_from(join(DatasetACL, Dataset, DatasetACL.dataset_id == Dataset.id)).where(DatasetACL.accessgroup_id.in_(ag_ids))).all()
+        return ds_list
+
+
+@app.get("/users/{orcid}/datasets/{dsid}")
+def read_user_access_to_dataset(dsid: str, orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
+    '''
+    Returns boolean: True is user with provided ORCID has access to the provided dataset ID, False if no access or dataset does not exist. 
+
+    I'm not sure why logic is different than above ... could also call above endpoint and filter list?  Worth time check?
+    '''
+    with Session(engine) as session:
+        ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.orcid == orcid)).all()
+        ag_ids = [x.accessgroup_id for x in ag]
+        ds_acl = session.exec(select(DatasetACL).select_from(join(DatasetACL, Dataset, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))).all()
+        if len(ds_acl) > 0:
+            return True
+        else:
+            return False
+
+
+@app.get("/users/{orcid}/proposals", response_model = List[Proposal])
+def read_proposals_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
+    '''
+    Returns a list of the proposals that this User is associated with. 
+    '''
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        user_id = user.id
+        proposals = session.exec(select(Proposal).select_from(join(Proposal, UserProposalLink, Proposal.id == UserProposalLink.proposal_id)).where(UserProposalLink.user_id == user_id)).all()
+        return proposals
+    
+
+@app.post("/proposals")
+def create_proposal(ag_ids:  Annotated[str, Depends(authorize_user)], P: Dict):
+    """
+    Add or update a proposal record in the database.
+    
+    Args:
+        ag_ids: List of access group IDs the user belongs to ** should update to is_admin
+        P: Proposal object to be added or updated
+        
+    Returns:
+        Added or updated proposal object
+
+    TODO: make P a proposal schema 
+    """
+    with Session(engine) as session:
+        prop = add_or_update(session, Proposal,  Proposal.id == P['id'], **P)
+                        # id = P['id'],
+                        # ser_num = P['proposal_serial_number'],
+                        # status= P['status'],
+                        # title= P['title'],
+                        # assigned_scientist_name = f"{P['assigned_scientist_first_name']} {P['assigned_scientist_last_name']}",
+                        # assigned_scientist_email = P['assigned_scientist_email']
+                        # )
+        ag = add_or_update(session, 
+                      AccessGroup, 
+                      AccessGroup.group_name==P['id'], 
+                      group_name=P['id'])
+        
+        r1 = session.exec(select(User).where(User.lbl_email.ilike(f"%{P['assigned_scientist_email']}%"))).one_or_none()
+        r2 = session.exec(select(User).where(User.email.ilike(f"%{P['assigned_scientist_email']}%"))).one_or_none()
+        all_found_accounts = list(set([x for x in r1 + r2 if x['orcid'] is not None]))
+        
+        print(f"found accounts for user: {all_found_accounts}")
+
+        if len(all_found_accounts) > 0:
+            assigned_scientist = all_found_accounts[-1]
+            if not (assigned_scientist in ag.users):
+                ag.users.append(assigned_scientist)
+
+            if not (prop in assigned_scientist.proposals):
+                assigned_scientist.append(prop)
+
+        session.commit()
+
+    return(P)
+
+
+@app.get("/proposals")
+def list_proposals(admin_acct:  Annotated[str, Depends(is_admin)]):
+    '''
+    Returns the proposal object for the provided ID
+    '''
+    with Session(engine) as session:
+        props = session.exec(select(Proposal)).all()
+        return(props)
+
+
+@app.get("/proposals/{prop_id}")
+def read_proposal(prop_id: str, admin_acct:  Annotated[str, Depends(is_admin)]):
+    '''
+    Returns the proposal object for the provided ID
+    '''
+    with Session(engine) as session:
+        prop = session.exec(select(Proposal).where(Proposal.id == prop_id)).one_or_none()
+        return(prop)
+
+
+@app.get("/proposals/{prop_id}/users", response_model = List[User])
+def read_users_on_proposal(prop_id: str, admin_acct:  Annotated[str, Depends(is_admin)]):
+    '''
+    Returns a list of users associated with the proposal ID provided
+    '''
+    with Session(engine) as session:
+        users = session.exec(select(User).select_from(join(User, UserProposalLink, UserProposalLink.user_id == User.id)).where(UserProposalLink.proposal_id == prop_id)).all()
+        return users

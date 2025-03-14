@@ -25,7 +25,7 @@ from app.models.dataset import Dataset, DatasetACL, Keyword, DatasetKeywordLink,
 from app.models.instrument import Instrument
 from app.models.user import User, AccessGroup, Proposal, UserAccessGroupLink, UserProposalLink
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
-from app.models.tasks import TransferRequest
+from app.models.tasks import TransferRequest, SciCatUpdateRequest
 from app.utils.rmq_utils import send_pika_message
 
 # ======================= APP
@@ -163,23 +163,25 @@ def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request = Req
     query_params = request.query_params
     params_dict = dict(query_params)
 
-    ds_cmd = select(Dataset.unique_id).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).filter(DatasetACL.accessgroup_id.in_(ag_ids))
-    
-    for k, v in params_dict.items():
-        if hasattr(Dataset, k):
-            ds_cmd = ds_cmd.where(getattr(Dataset, k) == v)
-        elif k == "keyword":
-            # TODO: move this logic to before the initial ds_cmd so that you can add other where queries to it ... or maybe keyword needs to be an official parameter / data field?
-            K = session.exec(select(Keyword).where(Keyword.keyword.ilike(f"%{v}%"))).all()
-            if K:
-                k_ids = [k.id for k in K]
-                ds_cmd = select(Dataset).select_from(join(DatasetKeywordLink,
+    if 'keyword' in list(params_dict.keys()):
+        K = session.exec(select(Keyword).where(Keyword.keyword.ilike(f"%{v}%"))).all()
+        if K:
+            k_ids = [k.id for k in K]
+            ds_cmd = select(Dataset).select_from(join(DatasetKeywordLink,
                                                 join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id),
                                                      DatasetKeywordLink.dataset_id == Dataset.id))\
                                                 .filter(DatasetACL.accessgroup_id.in_(ag_ids))\
                                                 .filter(DatasetKeywordLink.keyword_id.in_(k_ids))
-        else: 
-            pass
+        # TODO: what is the actual command for delete?
+        params_dict.pop(k)
+
+    else:
+        ds_cmd = select(Dataset.unique_id).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    
+
+    for k, v in params_dict.items():
+        if hasattr(Dataset, k):
+            ds_cmd = ds_cmd.where(getattr(Dataset, k) == v)
 
         # TODO: would also be good to add logic to: 
         #       get user_id from orcid / email
@@ -187,10 +189,9 @@ def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request = Req
         #       filter on creation time range? 
         #       contains a sample ID?
         #       includes an associated file name?
-        # mainly the first 2
+        # mainly the first 2 --- but I think this is okay for now
 
     with Session(engine) as session:
-        ds_cmd = ds_cmd # I think the filter has to occur after the "where"
         ds_list = session.exec(ds_cmd).all()
         return ds_list
     
@@ -223,7 +224,7 @@ def create_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dataset: Emp
     # 2) A user wants to create a dataset record from a raw file (ingest data) (dataset_upload endpoint)
     # 3) A user wants to create a datatset record directly from json (current endpoint here / variation on upload_with_metadata)
 
-    apikey = get_secret_2() # TODO: fill this out
+    apikey = get_secret_2("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
     with Session(engine) as session:
 
         # add any existing information about the dataset to the SQL database
@@ -234,12 +235,12 @@ def create_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dataset: Emp
         ro = requests.request("post",
                             url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
                             params = {"group_name": "readonly", "read": True, "write": False}, 
-                            headers = {"apikey": apikey})
+                            headers = {"Authorization":f"Bearer {apikey}"})
         
         admin = requests.request("post",
                             url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
                             params = {"group_name": "admin", "read": True, "write": True}, 
-                            headers = {"apikey": apikey})
+                            headers = {"Authorization":f"Bearer {apikey}"})
         
         
         if dataset.owner_user_id is not None:
@@ -247,21 +248,21 @@ def create_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dataset: Emp
             user_ag = requests.request("post",
                             url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
                             params = {"group_name": user_orcid, "read": True, "write": True}, 
-                            headers = {"apikey": apikey})
+                            headers = {"Authorization":f"Bearer {apikey}"})
 
         if dataset.proposal_id is not None:
             prop_name = session.exec(select(Proposal.name).where(Proposal.id == dataset.proposal_id))
             prop_ag = requests.request("post",
                             url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
                             params = {"group_name": prop_name, "read": True, "write": False}, 
-                            headers = {"apikey": apikey})
+                            headers = {"Authorization":f"Bearer {apikey}"})
 
         if dataset.instrument_id is not None:
             inst_name = session.exec(select(Instrument.name).where(Instrument.id == dataset.instrument_id))
             inst_ag = requests.request("post",
                             url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
                             params = {"group_name": inst_name, "read": True, "write": False}, 
-                            headers = {"apikey": apikey})
+                            headers = {"Authorization":f"Bearer {apikey}"})
             
         add_or_update(session, IdType, where=(IdType.unique_id == dataset.unique_id), unique_id = dataset.unique_id, type = "dataset")
         session.commit()
@@ -340,6 +341,43 @@ def transfer_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str,
 
         return(transfer_request)
 
+@app.post("datasets/{dsid}/scicat_update")
+def update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+    # this endpoint would send rmq message that would call scicat API 
+    # does it even make sense?
+    # consumer would do more than that but still...
+    # add for now though for gradual compatibilty
+    pst= pytz.timezone("America/Los_Angeles")
+    creation_time = datetime.datetime.now(pst).isoformat()
+
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+
+    with Session(engine) as session:
+        ds_list = session.exec(ds_cmd).all()
+
+    if ds_list is None:
+        raise HTTPException(status_code=402, detail="Dataset not found")
+    elif len(ds_list) == 0:
+        raise HTTPException(status_code=402, detail="Dataset not found")
+    else:
+        pass
+
+    scicat_request = SciCatUpdateRequest({"dataset_id": dsid, "time_created": creation_time})
+    session.add(scicat_request)
+    session.commit()
+
+    # TODO: confirm rabbit mq side matches // could make new vs. update field in message?
+    message = json.dumps({"dsid": dsid, "source_bucket":"mf-storage-prod"})
+    rmq_pw = get_secret_2("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
+    
+    # TODO: this will need to live somewhere - see if there is a way to check exchange / channel / binding existence and establish if not ///// then can live in rmq_utils OR crucible-rabbit-mq but make sure that you don't forget to make it!
+    # channel.exchange_declare(exchange='raw-data-processing', exchange_type='topic')
+    # transfer_queue = channel.queue_declare(queue='q-transfer-to-drive')
+    # channel.queue_bind(exchange='raw-data-processing', queue=transfer_queue.method.queue, routing_key = '#.transfer-request.#')
+
+    send_pika_message(message, exchange = "raw-data-processing", routing_key= "#.scicat-request.#", user = 'admin', rmq_pw= rmq_pw)
+
+
 
 @app.patch("/datasets/{dsid}")
 def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, updated_dataset: Dataset):
@@ -360,21 +398,31 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
     else:
         pass
     
+    apikey = get_secret_2("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
+
     with Session(engine) as session:
-        #TODO
         ds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **updated_dataset)
         if updated_dataset.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == updated_dataset.owner_user_id))
-            update_acl(user_orcid, ds, session, read = True, write = True)
+            user_ag = requests.request("post",
+                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            params = {"group_name": user_orcid, "read": True, "write": True}, 
+                            headers = {"Authorization":f"Bearer {apikey}"})
 
         if updated_dataset.proposal_id is not None:
             prop_name = session.exec(select(Proposal.name).where(Proposal.id == updated_dataset.proposal_id))
-            update_acl(prop_name, ds, session, read = True, write = False)
+            prop_ag = requests.request("post",
+                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            params = {"group_name": prop_name, "read": True, "write": False}, 
+                            headers = {"Authorization":f"Bearer {apikey}"})
 
         if updated_dataset.instrument_id is not None:
             inst_name = session.exec(select(Instrument.name).where(Instrument.id == updated_dataset.instrument_id))
-            update_acl(inst_name, ds, session, read = True, write = False)
-
+            inst_ag = requests.request("post",
+                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            params = {"group_name": inst_name, "read": True, "write": False}, 
+                            headers = {"Authorization":f"Bearer {apikey}"})
+            
 
         message = json.dumps(updated_dataset)
         rmq_pw = get_secret_2("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
@@ -404,12 +452,15 @@ def read_thumbnails(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of thumbnail objects associated with the dataset ID provided
     '''
-    # TODO: define this 
-    pass
+    with Session(engine) as session:
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds = session.exec(ds_cmd).one_or_none()
+        ds_thumbnails = session.exec(select(Thumbnail).where(Thumbnail.dataset_id == ds.id)).all()
+        return ds_thumbnails
 
 
 @app.post("/datasets/{dsid}/thumbnails")
-def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)], dsid = str, thumbnail: str):
+def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, thumbnail: str):
     '''
     Adds a thumbnail to a dataset. If the thumbnail exists, it will simply add the existing thumbnail to the dataset object. 
     Otherwise, the thumbnail will be created and then added to the dataset. 
@@ -439,8 +490,12 @@ def read_associated_files(ag_ids: Annotated[str, Depends(authorize_user)], dsid:
     '''
     Returns a list of the files associated with the dataset ID provided. 
     '''
-    # TODO: define this 
-    pass
+    with Session(engine) as session:
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds = session.exec(ds_cmd).one_or_none()
+        ds_files = session.exec(select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)).all()
+        return ds_files
+
 
 
 @app.post("/datasets/{dsid}/associated_files")
@@ -466,9 +521,6 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)], dsid: s
         session.commit()
         return(af_obj)
  
- # I think change these to /datasets/{dsid}/keywords
-
-
 
 @app.get("/datasets/{dsid}/keywords")
 def list_keywords_for_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
@@ -479,25 +531,7 @@ def list_keywords_for_dataset(ag_ids: Annotated[str, Depends(authorize_user)], d
         return ds_keywords
 
 
-
-@app.get("/keywords/{keyword}")
-def read_keyword(keyword: str, permissive: bool = True):
-    '''
-    Returns a list of all keyword entries that match the provided keyword. 
-    If permissive is set to False, then all returned entries will be an exact match to the provided string. 
-    Otherwise, keywords will be searched as case insensitive.  The default configuration has permissive set to True.  
-    '''
-    if permissive:
-        cmd = select(Keyword).where(Keyword.keyword.ilike(f"{keyword.lower()}"))
-    else:
-        cmd = select(Keyword).where(Keyword.keyword == keyword)
-
-    with Session(engine) as session:
-        K = session.exec(cmd).all()
-    return(K)
-
-# TODO: Move /keywords to /datasets/keywords
-@app.post("/keywords")
+@app.post("/datasets/{dsid}/keywords")
 def add_keyword(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, keyword: str):
     '''
     Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object. 
@@ -594,6 +628,22 @@ def create_dataset_acl(group_name: str, dsid: str, read: str, write: str, admin_
         session.commit()
 
 
+@app.get("/keywords/{keyword}")
+def read_keyword(keyword: str, permissive: bool = True):
+    '''
+    Returns a list of all keyword entries that match the provided keyword. 
+    If permissive is set to False, then all returned entries will be an exact match to the provided string. 
+    Otherwise, keywords will be searched as case insensitive.  The default configuration has permissive set to True.  
+    '''
+    if permissive:
+        cmd = select(Keyword).where(Keyword.keyword.ilike(f"{keyword.lower()}"))
+    else:
+        cmd = select(Keyword).where(Keyword.keyword == keyword)
+
+    with Session(engine) as session:
+        K = session.exec(cmd).all()
+    return(K)
+
 
 @app.get("/instruments", response_model = List)
 def list_instrument(ag_ids: Annotated[str, Depends(authorize_user)], request = Request):
@@ -622,10 +672,15 @@ def list_instrument(ag_ids: Annotated[str, Depends(authorize_user)], request = R
 
         return(all_inst)
 
-# TODO: get single instrument
-@app.get("instruments/{instrument_id}")
-def read_instrument():
-    pass
+
+@app.get("instruments/{instrument_unique_id}")
+def read_instrument(admin_acct: Annotated[str, Depends(is_admin)], instrument_unique_id: str):
+    '''
+    Returns an instrument with the provided ID if one exists. Otherwise returns None. 
+    '''
+    with Session(engine) as session:
+        inst = session.exec(select(Instrument).where(Instrument.unique_id == instrument_unique_id)).one_or_none()
+        return(inst)
 
 
 @app.post("/instruments", response_model = Instrument)
@@ -743,14 +798,16 @@ def list_users(admin_acct:  Annotated[str, Depends(is_admin)], request: Request,
 
 @app.get("/users/{orcid}")
 def read_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
-    from sqlmodel import select
+    '''
+    Returns the User object associated with the provided ORCID if found. Otherwise returns None. 
+    '''
     with Session(engine) as session:
         users = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
         return users
 
-
+# TODO: make sure that services are admin // so they can call these endpoints
 @app.post("/users")
-def create_user(ag_ids:  Annotated[str, Depends(authorize_user)], user_info: Dict):  
+def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: Dict):  
     """
     Add or update a user record in the database.
     Add the user to an Access Group with their ORCID
@@ -843,7 +900,7 @@ def read_proposals_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_a
     
 
 @app.post("/proposals")
-def create_proposal(ag_ids:  Annotated[str, Depends(authorize_user)], P: Dict):
+def create_proposal(admin_acct:  Annotated[str, Depends(is_admin)], P: Dict):
     """
     Add or update a proposal record in the database.
     

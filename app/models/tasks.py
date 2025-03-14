@@ -11,5 +11,10 @@ class TransferRequest(SQLModel, table = True):
     destination_path: str
 
 
+class SciCatUpdateRequest(SQLModel, table = True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    dataset_id: str = Field(default = None, index = True)
+    time_created: Optional[str] = None
+    time_completed: Optional[str] = None
 
 

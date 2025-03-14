@@ -23,10 +23,6 @@ from sqlalchemy.sql import and_
 from sqlalchemy import select, join
 
 
-
-
-
-
 # =============================== datasets
 
 @app.get("/dataset_with_metadata/{pid}")

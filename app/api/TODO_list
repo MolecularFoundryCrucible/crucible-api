@@ -49,3 +49,4 @@ Update datasets: check how dsupdate and dsupdate-owner consumers differ / what a
 Define the delete endpoint for datasets (and everything...)
 
 Endpoints for /access_groups ? 
+Endpoint for /datasets/{dsid}/stream

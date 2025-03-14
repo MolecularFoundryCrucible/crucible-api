@@ -37,9 +37,9 @@ class Proposal(SQLModel, table=True):
     id: str = Field(default=None, primary_key=True)
     name: str = Field(index=True, unique=True)
     organization: str 
-    status: str
-    title: str
-    assigned_scientist_name: str
+    status: Optional[str]
+    title: Optional[str]
+    assigned_scientist_name: Optional[str]
     assigned_scientist_email: str
     users: List[User] = Relationship(back_populates="proposals", link_model=UserProposalLink)
 

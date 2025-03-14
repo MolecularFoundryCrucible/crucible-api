@@ -1,0 +1,44 @@
+
+List datasets: would also be good to add logic to filter by: 
+        #       get user_id from orcid / email
+        #       get proposal_id from proposal name
+        #       filter on creation time range? 
+        #       contains a sample ID?
+        #       includes an associated file name?
+        # mainly the first 2 --- but I think this is okay for now
+
+
+Create Datasets needs to handle a couple use cases: 
+    # 1) A user wants to create a dataset record before they have any data (streaming use case) (current endpoint here)
+    # 2) A user wants to create a dataset record from a raw file (ingest data) (dataset_upload endpoint)
+    # 3) A user wants to create a datatset record directly from json (current endpoint here / variation on upload_with_metadata)
+
+
+Transfer Datasets RMQ messaging mismatch: 
+    probably want to update this on the rabbit mq side .. 
+        # 1) to match the request and be more general dsid, source, dest and 
+        # 2) exchange name is potentially limiting / inaccurate in new set up?
+        # kind of brings into question the design choice of having a topic exchange since the WHOLE point of this is to allow multiple points of entry...
+        # and the whole point of that was to send one message from ingestion to all the services that should happen if data is ingested.. (not very modular)
+        # maybe thats not true bc you can still send the other message with full bindings to the same exchange and this one just has the partial binding to do this one thing..
+        # see other notes in comment above
+
+Also in Transfer Datasets : this will need to live somewhere - see if there is a way to check exchange / channel / binding existence and establish if not ///// then can live in rmq_utils OR crucible-rabbit-mq but make sure that you don't forget to make it!
+        # channel.exchange_declare(exchange='raw-data-processing', exchange_type='topic')
+        # transfer_queue = channel.queue_declare(queue='q-transfer-to-drive')
+        # channel.queue_bind(exchange='raw-data-processing', queue=transfer_queue.method.queue, routing_key = '#.transfer-request.#')
+
+Update datasets: check how dsupdate and dsupdate-owner consumers differ / what are the inputs expected --- can we consolidate?
+        # note: dsupdate-owner is expected the message to contain the field updated_ownership_info whereas dsupdate is expected updated_info
+        #       both are expecting "dataset_to_update": pid
+        #       update_info can be any dictionary
+        #       updated_ownership_info is an instance of the Owner schema
+        # Really this will have to change to work but the current format would look like: 
+        # message = json.dumps({"dataset_to_update": updated_dataset.unique_id, "updated_info": dict(updated_dataset)})
+        # and for ownership it would look like: 
+        # message = json.dumps({"dataset_to_update": updated_dataset.unique_id, "updated_ownership_info": dict(Owner(subset of updated_dataset))})
+
+
+Define the delete endpoint for datasets (and everything...)
+
+Endpoints for /access_groups ? 

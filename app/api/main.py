@@ -1,8 +1,7 @@
-from typing import Annotated, List, Tuple, Dict, Any, Optional
+from typing import Annotated, List, Tuple, Dict, Optional
 import json
 import requests
-import subprocess as sp
-from jose import jwt, JWTError
+from jose import jwt
 import urllib.parse
 import datetime
 import pytz
@@ -172,8 +171,8 @@ def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request = Req
                                                      DatasetKeywordLink.dataset_id == Dataset.id))\
                                                 .filter(DatasetACL.accessgroup_id.in_(ag_ids))\
                                                 .filter(DatasetKeywordLink.keyword_id.in_(k_ids))
-        # TODO: what is the actual command for delete?
-        params_dict.pop(k)
+        
+        del params_dict[k]
 
     else:
         ds_cmd = select(Dataset.unique_id).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).filter(DatasetACL.accessgroup_id.in_(ag_ids))
@@ -768,9 +767,6 @@ def create_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], D
     return(D)
 
 # ===============================================================================================================================================================
-
-# TODO: Dict should be a schema or model
-
 @app.get("/users", response_model = List[Tuple])
 def list_users(admin_acct:  Annotated[str, Depends(is_admin)], request: Request, permissive = True):
 
@@ -805,44 +801,51 @@ def read_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
         users = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
         return users
 
-# TODO: make sure that services are admin // so they can call these endpoints
+
 @app.post("/users")
-def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: Dict):  
+def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User, proposal_names: List):  
     """
     Add or update a user record in the database.
     Add the user to an Access Group with their ORCID
-    Add the user to Access Groups for any proposal they are a USER on // DOES NOT ADD Users to access groups for the proposals on which they are the assigned scientist
+    Add the user to Access Groups for any proposal they are a USER on
+         // DOES NOT ADD Users to access groups for the proposals
+            on which they are the assigned scientist
     Create a link to the proposals that the User is a USER on
 
     Args:
         ag_ids: List of access group IDs the user belongs to ** should update to is_admin
-        user_info: User information to be added or updated
+        user_info: Instance of class User 
         
     Returns:
         Added or updated user object
     """
-    props = user_info.pop("proposals")
-    
     with Session(engine) as session:
         if True:
             # add user to user table
-            user = add_or_update(session, User, User.orcid == user_info['orcid'], **user_info)
+            user = add_or_update(session, User, User.orcid == user_info.orcid, **user_info)
             session.commit()
         
             # TODO: make /access_groups endpoint?
             # add an access group named by the users orcid, containing the orcid as a user
-            ag = add_or_update(session, AccessGroup, AccessGroup.group_name == user_info['orcid'], group_name = user_info['orcid'], users = [user])
+            ag = add_or_update(session, 
+                               AccessGroup,
+                               AccessGroup.group_name == user_info.orcid,
+                               group_name = user_info.orcid,
+                               users = [user]
+                               )
         
             # for each proposal that the user is a USER on: 
             # 1. get the proposal object from the database
             # 2. add the proposal to the user object
             # 3. add an access group for the proposal, named by the proposal and add the user to the access group
-            for pname in props:
-                propid = pname
-                prop = session.get(Proposal, propid)
-                
-                # some proposals don't exist!
-                if prop:
+            for pname in proposal_names:
+                props = session.exec(select(Proposal).where(Proposal.name == pname)).all()
+                if len(props) != 1:
+                    print(f"Proposals found for {pname}: {props} --- skipping.  Please ensure a proposal exists with a unique name.")
+                    continue
+                else:
+                    prop = props[-1]
+                    
                     # add proposal to user
                     if prop not in user.proposals:
                         user.proposals.append(prop)
@@ -900,7 +903,7 @@ def read_proposals_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_a
     
 
 @app.post("/proposals")
-def create_proposal(admin_acct:  Annotated[str, Depends(is_admin)], P: Dict):
+def create_proposal(admin_acct:  Annotated[str, Depends(is_admin)], P: Proposal):
     """
     Add or update a proposal record in the database.
     
@@ -910,25 +913,16 @@ def create_proposal(admin_acct:  Annotated[str, Depends(is_admin)], P: Dict):
         
     Returns:
         Added or updated proposal object
-
-    TODO: make P a proposal schema 
     """
     with Session(engine) as session:
-        prop = add_or_update(session, Proposal,  Proposal.id == P['id'], **P)
-                        # id = P['id'],
-                        # ser_num = P['proposal_serial_number'],
-                        # status= P['status'],
-                        # title= P['title'],
-                        # assigned_scientist_name = f"{P['assigned_scientist_first_name']} {P['assigned_scientist_last_name']}",
-                        # assigned_scientist_email = P['assigned_scientist_email']
-                        # )
+        prop = add_or_update(session, Proposal,  Proposal.id == P.id, **P)
         ag = add_or_update(session, 
                       AccessGroup, 
-                      AccessGroup.group_name==P['id'], 
-                      group_name=P['id'])
+                      AccessGroup.group_name==P.name, 
+                      group_name=P.name)
         
-        r1 = session.exec(select(User).where(User.lbl_email.ilike(f"%{P['assigned_scientist_email']}%"))).one_or_none()
-        r2 = session.exec(select(User).where(User.email.ilike(f"%{P['assigned_scientist_email']}%"))).one_or_none()
+        r1 = session.exec(select(User).where(User.lbl_email.ilike(f"%{P.assigned_scientist_email}%"))).one_or_none()
+        r2 = session.exec(select(User).where(User.email.ilike(f"%{P.assigned_scientist_email}%"))).one_or_none()
         all_found_accounts = list(set([x for x in r1 + r2 if x['orcid'] is not None]))
         
         print(f"found accounts for user: {all_found_accounts}")

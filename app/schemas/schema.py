@@ -4,7 +4,7 @@ from app.models.dataset import Dataset, AssociatedFile
 from mfid import mfid
 
 # ======================= more classes : )
-class EmptyDataset(Dataset):
+class NewDataset(Dataset):
     '''
     This is the pydantic model for adding a Dataset Record to the SQL database. 
     It inherits from the Dataset SQLmodel class that defines the table, but

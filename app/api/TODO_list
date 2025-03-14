@@ -8,10 +8,17 @@ List datasets: would also be good to add logic to filter by:
         # mainly the first 2 --- but I think this is okay for now
 
 
-Create Datasets needs to handle a couple use cases: 
-    # 1) A user wants to create a dataset record before they have any data (streaming use case) (current endpoint here)
-    # 2) A user wants to create a dataset record from a raw file (ingest data) (dataset_upload endpoint)
-    # 3) A user wants to create a datatset record directly from json (current endpoint here / variation on upload_with_metadata)
+Create Datasets
+- If both dataset.file_to_upload and file provided but do not match - how to handle - current ** provided file overrides
+- Check post request formats (especially when passing in pydantic objs)
+
+Ingest Datasets RMQ: 
+TODO: In order to associate the ingested data back to the dsid provided:
+- the dsid needs to be sent with the message
+- rmq consumer needs to be updated to expect a dsid
+- ingestion class methods need to use the dsid provided ...
+- Need to consider how the system works when a dsid exists INSIDE the file
+
 
 
 Transfer Datasets RMQ messaging mismatch: 

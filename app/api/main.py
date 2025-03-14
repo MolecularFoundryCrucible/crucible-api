@@ -24,7 +24,7 @@ from app.models.dataset import Dataset, DatasetACL, Keyword, DatasetKeywordLink,
 from app.models.instrument import Instrument
 from app.models.user import User, AccessGroup, Proposal, UserAccessGroupLink, UserProposalLink
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
-from app.models.tasks import TransferRequest, SciCatUpdateRequest
+from app.models.tasks import TransferRequest, SciCatUpdateRequest, IngestionRequest
 from app.utils.rmq_utils import send_pika_message
 
 # ======================= APP
@@ -153,114 +153,46 @@ def regenerate_apikey(request: Request):
 
 ######################## =============================DATASETS ==========================================================================================================  
 
-@app.post("/files")
-async def create_file(file: Annotated[UploadFile, File(description="A file read as UploadFile")], ag_ids:  Annotated[str, Depends(authorize_user)]):
-    """
-    Upload a file to the database.
-    The max size of the file is currently set to 500MB.
-    Args:
-        file: File to be uploaded
-        ag_ids: List of access group IDs the user belongs to; used to confirm they have permission to upload the file
-        
-    Returns:
-        File information
-    """
-    
-    save_file_path = f"/root/uploads/{file.filename}"
-    with open(save_file_path, "wb") as f:
-        f.write(await file.read())
-
-    # call create dataset TODO: add call to create_dataset here 
-    apikey = get_secret_2("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
-    payload  = {"dataset": NewDataset(file_to_upload = file.filename)}
-
-    ds = requests.post( url = "https://crucible.lbl.gov/api/datasets",  
-                        headers = {"Authorization":f"Bearer {apikey}"}, 
-                        data = payload
-                      )
-    
-    return {"filename": file.filename, "unique_id": ds.unique_id}
-
-
-
-
-@app.get("/datasets")
-def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request = Request):
-    '''
-    Returns a list of all dataset IDs the requesting user is authorized to view. 
-    If no dataset IDs are authorized for the user, an empty list will be returned. 
-
-    '''
-    query_params = request.query_params
-    params_dict = dict(query_params)
-
-    if 'keyword' in list(params_dict.keys()):
-        K = session.exec(select(Keyword).where(Keyword.keyword.ilike(f"%{v}%"))).all()
-        if K:
-            k_ids = [k.id for k in K]
-            ds_cmd = select(Dataset).select_from(join(DatasetKeywordLink,
-                                                join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id),
-                                                     DatasetKeywordLink.dataset_id == Dataset.id))\
-                                                .filter(DatasetACL.accessgroup_id.in_(ag_ids))\
-                                                .filter(DatasetKeywordLink.keyword_id.in_(k_ids))
-        
-        del params_dict[k]
-
-    else:
-        ds_cmd = select(Dataset.unique_id).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).filter(DatasetACL.accessgroup_id.in_(ag_ids))
-    
-
-    for k, v in params_dict.items():
-        if hasattr(Dataset, k):
-            ds_cmd = ds_cmd.where(getattr(Dataset, k) == v)
-
-        # TODO: would also be good to add logic to: 
-        #       get user_id from orcid / email
-        #       get proposal_id from proposal name
-        #       filter on creation time range? 
-        #       contains a sample ID?
-        #       includes an associated file name?
-        # mainly the first 2 --- but I think this is okay for now
-
-    with Session(engine) as session:
-        ds_list = session.exec(ds_cmd).all()
-        return ds_list
-    
-    
-@app.get("/datasets/{dsid}")
-def read_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
-    '''
-    Returns a dataset found with the provided unique ID if one is exists and the requesting user is authorized to view the dataset. 
-    Otherwise, returns None
-    '''
-    with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
-        ds = session.exec(ds_cmd).one_or_none()
-        return ds
-    
-
 @app.post("/datasets")
-def create_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dataset: NewDataset):
-    '''
-    Creates a dataset in SQL and returns the Dataset object that was created. 
-    
-    Data and metadata can be added to a dataset at the time of or after the record creation.
-    
-    # ARGS
+async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)], dataset: NewDataset, file: Optional[Annotated[UploadFile, File(description="A file read as UploadFile")]] = None):
+    """
+    Create a new dataset in Crucible by provided a dataset object and optionally the file that you wish to create the dataset from. 
+    If a file is provided the contents will be uploaded to the crucible-uploads bucket and saved to the relative path defined by filename. 
+    This path will be used as the "file_to_upload" field in the Dataset object **and will override the existing value. # TODO does that make sense?
+
+    The /datasets/{dsid}/ingest endpoint will then be called using the resulting dataset object and unique_id. 
+
+    The max size of a file is currently set to 500MB. If files are larger than 500MB then an empty dataset can be created through this endpoint using a blank NewDataset object with no "file_to_upload" specified. 
+    Data can then be streamed to a primary_file (should replace the file_to_upload field and get combined with extract_data) using the /datasets/{dsid}/stream endpoint. 
+
+    Args:
         dataset: A Crucible Dataset object. 
             - If provided with no attributes defined, it will be created with an autogenerated MFID and public set to false.  
             - Can contain a fully defined dataset
             - Results in a new SQL dataset record
             - If file_to_upload is defined; the ingestion process will be triggered with RMQ for that file.  **This can get updated using notes from commit 1a7c1e1 on main
 
+        file: Optional file to be uploaded
+        ag_ids: List of access group IDs the user belongs to; used to confirm they have permission to upload the file
+        
+    Returns:
+        Returns the Dataset object that was created. 
+    
+    Data and metadata can be added to a dataset at the time of or after the record creation.
+    
+    By default it will give access to the admin and readonly accounts. If user information, proposal, or instrument are included, 
+    then access will also be given to the relevant groups. 
 
-    # ACCESS
-        By default it will give access to the admin and readonly accounts. If user information, proposal, or instrument are included, 
-        then access will also be given to the relevant groups. 
+    The dataset ID is recorded in a table to track that the mfid corresponds to a dataset. 
+    """
 
-    # MISC
-        The dataset ID is recorded in a table to track that the mfid corresponds to a dataset. 
-    '''
+    if file:
+        # save the file to crucible-uploads
+        save_file_path = f"/root/uploads/{file.filename}"
+        with open(save_file_path, "wb") as f:
+            f.write(await file.read())
+        dataset.file_to_upload == file.filename
+
 
     apikey = get_secret_2("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
     with Session(engine) as session:
@@ -305,30 +237,52 @@ def create_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dataset: New
         add_or_update(session, IdType, where=(IdType.unique_id == dataset.unique_id), unique_id = dataset.unique_id, type = "dataset")
         session.commit()
 
-        # kick off ingestion for file to upload
-        # call ingestion endpoint for the dataset
-        if extract_data == True and dataset.file_to_upload is not None:
-            rmq_pw = get_secret_2("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
-            # this message is going to start a process that will act on the file_to_upload 
-            # to extract other fields and create a json representation of the dataset
-            # currently that ingestion process would also then add or update the existing dataset record in the sql database 
-            # using the created json file 
-            send_pika_message(message = dataset.file_to_upload, exchange= "", routing_key= "ingest2", user = 'admin', rmq_pw= rmq_pw)
 
-        return ds
+    if dataset.file_to_upload is not None:
+        # call ingest endpoint 
+        apikey = get_secret_2("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
+        payload  = {"dataset": dataset}
+
+        ds = requests.post( url = f"https://crucible.lbl.gov/api/datasets/{dataset.unique_id}/ingest",  
+                            headers = {"Authorization":f"Bearer {apikey}"}, 
+                            data = payload   #TODO: check this request format
+                          )
+    
+    return {"filename": file.filename, "unique_id": ds.unique_id}
 
 
 
 @app.post("/datasets/{dsid}/ingest")
-def ingest_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, file_to_upload: str):
+def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str,  dataset: NewDataset):
     '''
-    This function sends a message to rabbit mq to kick off the ingestion process. The file
+    This sends a rabbitMQ message to the ingestion queue.
+    The current ingestion queue is only expecting a "file_to_upload" value which this has enough information to provide. 
+
+    TODO: In order to associate the ingested data back to the dsid provided:
+      - the dsid needs to be sent with the message
+      - rmq consumer needs to be updated to expect a dsid
+      - ingestion class methods need to use the dsid provided ...
+      - Need to consider how the system works when a dsid exists INSIDE the file
+
+    Done - To follow the setup of the other "request functions" this should result in a record being created in the "IngestionRequest" table. 
+
+
     '''
-    pass
+    pst= pytz.timezone("America/Los_Angeles")
+    creation_time = datetime.datetime.now(pst).isoformat()
+    ingestion_request = IngestionRequest({"dataset_id": dsid, "time_created": creation_time, "file_to_upload": dataset.file_to_upload})
+    with Session(engine) as session:
+        session.add(ingestion_request)
+        session.commit()
+
+    rmq_pw = get_secret_2("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
+    send_pika_message(message = dataset.file_to_upload, exchange= "", routing_key= "ingest2", user = 'admin', rmq_pw= rmq_pw)
+
+    return ingestion_request
 
 
 @app.post("/datasets/{dsid}/transfer")
-def transfer_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, source_path: str, destination_path: str):
+def request_dataset_transfer(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, source_path: str, destination_path: str):
     '''
     This concept is fairly different from what we currently have ..
 
@@ -391,7 +345,7 @@ def transfer_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str,
 
 
 @app.post("datasets/{dsid}/scicat_update")
-def update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     # this endpoint would send rmq message that would call scicat API 
     # does it even make sense?
     # consumer would do more than that but still...
@@ -488,6 +442,61 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
 
         return ds
 
+
+@app.get("/datasets")
+def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request = Request):
+    '''
+    Returns a list of all dataset IDs the requesting user is authorized to view. 
+    If no dataset IDs are authorized for the user, an empty list will be returned. 
+
+    '''
+    query_params = request.query_params
+    params_dict = dict(query_params)
+
+    if 'keyword' in list(params_dict.keys()):
+        K = session.exec(select(Keyword).where(Keyword.keyword.ilike(f"%{v}%"))).all()
+        if K:
+            k_ids = [k.id for k in K]
+            ds_cmd = select(Dataset).select_from(join(DatasetKeywordLink,
+                                                join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id),
+                                                     DatasetKeywordLink.dataset_id == Dataset.id))\
+                                                .filter(DatasetACL.accessgroup_id.in_(ag_ids))\
+                                                .filter(DatasetKeywordLink.keyword_id.in_(k_ids))
+        
+        del params_dict[k]
+
+    else:
+        ds_cmd = select(Dataset.unique_id).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    
+
+    for k, v in params_dict.items():
+        if hasattr(Dataset, k):
+            ds_cmd = ds_cmd.where(getattr(Dataset, k) == v)
+
+        # TODO: would also be good to add logic to: 
+        #       get user_id from orcid / email
+        #       get proposal_id from proposal name
+        #       filter on creation time range? 
+        #       contains a sample ID?
+        #       includes an associated file name?
+        # mainly the first 2 --- but I think this is okay for now
+
+    with Session(engine) as session:
+        ds_list = session.exec(ds_cmd).all()
+        return ds_list
+    
+    
+@app.get("/datasets/{dsid}")
+def read_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+    '''
+    Returns a dataset found with the provided unique ID if one is exists and the requesting user is authorized to view the dataset. 
+    Otherwise, returns None
+    '''
+    with Session(engine) as session:
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds = session.exec(ds_cmd).one_or_none()
+        return ds
+    
 
 @app.delete("/datasets/{dsid}")
 def delete_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid = str):

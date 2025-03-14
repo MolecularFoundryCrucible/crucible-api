@@ -1,0 +1,12 @@
+
+fastapi
+pyyaml
+uvicorn
+openssl
+pg8000
+psycopg2-binary
+python-jose
+urllib3
+python-multipart
+pika
+git+https://${GPAT}@github.com/MolecularFoundry/pycrucible.git@99b4eee

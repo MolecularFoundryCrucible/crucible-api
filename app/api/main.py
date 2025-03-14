@@ -10,22 +10,24 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from starlette.requests import Request
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPBearer
-from pycrucible.general_functions import  get_secret_2
+from utils import get_secret_2
 
 
 from sqlmodel import Session, select
 from sqlalchemy import join, func
 from sqlalchemy.sql import and_
 
-from utils.auth_utils import authorize_user, is_admin
-from utils.sql_utils import setup_engine, add_or_update
+from app.utils.auth_utils import authorize_user, is_admin
+from app.utils.sql_utils import setup_engine, add_or_update
+from app.utils.rmq_utils import send_pika_message
+
 from app.schemas.schema import NewDataset
 from app.models.dataset import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile
 from app.models.instrument import Instrument
 from app.models.user import User, AccessGroup, Proposal, UserAccessGroupLink, UserProposalLink
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import TransferRequest, SciCatUpdateRequest, IngestionRequest
-from app.utils.rmq_utils import send_pika_message
+
 
 # ======================= APP
 app = FastAPI()

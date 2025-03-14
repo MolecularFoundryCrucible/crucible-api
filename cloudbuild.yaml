@@ -1,0 +1,27 @@
+# TODO: MOVE THIS TO ARTIFACT REGISTRY
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args: [-c, 'docker pull gcr.io/$PROJECT_ID/${REPO_NAME}-${BRANCH_NAME}:latest || exit 0']
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args: [-c, 'docker build -t gcr.io/${PROJECT_ID}/${REPO_NAME}-${BRANCH_NAME}:latest --cache-from gcr.io/${PROJECT_ID}/${REPO_NAME}-${BRANCH_NAME}:latest .' ]
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/${PROJECT_ID}/${REPO_NAME}-${BRANCH_NAME}:latest' ]
+  - name: "gcr.io/cloud-builders/gke-deploy"
+    args:
+    - run
+    - --filename=./k8s-conf.yaml # TODO: MODIFY THIS WHOLE FILE
+    - --location=us-central1
+    - --cluster=crucible-cluster
+
+
+# TODO: MOVE THIS TO K8S CONF?
+availableSecrets:
+  secretManager:
+  - versionName: projects/776258882599/secrets/service-account-cred/versions/1
+    env: 'GCS_SA'
+    
+timeout: 600s
+#options:
+#  machineType: 'e2-standard-2' # default

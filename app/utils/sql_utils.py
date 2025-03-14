@@ -1,10 +1,8 @@
-from typing import Annotated, List, Tuple, Dict, Any, Optional
-import yaml
-from jose import  JWTError
 
-from pycrucible.general_functions import get_file_from_gcs, get_secret_2, get_secret
+import yaml
+from utils import get_secret_2
 from sqlmodel import create_engine, select
-from sqlalchemy import select, join, JSON, Column
+
 
 
 def setup_engine(env_config_file):
@@ -12,7 +10,7 @@ def setup_engine(env_config_file):
         env_config = yaml.safe_load(f)
     
     C = config = env_config.copy()
-    password = get_secret('', 'sql_password')
+    password = get_secret_2('PGDB_PW', 'projects/776258882599/secrets/pgcloud_pw/versions/1')
     
     if C['db_type'] == 'sqlite':
         db_url = f"sqlite:///{C['db_file']}"
@@ -33,7 +31,6 @@ def get_any(d, keys, default=None):
 
 
 def add_or_update(session, cls, where, **kwargs):
-    from sqlmodel import select
     statement = select(cls).where(where)
     obj = session.exec(statement).one_or_none()
     print(type(obj))
@@ -48,10 +45,7 @@ def add_or_update(session, cls, where, **kwargs):
 
 
 
-
-
 def delete_link(table, dataset_id, session):
-    from sqlmodel import select
     statement = select(table).where(table.dataset_id == dataset_id)
     found_records = session.exec(statement).all()
     for rec in found_records:

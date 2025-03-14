@@ -8,7 +8,7 @@ from fastapi import Depends,  HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from pycrucible.general_functions import  get_secret_2
+from utils import  get_secret_2
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import select, join

@@ -50,3 +50,19 @@ Define the delete endpoint for datasets (and everything...)
 
 Endpoints for /access_groups ? 
 Endpoint for /datasets/{dsid}/stream
+
+
+# ========================== DEPLOYMENT
+
+DOCKERFILE
+- how to get gcs_sa during runtime // on the fly 
+- how to connect to database without the credentials file >> prob through k8s config also
+- what is the crucible_env variable getting used for?
+- fix the requirements file / pip vs. conda / add versions etc
+
+K8S CONF 
+- the whole thing is just copied from a different repo 
+
+CLOUDBUILD
+- remove secret
+- push /pull from artifact registry

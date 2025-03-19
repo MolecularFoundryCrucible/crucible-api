@@ -172,7 +172,7 @@ spec:
       - name crucible-api-app
       - env:
         - name: PYTHONUNBUFFERED
-          value: "true"
+          value: "True"
         - name: DB_NAME
           value: "testdb2"
         image: us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-main

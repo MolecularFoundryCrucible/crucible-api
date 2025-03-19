@@ -86,3 +86,8 @@ Endpoint for /datasets/{dsid}/stream
         - a ksa service account bound to a gsa service account with workload identity role --- 
         - want to use this to access 1) SQL 2) Cloud Storage 3) Secrets
      ** - may need to configure that access separately with gcloud (?)
+
+- In the google cloud console I went to IAM&Admin >> IAM: 
+        - Until you assign a service account a role, it will not be listed here as a "Principle"
+        - You can change this by clicking +GrantAccess, then adding "new Principle" with your SA email addres from the Service Account tab and selecting the roles you want. 
+        - The roles I chose were: Cloud SQL Client, Cloud Storage User, Secret Manager Accessor

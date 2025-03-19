@@ -1,0 +1,13 @@
+
+# ran these commands to configure the workload identity ... not sure if it works yet
+# just following this: https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity#enable_on_cluster
+
+kubectl apply -f /home/morgan/Git/CrucibleRefactor/crucible-api/k8s-conf/service-account.yaml
+gcloud iam service-accounts add-iam-policy-binding --role="roles/iam.workloadIdentityUser" --member="serviceAccount:mf-crucible.svc.id.goog[default/crucible-api-k8s]" --role="roles/iam.workloadIdentityUser" crucible-k8s-gsa@mf-crucible.iam.gserviceaccount.com
+kubectl annotate serviceaccount crucible-k8s-ksa iam.gke.io/gcp-service-account=crucible-k8s-gsa@mf-crucible.iam.gserviceaccount.com
+
+
+# might need to do this
+gcloud secrets add-iam-policy-binding SECRET_NAME \
+    --role=roles/secretmanager.secretAccessor \
+    --member=principal://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/PROJECT_ID.svc.id.goog/subject/ns/NAMESPACE/sa/KSA_NAME

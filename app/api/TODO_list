@@ -55,14 +55,21 @@ Endpoint for /datasets/{dsid}/stream
 # ========================== DEPLOYMENT
 
 DOCKERFILE
-- how to get gcs_sa during runtime // on the fly 
-- how to connect to database without the credentials file >> prob through k8s config also
-- what is the crucible_env variable getting used for?
-- fix the requirements file / pip vs. conda / add versions etc
+- get pytx version?
 
 K8S CONF 
-- the whole thing is just copied from a different repo 
+- simple which I think is sans helm ?? no templating - just direct config
+- simple contains:
+  -  a container for cloud sql proxy 
+  -  a container for the API with:
+        - volume mount to crucible-uploads
+        - a ksa service account bound to a gsa service account with workload identity role --- 
+        - want to use this to access 1) SQL 2) Cloud Storage 3) Secrets
+     ** - may need to configure that access separately with gcloud (?)
 
-CLOUDBUILD
-- remove secret
-- push /pull from artifact registry
+# ===== A couple notes on things I did...
+
+- set up the ksa service account using the bash commands in the crucible-api/k8s-conf/bash commands to setup k8s file ( did not use the commented ones that say "might need this")
+
+- setup the cloud build trigger and specified the ksa/gsa service account
+- got the existing package versions from the running instance of crucible-db (API) on instance 1

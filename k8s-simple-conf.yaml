@@ -1,3 +1,14 @@
+apiVersion: "v1"
+kind: "ConfigMap"
+metadata:
+  name: "crucible-api-config-jeoi"
+  namespace: "default"
+  labels:
+    app: "crucible-api"
+data:
+  PYTHONUNBUFFERED: "True"
+
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -146,9 +157,10 @@ metadata:
   resourceVersion: 
   uid: 
 spec:
+  replicas: 3
   selector:
     matchLabels:
-      app: crucible-api
+      app: "crucible-api"
   strategy:
     rollingUpdate:
       maxSurge: 25%
@@ -166,18 +178,21 @@ spec:
         autoscaling.knative.dev/maxScale: "10"
         autoscaling.knative.dev/target: "8"
       labels:
-        app: crucible-api
+        app: "crucible-api"
     spec:
       containers:
-      - name crucible-api-app
-      - env:
-        - name: PYTHONUNBUFFERED
-          value: "True"
-        - name: DB_NAME
+      - name "crucible-api-app"
+        env:
+        - name: "PYTHONUNBUFFERED"
+          valueFrom:
+            configMapKeyRef:
+              key: "PYTHONUNBUFFERED"
+              name: "test-config-jeoi"
+        - name: "DB_NAME"
           value: "testdb2"
-        image: us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-main
+        image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-main"
         imagePullPolicy: Always
-        name: crucible-api-container
+        name: "crucible-api-container"
         resources:
           limits:
             cpu: 32000m

@@ -11,3 +11,19 @@ kubectl annotate serviceaccount crucible-k8s-ksa iam.gke.io/gcp-service-account=
 gcloud secrets add-iam-policy-binding SECRET_NAME \
     --role=roles/secretmanager.secretAccessor \
     --member=principal://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/PROJECT_ID.svc.id.goog/subject/ns/NAMESPACE/sa/KSA_NAME
+
+
+# for artifact registry repository creation I ran this: 
+gcloud artifacts repositories create crucible-api \
+--repository-format=docker \
+--location=us-central1 \
+--description="Crucible API and related Docker images" \
+--immutable-tags \
+--async \
+--disable-vulnerability-scanning
+
+# check that it was created
+gcloud artifacts repositories describe crucible-api --location=us-central1
+
+
+

@@ -1,13 +1,3 @@
-
-List datasets: would also be good to add logic to filter by: 
-        #       get user_id from orcid / email
-        #       get proposal_id from proposal name
-        #       filter on creation time range? 
-        #       contains a sample ID?
-        #       includes an associated file name?
-        # mainly the first 2 --- but I think this is okay for now
-
-
 Create Datasets
 - If both dataset.file_to_upload and file provided but do not match - how to handle - current ** provided file overrides
 - Check post request formats (especially when passing in pydantic objs)
@@ -52,12 +42,42 @@ Endpoints for /access_groups ?
 Endpoint for /datasets/{dsid}/stream
 
 
-# ========================== DEPLOYMENT
+# ========================== TESTS / Troubleshooting
+ 2. test cont. deploy
+ 3. test database connection
+ 4. test storage connection
+ 5. test secrets (although if above work then secret access should be working)
+ 6. test rclone
+ 7. test the endpoints ... put whatever you need to be able to do this below. 
 
-DOCKERFILE
-- get pytx version?
 
-K8S CONF 
+# ========================== To Do Items
+1. How to run locally
+        -  how to use configmaps
+2. Front end with buttons (Upload Sample | Upload Dataset | Add Metadata to Dataset)
+        - how does this support Autobot || CIWE || Peptoid
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ===== A couple notes on things I did...
+
+- set up the ksa service account using the bash commands in the crucible-api/k8s-conf/bash commands to setup k8s file ( did not use the commented ones that say "might need this")
+
+- setup the cloud build trigger (no SA for now..)
+- got the existing package versions from the running instance of crucible-db (API) on instance 1
 - simple which I think is sans helm ?? no templating - just direct config
 - simple contains:
   -  a container for cloud sql proxy 
@@ -66,10 +86,3 @@ K8S CONF
         - a ksa service account bound to a gsa service account with workload identity role --- 
         - want to use this to access 1) SQL 2) Cloud Storage 3) Secrets
      ** - may need to configure that access separately with gcloud (?)
-
-# ===== A couple notes on things I did...
-
-- set up the ksa service account using the bash commands in the crucible-api/k8s-conf/bash commands to setup k8s file ( did not use the commented ones that say "might need this")
-
-- setup the cloud build trigger (no SA for now..)
-- got the existing package versions from the running instance of crucible-db (API) on instance 1

@@ -20,6 +20,7 @@ ENV PATH "/root/miniconda3/bin:$PATH"
 
 
 # packages
+COPY requirements.txt ./requirements.txt
 RUN conda install -c conda-forge rclone==1.65.2 python2-secrets && conda install -c anaconda -y pip 
 RUN pip install -r requirements.txt
 

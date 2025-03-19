@@ -71,5 +71,5 @@ K8S CONF
 
 - set up the ksa service account using the bash commands in the crucible-api/k8s-conf/bash commands to setup k8s file ( did not use the commented ones that say "might need this")
 
-- setup the cloud build trigger and specified the ksa/gsa service account
+- setup the cloud build trigger (no SA for now..)
 - got the existing package versions from the running instance of crucible-db (API) on instance 1

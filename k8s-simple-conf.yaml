@@ -169,7 +169,6 @@ spec:
         app: "crucible-api"
     spec:
       containers:
-      - name "crucible-api-container"
       - env:
         - name: "PYTHONUNBUFFERED"
           value: "True"

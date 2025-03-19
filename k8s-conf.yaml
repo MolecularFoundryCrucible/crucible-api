@@ -1,5 +1,5 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: "apps/v1"
+kind: "Deployment"
 metadata:
   annotations:
     autopilot.gke.io/resource-adjustment: '{"input":{"containers":[{"limits":{"ephemeral-storage":"10Gi"},"requests":{"cpu":"500m","ephemeral-storage":"20Gi","memory":"20Gi"},"name":"crucible-api-container"}]},"output":{"containers":[{"limits":{"ephemeral-storage":"20Gi"},"requests":{"cpu":"3077m","ephemeral-storage":"10Gi","memory":"20Gi"},"name":"crucible-api-container"}]},"modified":true}'
@@ -147,8 +147,8 @@ metadata:
     operation: Update
     subresource: status
     time: 
-  name: crucible-api
-  namespace: default
+  name: "crucible-api"
+  namespace: "default"
   resourceVersion: 
   uid: 
 spec:
@@ -156,13 +156,12 @@ spec:
   revisionHistoryLimit: 10
   selector:
     matchLabels:
-      app: crucible-api
+      app: "crucible-api"
   strategy:
     rollingUpdate:
       maxSurge: 25%
       maxUnavailable: 100%
     type: RollingUpdate
-  # Horizontal Pod Autoscaling
   template:
     metadata:
       annotations:
@@ -174,34 +173,20 @@ spec:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "10"
         autoscaling.knative.dev/target: "8"
-      creationTimestamp: null
       labels:
-        app: crucible-api
+        app: "crucible-api"
       name: crucible-api
       namespace: default
     spec:
       containers:
       - env:
-        - name: PYTHONUNBUFFERED
-          value: "true"
-        - name: DB_USER
-          valueFrom:
-            secretKeyRef:
-              name: <YOUR-DB-SECRET>
-              key: username
-        - name: DB_PASS
-          valueFrom:
-            secretKeyRef:
-              name: <YOUR-DB-SECRET>
-              key: password
-        - name: DB_NAME
-          valueFrom:
-            secretKeyRef:
-              name: <YOUR-DB-SECRET>
-              key: database
-        image: gcr.io/mf-crucible/crucible-api-main
+        - name: "PYTHONUNBUFFERED"
+          value: "True"
+        - name: "DB_NAME"
+          value: "testdb2"
+        image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-main"
         imagePullPolicy: Always
-        name: crucible-api-container
+        name: "crucible-api-container"
         resources:
           limits:
             cpu: 32000m
@@ -220,24 +205,6 @@ spec:
         volumeMounts:
         - mountPath: /mnt/gcs
           name: cruc-upload-vol2
-          readOnly: true
-      dnsPolicy: ClusterFirst
-      restartPolicy: Always
-      schedulerName: default-scheduler
-      securityContext:
-        seccompProfile:
-          type: RuntimeDefault
-      serviceAccountName: crucible-k8s-ksa
-      terminationGracePeriodSeconds: 30
-      tolerations:
-      - effect: NoSchedule
-        key: kubernetes.io/arch
-        operator: Equal
-        value: amd64
-      volumes:
-      - name: cruc-upload-vol2
-        persistentVolumeClaim:
-          claimName: cruc-upload-pvc2
           readOnly: true
       initContainers:
         - name: cloud-sql-proxy
@@ -259,24 +226,32 @@ spec:
 
             # Replace DB_PORT with the port the proxy should listen on
             - "--port=5432"
-            - "crucible_db"
+            - "mf-crucible:us-central1:testdb2"
 
           securityContext:
-            # The default Cloud SQL Auth Proxy image runs as the
-            # "nonroot" user and group (uid: 65532) by default.
             runAsNonRoot: true
-          # You should use resource requests/limits as a best practice to prevent
-          # pods from consuming too many resources and affecting the execution of
-          # other pods. You should adjust the following values based on what your
-          # application needs. For details, see
-          # https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
           resources:
             requests:
-              # The proxy's memory use scales linearly with the number of active
-              # connections. Fewer open connections will use less memory. Adjust
-              # this value based on your application's requirements.
-              memory: "8Gi"
-              # The proxy's CPU use scales linearly with the amount of IO between
-              # the database and the application. Adjust this value based on your
-              # application's requirements.
-              cpu: "4"
+              memory: "2Gi"
+              cpu: "1"
+
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: crucible-k8s-ksa
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - effect: NoSchedule
+        key: kubernetes.io/arch
+        operator: Equal
+        value: amd64
+      volumes:
+      - name: cruc-upload-vol2
+        persistentVolumeClaim:
+          claimName: cruc-upload-pvc2
+          readOnly: true
+
+

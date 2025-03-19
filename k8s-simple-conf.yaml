@@ -206,34 +206,34 @@ spec:
         - mountPath: /mnt/gcs
           name: cruc-upload-vol2
           readOnly: true
-      initContainers:
-        - name: cloud-sql-proxy
-          restartPolicy: Always
-          # It is recommended to use the latest version of the Cloud SQL Auth Proxy
-          # Make sure to update on a regular schedule!
-          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
-          args:
-            # If connecting from a VPC-native GKE cluster, you can use the
-            # following flag to have the proxy connect over private IP
-            - "--private-ip"
+      # initContainers:
+      #   - name: cloud-sql-proxy
+      #     restartPolicy: Always
+      #     # It is recommended to use the latest version of the Cloud SQL Auth Proxy
+      #     # Make sure to update on a regular schedule!
+      #     image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
+      #     args:
+      #       # If connecting from a VPC-native GKE cluster, you can use the
+      #       # following flag to have the proxy connect over private IP
+      #       - "--private-ip"
 
-            # If you are not connecting with Automatic IAM, you can delete
-            # the following flag.
-            - "--auto-iam-authn"
+      #       # If you are not connecting with Automatic IAM, you can delete
+      #       # the following flag.
+      #       - "--auto-iam-authn"
 
-            # Enable structured logging with LogEntry format:
-            - "--structured-logs"
+      #       # Enable structured logging with LogEntry format:
+      #       - "--structured-logs"
 
-            # Replace DB_PORT with the port the proxy should listen on
-            - "--port=5432"
-            - "mf-crucible:us-central1:testdb2"
+      #       # Replace DB_PORT with the port the proxy should listen on
+      #       - "--port=5432"
+      #       - "mf-crucible:us-central1:testdb2"
 
-          securityContext:
-            runAsNonRoot: true
-          resources:
-            requests:
-              memory: "2Gi"
-              cpu: "1"
+      #     securityContext:
+      #       runAsNonRoot: true
+      #     resources:
+      #       requests:
+      #         memory: "2Gi"
+      #         cpu: "1"
 
       dnsPolicy: ClusterFirst
       restartPolicy: Always

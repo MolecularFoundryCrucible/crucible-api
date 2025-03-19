@@ -2,7 +2,6 @@
 fastapi==0.112.2
 pyyaml==6.0.2
 uvicorn==0.32.1
-openssl==3.4.0
 pg8000==1.31.2
 psycopg2-binary
 python-jose==3.3.0

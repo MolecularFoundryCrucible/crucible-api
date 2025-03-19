@@ -43,9 +43,9 @@ Endpoint for /datasets/{dsid}/stream
 
 
 # ========================== TESTS / Troubleshooting
- 2. test cont. deploy
+ 2. test cont. deploy - working with default KSA (no binding)
  3. test database connection
- 4. test storage connection
+ 4. test storage connection - working with default KSA (no binding)
  5. test secrets (although if above work then secret access should be working)
  6. test rclone
  7. test the endpoints ... put whatever you need to be able to do this below. 
@@ -91,3 +91,5 @@ Endpoint for /datasets/{dsid}/stream
         - Until you assign a service account a role, it will not be listed here as a "Principle"
         - You can change this by clicking +GrantAccess, then adding "new Principle" with your SA email addres from the Service Account tab and selecting the roles you want. 
         - The roles I chose were: Cloud SQL Client, Cloud Storage User, Secret Manager Accessor
+
+        - I tried Cloud Storage Admin too but ultimately I think for the already created Autopilot cluster it only works with default ksa and we may need to bind that to gsa to access cloud storage but the ksa I created is not working with the volume mount so ditching that for now

@@ -1,7 +1,6 @@
 from typing import Optional, List
-from sqlalchemy import JSON, Column,BigInteger
 from sqlmodel import Field, SQLModel,Relationship
-from models.dataset import DatasetACL
+from app.models.dataset import DatasetACL
 
 class UserProposalLink(SQLModel, table=True):
     user_id: Optional[int] = Field(

@@ -24,5 +24,8 @@ gcloud artifacts repositories create crucible-api \
 # check that it was created
 gcloud artifacts repositories describe crucible-api --location=us-central1
 
-
+# THIS IS CRITICAL **** 
+gcloud storage buckets add-iam-policy-binding gs://crucible-uploads \
+    --member "principal://iam.googleapis.com/projects/776258882599/locations/global/workloadIdentityPools/mf-crucible.svc.id.goog/subject/ns/default/sa/crucible-k8s-ksa" \
+    --role "roles/storage.Admin"
 

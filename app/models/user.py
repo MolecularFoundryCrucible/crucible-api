@@ -1,6 +1,5 @@
 from typing import Optional, List
 from sqlmodel import Field, SQLModel,Relationship
-from app.models.dataset import DatasetACL
 
 class UserProposalLink(SQLModel, table=True):
     user_id: Optional[int] = Field(
@@ -44,6 +43,7 @@ class Proposal(SQLModel, table=True):
 
 
 class AccessGroup(SQLModel, table=True):
+    from app.models.dataset import DatasetACL
     id: Optional[int] = Field(default=None, primary_key=True)
     group_name: str = Field(index=True, unique=True)
     users: List[User] = Relationship(back_populates="accessgroups", link_model=UserAccessGroupLink)

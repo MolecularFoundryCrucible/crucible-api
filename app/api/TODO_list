@@ -1,3 +1,21 @@
+
+
+
+# ========================== Immediate To Do Items
+1. Rebuild database with new models
+2. Secret access 
+3. Fix setup engine
+4. Fix models organization to avoid circular inputs
+
+
+# ========================== Future To Do Items
+1. How to run locally
+        -  how to use configmaps
+2. Front end with buttons (Upload Sample | Upload Dataset | Add Metadata to Dataset)
+        - how does this support Autobot || CIWE || Peptoid
+
+
+# ======================= Notes / API design to do
 Create Datasets
 - If both dataset.file_to_upload and file provided but do not match - how to handle - current ** provided file overrides
 - Check post request formats (especially when passing in pydantic objs)
@@ -40,25 +58,6 @@ Define the delete endpoint for datasets (and everything...)
 
 Endpoints for /access_groups ? 
 Endpoint for /datasets/{dsid}/stream
-
-
-# ========================== TESTS / Troubleshooting
- 2. test cont. deploy - working with default KSA (no binding)
- 3. test database connection
- 4. test storage connection - working with default KSA (no binding)
- 5. test secrets (although if above work then secret access should be working)
- 6. test rclone
- 7. test the endpoints ... put whatever you need to be able to do this below. 
-
-
-# ========================== To Do Items
-1. How to run locally
-        -  how to use configmaps
-2. Front end with buttons (Upload Sample | Upload Dataset | Add Metadata to Dataset)
-        - how does this support Autobot || CIWE || Peptoid
-
-
-
 
 
 

@@ -1,6 +1,6 @@
 
 import yaml
-from utils import get_secret_2
+from app.general_utils import get_secret_2
 from sqlmodel import create_engine, select
 
 

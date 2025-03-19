@@ -10,13 +10,13 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from starlette.requests import Request
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPBearer
-from utils import get_secret_2
 
 
 from sqlmodel import Session, select
 from sqlalchemy import join, func
 from sqlalchemy.sql import and_
 
+from app.general_utils import get_secret_2
 from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.sql_utils import setup_engine, add_or_update
 from app.utils.rmq_utils import send_pika_message

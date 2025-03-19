@@ -170,7 +170,7 @@ spec:
     spec:
       containers:
       - name "crucible-api-container"
-        env:
+      - env:
         - name: "PYTHONUNBUFFERED"
           value: "True"
         - name: "DB_NAME"

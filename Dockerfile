@@ -30,4 +30,5 @@ COPY . .
 RUN mkdir uploads
 
 # Run app
-CMD exec uvicorn app.api.main:app --host 0.0.0.0 --reload --port 7777  --limit-max-requests 500000000 --root-path "/testapi"
+CMD echo "hello world - the app deployed"
+#CMD exec uvicorn app.api.main:app --host 0.0.0.0 --reload --port 7777  --limit-max-requests 500000000 --root-path "/testapi"

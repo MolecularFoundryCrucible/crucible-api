@@ -21,6 +21,7 @@ def get_gcs_secret(secret_name):
     from google.cloud import secretmanager
     from google.oauth2 import service_account
     try:
+        # ====== this means you have to have this env var or temp_creds .... not just the SA connected ...
         J = json.loads(os.getenv("GCS_SA"))
         with open("temp_creds.json", "w") as f:
             json.dump(J, f)

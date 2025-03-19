@@ -206,6 +206,8 @@ spec:
         - mountPath: /mnt/gcs
           name: cruc-upload-vol2
           readOnly: true
+        - mountPath: "/var/secrets"
+          name: cruc_secrets
       initContainers:
         - name: cloud-sql-proxy
           restartPolicy: Always
@@ -253,5 +255,11 @@ spec:
         persistentVolumeClaim:
           claimName: cruc-upload-pvc2
           readOnly: true
+      - name: mysecret
+        csi:
+          driver: secrets-store-gke.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: crucible-api-secret-provider
 
 

@@ -6,11 +6,11 @@ kubectl apply -f /home/morgan/Git/CrucibleRefactor/crucible-api/k8s-conf/service
 gcloud iam service-accounts add-iam-policy-binding --role="roles/iam.workloadIdentityUser" --member="serviceAccount:mf-crucible.svc.id.goog[default/crucible-api-k8s]" --role="roles/iam.workloadIdentityUser" crucible-k8s-gsa@mf-crucible.iam.gserviceaccount.com
 kubectl annotate serviceaccount crucible-k8s-ksa iam.gke.io/gcp-service-account=crucible-k8s-gsa@mf-crucible.iam.gserviceaccount.com
 
+# ultimately none of this mattered for ksa ----- needed to do this command for "default" ksa that was created with autopilot cluster
+gcloud storage buckets add-iam-policy-binding gs://crucible-uploads \
+    --member "principal://iam.googleapis.com/projects/776258882599/locations/global/workloadIdentityPools/mf-crucible.svc.id.goog/subject/ns/default/sa/crucible-k8s-ksa" \
+    --role "roles/storage.Admin"
 
-# might need to do this
-gcloud secrets add-iam-policy-binding SECRET_NAME \
-    --role=roles/secretmanager.secretAccessor \
-    --member=principal://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/PROJECT_ID.svc.id.goog/subject/ns/NAMESPACE/sa/KSA_NAME
 
 
 # for artifact registry repository creation I ran this: 
@@ -24,8 +24,8 @@ gcloud artifacts repositories create crucible-api \
 # check that it was created
 gcloud artifacts repositories describe crucible-api --location=us-central1
 
-# THIS IS CRITICAL **** 
-gcloud storage buckets add-iam-policy-binding gs://crucible-uploads \
-    --member "principal://iam.googleapis.com/projects/776258882599/locations/global/workloadIdentityPools/mf-crucible.svc.id.goog/subject/ns/default/sa/crucible-k8s-ksa" \
-    --role "roles/storage.Admin"
-
+# starting with just this secret
+gcloud secrets add-iam-policy-binding service-account-cred \
+    --role=roles/secretmanager.secretAccessor \
+    --member=principal://iam.googleapis.com/projects/776258882599/locations/global/workloadIdentityPools/mf-crucible.svc.id.goog/subject/ns/default/sa/default
+kubectl apply -f k8s-conf/secret-store.yaml

@@ -7,12 +7,12 @@ steps:
     entrypoint: 'bash'
     args: [-c, 'docker build -t us-central1-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${REPO_NAME}-${BRANCH_NAME}:${SHORT_SHA} --cache-from us-central1-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${REPO_NAME}-${BRANCH_NAME}:latest .' ]
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${REPO_NAME}-${BRANCH_NAME}:${SHORT_SHA}' ]
+    args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${REPO_NAME}-${BRANCH_NAME}' ]
   - name: "gcr.io/cloud-builders/gke-deploy"
     args:
     - run
     - --filename=./k8s-simple-conf.yaml 
-    - --image="us-central1-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${REPO_NAME}-${BRANCH_NAME}:${SHORT_SHA}"
+    - --image="us-central1-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${REPO_NAME}-${BRANCH_NAME}"
     - --location=us-central1
     - --cluster=crucible-cluster
 

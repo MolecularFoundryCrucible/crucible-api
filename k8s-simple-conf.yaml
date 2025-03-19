@@ -7,10 +7,11 @@ metadata:
     app: "crucible-api"
 data:
   PYTHONUNBUFFERED: "True"
+  
+---
 
-
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: "apps/v1"
+kind: "Deployment"
 metadata:
   labels:
     app: crucible-api
@@ -152,8 +153,8 @@ metadata:
     operation: Update
     subresource: status
     time: 
-  name: crucible-api
-  namespace: default
+  name: "crucible-api"
+  namespace: "default"
   resourceVersion: 
   uid: 
 spec:
@@ -181,7 +182,7 @@ spec:
         app: "crucible-api"
     spec:
       containers:
-      - name "crucible-api-app"
+      - name "crucible-api-container"
         env:
         - name: "PYTHONUNBUFFERED"
           valueFrom:
@@ -260,4 +261,27 @@ spec:
           claimName: cruc-upload-pvc2
           readOnly: true
 
+
+---
+apiVersion: "autoscaling/v2"
+kind: "HorizontalPodAutoscaler"
+metadata:
+  name: "cruc-api-hpa-ryc4"
+  namespace: "default"
+  labels:
+    app: "crucible-api"
+spec:
+  scaleTargetRef:
+    kind: "Deployment"
+    name: "crucible-api"
+    apiVersion: "apps/v1"
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: "Resource"
+    resource:
+      name: "cpu"
+      target:
+        type: "Utilization"
+        averageUtilization: 8
       

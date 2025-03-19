@@ -12,6 +12,7 @@ steps:
     args:
     - run
     - --filename=./k8s-simple-conf.yaml 
+    - --image="us-central1-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${REPO_NAME}-${BRANCH_NAME}:${SHORT_SHA}"
     - --location=us-central1
     - --cluster=crucible-cluster
 

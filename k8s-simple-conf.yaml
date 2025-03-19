@@ -146,7 +146,6 @@ metadata:
   resourceVersion: 
   uid: 
 spec:
-  replicas: 3
   selector:
     matchLabels:
       app: "crucible-api"

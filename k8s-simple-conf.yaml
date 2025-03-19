@@ -1,15 +1,3 @@
-apiVersion: "v1"
-kind: "ConfigMap"
-metadata:
-  name: "crucible-api-config-jeoi"
-  namespace: "default"
-  labels:
-    app: "crucible-api"
-data:
-  PYTHONUNBUFFERED: "True"
-  
----
-
 apiVersion: "apps/v1"
 kind: "Deployment"
 metadata:
@@ -185,10 +173,7 @@ spec:
       - name "crucible-api-container"
         env:
         - name: "PYTHONUNBUFFERED"
-          valueFrom:
-            configMapKeyRef:
-              key: "PYTHONUNBUFFERED"
-              name: "test-config-jeoi"
+          value: "True"
         - name: "DB_NAME"
           value: "testdb2"
         image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-main"
@@ -262,26 +247,3 @@ spec:
           readOnly: true
 
 
----
-apiVersion: "autoscaling/v2"
-kind: "HorizontalPodAutoscaler"
-metadata:
-  name: "cruc-api-hpa-ryc4"
-  namespace: "default"
-  labels:
-    app: "crucible-api"
-spec:
-  scaleTargetRef:
-    kind: "Deployment"
-    name: "crucible-api"
-    apiVersion: "apps/v1"
-  minReplicas: 1
-  maxReplicas: 5
-  metrics:
-  - type: "Resource"
-    resource:
-      name: "cpu"
-      target:
-        type: "Utilization"
-        averageUtilization: 8
-      

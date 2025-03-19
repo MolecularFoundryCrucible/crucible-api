@@ -1,0 +1,10 @@
+apiVersion: "v1"
+kind: "ConfigMap"
+metadata:
+  name: "crucible-api-config-jeoi"
+  namespace: "default"
+  labels:
+    app: "crucible-api"
+data:
+  PYTHONUNBUFFERED: "True"
+  

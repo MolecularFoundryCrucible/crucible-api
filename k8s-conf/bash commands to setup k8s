@@ -18,7 +18,6 @@ gcloud artifacts repositories create crucible-api \
 --repository-format=docker \
 --location=us-central1 \
 --description="Crucible API and related Docker images" \
---immutable-tags \
 --async \
 --disable-vulnerability-scanning
 

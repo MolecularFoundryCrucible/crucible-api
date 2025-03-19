@@ -1,6 +1,12 @@
 apiVersion: "apps/v1"
 kind: "Deployment"
 metadata:
+  annotations:
+    autopilot.gke.io/resource-adjustment: '{"input":{"containers":[{"limits":{"ephemeral-storage":"10Gi"},"requests":{"cpu":"500m","ephemeral-storage":"20Gi","memory":"20Gi"},"name":"crucible-api-container"}]},"output":{"containers":[{"limits":{"ephemeral-storage":"20Gi"},"requests":{"cpu":"3077m","ephemeral-storage":"10Gi","memory":"20Gi"},"name":"crucible-api-container"}]},"modified":true}'
+    autopilot.gke.io/warden-version: 3.0.42
+    deployment.kubernetes.io/revision: "50"
+  creationTimestamp: 
+  generation: 
   labels:
     app: crucible-api
   managedFields:
@@ -146,6 +152,8 @@ metadata:
   resourceVersion: 
   uid: 
 spec:
+  progressDeadlineSeconds: 600
+  revisionHistoryLimit: 10
   selector:
     matchLabels:
       app: "crucible-api"
@@ -167,6 +175,8 @@ spec:
         autoscaling.knative.dev/target: "8"
       labels:
         app: "crucible-api"
+      name: crucible-api
+      namespace: default
     spec:
       containers:
       - env:

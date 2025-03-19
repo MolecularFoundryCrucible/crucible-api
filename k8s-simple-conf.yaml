@@ -165,7 +165,7 @@ spec:
   template:
     metadata:
       annotations:
-        gke-gcsfuse/cpu-limit: "10"
+        gke-gcsfuse/cpu-limit: "4"
         gke-gcsfuse/cpu-request: 500m
         gke-gcsfuse/memory-limit: 1000Gi
         gke-gcsfuse/memory-request: 1Gi
@@ -189,13 +189,13 @@ spec:
         name: "crucible-api-container"
         resources:
           limits:
-            cpu: 32000m
-            memory: 32Gi
+            cpu: 8000m
+            memory: 4Gi
             ephemeral-storage: 2Gi
           requests:
-            cpu: 4000m
-            memory: 2Gi
-            ephemeral-storage: 2Gi
+            cpu: 500m
+            memory: 1Gi
+            ephemeral-storage: 1Gi
         securityContext:
           capabilities:
             drop:
@@ -241,7 +241,7 @@ spec:
       securityContext:
         seccompProfile:
           type: RuntimeDefault
-      serviceAccountName: crucible-k8s-ksa
+      serviceAccountName: default
       terminationGracePeriodSeconds: 30
       tolerations:
       - effect: NoSchedule

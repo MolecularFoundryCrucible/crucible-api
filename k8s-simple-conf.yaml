@@ -152,8 +152,8 @@ metadata:
   resourceVersion: 
   uid: 
 spec:
-  progressDeadlineSeconds: 600
-  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 120
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app: "crucible-api"

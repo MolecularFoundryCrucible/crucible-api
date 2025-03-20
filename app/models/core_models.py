@@ -116,11 +116,11 @@ class UserAccessGroupLink(SQLModel, table=True):
     accessgroup_id: Optional[int] = Field(
         default=None, foreign_key="accessgroup.id", primary_key=True
     )
-    
+
 class AccessGroup(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     group_name: str = Field(index=True, unique=True)
-    users: List[User] = Relationship(back_populates="accessgroups", link_model=UserAccessGroupLink)
+    users: List["User"] = Relationship(back_populates="accessgroups", link_model=UserAccessGroupLink)
     #datasets: List[Dataset] = Relationship(back_populates="accessgroups", link_model=DatasetAccessGroupLink)
     acl: List[DatasetACL] = Relationship(back_populates="accessgroup")
 

@@ -109,6 +109,14 @@ class DatasetACL(SQLModel, table=True):
     accessgroup: "AccessGroup" = Relationship(back_populates="acl")
 
 
+class UserAccessGroupLink(SQLModel, table=True):
+    user_id: Optional[int] = Field(
+        default=None, foreign_key="user.id", primary_key=True
+    )
+    accessgroup_id: Optional[int] = Field(
+        default=None, foreign_key="accessgroup.id", primary_key=True
+    )
+    
 class AccessGroup(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     group_name: str = Field(index=True, unique=True)
@@ -123,15 +131,6 @@ class UserProposalLink(SQLModel, table=True):
     )
     proposal_id: Optional[str] = Field(
         default=None, foreign_key="proposal.id", primary_key=True
-    )
-
-
-class UserAccessGroupLink(SQLModel, table=True):
-    user_id: Optional[int] = Field(
-        default=None, foreign_key="user.id", primary_key=True
-    )
-    accessgroup_id: Optional[int] = Field(
-        default=None, foreign_key="accessgroup.id", primary_key=True
     )
 
 

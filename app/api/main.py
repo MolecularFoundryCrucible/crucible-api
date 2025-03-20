@@ -42,7 +42,7 @@ redirect_uri = urllib.parse.quote_plus("https://crucible.lbl.gov/api/auth")
 
 # ====== Database config
 connect_args = {"check_same_thread": False}
-engine = setup_engine("cloud_config.yaml")
+engine = setup_engine()
 
 
 

@@ -184,6 +184,31 @@ spec:
           value: "True"
         - name: "DB_NAME"
           value: "testdb2"
+        - name: "DB_TYPE"
+          valueFrom:
+            configMapKeyRef:
+              key: db_type
+              name: crucible-api-config-jeoi
+        - name: "DB_SERVER"
+          valueFrom:
+            configMapKeyRef:
+              key: db_server
+              name: crucible-api-config-jeoi
+        - name: "DB_USERNAME"
+          valueFrom:
+            configMapKeyRef:
+              key: db_username
+              name: crucible-api-config-jeoi
+        - name: "DB_DATABASE"
+          valueFrom:
+            configMapKeyRef:
+              key: db_database
+              name: crucible-api-config-jeoi
+        - name: "DB_AUTH"
+          valueFrom:
+            configMapKeyRef:
+              key: db_auth
+              name: crucible-api-config-jeoi
         image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-main:latest"
         imagePullPolicy: Always
         name: "crucible-api-container"

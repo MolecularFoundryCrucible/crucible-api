@@ -29,3 +29,4 @@ gcloud secrets add-iam-policy-binding service-account-cred \
     --role=roles/secretmanager.secretAccessor \
     --member=principal://iam.googleapis.com/projects/776258882599/locations/global/workloadIdentityPools/mf-crucible.svc.id.goog/subject/ns/default/sa/default
 kubectl apply -f k8s-conf/secret-store.yaml
+kubectl apply -f k8s-conf/config-map-api.yaml 

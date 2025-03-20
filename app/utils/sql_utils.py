@@ -1,26 +1,41 @@
 
 import yaml
+import os
 from app.general_utils import get_secret
 from sqlmodel import create_engine, select
 
 
 
-def setup_engine(env_config_file):
+def setup_engine(env_config_file = None):
+    password = get_secret('PGDB_PW', 'projects/776258882599/secrets/pgcloud_pw/versions/1')
+    if env_config_file is not None:
+        db_url = parse_db_url_from_config_file(env_config_file, password)
+    else:
+        db_type = os.getenv("DB_TYPE")
+        if db_type == 'sqlite':
+            db_url = f"sqlite:///{os.getenv("DB_FILE")}"
+        elif db_type == 'postgres':
+            db_url = f"postgresql://{os.getenv("DB_USERNAME")}:{password}@{os.getenv("DB_SERVER")}/{os.getenv("DB_DATABASE")}"
+        else:
+            raise ValueError(f"Unknown DB Type {db_type}")
+        
+    engine = create_engine(db_url, echo=False)
+    return(engine)
+
+
+def parse_db_url_from_config_file(env_config_file, password):
     with open(f"conf/{env_config_file}") as f:
         env_config = yaml.safe_load(f)
     
-    C = config = env_config.copy()
-    password = get_secret('PGDB_PW', 'projects/776258882599/secrets/pgcloud_pw/versions/1')
-    
+    C = env_config.copy()
+
     if C['db_type'] == 'sqlite':
         db_url = f"sqlite:///{C['db_file']}"
     elif C['db_type'] == 'postgres':
         db_url = f"postgresql://{C['db_username']}:{password}@{C['db_server']}/{C['db_database']}"
     else:
         raise ValueError(f"Unknown DB Type {C['db_type']}")
-
-    engine = create_engine(db_url, echo=False)
-    return(engine)
+    return(db_url)
 
 
 def get_any(d, keys, default=None):

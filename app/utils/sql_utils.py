@@ -13,9 +13,9 @@ def setup_engine(env_config_file = None):
     else:
         db_type = os.getenv("DB_TYPE")
         if db_type == 'sqlite':
-            db_url = f"sqlite:///{os.getenv("DB_FILE")}"
+            db_url = f'sqlite:///{os.getenv("DB_FILE")}'
         elif db_type == 'postgres':
-            db_url = f"postgresql://{os.getenv("DB_USERNAME")}:{password}@{os.getenv("DB_SERVER")}/{os.getenv("DB_DATABASE")}"
+            db_url = f'postgresql://{os.getenv("DB_USERNAME")}:{password}@{os.getenv("DB_SERVER")}/{os.getenv("DB_DATABASE")}'
         else:
             raise ValueError(f"Unknown DB Type {db_type}")
         

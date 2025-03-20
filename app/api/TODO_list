@@ -3,12 +3,16 @@
 
 # ========================== Immediate To Do Items
 1. Rebuild database with new models
-3. Fix setup engine
+2. Fix setup engine (again?)
+3. Maybe envvar name should not be set in get_secret..
+4. Configure network traffic
+- allow ingress
+- set up with proxy...
+
 
 
 # ========================== Future To Do Items
 1. How to run locally
-        -  how to use configmaps
 2. Front end with buttons (Upload Sample | Upload Dataset | Add Metadata to Dataset)
         - how does this support Autobot || CIWE || Peptoid
 

@@ -1,6 +1,6 @@
 
 import yaml
-from app.general_utils import get_secret_2
+from app.general_utils import get_secret
 from sqlmodel import create_engine, select
 
 
@@ -10,7 +10,7 @@ def setup_engine(env_config_file):
         env_config = yaml.safe_load(f)
     
     C = config = env_config.copy()
-    password = get_secret_2('PGDB_PW', 'projects/776258882599/secrets/pgcloud_pw/versions/1')
+    password = get_secret('PGDB_PW', 'projects/776258882599/secrets/pgcloud_pw/versions/1')
     
     if C['db_type'] == 'sqlite':
         db_url = f"sqlite:///{C['db_file']}"

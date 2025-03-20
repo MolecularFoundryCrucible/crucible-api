@@ -8,7 +8,7 @@ from fastapi import Depends,  HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.general_utils import  get_secret_2
+from app.general_utils import  get_secret
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import select, join
@@ -16,7 +16,7 @@ from datetime import date, timedelta
 
 
 # ====== Constants
-SECRET_KEY = get_secret_2("CRUCIBLE_SECRET_KEY", "projects/776258882599/secrets/crucible_secret_key/versions/1")
+SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "projects/776258882599/secrets/crucible_secret_key/versions/1")
 ALGORITHM = "HS256"
 security = HTTPBearer()
 

@@ -9,7 +9,7 @@ def run_shell(cmd, checkflag = True, background = False):
     return(sp.run(cmd, stdout = sp.PIPE, stderr = sp.STDOUT, shell = True, universal_newlines = True, check = checkflag))
 
 
-def get_secret_2(secret_env_var, gcs_secret_path = None, sa_creds: str = None, cred_file: bool = False): 
+def get_secret(secret_env_var, gcs_secret_path = None, sa_creds: str = None, cred_file: bool = False): 
     '''
     sa_creds defaults to None in which case it is assumed that you are running the function from a GCP instance with a service account that can authenticate itself. 
     If a value is provided, the function will check to see if the argument cred_file is set to True or False (default).

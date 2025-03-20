@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 from sqlalchemy import join, func
 from sqlalchemy.sql import and_
 
-from app.general_utils import get_secret_2
+from app.general_utils import get_secret
 from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.sql_utils import setup_engine, add_or_update
 from app.utils.rmq_utils import send_pika_message
@@ -36,7 +36,7 @@ security = HTTPBearer()
 # ====== Oauth config
 hostname = "crucible.lbl.gov"
 orcid_client_id = "APP-AXDIPEVR6IMA0RL7"
-orcid_client_secret = get_secret_2("CLIENT_SECRET", "projects/776258882599/secrets/orcid_client_secret/versions/2")
+orcid_client_secret = get_secret("CLIENT_SECRET", "projects/776258882599/secrets/orcid_client_secret/versions/2")
 redirect_uri = urllib.parse.quote_plus("https://crucible.lbl.gov/api/auth")
 
 
@@ -195,7 +195,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)], datas
         dataset.file_to_upload == file.filename
 
 
-    apikey = get_secret_2("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
+    apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
     with Session(engine) as session:
 
         # add any existing information about the dataset to the SQL database
@@ -241,7 +241,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)], datas
 
     if dataset.file_to_upload is not None:
         # call ingest endpoint 
-        apikey = get_secret_2("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
+        apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
         payload  = {"dataset": dataset}
 
         ds = requests.post( url = f"https://crucible.lbl.gov/api/datasets/{dataset.unique_id}/ingest",  
@@ -276,7 +276,7 @@ def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], d
         session.add(ingestion_request)
         session.commit()
 
-    rmq_pw = get_secret_2("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
+    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
     send_pika_message(message = dataset.file_to_upload, exchange= "", routing_key= "ingest2", user = 'admin', rmq_pw= rmq_pw)
 
     return ingestion_request
@@ -328,7 +328,7 @@ def request_dataset_transfer(ag_ids: Annotated[str, Depends(authorize_user)], ds
         # maybe thats not true bc you can still send the other message with full bindings to the same exchange and this one just has the partial binding to do this one thing..
         # see other notes in comment above
         message = json.dumps({"dsid":dsid, "source_bucket":"mf-storage-prod"})
-        rmq_pw = get_secret_2("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
+        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
         
         # TODO: this will need to live somewhere - see if there is a way to check exchange / channel / binding existence and establish if not ///// then can live in rmq_utils OR crucible-rabbit-mq but make sure that you don't forget to make it!
         # channel.exchange_declare(exchange='raw-data-processing', exchange_type='topic')
@@ -372,7 +372,7 @@ def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)
 
     # TODO: confirm rabbit mq side matches // could make new vs. update field in message?
     message = json.dumps({"dsid": dsid, "source_bucket":"mf-storage-prod"})
-    rmq_pw = get_secret_2("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
+    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
     
     # TODO: this will need to live somewhere - see if there is a way to check exchange / channel / binding existence and establish if not ///// then can live in rmq_utils OR crucible-rabbit-mq but make sure that you don't forget to make it!
     # channel.exchange_declare(exchange='raw-data-processing', exchange_type='topic')
@@ -401,7 +401,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
     else:
         pass
     
-    apikey = get_secret_2("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
+    apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
 
     with Session(engine) as session:
         ds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **updated_dataset)
@@ -428,7 +428,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
             
 
         message = json.dumps(updated_dataset)
-        rmq_pw = get_secret_2("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
+        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
     
         # TODO: check how dsupdate and dsupdate-owner consumers differ / what are the inputs expected --- can we consolidate?
         # note: dsupdate-owner is expected the message to contain the field updated_ownership_info whereas dsupdate is expected updated_info

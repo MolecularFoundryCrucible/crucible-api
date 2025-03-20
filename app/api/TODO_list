@@ -3,9 +3,7 @@
 
 # ========================== Immediate To Do Items
 1. Rebuild database with new models
-2. Secret access 
 3. Fix setup engine
-4. Fix models organization to avoid circular inputs
 
 
 # ========================== Future To Do Items
@@ -59,7 +57,8 @@ Define the delete endpoint for datasets (and everything...)
 Endpoints for /access_groups ? 
 Endpoint for /datasets/{dsid}/stream
 
-
+** Endpoints to create samples
+** AND where are we putting scientific metadata in this database?????????????
 
 
 

@@ -1,7 +1,7 @@
 from typing import Optional, List
 from sqlalchemy import JSON, Column,BigInteger
 from sqlmodel import Field, SQLModel,Relationship
-
+from mfid import mfid
 
 class DatasetKeywordLink(SQLModel, table=True):
     keyword_id: Optional[int] = Field(
@@ -72,8 +72,8 @@ class Sample(SQLModel, table = True):
 
 class Dataset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    unique_id: str = Field(index=True, unique=True, primary_key = True)
-    public: bool = Field(index = True)
+    unique_id: str = Field(default = mfid(), index=True, unique=True, primary_key = True)
+    public: bool = Field(default = False, index = True)
     dataset_name: Optional[str] = Field(default = "") 
     file_to_upload: Optional[str] = Field(default = None)  
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")

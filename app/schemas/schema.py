@@ -1,6 +1,7 @@
-from typing import Annotated, List, Tuple, Dict, Any, Optional
-from pydantic import BaseModel
-from app.models.core_models import Dataset, AssociatedFile
+
+
+from typing import Optional
+from app.models.core_models import Dataset
 from mfid import mfid
 
 # ======================= more classes : )
@@ -18,11 +19,4 @@ class NewDataset(Dataset):
     unique_id: Optional[str] = mfid()
     public: Optional[bool] = False
 
-class AssociatedFile(AssociatedFile):
-    '''
-    Default calculates needed values
-    '''
-af_obj = add_or_update(session, AssociatedFile, where=(AssociatedFile.filename == k),
-                                       filename = k,
-                                       size = int(v['size']), 
-                                       sha256_hash = v['sha256_hash'])
+

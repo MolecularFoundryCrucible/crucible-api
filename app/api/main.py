@@ -21,12 +21,12 @@ from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.sql_utils import setup_engine, add_or_update
 from app.utils.rmq_utils import send_pika_message
 
-from app.schemas.schema import NewDataset
+
 from app.models.core_models import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile, User, AccessGroup, Proposal, UserAccessGroupLink, UserProposalLink
 from app.models.instrument import Instrument
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import TransferRequest, SciCatUpdateRequest, IngestionRequest
-
+#from app.schemas.schema import NewDataset
 
 # ======================= APP
 app = FastAPI()
@@ -155,7 +155,7 @@ def regenerate_apikey(request: Request):
 ######################## =============================DATASETS ==========================================================================================================  
 
 @app.post("/datasets")
-async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)], dataset: NewDataset, file: Optional[Annotated[UploadFile, File(description="A file read as UploadFile")]] = None):
+async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)], dataset: Dataset, file: Optional[Annotated[UploadFile, File(description="A file read as UploadFile")]] = None):
     """
     Create a new dataset in Crucible by provided a dataset object and optionally the file that you wish to create the dataset from. 
     If a file is provided the contents will be uploaded to the crucible-uploads bucket and saved to the relative path defined by filename. 
@@ -163,7 +163,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)], datas
 
     The /datasets/{dsid}/ingest endpoint will then be called using the resulting dataset object and unique_id. 
 
-    The max size of a file is currently set to 500MB. If files are larger than 500MB then an empty dataset can be created through this endpoint using a blank NewDataset object with no "file_to_upload" specified. 
+    The max size of a file is currently set to 500MB. If files are larger than 500MB then an empty dataset can be created through this endpoint using a blank Dataset object with no "file_to_upload" specified. 
     Data can then be streamed to a primary_file (should replace the file_to_upload field and get combined with extract_data) using the /datasets/{dsid}/stream endpoint. 
 
     Args:
@@ -254,7 +254,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)], datas
 
 
 @app.post("/datasets/{dsid}/ingest")
-def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str,  dataset: NewDataset):
+def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str,  dataset: Dataset):
     '''
     This sends a rabbitMQ message to the ingestion queue.
     The current ingestion queue is only expecting a "file_to_upload" value which this has enough information to provide. 

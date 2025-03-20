@@ -134,7 +134,7 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
     note: ORCIDs are used as Access Group Names, but a user with an ORCID can be a member of multiple access groups),
     it looks up the access group ID directly.
     """
-    from app.models.user import UserAccessGroupLink, User, AccessGroup
+    from app.models.core_models import UserAccessGroupLink, User, AccessGroup
     api_acct = find_key(credentials, engine)
     
     if api_acct is None:

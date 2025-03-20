@@ -152,8 +152,8 @@ metadata:
   resourceVersion: 
   uid: 
 spec:
-  progressDeadlineSeconds: 600
-  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 120
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app: "crucible-api"
@@ -165,7 +165,7 @@ spec:
   template:
     metadata:
       annotations:
-        gke-gcsfuse/cpu-limit: "10"
+        gke-gcsfuse/cpu-limit: "4"
         gke-gcsfuse/cpu-request: 500m
         gke-gcsfuse/memory-limit: 1000Gi
         gke-gcsfuse/memory-request: 1Gi
@@ -184,18 +184,18 @@ spec:
           value: "True"
         - name: "DB_NAME"
           value: "testdb2"
-        image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-main"
+        image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-main:latest"
         imagePullPolicy: Always
         name: "crucible-api-container"
         resources:
           limits:
-            cpu: 32000m
-            memory: 32Gi
+            cpu: 8000m
+            memory: 4Gi
             ephemeral-storage: 2Gi
           requests:
-            cpu: 4000m
-            memory: 2Gi
-            ephemeral-storage: 2Gi
+            cpu: 500m
+            memory: 1Gi
+            ephemeral-storage: 1Gi
         securityContext:
           capabilities:
             drop:
@@ -241,7 +241,7 @@ spec:
       securityContext:
         seccompProfile:
           type: RuntimeDefault
-      serviceAccountName: crucible-k8s-ksa
+      serviceAccountName: default
       terminationGracePeriodSeconds: 30
       tolerations:
       - effect: NoSchedule
@@ -253,5 +253,6 @@ spec:
         persistentVolumeClaim:
           claimName: cruc-upload-pvc2
           readOnly: true
+
 
 

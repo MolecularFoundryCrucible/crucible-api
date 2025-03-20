@@ -1,6 +1,6 @@
 from typing import Annotated, List, Tuple, Dict, Any, Optional
 from pydantic import BaseModel
-from app.models.dataset import Dataset, AssociatedFile
+from app.models.core_models import Dataset, AssociatedFile
 from mfid import mfid
 
 # ======================= more classes : )

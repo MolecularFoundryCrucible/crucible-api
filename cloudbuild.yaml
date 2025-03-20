@@ -11,7 +11,7 @@ steps:
   - name: "gcr.io/cloud-builders/gke-deploy"
     args:
     - run
-    - --filename=./k8s-simple-conf.yaml 
+    - --filename=./k8s-conf.yaml 
     - --location=us-central1
     - --cluster=crucible-cluster
 

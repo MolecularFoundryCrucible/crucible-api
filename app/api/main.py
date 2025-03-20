@@ -22,9 +22,8 @@ from app.utils.sql_utils import setup_engine, add_or_update
 from app.utils.rmq_utils import send_pika_message
 
 from app.schemas.schema import NewDataset
-from app.models.dataset import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile
+from app.models.core_models import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile, User, AccessGroup, Proposal, UserAccessGroupLink, UserProposalLink
 from app.models.instrument import Instrument
-from app.models.user import User, AccessGroup, Proposal, UserAccessGroupLink, UserProposalLink
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import TransferRequest, SciCatUpdateRequest, IngestionRequest
 

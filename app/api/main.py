@@ -154,6 +154,9 @@ def regenerate_apikey(request: Request):
 
 ######################## =============================DATASETS ==========================================================================================================  
 
+# TODO: person creating dataset must exist in create data set access group
+# TODO: public datasets rate limited but dont require orcid
+# TODO: use agids to authorize for all endpoints
 @app.post("/datasets")
 async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)], dataset: Dataset, file: Optional[Annotated[UploadFile, File(description="A file read as UploadFile")]] = None):
     """
@@ -249,7 +252,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)], datas
                             data = payload   #TODO: check this request format
                           )
     
-    return {"filename": file.filename, "unique_id": ds.unique_id}
+    return ds
 
 
 
@@ -298,6 +301,8 @@ def request_dataset_transfer(ag_ids: Annotated[str, Depends(authorize_user)], ds
 
     Also worth noting --- the endpoint will need to be called multiple times per dataset (x4 prob)
     User Drive, Prop Drive x Organized, Flat
+
+    **** google drive transfer with semi hardcoded paths
     '''
 
     with Session(engine) as session:

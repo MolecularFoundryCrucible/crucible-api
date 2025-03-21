@@ -147,6 +147,10 @@ class User(SQLModel, table=True):
 
 
 class Proposal(SQLModel, table=True):
+    '''
+    add project name and "project" to prefix of field names
+    assigned_scientist >> project lead
+    '''
     id: str = Field(default=None, primary_key=True)
     name: str = Field(index=True, unique=True)
     organization: str 

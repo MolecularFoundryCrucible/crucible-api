@@ -8,7 +8,9 @@
 4. Configure network traffic
 - allow ingress
 - set up with proxy...
-
+5. Annotate the response times
+6. uses/orcid/datasets/dsid ---- return read / write permissions (read = True, write = True json)
+7. change proposals to projects
 
 
 # ========================== Future To Do Items
@@ -95,3 +97,6 @@ Endpoint for /datasets/{dsid}/stream
         - The roles I chose were: Cloud SQL Client, Cloud Storage User, Secret Manager Accessor
 
         - I tried Cloud Storage Admin too but ultimately I think for the already created Autopilot cluster it only works with default ksa and we may need to bind that to gsa to access cloud storage but the ksa I created is not working with the volume mount so ditching that for now
+
+
+Applying the network policy made no apparent change; but when the load balancer is created a new firewall is created and can be seen in the console under network security >> firewall policies >> vpc firewall rules.  It allows ingress to the Load Balancer external IP from 0.0.0.0/0 on the port specified (7777 for us).  If you modify that firewall rule to only allow traffic from the external IP of the VM running the nginx proxy and configure the proxy for the LB IP/port then you can access the API from the proxied url and not from the LB IP directly. 

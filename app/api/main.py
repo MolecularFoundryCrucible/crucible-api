@@ -28,12 +28,12 @@ from app.models.instrument import Instrument
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import TransferRequest, SciCatUpdateRequest, IngestionRequest
 
-import argparse
+# import argparse
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--db_config', help='Database config file', required=False)
-parser.add_argument('--api_config', help='API config file', required = False)
-args = parser.parse_args()
+# parser = argparse.ArgumentParser()
+# parser.add_argument('--db_config', help='Database config file', required=False)
+# parser.add_argument('--api_config', help='API config file', required = False)
+# args = parser.parse_args()
 
 # ======================= APP
 app = FastAPI()
@@ -47,20 +47,8 @@ security = HTTPBearer()
 connect_args = {"check_same_thread": False}
 
 
-if args.db_config:
-    db_config_file = args.db_config
-    os.environ["DB_CONF_FILE"] = db_config_file
-else:
-    db_config_file = None
-
-engine = setup_engine(db_config_file)
-
-# ====== Oauth config
-if args.api_config:
-    api_config_file = args.api_config
-    os.environ["API_CONF_FILE"] = api_config_file
-else:
-    api_config_file = os.getenv("API_CONF_FILE")
+db_config_file = os.getenv("DB_CONF_FILE")
+api_config_file = os.getenv("API_CONF_FILE")
 
 
 with open(api_config_file, 'r') as f:
@@ -1124,6 +1112,6 @@ def read_users_on_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_a
 # if __name__ == "__main__":
 
 #     # run locally with: python -m app.api.main --db_config cloud_config.yaml --api_config "conf/api_conf.yaml"
-
+#     print("running as main")
 #     import uvicorn
 #     uvicorn.run(app, host="0.0.0.0", port=7777)

@@ -24,7 +24,7 @@ def setup_engine(env_config_file = None):
 
 
 def parse_db_url_from_config_file(env_config_file, password):
-    with open(f"conf/{env_config_file}") as f:
+    with open(env_config_file) as f:
         env_config = yaml.safe_load(f)
     
     C = env_config.copy()

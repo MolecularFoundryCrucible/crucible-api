@@ -1,0 +1,4 @@
+db_type: sqlite
+db_file: database.db
+crucible_db_web_password: LOOK_IN_SECRETS!
+auth: None

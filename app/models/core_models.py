@@ -14,7 +14,7 @@ class DatasetKeywordLink(SQLModel, table=True):
 
 
 class Keyword(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: Optional[int] = Field(default=None, primary_key=True, unique = True)
     keyword: str
     datasets: List["Dataset"] = Relationship(back_populates="keywords", link_model=DatasetKeywordLink)
     num_datasets: Optional[int]
@@ -47,7 +47,7 @@ class DatasetCollectionLink(SQLModel, table=True):
 
 
 class DatasetCollection(SQLModel, table = True):
-    id: Optional[int] = Field(default=None, primary_key=True, index = True)
+    id: Optional[int] = Field(default=None, primary_key=True, index = True, unique = True)
     unique_id: str = Field(default = mfid(), index = True)
     date_created: Optional[str] = None
     description: Optional[str]
@@ -56,15 +56,16 @@ class DatasetCollection(SQLModel, table = True):
 
 class DatasetSampleLink(SQLModel, table=True):
     sample_id: Optional[int] = Field(
-        default=None, foreign_key="sample.unique_id", primary_key=True, index=True
+        default=None, foreign_key="sample.id", primary_key=True, index=True
     )
-    dataset_id: Optional[str] = Field(
-        default=None, foreign_key="dataset.unique_id", primary_key=True
+    dataset_id: Optional[int] = Field(
+        default=None, foreign_key="dataset.id", primary_key=True
     )
 
 
 class Sample(SQLModel, table = True):
-    unique_id: str = Field(default = mfid(), primary_key = True, index = True)
+    id: Optional[int] = Field(default = None, primary_key = True, index = True, unique= True)
+    unique_id: str = Field(default = mfid(), primary_key = True, index = True, unique = True)
     owner_user_id: int = Field(default=None, index=True, foreign_key="user.id")
     date_created: Optional[str] = None
     description: Optional[str]
@@ -72,7 +73,7 @@ class Sample(SQLModel, table = True):
 
 
 class Dataset(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: Optional[int] = Field(default=None, primary_key=True, unique = True)
     unique_id: str = Field(default = mfid(), index=True, unique=True, primary_key = True)
     public: bool = Field(default = False, index = True)
     dataset_name: Optional[str] = Field(default = "") 

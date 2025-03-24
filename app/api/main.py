@@ -29,7 +29,7 @@ from app.models.tasks import TransferRequest, SciCatUpdateRequest, IngestionRequ
 #from app.schemas.schema import NewDataset
 
 # ======================= APP
-app = FastAPI(openapi_url="/testapi/v1/openapi.json")
+app = FastAPI()
 security = HTTPBearer()
 
 

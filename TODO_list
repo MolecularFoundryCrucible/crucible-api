@@ -1,15 +1,25 @@
 
 
 
-# ========================== Immediate To Do Items
-1. Rebuild database with new models
-2. Authorization rule updates: person creating dataset must exist in create data set access group, public datasets rate limited but dont require orcid, use agids to authorize for all endpoints
+
+1. Jupyter notebook to test the endpoints
+2. Make a create dataset access group (using the API)
+3. How are you going to get all the existing data into the new database ...
+4. What needs to get cleaned up in process
+        - raw vs. processed
+        - duplicates
+        - test datasets
+5. Do that
+6. RabbitMQ queues that connect to these endpoints in the expected way
+7. Consumers in those queues reference this API
+8. Transfer data endpoint goes back to more standard
+9. Where are you going to put scientific metadata and in what format // if as is ... are you going to connect Elastic search
 
 
-# ========================== Future To Do Items
-1. How to run locally
-2. Front end with buttons (Upload Sample | Upload Dataset | Add Metadata to Dataset)
-        - how does this support Autobot || CIWE || Peptoid
+
+
+
+
 
 
 # ======================= Notes / API design to do
@@ -50,13 +60,17 @@ Update datasets: check how dsupdate and dsupdate-owner consumers differ / what a
         # message = json.dumps({"dataset_to_update": updated_dataset.unique_id, "updated_ownership_info": dict(Owner(subset of updated_dataset))})
 
 
-Define the delete endpoint for datasets (and everything...)
-Endpoint for /datasets/{dsid}/stream
-
-** Endpoints to create samples
-** AND where are we putting scientific metadata in this database?????????????
+Scientific metadata
 
 
+# ========================== Other To Do Items
+1. Local testing documentation
+2. Front end with buttons (Upload Sample | Upload Dataset | Add Metadata to Dataset)
+        - how does this support Autobot || CIWE || Peptoid
+3. Authorization rule updates: person creating dataset must exist in create data set access group, public datasets rate limited but dont require orcid, use agids to authorize for all endpoints
+4. Define the delete endpoint for datasets (and everything...)
+5. Endpoint for /datasets/{dsid}/stream
+6. Sample endpoints
 
 
 

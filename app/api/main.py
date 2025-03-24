@@ -29,7 +29,7 @@ from app.models.tasks import TransferRequest, SciCatUpdateRequest, IngestionRequ
 #from app.schemas.schema import NewDataset
 
 # ======================= APP
-app = FastAPI()
+app = FastAPI(openapi_url="/testapi/v1/openapi.json")
 security = HTTPBearer()
 
 
@@ -158,8 +158,11 @@ def regenerate_apikey(request: Request):
 # TODO: public datasets rate limited but dont require orcid
 # TODO: use agids to authorize for all endpoints
 @app.post("/datasets")
-async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)], dataset: Dataset, file: Optional[Annotated[UploadFile, File(description="A file read as UploadFile")]] = None):
+async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
+                          dataset: Dataset, 
+                          file: Optional[Annotated[UploadFile, File(description="A file read as UploadFile")]] = None):
     """
+    *** new doc ***
     Create a new dataset in Crucible by provided a dataset object and optionally the file that you wish to create the dataset from. 
     If a file is provided the contents will be uploaded to the crucible-uploads bucket and saved to the relative path defined by filename. 
     This path will be used as the "file_to_upload" field in the Dataset object **and will override the existing value. # TODO does that make sense?

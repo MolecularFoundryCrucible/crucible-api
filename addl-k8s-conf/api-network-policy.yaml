@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-web
+spec:
+  podSelector:
+    matchLabels:
+      app: crucible-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 10.128.0.0/9
+      ports:
+        - protocol: TCP
+          port: 7777

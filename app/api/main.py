@@ -23,7 +23,7 @@ from app.utils.sql_utils import setup_engine, add_or_update
 from app.utils.rmq_utils import send_pika_message
 
 
-from app.models.core_models import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile, User, AccessGroup, Project, UserAccessGroupLink, UserProjectLink
+from app.models.core_models import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile, User, AccessGroup, Project, UserAccessGroupLink, UserProjectLink, DatasetCollection, DatasetCollectionLink
 from app.models.instrument import Instrument
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import TransferRequest, SciCatUpdateRequest, IngestionRequest
@@ -71,7 +71,7 @@ api_path = apiconf['api_path']
 api_url = f"https://{hostname}/{api_path}"
 orcid_client_id = apiconf['orcid_client_id']
 orcid_client_secret = get_secret("CLIENT_SECRET", "projects/776258882599/secrets/orcid_client_secret/versions/2")
-redirect_uri = urllib.parse.quote_plus("{api_url}/auth")
+redirect_uri = urllib.parse.quote_plus(f"{api_url}/auth")
 
 
 
@@ -106,7 +106,7 @@ def redirect_exchange(request: Request, code: str, state: str=None):
         RedirectResponse to the appropriate page after successful authentication
     """
     from utils.auth_utils import SECRET_KEY, ALGORITHM, code_for_token_exchange
-    token = code_for_token_exchange(code, orcid_client_id, orcid_client_secret, "{api_url}/auth")                                
+    token = code_for_token_exchange(code, orcid_client_id, orcid_client_secret, f"{api_url}/auth")                                
     user_from_orcid = requests.get(url = "https://orcid.org/oauth/userinfo", headers = {"Authorization": f"Bearer {token}"})
     try:
         user = user_from_orcid.json()
@@ -280,7 +280,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
         payload  = {"dataset": dataset}
 
-        ds = requests.post( url = f"{api_url}/datasets/{dataset.unique_id}/ingest",  
+        ds = requests.post(url = f"{api_url}/datasets/{dataset.unique_id}/ingest",  
                             headers = {"Authorization":f"Bearer {apikey}"}, 
                             data = payload   #TODO: check this request format
                           )
@@ -717,9 +717,39 @@ def create_dataset_acl(group_name: str, dsid: str, read: str, write: str, admin_
     return(acl)
 
 
+@app.post("/dataset_collections", response_model = DatasetCollection)
+def create_dataset_collection(ag_ids:  Annotated[str, Depends(authorize_user)], dc: DatasetCollection):
+    with Session(engine) as session:
+        session.add(dc)
+        session.commit()
+    return(dc)
+
+
+@app.get("/dataset_collections/{dcid}", response_model = DatasetCollection)
+def read_dataset_collection(admin_acct: Annotated[str, Depends(is_admin)], dcid: str):
+    with Session(engine) as session:
+        dc = session.exec(select(DatasetCollection).where(DatasetCollection.unique_id == dcid)).one_or_none()
+    return(dc)
+
+
+@app.get("/dataset_collections", response_model = List[DatasetCollection])
+def list_dataset_collections(admin_acct: Annotated[str, Depends(is_admin)], request = Request):
+    query_params = request.query_params
+    params_dict = dict(query_params)
+
+    ds_cmd = select(DatasetCollection)
+    
+    for k, v in params_dict.items():
+        if hasattr(DatasetCollection, k):
+            ds_cmd = ds_cmd.where(getattr(DatasetCollection, k) == v)
+
+    with Session(engine) as session:
+        dc_list = session.exec(ds_cmd).all()
+        return dc_list
+
 
 @app.post("/access_groups", response_model = AccessGroup)
-def create_access_group(admin_acct: Annotated[str, Depends(is_admin)], ag = AccessGroup):
+def create_access_group(admin_acct: Annotated[str, Depends(is_admin)], ag: AccessGroup):
     with Session(engine) as session:
         session.add(ag)
         session.commit()
@@ -1093,7 +1123,7 @@ def read_users_on_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_a
 
 if __name__ == "__main__":
 
-    # run locally with: python -m app.api.main --env-config cloud_config.yaml
+    # run locally with: python -m app.api.main --db_config cloud_config.yaml --api_config "conf/api_conf.yaml"
 
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=7777)

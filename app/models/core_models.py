@@ -12,6 +12,7 @@ class DatasetKeywordLink(SQLModel, table=True):
         default=None, foreign_key="dataset.id", primary_key=True
     )
 
+
 class Keyword(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     keyword: str
@@ -47,11 +48,10 @@ class DatasetCollectionLink(SQLModel, table=True):
 
 class DatasetCollection(SQLModel, table = True):
     id: Optional[int] = Field(default=None, primary_key=True, index = True)
-    unique_id: str = Field(default = None, index = True)
+    unique_id: str = Field(default = mfid(), index = True)
     date_created: Optional[str] = None
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="collections", link_model=DatasetCollectionLink)
-
 
 
 class DatasetSampleLink(SQLModel, table=True):
@@ -62,8 +62,9 @@ class DatasetSampleLink(SQLModel, table=True):
         default=None, foreign_key="dataset.unique_id", primary_key=True
     )
 
+
 class Sample(SQLModel, table = True):
-    unique_id: str = Field(default = None, primary_key = True, index = True)
+    unique_id: str = Field(default = mfid(), primary_key = True, index = True)
     owner_user_id: int = Field(default=None, index=True, foreign_key="user.id")
     date_created: Optional[str] = None
     description: Optional[str]
@@ -116,6 +117,7 @@ class UserAccessGroupLink(SQLModel, table=True):
     accessgroup_id: Optional[int] = Field(
         default=None, foreign_key="accessgroup.id", primary_key=True
     )
+
 
 class AccessGroup(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

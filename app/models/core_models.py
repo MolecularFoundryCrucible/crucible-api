@@ -77,7 +77,7 @@ class Dataset(SQLModel, table=True):
     dataset_name: Optional[str] = Field(default = "") 
     file_to_upload: Optional[str] = Field(default = None)  
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
-    proposal_id: Optional[str] = Field(default=None, index=True, foreign_key="proposal.id")
+    project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.id")
     instrument_id: Optional[int]  = Field(default = None, index = True, foreign_key = "instrument.id")
     source_folder: Optional[str] # folder where the data was synced from (on instrument PC)
     creation_time: Optional[str]
@@ -125,12 +125,12 @@ class AccessGroup(SQLModel, table=True):
     acl: List[DatasetACL] = Relationship(back_populates="accessgroup")
 
 
-class UserProposalLink(SQLModel, table=True):
+class UserProjectLink(SQLModel, table=True):
     user_id: Optional[int] = Field(
         default=None, foreign_key="user.id", primary_key=True
     )
-    proposal_id: Optional[str] = Field(
-        default=None, foreign_key="proposal.id", primary_key=True
+    project_id: Optional[str] = Field(
+        default=None, foreign_key="project.id", primary_key=True
     )
 
 
@@ -142,23 +142,23 @@ class User(SQLModel, table=True):
     lbl_email: Optional[str]
     orcid: str = Field(index=True, unique=True)
     employee_number: Optional[str]
-    proposals: List["Proposal"] = Relationship(back_populates="users", link_model=UserProposalLink)
+    projects: List["Project"] = Relationship(back_populates="users", link_model=UserProjectLink)
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
 
 
-class Proposal(SQLModel, table=True):
+class Project(SQLModel, table=True):
     '''
     add project name and "project" to prefix of field names
     assigned_scientist >> project lead
     '''
     id: str = Field(default=None, primary_key=True)
-    name: str = Field(index=True, unique=True)
+    project_name: str = Field(index=True, unique=True)
     organization: str 
     status: Optional[str]
     title: Optional[str]
-    assigned_scientist_name: Optional[str]
-    assigned_scientist_email: str
-    users: List[User] = Relationship(back_populates="proposals", link_model=UserProposalLink)
+    project_lead_name: Optional[str]
+    project_lead_email: str
+    users: List[User] = Relationship(back_populates="projects", link_model=UserProjectLink)
 
 
 

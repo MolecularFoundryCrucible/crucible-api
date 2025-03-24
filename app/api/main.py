@@ -18,16 +18,14 @@ from sqlalchemy import join, func
 from sqlalchemy.sql import and_
 
 from app.general_utils import get_secret
-
 from app.utils.sql_utils import setup_engine, add_or_update
 from app.utils.rmq_utils import send_pika_message
 
 
-from app.models.core_models import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile, User, AccessGroup, Proposal, UserAccessGroupLink, UserProposalLink
+from app.models.core_models import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile, User, AccessGroup, Project, UserAccessGroupLink, UserProjectLink
 from app.models.instrument import Instrument
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import TransferRequest, SciCatUpdateRequest, IngestionRequest
-#from app.schemas.schema import NewDataset
 
 # ======================= APP
 app = FastAPI()
@@ -200,7 +198,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
     
     Data and metadata can be added to a dataset at the time of or after the record creation.
     
-    By default it will give access to the admin and readonly accounts. If user information, proposal, or instrument are included, 
+    By default it will give access to the admin and readonly accounts. If user information, project, or instrument are included, 
     then access will also be given to the relevant groups. 
 
     The dataset ID is recorded in a table to track that the mfid corresponds to a dataset. 
@@ -240,8 +238,8 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
                             params = {"group_name": user_orcid, "read": True, "write": True}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
 
-        if dataset.proposal_id is not None:
-            prop_name = session.exec(select(Proposal.name).where(Proposal.id == dataset.proposal_id))
+        if dataset.project_id is not None:
+            prop_name = session.exec(select(Project.project_name).where(Project.id == dataset.project_id))
             prop_ag = requests.request("post",
                             url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
                             params = {"group_name": prop_name, "read": True, "write": False}, 
@@ -269,7 +267,6 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
                           )
     
     return ds
-
 
 
 @app.post("/datasets/{dsid}/ingest")
@@ -433,8 +430,8 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
                             params = {"group_name": user_orcid, "read": True, "write": True}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
 
-        if updated_dataset.proposal_id is not None:
-            prop_name = session.exec(select(Proposal.name).where(Proposal.id == updated_dataset.proposal_id))
+        if updated_dataset.project_id is not None:
+            prop_name = session.exec(select(Project.project_name).where(Project.id == updated_dataset.project_id))
             prop_ag = requests.request("post",
                             url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
                             params = {"group_name": prop_name, "read": True, "write": False}, 
@@ -494,14 +491,6 @@ def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request = Req
     for k, v in params_dict.items():
         if hasattr(Dataset, k):
             ds_cmd = ds_cmd.where(getattr(Dataset, k) == v)
-
-        # TODO: would also be good to add logic to: 
-        #       get user_id from orcid / email
-        #       get proposal_id from proposal name
-        #       filter on creation time range? 
-        #       contains a sample ID?
-        #       includes an associated file name?
-        # mainly the first 2 --- but I think this is okay for now
 
     with Session(engine) as session:
         ds_list = session.exec(ds_cmd).all()
@@ -708,7 +697,35 @@ def create_dataset_acl(group_name: str, dsid: str, read: str, write: str, admin_
 
 
 
+@app.post("/access_groups")
+def create_access_group(admin_acct: Annotated[str, Depends(is_admin)], ag = AccessGroup):
+    with Session(engine) as session:
+        session.add(ag)
+        session.commit()
+    return(ag)
 
+
+@app.get("/access_groups/{group_name}")
+def read_access_group(admin_acct: Annotated[str, Depends(is_admin)], group_name: str):
+    with Session(engine) as session:
+        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
+        return(ag)
+
+@app.post("/users/{orcid}/access_groups/{group_name}")
+def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orcid: str, group_name: str):
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        ag = add_or_update(session, 
+                            AccessGroup,
+                            AccessGroup.group_name == group_name,
+                            group_name = group_name )
+        
+        if not (user in ag.users):
+            ag.users.append(user)
+
+        session.commit()
+        
+    return(ag)
 
 
 
@@ -788,7 +805,7 @@ def create_instrument(ag_ids:  Annotated[str, Depends(authorize_user)], instrume
     return(instrument)
 
 
-@app.get("/google_drives}")
+@app.get("/google_drives")
 def list_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], request = Request):
     """
     Returns a list of google drive information
@@ -890,14 +907,14 @@ def read_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
 
 
 @app.post("/users")
-def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User, proposal_names: List):  
+def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User, project_names: List):  
     """
     Add or update a user record in the database.
     Add the user to an Access Group with their ORCID
-    Add the user to Access Groups for any proposal they are a USER on
-         // DOES NOT ADD Users to access groups for the proposals
-            on which they are the assigned scientist
-    Create a link to the proposals that the User is a USER on
+    Add the user to Access Groups for any project they are a USER on
+         // DOES NOT ADD Users to access groups for the projects
+            on which they are the project lead
+    Create a link to the projects that the User is a USER on
 
     Args:
         ag_ids: List of access group IDs the user belongs to ** should update to is_admin
@@ -912,35 +929,30 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
             user = add_or_update(session, User, User.orcid == user_info.orcid, **user_info)
             session.commit()
         
-            # TODO: make /access_groups endpoint?
-            # add an access group named by the users orcid, containing the orcid as a user
-            ag = add_or_update(session, 
-                               AccessGroup,
-                               AccessGroup.group_name == user_info.orcid,
-                               group_name = user_info.orcid,
-                               users = [user]
-                               )
+            apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
+            requests.request("post", url =  f"https://crucible.lbl.gov/api/users/{user.orcid}/access_groups/{user.orcid}", headers = {"Authorization":f"Bearer {apikey}"})
         
-            # for each proposal that the user is a USER on: 
-            # 1. get the proposal object from the database
-            # 2. add the proposal to the user object
-            # 3. add an access group for the proposal, named by the proposal and add the user to the access group
-            for pname in proposal_names:
-                props = session.exec(select(Proposal).where(Proposal.name == pname)).all()
+            # for each project that the user is a USER on: 
+            # 1. get the project object from the database
+            # 2. add the project to the user object
+            # 3. add an access group for the project, named by the project and add the user to the access group
+            for pname in project_names:
+                props = session.exec(select(Project).where(Project.project_name == pname)).all()
                 if len(props) != 1:
-                    print(f"Proposals found for {pname}: {props} --- skipping.  Please ensure a proposal exists with a unique name.")
+                    print(f"Projects found for {pname}: {props} --- skipping.  Please ensure a project exists with a unique name.")
                     continue
                 else:
                     prop = props[-1]
                     
-                    # add proposal to user
-                    if prop not in user.proposals:
-                        user.proposals.append(prop)
+                    # add project to user
+                    if prop not in user.projects:
+                        user.projects.append(prop)
                     
                     # add user to access group
-                    ag = add_or_update(session, AccessGroup, AccessGroup.group_name==pname, group_name=pname)
-                    if not (user in ag.users):
-                        ag.users.append(user)
+                    requests.request("post", url =  f"https://crucible.lbl.gov/api/users/{user.orcid}/access_groups/{pname}", headers = {"Authorization":f"Bearer {apikey}"})
+                    #ag = add_or_update(session, AccessGroup, AccessGroup.group_name==pname, group_name=pname)
+                    #if not (user in ag.users):
+                    #    ag.users.append(user)
         
             session.add(user)
             session.commit()
@@ -977,83 +989,83 @@ def read_user_access_to_dataset(dsid: str, orcid: str, admin_acct: Annotated[str
             return False
 
 
-@app.get("/users/{orcid}/proposals", response_model = List[Proposal])
-def read_proposals_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
+@app.get("/users/{orcid}/projects", response_model = List[Project])
+def read_projects_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
     '''
-    Returns a list of the proposals that this User is associated with. 
+    Returns a list of the projects that this User is associated with. 
     '''
     with Session(engine) as session:
         user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
         user_id = user.id
-        proposals = session.exec(select(Proposal).select_from(join(Proposal, UserProposalLink, Proposal.id == UserProposalLink.proposal_id)).where(UserProposalLink.user_id == user_id)).all()
-        return proposals
+        projects = session.exec(select(Project).select_from(join(Project, UserProjectLink, Project.id == UserProjectLink.project_id)).where(UserProjectLink.user_id == user_id)).all()
+        return projects
     
 
-@app.post("/proposals")
-def create_proposal(admin_acct:  Annotated[str, Depends(is_admin)], P: Proposal):
+@app.post("/projects")
+def create_project(admin_acct:  Annotated[str, Depends(is_admin)], P: Project):
     """
-    Add or update a proposal record in the database.
+    Add or update a project record in the database.
     
     Args:
         ag_ids: List of access group IDs the user belongs to ** should update to is_admin
-        P: Proposal object to be added or updated
+        P: Project object to be added or updated
         
     Returns:
-        Added or updated proposal object
+        Added or updated project object
     """
     with Session(engine) as session:
-        prop = add_or_update(session, Proposal,  Proposal.id == P.id, **P)
+        prop = add_or_update(session, Project,  Project.id == P.id, **P)
         ag = add_or_update(session, 
                       AccessGroup, 
                       AccessGroup.group_name==P.name, 
                       group_name=P.name)
         
-        r1 = session.exec(select(User).where(User.lbl_email.ilike(f"%{P.assigned_scientist_email}%"))).one_or_none()
-        r2 = session.exec(select(User).where(User.email.ilike(f"%{P.assigned_scientist_email}%"))).one_or_none()
+        r1 = session.exec(select(User).where(User.lbl_email.ilike(f"%{P.project_lead_email}%"))).one_or_none()
+        r2 = session.exec(select(User).where(User.email.ilike(f"%{P.project_lead_email}%"))).one_or_none()
         all_found_accounts = list(set([x for x in r1 + r2 if x['orcid'] is not None]))
         
         print(f"found accounts for user: {all_found_accounts}")
 
         if len(all_found_accounts) > 0:
-            assigned_scientist = all_found_accounts[-1]
-            if not (assigned_scientist in ag.users):
-                ag.users.append(assigned_scientist)
+            project_lead = all_found_accounts[-1]
+            if not (project_lead in ag.users):
+                ag.users.append(project_lead)
 
-            if not (prop in assigned_scientist.proposals):
-                assigned_scientist.append(prop)
+            if not (prop in project_lead.projects):
+                project_lead.append(prop)
 
         session.commit()
 
     return(P)
 
 
-@app.get("/proposals")
-def list_proposals(admin_acct:  Annotated[str, Depends(is_admin)]):
+@app.get("/projects")
+def list_projects(admin_acct:  Annotated[str, Depends(is_admin)]):
     '''
-    Returns the proposal object for the provided ID
+    Returns the project object for the provided ID
     '''
     with Session(engine) as session:
-        props = session.exec(select(Proposal)).all()
+        props = session.exec(select(Project)).all()
         return(props)
 
 
-@app.get("/proposals/{prop_id}")
-def read_proposal(prop_id: str, admin_acct:  Annotated[str, Depends(is_admin)]):
+@app.get("/projects/{prop_id}")
+def read_project(prop_id: str, admin_acct:  Annotated[str, Depends(is_admin)]):
     '''
-    Returns the proposal object for the provided ID
+    Returns the project object for the provided ID
     '''
     with Session(engine) as session:
-        prop = session.exec(select(Proposal).where(Proposal.id == prop_id)).one_or_none()
+        prop = session.exec(select(Project).where(Project.id == prop_id)).one_or_none()
         return(prop)
 
 
-@app.get("/proposals/{prop_id}/users", response_model = List[User])
-def read_users_on_proposal(prop_id: str, admin_acct:  Annotated[str, Depends(is_admin)]):
+@app.get("/projects/{prop_id}/users", response_model = List[User])
+def read_users_on_project(prop_id: str, admin_acct:  Annotated[str, Depends(is_admin)]):
     '''
-    Returns a list of users associated with the proposal ID provided
+    Returns a list of users associated with the project ID provided
     '''
     with Session(engine) as session:
-        users = session.exec(select(User).select_from(join(User, UserProposalLink, UserProposalLink.user_id == User.id)).where(UserProposalLink.proposal_id == prop_id)).all()
+        users = session.exec(select(User).select_from(join(User, UserProjectLink, UserProjectLink.user_id == User.id)).where(UserProjectLink.project_id == prop_id)).all()
         return users
     
 

@@ -3,14 +3,8 @@
 
 # ========================== Immediate To Do Items
 1. Rebuild database with new models
-2. Fix setup engine (again?)
-3. Maybe envvar name should not be set in get_secret..
-4. Configure network traffic
-- allow ingress
-- set up with proxy...
-5. Annotate the response times
+5. Annotate the response types
 6. uses/orcid/datasets/dsid ---- return read / write permissions (read = True, write = True json)
-7. change proposals to projects
 
 
 # ========================== Future To Do Items
@@ -59,8 +53,6 @@ Update datasets: check how dsupdate and dsupdate-owner consumers differ / what a
 
 
 Define the delete endpoint for datasets (and everything...)
-
-Endpoints for /access_groups ? 
 Endpoint for /datasets/{dsid}/stream
 
 ** Endpoints to create samples

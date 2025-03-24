@@ -31,8 +31,8 @@ from app.models.tasks import TransferRequest, SciCatUpdateRequest, IngestionRequ
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--db_config', help='Database config file')
-parser.add_argument('--api_config', help='API config file')
+parser.add_argument('--db_config', help='Database config file', required=False)
+parser.add_argument('--api_config', help='API config file', required = False)
 args = parser.parse_args()
 
 # ======================= APP
@@ -1121,9 +1121,9 @@ def read_users_on_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_a
     
 
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
 
-    # run locally with: python -m app.api.main --db_config cloud_config.yaml --api_config "conf/api_conf.yaml"
+#     # run locally with: python -m app.api.main --db_config cloud_config.yaml --api_config "conf/api_conf.yaml"
 
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7777)
+#     import uvicorn
+#     uvicorn.run(app, host="0.0.0.0", port=7777)

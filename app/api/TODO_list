@@ -3,8 +3,7 @@
 
 # ========================== Immediate To Do Items
 1. Rebuild database with new models
-5. Annotate the response types
-6. uses/orcid/datasets/dsid ---- return read / write permissions (read = True, write = True json)
+2. Authorization rule updates: person creating dataset must exist in create data set access group, public datasets rate limited but dont require orcid, use agids to authorize for all endpoints
 
 
 # ========================== Future To Do Items
@@ -15,7 +14,6 @@
 
 # ======================= Notes / API design to do
 Create Datasets
-- If both dataset.file_to_upload and file provided but do not match - how to handle - current ** provided file overrides
 - Check post request formats (especially when passing in pydantic objs)
 
 Ingest Datasets RMQ: 

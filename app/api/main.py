@@ -169,14 +169,14 @@ def regenerate_apikey(request: Request):
 # TODO: person creating dataset must exist in create data set access group
 # TODO: public datasets rate limited but dont require orcid
 # TODO: use agids to authorize for all endpoints
-@app.post("/datasets")
+@app.post("/datasets", response_model = Dataset)
 async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
                          dataset: Dataset, 
                          file: Optional[Annotated[UploadFile, File(description="A file read as UploadFile")]] = None):
     """
     Create a new dataset in Crucible by provided a dataset object and optionally the file that you wish to create the dataset from. 
     If a file is provided the contents will be uploaded to the crucible-uploads bucket and saved to the relative path defined by filename. 
-    This path will be used as the "file_to_upload" field in the Dataset object **and will override the existing value. # TODO does that make sense?
+    This path will be used as the "file_to_upload" field in the Dataset object **and will override the existing value. 
 
     The /datasets/{dsid}/ingest endpoint will then be called using the resulting dataset object and unique_id. 
 
@@ -269,7 +269,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
     return ds
 
 
-@app.post("/datasets/{dsid}/ingest")
+@app.post("/datasets/{dsid}/ingest", response_model = IngestionRequest)
 def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str,  dataset: Dataset):
     '''
     This sends a rabbitMQ message to the ingestion queue.
@@ -298,7 +298,7 @@ def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], d
     return ingestion_request
 
 
-@app.post("/datasets/{dsid}/transfer")
+@app.post("/datasets/{dsid}/transfer", response_model = TransferRequest)
 def request_dataset_transfer(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, source_path: str, destination_path: str):
     '''
     This concept is fairly different from what we currently have ..
@@ -363,7 +363,7 @@ def request_dataset_transfer(ag_ids: Annotated[str, Depends(authorize_user)], ds
         return(transfer_request)
 
 
-@app.post("datasets/{dsid}/scicat_update")
+@app.post("datasets/{dsid}/scicat_update", response_model = SciCatUpdateRequest)
 def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     # this endpoint would send rmq message that would call scicat API 
     # does it even make sense?
@@ -400,7 +400,7 @@ def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)
     send_pika_message(message, exchange = "raw-data-processing", routing_key= "#.scicat-request.#", user = 'admin', rmq_pw= rmq_pw)
 
 
-@app.patch("/datasets/{dsid}")
+@app.patch("/datasets/{dsid}", response_model = Dataset)
 def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, updated_dataset: Dataset):
     '''
     Updates a dataset in SQL and returns the Updated Dataset object. 
@@ -462,7 +462,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
         return ds
 
 
-@app.get("/datasets")
+@app.get("/datasets", response_model = List[Dataset])
 def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request = Request):
     '''
     Returns a list of all dataset IDs the requesting user is authorized to view. 
@@ -497,7 +497,7 @@ def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request = Req
         return ds_list
     
     
-@app.get("/datasets/{dsid}")
+@app.get("/datasets/{dsid}", response_model = Dataset)
 def read_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     '''
     Returns a dataset found with the provided unique ID if one is exists and the requesting user is authorized to view the dataset. 
@@ -509,13 +509,13 @@ def read_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
         return ds
     
 
-@app.delete("/datasets/{dsid}")
+@app.delete("/datasets/{dsid}", response_model = Dataset)
 def delete_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid = str):
     # TODO: DEFINE THIS
     pass
 
 
-@app.get("/datasets/{dsid}/thumbnails")
+@app.get("/datasets/{dsid}/thumbnails", response_model = List[Thumbnail])
 def read_thumbnails(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of thumbnail objects associated with the dataset ID provided
@@ -527,7 +527,7 @@ def read_thumbnails(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
         return ds_thumbnails
 
 
-@app.post("/datasets/{dsid}/thumbnails")
+@app.post("/datasets/{dsid}/thumbnails", response_model = Thumbnail)
 def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, thumbnail: str):
     '''
     Adds a thumbnail to a dataset. If the thumbnail exists, it will simply add the existing thumbnail to the dataset object. 
@@ -553,7 +553,7 @@ def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, th
         return(tn_obj)
 
 
-@app.get("/datasets/{dsid}/associated_files")
+@app.get("/datasets/{dsid}/associated_files", response_model = List[AssociatedFile])
 def read_associated_files(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of the files associated with the dataset ID provided. 
@@ -566,7 +566,7 @@ def read_associated_files(ag_ids: Annotated[str, Depends(authorize_user)], dsid:
 
 
 
-@app.post("/datasets/{dsid}/associated_files")
+@app.post("/datasets/{dsid}/associated_files", response_model = AssociatedFile)
 def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, associated_file: AssociatedFile):
     '''
     Adds an associated file to a dataset. 
@@ -590,7 +590,7 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)], dsid: s
         return(af_obj)
  
 
-@app.get("/datasets/{dsid}/keywords")
+@app.get("/datasets/{dsid}/keywords", response_model = List[Keyword])
 def list_keywords_for_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
@@ -599,7 +599,7 @@ def list_keywords_for_dataset(ag_ids: Annotated[str, Depends(authorize_user)], d
         return ds_keywords
 
 
-@app.post("/datasets/{dsid}/keywords")
+@app.post("/datasets/{dsid}/keywords", response_model = Keyword)
 def add_keyword(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, keyword: str):
     '''
     Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object. 
@@ -628,7 +628,7 @@ def add_keyword(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, keyw
         return(kw_obj)
 
 
-@app.get("/datasets/{dsid}/drive_location")
+@app.get("/datasets/{dsid}/drive_location", response_model = DataDriveLocation)
 def read_dataset_drive_location(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of DataDriveLocation objects with one object for each location in google drive where the dataset is currently located.
@@ -638,7 +638,7 @@ def read_dataset_drive_location(ag_ids: Annotated[str, Depends(authorize_user)],
     return(ds_locs)
 
 
-@app.post("/datasets/{dsid}/drive_location")
+@app.post("/datasets/{dsid}/drive_location", response_model = DataDriveLocation)
 def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user)], dsid: str, drive_info: DataDriveLocation):   
     """
     Add a Google Drive location record to the database.
@@ -672,7 +672,7 @@ def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user
     return(drive_info)
 
 
-@app.get("/datasets/{dsid}/access_groups")
+@app.get("/datasets/{dsid}/access_groups", response_model = DatasetACL)
 def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     with Session(engine) as session:
         ds_acl = session.exec(select(AccessGroup).select_from(join(AccessGroup, join(DatasetACL, 
@@ -681,23 +681,25 @@ def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
         return ds_acl
 
 
-@app.post("/datasets/{dsid}/access_groups")
+@app.post("/datasets/{dsid}/access_groups", response_model = DatasetACL)
 def create_dataset_acl(group_name: str, dsid: str, read: str, write: str, admin_acct: Annotated[str, Depends(is_admin)]):
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
 
-        curr_acl = session.exec(select(DatasetACL).where(DatasetACL.accessgroup == ag).where(DatasetACL.dataset == ds)).one_or_none()
-    if not curr_acl:
+        acl = session.exec(select(DatasetACL).where(DatasetACL.accessgroup == ag).where(DatasetACL.dataset == ds)).one_or_none()
+    if not acl:
         acl = DatasetACL(accessgroup=ag, dataset=ds)
         acl.read = read
         acl.write = write
         session.add(acl)
         session.commit()
 
+    return(acl)
 
 
-@app.post("/access_groups")
+
+@app.post("/access_groups", response_model = AccessGroup)
 def create_access_group(admin_acct: Annotated[str, Depends(is_admin)], ag = AccessGroup):
     with Session(engine) as session:
         session.add(ag)
@@ -705,13 +707,13 @@ def create_access_group(admin_acct: Annotated[str, Depends(is_admin)], ag = Acce
     return(ag)
 
 
-@app.get("/access_groups/{group_name}")
+@app.get("/access_groups/{group_name}", response_model = AccessGroup)
 def read_access_group(admin_acct: Annotated[str, Depends(is_admin)], group_name: str):
     with Session(engine) as session:
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
         return(ag)
 
-@app.post("/users/{orcid}/access_groups/{group_name}")
+@app.post("/users/{orcid}/access_groups/{group_name}", response_model = AccessGroup)
 def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orcid: str, group_name: str):
     with Session(engine) as session:
         user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
@@ -731,7 +733,7 @@ def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orci
 
 # ===============================================================================================================================================================
 
-@app.get("/keywords/{keyword}")
+@app.get("/keywords/{keyword}", response_model = List[Keyword])
 def read_keyword(keyword: str, permissive: bool = True):
     '''
     Returns a list of all keyword entries that match the provided keyword. 
@@ -748,7 +750,7 @@ def read_keyword(keyword: str, permissive: bool = True):
     return(K)
 
 
-@app.get("/instruments", response_model = List)
+@app.get("/instruments", response_model = List[Instrument])
 def list_instrument(ag_ids: Annotated[str, Depends(authorize_user)], request = Request):
     '''
     Returns a list of instruments filtered by any provided search terms that are attributes of the instrument Class. 
@@ -776,7 +778,7 @@ def list_instrument(ag_ids: Annotated[str, Depends(authorize_user)], request = R
         return(all_inst)
 
 
-@app.get("instruments/{instrument_unique_id}")
+@app.get("instruments/{instrument_unique_id}", response_model = Instrument)
 def read_instrument(admin_acct: Annotated[str, Depends(is_admin)], instrument_unique_id: str):
     '''
     Returns an instrument with the provided ID if one exists. Otherwise returns None. 
@@ -805,7 +807,7 @@ def create_instrument(ag_ids:  Annotated[str, Depends(authorize_user)], instrume
     return(instrument)
 
 
-@app.get("/google_drives")
+@app.get("/google_drives", response_model = List[GoogleDrives])
 def list_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], request = Request):
     """
     Returns a list of google drive information
@@ -825,7 +827,7 @@ def list_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], req
     return(drives)
 
 
-@app.get("/google_drives/{drive_id}")
+@app.get("/google_drives/{drive_id}", response_model = GoogleDrives)
 def read_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], drive_id: str):
     """
     Add or update a Google Drive record in the database.
@@ -843,7 +845,7 @@ def read_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], dri
     return(drive)
 
 
-@app.post("/google_drives")
+@app.post("/google_drives", response_model = GoogleDrives)
 def create_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], D: Dict):
     """
     Add or update a Google Drive record in the database.
@@ -871,7 +873,7 @@ def create_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], D
     return(D)
 
 # ===============================================================================================================================================================
-@app.get("/users", response_model = List[Tuple])
+@app.get("/users", response_model = List[User])
 def list_users(admin_acct:  Annotated[str, Depends(is_admin)], request: Request, permissive = True):
 
     query_params = request.query_params
@@ -896,7 +898,7 @@ def list_users(admin_acct:  Annotated[str, Depends(is_admin)], request: Request,
         return users
 
 
-@app.get("/users/{orcid}")
+@app.get("/users/{orcid}", response_model = User)
 def read_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
     '''
     Returns the User object associated with the provided ORCID if found. Otherwise returns None. 
@@ -906,7 +908,7 @@ def read_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
         return users
 
 
-@app.post("/users")
+@app.post("/users", response_model = User)
 def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User, project_names: List):  
     """
     Add or update a user record in the database.
@@ -960,7 +962,7 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
     return(user_info)
 
 
-@app.get("/users/{orcid}/datasets")
+@app.get("/users/{orcid}/datasets", response_model = List[Dataset])
 def read_user_datasets(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     '''
     Returns a list of all the datasets the user has access to based on the ORCID provided. 
@@ -972,7 +974,7 @@ def read_user_datasets(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]
         return ds_list
 
 
-@app.get("/users/{orcid}/datasets/{dsid}")
+@app.get("/users/{orcid}/datasets/{dsid}", response_model = Dict)
 def read_user_access_to_dataset(dsid: str, orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     '''
     Returns boolean: True is user with provided ORCID has access to the provided dataset ID, False if no access or dataset does not exist. 
@@ -984,9 +986,9 @@ def read_user_access_to_dataset(dsid: str, orcid: str, admin_acct: Annotated[str
         ag_ids = [x.accessgroup_id for x in ag]
         ds_acl = session.exec(select(DatasetACL).select_from(join(DatasetACL, Dataset, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))).all()
         if len(ds_acl) > 0:
-            return True
+            return {"read": ds_acl.read, "write": ds_acl.write}
         else:
-            return False
+            return {"read": False, "write": False}
 
 
 @app.get("/users/{orcid}/projects", response_model = List[Project])
@@ -1001,7 +1003,7 @@ def read_projects_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_ad
         return projects
     
 
-@app.post("/projects")
+@app.post("/projects", response_model = Project)
 def create_project(admin_acct:  Annotated[str, Depends(is_admin)], P: Project):
     """
     Add or update a project record in the database.
@@ -1039,7 +1041,7 @@ def create_project(admin_acct:  Annotated[str, Depends(is_admin)], P: Project):
     return(P)
 
 
-@app.get("/projects")
+@app.get("/projects", response_model = List[Project])
 def list_projects(admin_acct:  Annotated[str, Depends(is_admin)]):
     '''
     Returns the project object for the provided ID
@@ -1049,23 +1051,23 @@ def list_projects(admin_acct:  Annotated[str, Depends(is_admin)]):
         return(props)
 
 
-@app.get("/projects/{prop_id}")
-def read_project(prop_id: str, admin_acct:  Annotated[str, Depends(is_admin)]):
+@app.get("/projects/{proj_id}", response_model = Project)
+def read_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_admin)]):
     '''
     Returns the project object for the provided ID
     '''
     with Session(engine) as session:
-        prop = session.exec(select(Project).where(Project.id == prop_id)).one_or_none()
+        prop = session.exec(select(Project).where(Project.id == proj_id)).one_or_none()
         return(prop)
 
 
-@app.get("/projects/{prop_id}/users", response_model = List[User])
-def read_users_on_project(prop_id: str, admin_acct:  Annotated[str, Depends(is_admin)]):
+@app.get("/projects/{proj_id}/users", response_model = List[User])
+def read_users_on_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_admin)]):
     '''
     Returns a list of users associated with the project ID provided
     '''
     with Session(engine) as session:
-        users = session.exec(select(User).select_from(join(User, UserProjectLink, UserProjectLink.user_id == User.id)).where(UserProjectLink.project_id == prop_id)).all()
+        users = session.exec(select(User).select_from(join(User, UserProjectLink, UserProjectLink.user_id == User.id)).where(UserProjectLink.project_id == proj_id)).all()
         return users
     
 

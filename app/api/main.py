@@ -1,5 +1,6 @@
 from typing import Annotated, List, Tuple, Dict, Optional
 import json
+import yaml
 import requests
 from jose import jwt
 import urllib.parse
@@ -27,39 +28,57 @@ from app.models.instrument import Instrument
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import TransferRequest, SciCatUpdateRequest, IngestionRequest
 
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--db_config', help='Database config file')
+parser.add_argument('--api_config', help='API config file')
+args = parser.parse_args()
+
 # ======================= APP
 app = FastAPI()
 security = HTTPBearer()
 
 
-# ====== Oauth config
-hostname = "crucible.lbl.gov"
-orcid_client_id = "APP-AXDIPEVR6IMA0RL7"
-orcid_client_secret = get_secret("CLIENT_SECRET", "projects/776258882599/secrets/orcid_client_secret/versions/2")
-redirect_uri = urllib.parse.quote_plus("https://crucible.lbl.gov/api/auth")
+
 
 
 # ====== Database config
 connect_args = {"check_same_thread": False}
-import argparse
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--env-config', help='Environment config file')
-args = parser.parse_args()
 
-if args.env_config:
-    env_config_file = args.env_config
-    os.environ["DB_CONF_FILE"] = env_config_file
+if args.db_config:
+    db_config_file = args.db_config
+    os.environ["DB_CONF_FILE"] = db_config_file
 else:
-    env_config_file = None
+    db_config_file = None
 
-from app.utils.auth_utils import authorize_user, is_admin
-engine = setup_engine(env_config_file)
+engine = setup_engine(db_config_file)
+
+# ====== Oauth config
+if args.api_config:
+    api_config_file = args.api_config
+    os.environ["API_CONF_FILE"] = api_config_file
+else:
+    api_config_file = os.getenv("API_CONF_FILE")
+
+
+with open(api_config_file, 'r') as f:
+    apiconf = yaml.safe_load(f)
+
+hostname = apiconf['hostname']
+api_path = apiconf['api_path']
+api_url = f"https://{hostname}/{api_path}"
+orcid_client_id = apiconf['orcid_client_id']
+orcid_client_secret = get_secret("CLIENT_SECRET", "projects/776258882599/secrets/orcid_client_secret/versions/2")
+redirect_uri = urllib.parse.quote_plus("{api_url}/auth")
 
 
 
 
 # ======================= AUTH AND ACCOUNT SET UP ENDPOINTS
+from app.utils.auth_utils import authorize_user, is_admin
+
 @app.get("/login")
 def orcid_login() -> RedirectResponse:
     """
@@ -87,7 +106,7 @@ def redirect_exchange(request: Request, code: str, state: str=None):
         RedirectResponse to the appropriate page after successful authentication
     """
     from utils.auth_utils import SECRET_KEY, ALGORITHM, code_for_token_exchange
-    token = code_for_token_exchange(code, orcid_client_id, orcid_client_secret, "https://crucible.lbl.gov/api/auth")                                
+    token = code_for_token_exchange(code, orcid_client_id, orcid_client_secret, "{api_url}/auth")                                
     user_from_orcid = requests.get(url = "https://orcid.org/oauth/userinfo", headers = {"Authorization": f"Bearer {token}"})
     try:
         user = user_from_orcid.json()
@@ -221,12 +240,12 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
 
         # set appropriate access controls
         ro = requests.request("post",
-                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
                             params = {"group_name": "readonly", "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
         
         admin = requests.request("post",
-                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
                             params = {"group_name": "admin", "read": True, "write": True}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
         
@@ -234,21 +253,21 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         if dataset.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id))
             user_ag = requests.request("post",
-                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
                             params = {"group_name": user_orcid, "read": True, "write": True}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
 
         if dataset.project_id is not None:
             prop_name = session.exec(select(Project.project_name).where(Project.id == dataset.project_id))
             prop_ag = requests.request("post",
-                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
                             params = {"group_name": prop_name, "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
 
         if dataset.instrument_id is not None:
             inst_name = session.exec(select(Instrument.name).where(Instrument.id == dataset.instrument_id))
             inst_ag = requests.request("post",
-                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
                             params = {"group_name": inst_name, "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
             
@@ -261,7 +280,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
         payload  = {"dataset": dataset}
 
-        ds = requests.post( url = f"https://crucible.lbl.gov/api/datasets/{dataset.unique_id}/ingest",  
+        ds = requests.post( url = f"{api_url}/datasets/{dataset.unique_id}/ingest",  
                             headers = {"Authorization":f"Bearer {apikey}"}, 
                             data = payload   #TODO: check this request format
                           )
@@ -426,21 +445,21 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
         if updated_dataset.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == updated_dataset.owner_user_id))
             user_ag = requests.request("post",
-                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
                             params = {"group_name": user_orcid, "read": True, "write": True}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
 
         if updated_dataset.project_id is not None:
             prop_name = session.exec(select(Project.project_name).where(Project.id == updated_dataset.project_id))
             prop_ag = requests.request("post",
-                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
                             params = {"group_name": prop_name, "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
 
         if updated_dataset.instrument_id is not None:
             inst_name = session.exec(select(Instrument.name).where(Instrument.id == updated_dataset.instrument_id))
             inst_ag = requests.request("post",
-                            url =  f"https://crucible.lbl.gov/api/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
                             params = {"group_name": inst_name, "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
             
@@ -932,7 +951,7 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
             session.commit()
         
             apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
-            requests.request("post", url =  f"https://crucible.lbl.gov/api/users/{user.orcid}/access_groups/{user.orcid}", headers = {"Authorization":f"Bearer {apikey}"})
+            requests.request("post", url =  f"{api_url}/users/{user.orcid}/access_groups/{user.orcid}", headers = {"Authorization":f"Bearer {apikey}"})
         
             # for each project that the user is a USER on: 
             # 1. get the project object from the database
@@ -951,7 +970,7 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
                         user.projects.append(prop)
                     
                     # add user to access group
-                    requests.request("post", url =  f"https://crucible.lbl.gov/api/users/{user.orcid}/access_groups/{pname}", headers = {"Authorization":f"Bearer {apikey}"})
+                    requests.request("post", url =  f"{api_url}/users/{user.orcid}/access_groups/{pname}", headers = {"Authorization":f"Bearer {apikey}"})
                     #ag = add_or_update(session, AccessGroup, AccessGroup.group_name==pname, group_name=pname)
                     #if not (user in ag.users):
                     #    ag.users.append(user)

@@ -5,6 +5,7 @@ from jose import jwt
 import urllib.parse
 import datetime
 import pytz
+import os
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File
 from starlette.requests import Request
@@ -17,7 +18,7 @@ from sqlalchemy import join, func
 from sqlalchemy.sql import and_
 
 from app.general_utils import get_secret
-from app.utils.auth_utils import authorize_user, is_admin
+
 from app.utils.sql_utils import setup_engine, add_or_update
 from app.utils.rmq_utils import send_pika_message
 
@@ -42,7 +43,20 @@ redirect_uri = urllib.parse.quote_plus("https://crucible.lbl.gov/api/auth")
 
 # ====== Database config
 connect_args = {"check_same_thread": False}
-engine = setup_engine()
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--env-config', help='Environment config file')
+args = parser.parse_args()
+
+if args.env_config:
+    env_config_file = args.env_config
+    os.environ["DB_CONF_FILE"] = env_config_file
+else:
+    env_config_file = None
+
+from app.utils.auth_utils import authorize_user, is_admin
+engine = setup_engine(env_config_file)
 
 
 
@@ -159,10 +173,9 @@ def regenerate_apikey(request: Request):
 # TODO: use agids to authorize for all endpoints
 @app.post("/datasets")
 async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
-                          dataset: Dataset, 
-                          file: Optional[Annotated[UploadFile, File(description="A file read as UploadFile")]] = None):
+                         dataset: Dataset, 
+                         file: Optional[Annotated[UploadFile, File(description="A file read as UploadFile")]] = None):
     """
-    *** new doc ***
     Create a new dataset in Crucible by provided a dataset object and optionally the file that you wish to create the dataset from. 
     If a file is provided the contents will be uploaded to the crucible-uploads bucket and saved to the relative path defined by filename. 
     This path will be used as the "file_to_upload" field in the Dataset object **and will override the existing value. # TODO does that make sense?
@@ -1042,3 +1055,12 @@ def read_users_on_proposal(prop_id: str, admin_acct:  Annotated[str, Depends(is_
     with Session(engine) as session:
         users = session.exec(select(User).select_from(join(User, UserProposalLink, UserProposalLink.user_id == User.id)).where(UserProposalLink.proposal_id == prop_id)).all()
         return users
+    
+
+
+if __name__ == "__main__":
+
+    # run locally with: python -m app.api.main --env-config cloud_config.yaml
+
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7777)

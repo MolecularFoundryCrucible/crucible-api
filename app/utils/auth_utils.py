@@ -1,5 +1,6 @@
 from typing import Annotated
 import re
+import os
 import requests
 import secrets
 from jose import jwt, JWTError
@@ -9,6 +10,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.general_utils import  get_secret
+from app.utils.sql_utils import setup_engine
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import select, join
@@ -19,6 +21,7 @@ from datetime import date, timedelta
 SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "projects/776258882599/secrets/crucible_secret_key/versions/1")
 ALGORITHM = "HS256"
 security = HTTPBearer()
+engine = setup_engine(env_config_file = os.getenv("DB_CONF_FILE"))
 
 # ====== Functions 
 def is_orcid(val):
@@ -115,7 +118,7 @@ def find_key(credentials, engine):
     return(api_acct)
 
 
-def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends(security)], engine):
+def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     """
     Authorize a user based on their API credentials.
     
@@ -154,7 +157,7 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
         return(ag_ids)  
 
 
-def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)], engine):
+def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     """
     Check if a user is an admin based on their API credentials.
     

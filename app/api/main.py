@@ -135,7 +135,7 @@ def get_apikey(request: Request):
     Returns:
         API key if the user is authenticated, redirects to login page otherwise
     """
-    from utils.auth_utils import decode_token, find_or_add_api_access
+    from app.utils.auth_utils import decode_token, find_or_add_api_access
     user_info_jwt = request.cookies.get("crucible_user_token")
     
     if user_info_jwt is None:

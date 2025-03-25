@@ -184,6 +184,16 @@ spec:
           value: "True"
         - name: "DB_NAME"
           value: "testdb2"
+        - name: "DB_CONF_FILE"
+          valueFrom:
+            configMapKeyRef:
+              key: DB_CONF_FILE
+              name: crucible-api-config-jeoi
+        - name: "API_CONF_FILE"
+          valueFrom:
+            configMapKeyRef:
+              key: API_CONF_FILE
+              name: crucible-api-config-jeoi
         - name: "DB_TYPE"
           valueFrom:
             configMapKeyRef:

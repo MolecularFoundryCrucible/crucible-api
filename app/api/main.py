@@ -47,13 +47,15 @@ security = HTTPBearer()
 connect_args = {"check_same_thread": False}
 
 
+
+
+home_dir = os.getenv("HOME")
+
 db_config_file = os.getenv("DB_CONF_FILE")
+db_config_file = f"{home_dir}/{db_config_file}"
 engine = setup_engine(db_config_file)
 
 api_config_file = os.getenv("API_CONF_FILE")
-home_dir = os.getenv("HOME")
-
-db_config_file = f"{home_dir}/{db_config_file}"
 with open(f"{home_dir}/{api_config_file}", 'r') as f:
     apiconf = yaml.safe_load(f)
 

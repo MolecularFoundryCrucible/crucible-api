@@ -98,7 +98,7 @@ def redirect_exchange(request: Request, code: str, state: str=None):
     Returns:
         RedirectResponse to the appropriate page after successful authentication
     """
-    from utils.auth_utils import SECRET_KEY, ALGORITHM, code_for_token_exchange
+    from app.utils.auth_utils import SECRET_KEY, ALGORITHM, code_for_token_exchange
     token = code_for_token_exchange(code, orcid_client_id, orcid_client_secret, f"{api_url}/auth")                                
     user_from_orcid = requests.get(url = "https://orcid.org/oauth/userinfo", headers = {"Authorization": f"Bearer {token}"})
     try:
@@ -160,7 +160,7 @@ def regenerate_apikey(request: Request):
     Returns:
         New API key if the user is authenticated, redirects to login page otherwise
     """
-    from utils.auth_utils import decode_token, find_or_add_api_access
+    from app.utils.auth_utils import decode_token, find_or_add_api_access
     user_info_jwt = request.cookies.get("crucible_user_token")
     
     if user_info_jwt is None:

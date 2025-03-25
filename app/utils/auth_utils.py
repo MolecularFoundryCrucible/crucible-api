@@ -22,7 +22,7 @@ SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "projects/776258882599/secrets/cr
 ALGORITHM = "HS256"
 security = HTTPBearer()
 
-db_config_file = f"{os.getenv("HOME")}/{os.getenv("DB_CONF_FILE")}"
+db_config_file = f'{os.getenv("HOME")}/{os.getenv("DB_CONF_FILE")}'
 engine = setup_engine(env_config_file = db_config_file)
 
 # ====== Functions 

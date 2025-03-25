@@ -49,9 +49,9 @@ connect_args = {"check_same_thread": False}
 
 db_config_file = os.getenv("DB_CONF_FILE")
 api_config_file = os.getenv("API_CONF_FILE")
+home_dir = os.getenv("HOME")
 
-
-with open(api_config_file, 'r') as f:
+with open(f"{home_dir}/{api_config_file}", 'r') as f:
     apiconf = yaml.safe_load(f)
 
 hostname = apiconf['hostname']

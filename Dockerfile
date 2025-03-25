@@ -26,7 +26,8 @@ RUN pip install -r requirements.txt
 
 
 # files
-COPY . .
+
+COPY app/ /root/app/
 RUN mkdir uploads
 
 # Run app

@@ -139,8 +139,8 @@ def get_apikey(request: Request):
     user_info_jwt = request.cookies.get("crucible_user_token")
     
     if user_info_jwt is None:
-        response = RedirectResponse("/api/login")
-        response.set_cookie("after_login_return_to_page", value = "/api/user_apikey", httponly = True, secure = True)
+        response = RedirectResponse(f"/{api_path}/login")
+        response.set_cookie("after_login_return_to_page", value = f"/{api_path}/user_apikey", httponly = True, secure = True)
         return response
     
     user_info = decode_token(user_info_jwt)
@@ -164,8 +164,8 @@ def regenerate_apikey(request: Request):
     user_info_jwt = request.cookies.get("crucible_user_token")
     
     if user_info_jwt is None:
-        response = RedirectResponse("/api/login")
-        response.set_cookie("after_login_return_to_page", value = "/api/regenerate_apikey", httponly = True, secure = True)
+        response = RedirectResponse(f"/{api_path}/login")
+        response.set_cookie("after_login_return_to_page", value = f"/{api_path}/regenerate_apikey", httponly = True, secure = True)
         return response
             
     user_info = decode_token(user_info_jwt)

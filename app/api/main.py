@@ -239,7 +239,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         # set appropriate access controls
         ro = requests.request("post",
                             url =  f"{api_url}/datasets/{ds.id}/access_groups", 
-                            params = {"group_name": "readonly", "read": True, "write": False}, 
+                            params = {"group_name": "read_only", "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
         
         admin = requests.request("post",
@@ -269,7 +269,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
                             params = {"group_name": inst_name, "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
             
-        add_or_update(session, IdType, where=(IdType.unique_id == dataset.unique_id), unique_id = dataset.unique_id, type = "dataset")
+        add_or_update(session, IdType, where=(IdType.unique_id == dataset.unique_id), unique_id = dataset.unique_id, object_type = "dataset")
         session.commit()
 
 
@@ -699,7 +699,7 @@ def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
 
 
 @app.post("/datasets/{dsid}/access_groups", response_model = DatasetACL)
-def create_dataset_acl(group_name: str, dsid: str, read: str, write: str, admin_acct: Annotated[str, Depends(is_admin)]):
+def create_dataset_acl(group_name: str, dsid: str, read: bool, write: bool, admin_acct: Annotated[str, Depends(is_admin)]):
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()

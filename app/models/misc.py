@@ -5,7 +5,7 @@ from sqlmodel import Field, SQLModel,Relationship
 
 class GoogleDrives(SQLModel, table = True):
     drive_id: str = Field(default=None, primary_key = True)
-    drive_name: str = Field(default = None, unique = True, primary_key = True)
+    drive_name: str = Field(default = None, unique = True)
 
 
 class DataDriveLocation(SQLModel, table = True):

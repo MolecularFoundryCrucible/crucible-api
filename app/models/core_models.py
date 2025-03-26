@@ -14,7 +14,7 @@ class DatasetKeywordLink(SQLModel, table=True):
 
 
 class Keyword(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True, unique = True)
+    id: Optional[int] = Field(default=None, primary_key=True)
     keyword: str
     datasets: List["Dataset"] = Relationship(back_populates="keywords", link_model=DatasetKeywordLink)
     num_datasets: Optional[int]
@@ -47,7 +47,7 @@ class DatasetCollectionLink(SQLModel, table=True):
 
 
 class DatasetCollection(SQLModel, table = True):
-    id: Optional[int] = Field(default=None, primary_key=True, index = True, unique = True)
+    id: Optional[int] = Field(default=None, primary_key=True)
     unique_id: str = Field(default = mfid()[0], index = True)
     date_created: Optional[str] = None
     description: Optional[str]
@@ -64,8 +64,8 @@ class DatasetSampleLink(SQLModel, table=True):
 
 
 class Sample(SQLModel, table = True):
-    id: Optional[int] = Field(default = None, primary_key = True, index = True, unique= True)
-    unique_id: str = Field(default = mfid()[0], primary_key = True, index = True, unique = True)
+    id: Optional[int] = Field(default = None, primary_key = True)
+    unique_id: str = Field(default = mfid()[0],index = True, unique = True)
     owner_user_id: int = Field(default=None, index=True, foreign_key="user.id")
     date_created: Optional[str] = None
     description: Optional[str]
@@ -73,8 +73,8 @@ class Sample(SQLModel, table = True):
 
 
 class Dataset(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True, unique = True, autoincrement = True)
-    unique_id: str = Field(default = mfid()[0], index=True, unique=True, primary_key = True)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    unique_id: str = Field(default = mfid()[0], index=True, unique=True)
     public: bool = Field(default = False, index = True)
     dataset_name: Optional[str] = Field(default = "") 
     file_to_upload: Optional[str] = Field(default = None)  

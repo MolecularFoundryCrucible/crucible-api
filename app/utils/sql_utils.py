@@ -48,7 +48,6 @@ def get_any(d, keys, default=None):
 def add_or_update(session, cls, where, **kwargs):
     statement = select(cls).where(where)
     obj = session.exec(statement).one_or_none()
-    print(type(obj))
     if obj: 
         for key, value in kwargs.items():
             print(key)

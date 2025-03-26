@@ -228,7 +228,11 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
     with Session(engine) as session:
 
         # add any existing information about the dataset to the SQL database
+        # add_ds = dict(dataset)
+        # if dataset.id is None:
+        #     add_ds.pop("id")
         ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id, **dict(dataset))
+
         session.commit()
 
         # set appropriate access controls

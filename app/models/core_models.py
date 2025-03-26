@@ -88,7 +88,7 @@ class Dataset(SQLModel, table=True):
     measurement: Optional[str]
     session_name: Optional[str]
     json_link: Optional[str] 
-    sha256_hash_file_to_upload: str
+    sha256_hash_file_to_upload: Optional[str]
     samples: List[Sample] = Relationship(back_populates="datasets", link_model = DatasetSampleLink)
     collections: List[DatasetCollection] = Relationship(back_populates = "datasets", link_model = DatasetCollectionLink)
     keywords: List[Keyword] = Relationship(back_populates="datasets", link_model=DatasetKeywordLink)

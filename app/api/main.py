@@ -228,7 +228,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
     with Session(engine) as session:
 
         # add any existing information about the dataset to the SQL database
-        ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id, **dataset)
+        ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id, **dict(dataset))
         session.commit()
 
         # set appropriate access controls
@@ -434,7 +434,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
     apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/2")
 
     with Session(engine) as session:
-        ds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **updated_dataset)
+        ds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **dict(updated_dataset))
         if updated_dataset.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == updated_dataset.owner_user_id))
             user_ag = requests.request("post",
@@ -586,7 +586,7 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)], dsid: s
     '''
     with Session(engine) as session:
         af_obj = add_or_update(session, AssociatedFile, where=(AssociatedFile.filename == associated_file.filename),
-                                       **associated_file)
+                                       **dict(associated_file))
 
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
         ds = session.exec(ds_cmd).one_or_none()
@@ -678,7 +678,7 @@ def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user
                       DataDriveLocation,
                       DataDriveLocation.folder_id == drive_info.folder_id,
                       dataset_id = dsid, 
-                      **drive_info)
+                      **dict(drive_info))
         session.commit()
 
     return(drive_info)
@@ -970,7 +970,7 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
     with Session(engine) as session:
         if True:
             # add user to user table
-            user = add_or_update(session, User, User.orcid == user_info.orcid, **user_info)
+            user = add_or_update(session, User, User.orcid == user_info.orcid, **dict(user_info))
             session.commit()
         
             apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/2")
@@ -1058,7 +1058,7 @@ def create_project(admin_acct:  Annotated[str, Depends(is_admin)], P: Project):
         Added or updated project object
     """
     with Session(engine) as session:
-        prop = add_or_update(session, Project,  Project.id == P.id, **P)
+        prop = add_or_update(session, Project,  Project.id == P.id, **dict(P))
         ag = add_or_update(session, 
                       AccessGroup, 
                       AccessGroup.group_name==P.name, 

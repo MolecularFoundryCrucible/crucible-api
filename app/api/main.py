@@ -231,6 +231,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         # add_ds = dict(dataset)
         # if dataset.id is None:
         #     add_ds.pop("id")
+        print(dict(dataset))
         ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id, **dict(dataset))
 
         session.commit()

@@ -73,7 +73,7 @@ class Sample(SQLModel, table = True):
 
 
 class Dataset(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True, unique = True)
+    id: Optional[int] = Field(default=None, primary_key=True, unique = True, autoincrement = True)
     unique_id: str = Field(default = mfid()[0], index=True, unique=True, primary_key = True)
     public: bool = Field(default = False, index = True)
     dataset_name: Optional[str] = Field(default = "") 

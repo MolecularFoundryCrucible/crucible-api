@@ -224,7 +224,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         dataset.file_to_upload == file.filename
 
 
-    apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
+    apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/2")
     with Session(engine) as session:
 
         # add any existing information about the dataset to the SQL database
@@ -270,7 +270,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
 
     if dataset.file_to_upload is not None:
         # call ingest endpoint 
-        apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
+        apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/2")
         payload  = {"dataset": dataset}
 
         ds = requests.post(url = f"{api_url}/datasets/{dataset.unique_id}/ingest",  
@@ -431,7 +431,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
     else:
         pass
     
-    apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
+    apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/2")
 
     with Session(engine) as session:
         ds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **updated_dataset)
@@ -973,7 +973,7 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
             user = add_or_update(session, User, User.orcid == user_info.orcid, **user_info)
             session.commit()
         
-            apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/1")
+            apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/2")
             requests.request("post", url =  f"{api_url}/users/{user.orcid}/access_groups/{user.orcid}", headers = {"Authorization":f"Bearer {apikey}"})
         
             # for each project that the user is a USER on: 

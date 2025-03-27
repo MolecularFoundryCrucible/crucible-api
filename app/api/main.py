@@ -236,40 +236,34 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         print("added ds")
         session.commit()
         print("committed")
-        # set appropriate access controls
-        fullurl = f"{api_url}/datasets/{ds.unique_id}/access_groups"
-        print(f"{fullurl=}")
-        ro = requests.post( url = fullurl , 
-                            params = {"group_name": "read_only", "read": True, "write": False}, 
-                            headers = {"Authorization":f"Bearer {apikey}"})
-        print("add ro access")
-        admin = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
-                            params = {"group_name": "admin", "read": True, "write": True}, 
-                            headers = {"Authorization":f"Bearer {apikey}"})
         
+        # set appropriate access controls
+        admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
+        admin_acl = sql_create_ds_acl(admin, ds, read = True, write = True)
         print('add admin access')
+
+        ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
+        ro_acl = sql_create_ds_acl(ro, ds, read = True, write = False)
+        print("add ro access")
+
         if dataset.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id))
-            user_ag = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
-                            params = {"group_name": user_orcid, "read": True, "write": True}, 
-                            headers = {"Authorization":f"Bearer {apikey}"})
+            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
+            user_acl = sql_create_ds_acl(user_ag, ds, read = True, write = True)
             print('add owner orcid access')
+
         if dataset.project_id is not None:
             prop_name = session.exec(select(Project.project_name).where(Project.id == dataset.project_id))
-            prop_ag = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
-                            params = {"group_name": prop_name, "read": True, "write": False}, 
-                            headers = {"Authorization":f"Bearer {apikey}"})
+            prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
+            prop_acl = sql_create_ds_acl(prop_ag, ds, read = True, write = True)
             print('add proposal access')
+
         if dataset.instrument_id is not None:
             inst_name = session.exec(select(Instrument.name).where(Instrument.id == dataset.instrument_id))
-            inst_ag = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
-                            params = {"group_name": inst_name, "read": True, "write": False}, 
-                            headers = {"Authorization":f"Bearer {apikey}"})
+            inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
+            inst_acl = sql_create_ds_acl(inst_ag, ds, read = True, write = True) 
             print('add instrument group access')
+            
         add_or_update(session, IdType, where=(IdType.unique_id == dataset.unique_id), unique_id = dataset.unique_id, object_type = "dataset")
         print('added the ID type')
         session.commit()
@@ -702,6 +696,17 @@ def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
         return ds_acl
 
 
+def sql_create_ds_acl(ds, ag, read, write, session):
+    acl = session.exec(select(DatasetACL).where(DatasetACL.accessgroup == ag).where(DatasetACL.dataset == ds)).one_or_none()
+    if not acl:
+        acl = DatasetACL(accessgroup_id = ag.id, dataset_id = ds.id, accessgroup=ag, dataset=ds)
+        acl.read = read
+        acl.write = write
+        session.add(acl)
+        session.commit()
+    return(acl)
+
+
 @app.post("/datasets/{dsid}/access_groups", response_model = DatasetACL)
 def create_dataset_acl(group_name: str, dsid: str, read: bool, write: bool, admin_acct: Annotated[str, Depends(is_admin)]):
     with Session(engine) as session:
@@ -709,14 +714,7 @@ def create_dataset_acl(group_name: str, dsid: str, read: bool, write: bool, admi
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
 
-        acl = session.exec(select(DatasetACL).where(DatasetACL.accessgroup == ag).where(DatasetACL.dataset == ds)).one_or_none()
-    if not acl:
-        acl = DatasetACL(accessgroup_id = ag.id, dataset_id = ds.id, accessgroup=ag, dataset=ds)
-        acl.read = read
-        acl.write = write
-        session.add(acl)
-        session.commit()
-
+        acl = sql_create_ds_acl(ds, ag, read, write, session)
     return(acl)
 
 

@@ -269,6 +269,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         print('added the ID type')
         session.commit()
         print('committed')
+        session.refresh(ds)
         
     if dataset.file_to_upload is not None:
         # call ingest endpoint 
@@ -280,7 +281,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
                             data = payload   #TODO: check this request format
                           )
         print('sent ingestion request')
-    session.refresh(dataset)
+
     return ds
 
 
@@ -306,7 +307,6 @@ def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], d
     with Session(engine) as session:
         session.add(ingestion_request)
         session.commit()
-        session.close()
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
     send_pika_message(message = dataset.file_to_upload, exchange= "", routing_key= "ingest2", user = 'admin', rmq_pw= rmq_pw)
 
@@ -352,7 +352,6 @@ def request_dataset_transfer(ag_ids: Annotated[str, Depends(authorize_user)], ds
         transfer_request = TransferRequest({"dataset_id": dsid, "time_created": creation_time, "source_path": source_path, "destination_path": destination_path})
         session.add(transfer_request)
         session.commit()
-        session.close()
         # TODO: probably want to update this on the rabbit mq side .. 
         # 1) to match the request and be more general dsid, source, dest and 
         # 2) exchange name is potentially limiting / inaccurate in new set up?
@@ -402,7 +401,6 @@ def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)
     scicat_request = SciCatUpdateRequest({"dataset_id": dsid, "time_created": creation_time})
     session.add(scicat_request)
     session.commit()
-    session.close()
     # TODO: confirm rabbit mq side matches // could make new vs. update field in message?
     message = json.dumps({"dsid": dsid, "source_bucket":"mf-storage-prod"})
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
@@ -566,7 +564,6 @@ def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, th
             ds.thumbnails.append(tn_obj)
         session.add(ds)
         session.commit()
-        session.close()
         return(tn_obj)
 
 
@@ -603,7 +600,6 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)], dsid: s
 
         session.add(ds)
         session.commit()
-        session.close()
         return(af_obj)
  
 
@@ -706,7 +702,6 @@ def sql_create_ds_acl(ag, ds, read, write, session):
         acl.write = write
         session.add(acl)
         session.commit()
-        #session.close()
     return(acl)
 
 
@@ -757,7 +752,6 @@ def create_access_group(admin_acct: Annotated[str, Depends(is_admin)], ag: Acces
     with Session(engine) as session:
         session.add(ag)
         session.commit()
-        session.close()
     return(ag)
 
 
@@ -780,7 +774,6 @@ def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orci
             ag.users.append(user)
 
         session.commit()
-        session.close()
     return(ag)
 
 
@@ -857,7 +850,6 @@ def create_instrument(ag_ids:  Annotated[str, Depends(authorize_user)], instrume
     with Session(engine) as session:
         session.add(instrument)
         session.commit()
-        session.close()
     return(instrument)
 
 
@@ -920,7 +912,6 @@ def create_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], D
                                    **D)
                 
                 session.commit()
-                session.close()
             except Exception as err:
                 print(err)
 
@@ -1012,7 +1003,6 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
         
             session.add(user)
             session.commit()
-            session.close()
     return(user_info)
 
 
@@ -1091,7 +1081,6 @@ def create_project(admin_acct:  Annotated[str, Depends(is_admin)], P: Project):
                 project_lead.append(prop)
 
         session.commit()
-        session.close()
     return(P)
 
 

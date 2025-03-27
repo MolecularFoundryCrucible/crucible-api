@@ -280,7 +280,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
                             data = payload   #TODO: check this request format
                           )
         print('sent ingestion request')
-    print(ds)
+    dataset = None
     return ds
 
 

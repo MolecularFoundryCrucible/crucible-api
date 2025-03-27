@@ -237,8 +237,9 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         session.commit()
         print("committed")
         # set appropriate access controls
-        ro = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
+        fullurl = f"{api_url}/datasets/{ds.unique_id}/access_groups"
+        print(f"{fullurl=}")
+        ro = requests.post( url = fullurl , 
                             params = {"group_name": "read_only", "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
         print("add ro access")

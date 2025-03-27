@@ -3,6 +3,11 @@ from sqlalchemy import JSON, Column,BigInteger
 from sqlmodel import Field, SQLModel,Relationship
 from mfid import mfid
 
+def get_mfid_value():
+    x = mfid()[0]
+    return(x)
+
+
 class DatasetKeywordLink(SQLModel, table=True):
     keyword_id: Optional[int] = Field(
         default=None, foreign_key="keyword.id", primary_key=True,
@@ -48,7 +53,7 @@ class DatasetCollectionLink(SQLModel, table=True):
 
 class DatasetCollection(SQLModel, table = True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    unique_id: str = Field(default= mfid()[0], index = True)
+    unique_id: str = Field(default_factory = get_mfid_value, index = True)
     date_created: Optional[str] = None
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="collections", link_model=DatasetCollectionLink)
@@ -65,7 +70,7 @@ class DatasetSampleLink(SQLModel, table=True):
 
 class Sample(SQLModel, table = True):
     id: Optional[int] = Field(default = None, primary_key = True)
-    unique_id: str = Field(default= mfid()[0],index = True, unique = True)
+    unique_id: str = Field(default_factory= get_mfid_value, index = True, unique = True)
     owner_user_id: int = Field(default=None, index=True, foreign_key="user.id")
     date_created: Optional[str] = None
     description: Optional[str]
@@ -74,7 +79,7 @@ class Sample(SQLModel, table = True):
 
 class Dataset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    unique_id: str = Field(default = mfid()[0], index=True, unique=True)
+    unique_id: str = Field(default_factory = get_mfid_value, index=True, unique=True)
     public: bool = Field(default = False, index = True)
     dataset_name: Optional[str] = Field(default = "") 
     file_to_upload: Optional[str] = Field(default = None)  

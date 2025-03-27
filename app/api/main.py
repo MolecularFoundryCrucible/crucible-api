@@ -282,7 +282,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
                             headers = {"Authorization":f"Bearer {apikey}"}, 
                             data = payload   #TODO: check this request format
                           )
-    
+    print(ds)
     return ds
 
 

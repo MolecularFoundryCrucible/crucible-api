@@ -487,6 +487,7 @@ def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request = Req
 
     '''
     query_params = request.query_params
+    print(query_params)
     params_dict = dict(query_params)
 
     if 'keyword' in list(params_dict.keys()):

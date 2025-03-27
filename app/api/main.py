@@ -233,55 +233,57 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         #     add_ds.pop("id")
         print(dict(dataset))
         ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id, **dict(dataset))
-
+        print("added ds")
         session.commit()
-
+        print("committed")
         # set appropriate access controls
         ro = requests.request("post",
                             url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": "read_only", "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
-        
+        print("add ro access")
         admin = requests.request("post",
                             url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": "admin", "read": True, "write": True}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
         
-        
+        print('add admin access')
         if dataset.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id))
             user_ag = requests.request("post",
                             url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": user_orcid, "read": True, "write": True}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
-
+            print('add owner orcid access')
         if dataset.project_id is not None:
             prop_name = session.exec(select(Project.project_name).where(Project.id == dataset.project_id))
             prop_ag = requests.request("post",
                             url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": prop_name, "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
-
+            print('add proposal access')
         if dataset.instrument_id is not None:
             inst_name = session.exec(select(Instrument.name).where(Instrument.id == dataset.instrument_id))
             inst_ag = requests.request("post",
                             url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": inst_name, "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
-            
+            print('add instrument group access')
         add_or_update(session, IdType, where=(IdType.unique_id == dataset.unique_id), unique_id = dataset.unique_id, object_type = "dataset")
+        print('added the ID type')
         session.commit()
-
+        print('committed')
 
     if dataset.file_to_upload is not None:
         # call ingest endpoint 
-        apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/3")
+        print('connecting to ingestion endpoint')
         payload  = {"dataset": dataset}
 
         ds = requests.post(url = f"{api_url}/datasets/{dataset.unique_id}/ingest",  
                             headers = {"Authorization":f"Bearer {apikey}"}, 
                             data = payload   #TODO: check this request format
                           )
+        print('sent ingestion request')
     print(ds)
     return ds
 

@@ -1,4 +1,4 @@
-from typing import Annotated, List, Tuple, Dict, Optional
+from typing import Annotated, List, Tuple, Dict, Optional, Union
 import json
 import yaml
 import requests
@@ -515,7 +515,7 @@ def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request: Requ
         return ds_list
     
     
-@app.get("/datasets/{dsid}", response_model = Dataset)
+@app.get("/datasets/{dsid}", response_model = Union[Dataset, None])
 def read_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     '''
     Returns a dataset found with the provided unique ID if one is exists and the requesting user is authorized to view the dataset. 

@@ -701,12 +701,13 @@ def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
 @app.post("/datasets/{dsid}/access_groups", response_model = DatasetACL)
 def create_dataset_acl(group_name: str, dsid: str, read: bool, write: bool, admin_acct: Annotated[str, Depends(is_admin)]):
     with Session(engine) as session:
+        print(f"{dsid=}")
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
 
         acl = session.exec(select(DatasetACL).where(DatasetACL.accessgroup == ag).where(DatasetACL.dataset == ds)).one_or_none()
     if not acl:
-        acl = DatasetACL(accessgroup=ag, dataset=ds)
+        acl = DatasetACL(accessgroup_id = ag.id, dataset_id = ds.id, accessgroup=ag, dataset=ds)
         acl.read = read
         acl.write = write
         session.add(acl)

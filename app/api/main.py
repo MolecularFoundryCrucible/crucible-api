@@ -269,7 +269,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         print('added the ID type')
         session.commit()
         print('committed')
-        session.close()
+        
     if dataset.file_to_upload is not None:
         # call ingest endpoint 
         print('connecting to ingestion endpoint')
@@ -280,7 +280,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
                             data = payload   #TODO: check this request format
                           )
         print('sent ingestion request')
-    dataset = None
+    session.refresh(dataset)
     return ds
 
 

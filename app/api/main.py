@@ -216,15 +216,15 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
     The dataset ID is recorded in a table to track that the mfid corresponds to a dataset. 
     """
 
-    if file:
-        # save the file to crucible-uploads
-        save_file_path = f"/root/uploads/{file.filename}"
-        with open(save_file_path, "wb") as f:
-            f.write(await file.read())
-        dataset.file_to_upload == file.filename
+    # if file:
+    #     # save the file to crucible-uploads
+    #     save_file_path = f"/root/uploads/{file.filename}"
+    #     with open(save_file_path, "wb") as f:
+    #         f.write(await file.read())
+    #     dataset.file_to_upload == file.filename
 
 
-    apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/3")
+    # apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/3")
     with Session(engine) as session:
 
         # add any existing information about the dataset to the SQL database
@@ -270,19 +270,58 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         session.commit()
         print('committed')
         session.refresh(ds)
-        
-    if dataset.file_to_upload is not None:
-        # call ingest endpoint 
-        print('connecting to ingestion endpoint')
-        payload  = {"dataset": dataset}
 
-        ds = requests.post(url = f"{api_url}/datasets/{dataset.unique_id}/ingest",  
-                            headers = {"Authorization":f"Bearer {apikey}"}, 
-                            data = payload   #TODO: check this request format
-                          )
-        print('sent ingestion request')
+    # if dataset.file_to_upload is not None:
+    #     # call ingest endpoint 
+    #     print('connecting to ingestion endpoint')
+    #     payload  = {"dataset": dataset}
+
+    #     ds = requests.post(url = f"{api_url}/datasets/{dataset.unique_id}/ingest",  
+    #                         headers = {"Authorization":f"Bearer {apikey}"}, 
+    #                         data = payload   #TODO: check this request format
+    #                       )
+    #     print('sent ingestion request')
 
     return ds
+
+
+@app.post("/datasets/{dsid}/upload", response_model = Dataset)
+async def create_dataset_from_file_upload(ag_ids:  Annotated[str, Depends(authorize_user)],
+                                          dsid: str, 
+                                          file: Optional[Annotated[UploadFile, File(description="A file read as UploadFile")]] = None):
+    '''
+    Given an existing dataset record - adds data from an uploaded file
+    - makes user call 2 endpoints 1) /datasets 2) /datasets/{dsid}/upload
+    - json info added during step 1
+    - If dsid in file then its a little convoluted ... but you could always pull it out and then send it in first request json
+    Calls ingestion request
+
+    Better than the other way because you would have to use FormData instead of "Dataset" model to combo with File
+    '''
+
+    # upload the file
+    save_file_path = f"/root/uploads/{file.filename}"
+    with open(save_file_path, "wb") as f:
+        f.write(await file.read())
+
+    # get the dataset
+    with Session(engine) as session:
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+    ds.file_to_upload == file.filename
+    session.add(ds)
+    session.commit()
+
+    # call ingest endpoint 
+    print('connecting to ingestion endpoint')
+    payload  = {"dataset": dsid}
+
+    apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/3")
+    ds = requests.post(url = f"{api_url}/datasets/{dsid}/ingest",  
+                        headers = {"Authorization":f"Bearer {apikey}"}, 
+                        data = payload   #TODO: check this request format
+                        )
+    print('sent ingestion request')
+
 
 
 @app.post("/datasets/{dsid}/ingest", response_model = IngestionRequest)
@@ -308,7 +347,7 @@ def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], d
         session.add(ingestion_request)
         session.commit()
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
-    send_pika_message(message = dataset.file_to_upload, exchange= "", routing_key= "ingest2", user = 'admin', rmq_pw= rmq_pw)
+    send_pika_message(message = dataset.file_to_upload, exchange= "", routing_key= "ingest-newapi", user = 'admin', rmq_pw= rmq_pw)
 
     return ingestion_request
 

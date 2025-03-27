@@ -244,7 +244,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         print('add admin access')
 
         ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
-        ro_acl = sql_create_ds_acl(ro, ds, read = True, write = False,session=session)
+        ro_acl = sql_create_ds_acl(ro, ds, read = True, write = False, session=session)
         print("add ro access")
 
         if dataset.owner_user_id is not None:
@@ -706,7 +706,7 @@ def sql_create_ds_acl(ag, ds, read, write, session):
         acl.write = write
         session.add(acl)
         session.commit()
-        session.close()
+        #session.close()
     return(acl)
 
 

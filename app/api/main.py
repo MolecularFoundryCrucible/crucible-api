@@ -233,6 +233,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         #     add_ds.pop("id")
         print(dict(dataset))
         ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id, **dict(dataset))
+        print(ds)
         print("added ds")
         session.commit()
         print("committed")
@@ -268,7 +269,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         print('added the ID type')
         session.commit()
         print('committed')
-
+        session.close()
     if dataset.file_to_upload is not None:
         # call ingest endpoint 
         print('connecting to ingestion endpoint')
@@ -305,7 +306,7 @@ def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], d
     with Session(engine) as session:
         session.add(ingestion_request)
         session.commit()
-
+        session.close()
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
     send_pika_message(message = dataset.file_to_upload, exchange= "", routing_key= "ingest2", user = 'admin', rmq_pw= rmq_pw)
 
@@ -351,7 +352,7 @@ def request_dataset_transfer(ag_ids: Annotated[str, Depends(authorize_user)], ds
         transfer_request = TransferRequest({"dataset_id": dsid, "time_created": creation_time, "source_path": source_path, "destination_path": destination_path})
         session.add(transfer_request)
         session.commit()
-
+        session.close()
         # TODO: probably want to update this on the rabbit mq side .. 
         # 1) to match the request and be more general dsid, source, dest and 
         # 2) exchange name is potentially limiting / inaccurate in new set up?
@@ -401,7 +402,7 @@ def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)
     scicat_request = SciCatUpdateRequest({"dataset_id": dsid, "time_created": creation_time})
     session.add(scicat_request)
     session.commit()
-
+    session.close()
     # TODO: confirm rabbit mq side matches // could make new vs. update field in message?
     message = json.dumps({"dsid": dsid, "source_bucket":"mf-storage-prod"})
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
@@ -565,6 +566,7 @@ def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, th
             ds.thumbnails.append(tn_obj)
         session.add(ds)
         session.commit()
+        session.close()
         return(tn_obj)
 
 
@@ -578,7 +580,6 @@ def read_associated_files(ag_ids: Annotated[str, Depends(authorize_user)], dsid:
         ds = session.exec(ds_cmd).one_or_none()
         ds_files = session.exec(select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)).all()
         return ds_files
-
 
 
 @app.post("/datasets/{dsid}/associated_files", response_model = AssociatedFile)
@@ -602,6 +603,7 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)], dsid: s
 
         session.add(ds)
         session.commit()
+        session.close()
         return(af_obj)
  
 
@@ -643,7 +645,7 @@ def add_keyword(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, keyw
         return(kw_obj)
 
 
-@app.get("/datasets/{dsid}/drive_location", response_model = DataDriveLocation)
+@app.get("/datasets/{dsid}/drive_location", response_model = Union[None, DataDriveLocation])
 def read_dataset_drive_location(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of DataDriveLocation objects with one object for each location in google drive where the dataset is currently located.
@@ -687,7 +689,7 @@ def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user
     return(drive_info)
 
 
-@app.get("/datasets/{dsid}/access_groups", response_model = DatasetACL)
+@app.get("/datasets/{dsid}/access_groups", response_model = Union[None,DatasetACL])
 def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     with Session(engine) as session:
         ds_acl = session.exec(select(AccessGroup).select_from(join(AccessGroup, join(DatasetACL, 
@@ -704,6 +706,7 @@ def sql_create_ds_acl(ag, ds, read, write, session):
         acl.write = write
         session.add(acl)
         session.commit()
+        session.close()
     return(acl)
 
 
@@ -726,7 +729,7 @@ def create_dataset_collection(ag_ids:  Annotated[str, Depends(authorize_user)], 
     return(dc)
 
 
-@app.get("/dataset_collections/{dcid}", response_model = DatasetCollection)
+@app.get("/dataset_collections/{dcid}", response_model = Union[None, DatasetCollection])
 def read_dataset_collection(admin_acct: Annotated[str, Depends(is_admin)], dcid: str):
     with Session(engine) as session:
         dc = session.exec(select(DatasetCollection).where(DatasetCollection.unique_id == dcid)).one_or_none()
@@ -754,10 +757,11 @@ def create_access_group(admin_acct: Annotated[str, Depends(is_admin)], ag: Acces
     with Session(engine) as session:
         session.add(ag)
         session.commit()
+        session.close()
     return(ag)
 
 
-@app.get("/access_groups/{group_name}", response_model = AccessGroup)
+@app.get("/access_groups/{group_name}", response_model = Union[None, AccessGroup])
 def read_access_group(admin_acct: Annotated[str, Depends(is_admin)], group_name: str):
     with Session(engine) as session:
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
@@ -776,7 +780,7 @@ def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orci
             ag.users.append(user)
 
         session.commit()
-        
+        session.close()
     return(ag)
 
 
@@ -828,7 +832,7 @@ def list_instrument(ag_ids: Annotated[str, Depends(authorize_user)], request: Re
         return(all_inst)
 
 
-@app.get("instruments/{instrument_unique_id}", response_model = Instrument)
+@app.get("instruments/{instrument_unique_id}", response_model = Union[None, Instrument])
 def read_instrument(admin_acct: Annotated[str, Depends(is_admin)], instrument_unique_id: str):
     '''
     Returns an instrument with the provided ID if one exists. Otherwise returns None. 
@@ -853,7 +857,7 @@ def create_instrument(ag_ids:  Annotated[str, Depends(authorize_user)], instrume
     with Session(engine) as session:
         session.add(instrument)
         session.commit()
-    
+        session.close()
     return(instrument)
 
 
@@ -877,7 +881,7 @@ def list_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], req
     return(drives)
 
 
-@app.get("/google_drives/{drive_id}", response_model = GoogleDrives)
+@app.get("/google_drives/{drive_id}", response_model = Union[None, GoogleDrives])
 def read_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], drive_id: str):
     """
     Add or update a Google Drive record in the database.
@@ -916,7 +920,7 @@ def create_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], D
                                    **D)
                 
                 session.commit()
-                    
+                session.close()
             except Exception as err:
                 print(err)
 
@@ -948,7 +952,7 @@ def list_users(admin_acct:  Annotated[str, Depends(is_admin)], request: Request,
         return users
 
 
-@app.get("/users/{orcid}", response_model = User)
+@app.get("/users/{orcid}", response_model = Union[None, User])
 def read_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
     '''
     Returns the User object associated with the provided ORCID if found. Otherwise returns None. 
@@ -980,7 +984,7 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
             # add user to user table
             user = add_or_update(session, User, User.orcid == user_info.orcid, **dict(user_info))
             session.commit()
-        
+            
             apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/3")
             requests.request("post", url =  f"{api_url}/users/{user.orcid}/access_groups/{user.orcid}", headers = {"Authorization":f"Bearer {apikey}"})
         
@@ -1008,7 +1012,7 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
         
             session.add(user)
             session.commit()
-
+            session.close()
     return(user_info)
 
 
@@ -1087,7 +1091,7 @@ def create_project(admin_acct:  Annotated[str, Depends(is_admin)], P: Project):
                 project_lead.append(prop)
 
         session.commit()
-
+        session.close()
     return(P)
 
 
@@ -1101,7 +1105,7 @@ def list_projects(admin_acct:  Annotated[str, Depends(is_admin)]):
         return(props)
 
 
-@app.get("/projects/{proj_id}", response_model = Project)
+@app.get("/projects/{proj_id}", response_model = Union[None, Project])
 def read_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_admin)]):
     '''
     Returns the project object for the provided ID

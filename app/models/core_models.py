@@ -48,7 +48,7 @@ class DatasetCollectionLink(SQLModel, table=True):
 
 class DatasetCollection(SQLModel, table = True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    unique_id: str = Field(default = mfid()[0], index = True)
+    unique_id: str = Field(default_factory = mfid()[0], index = True)
     date_created: Optional[str] = None
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="collections", link_model=DatasetCollectionLink)
@@ -65,7 +65,7 @@ class DatasetSampleLink(SQLModel, table=True):
 
 class Sample(SQLModel, table = True):
     id: Optional[int] = Field(default = None, primary_key = True)
-    unique_id: str = Field(default = mfid()[0],index = True, unique = True)
+    unique_id: str = Field(default_factory = mfid()[0],index = True, unique = True)
     owner_user_id: int = Field(default=None, index=True, foreign_key="user.id")
     date_created: Optional[str] = None
     description: Optional[str]
@@ -74,7 +74,7 @@ class Sample(SQLModel, table = True):
 
 class Dataset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    unique_id: str = Field(default = mfid()[0], index=True, unique=True)
+    unique_id: str = Field(default_factory = mfid()[0], index=True, unique=True)
     public: bool = Field(default = False, index = True)
     dataset_name: Optional[str] = Field(default = "") 
     file_to_upload: Optional[str] = Field(default = None)  

@@ -238,12 +238,12 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
 
         # set appropriate access controls
         ro = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": "read_only", "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
         
         admin = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": "admin", "read": True, "write": True}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
         
@@ -251,21 +251,21 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         if dataset.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id))
             user_ag = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": user_orcid, "read": True, "write": True}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
 
         if dataset.project_id is not None:
             prop_name = session.exec(select(Project.project_name).where(Project.id == dataset.project_id))
             prop_ag = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": prop_name, "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
 
         if dataset.instrument_id is not None:
             inst_name = session.exec(select(Instrument.name).where(Instrument.id == dataset.instrument_id))
             inst_ag = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": inst_name, "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
             
@@ -443,21 +443,21 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
         if updated_dataset.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == updated_dataset.owner_user_id))
             user_ag = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": user_orcid, "read": True, "write": True}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
 
         if updated_dataset.project_id is not None:
             prop_name = session.exec(select(Project.project_name).where(Project.id == updated_dataset.project_id))
             prop_ag = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": prop_name, "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
 
         if updated_dataset.instrument_id is not None:
             inst_name = session.exec(select(Instrument.name).where(Instrument.id == updated_dataset.instrument_id))
             inst_ag = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.id}/access_groups", 
+                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": inst_name, "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
             

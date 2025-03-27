@@ -480,7 +480,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
 
 
 @app.get("/datasets", response_model = List[Dataset])
-def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request = Request):
+def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request: Request):
     '''
     Returns a list of all dataset IDs the requesting user is authorized to view. 
     If no dataset IDs are authorized for the user, an empty list will be returned. 
@@ -733,7 +733,7 @@ def read_dataset_collection(admin_acct: Annotated[str, Depends(is_admin)], dcid:
 
 
 @app.get("/dataset_collections", response_model = List[DatasetCollection])
-def list_dataset_collections(admin_acct: Annotated[str, Depends(is_admin)], request = Request):
+def list_dataset_collections(admin_acct: Annotated[str, Depends(is_admin)], request: Request):
     query_params = request.query_params
     params_dict = dict(query_params)
 
@@ -800,7 +800,7 @@ def read_keyword(keyword: str, permissive: bool = True):
 
 
 @app.get("/instruments", response_model = List[Instrument])
-def list_instrument(ag_ids: Annotated[str, Depends(authorize_user)], request = Request):
+def list_instrument(ag_ids: Annotated[str, Depends(authorize_user)], request: Request):
     '''
     Returns a list of instruments filtered by any provided search terms that are attributes of the instrument Class. 
     If no instruments matching the search criteria are found, an empty list is returned.  
@@ -857,7 +857,7 @@ def create_instrument(ag_ids:  Annotated[str, Depends(authorize_user)], instrume
 
 
 @app.get("/google_drives", response_model = List[GoogleDrives])
-def list_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], request = Request):
+def list_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], request: Request):
     """
     Returns a list of google drive information
     """

@@ -307,7 +307,7 @@ async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(descr
     # get the dataset
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        ds.file_to_upload == file.filename
+        ds.file_to_upload = file.filename
         session.add(ds)
         session.commit()
         session.refresh(ds)
@@ -516,7 +516,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
         return ds
 
 
-@app.get("/datasets", response_model = List[Dataset])
+@app.get("/datasets", response_model = List[str])
 def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request: Request):
     '''
     Returns a list of all dataset IDs the requesting user is authorized to view. 

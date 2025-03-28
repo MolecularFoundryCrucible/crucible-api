@@ -183,8 +183,7 @@ def regenerate_apikey(request: Request):
 # TODO: use agids to authorize for all endpoints
 @app.post("/datasets", response_model = Dataset)
 async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
-                         dataset: Dataset, 
-                         file: Optional[Annotated[UploadFile, File(description="A file read as UploadFile")]] = None):
+                         dataset: Dataset):
     """
     Create a new dataset in Crucible by provided a dataset object and optionally the file that you wish to create the dataset from. 
     If a file is provided the contents will be uploaded to the crucible-uploads bucket and saved to the relative path defined by filename. 
@@ -286,9 +285,9 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
 
 
 @app.post("/datasets/{dsid}/upload", response_model = Dataset)
-async def create_dataset_from_file_upload(ag_ids:  Annotated[str, Depends(authorize_user)],
-                                          dsid: str, 
-                                          file: Optional[Annotated[UploadFile, File(description="A file read as UploadFile")]] = None):
+async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(description="A file read as UploadFile")],
+                                          ag_ids:  Annotated[str, Depends(authorize_user)],
+                                          dsid: str):
     '''
     Given an existing dataset record - adds data from an uploaded file
     - makes user call 2 endpoints 1) /datasets 2) /datasets/{dsid}/upload
@@ -298,7 +297,8 @@ async def create_dataset_from_file_upload(ag_ids:  Annotated[str, Depends(author
 
     Better than the other way because you would have to use FormData instead of "Dataset" model to combo with File
     '''
-
+    print(dsid)
+    print(file)
     # upload the file
     save_file_path = f"/root/uploads/{file.filename}"
     with open(save_file_path, "wb") as f:

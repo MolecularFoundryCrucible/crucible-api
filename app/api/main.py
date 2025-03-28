@@ -340,15 +340,17 @@ def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], d
 
 
     '''
+    print("request received")
     pst= pytz.timezone("America/Los_Angeles")
     creation_time = datetime.datetime.now(pst).isoformat()
-    ingestion_request = IngestionRequest({"dataset_id": dsid, "time_created": creation_time, "file_to_upload": dataset.file_to_upload})
+    ingestion_request = IngestionRequest(dataset_id= dsid, time_created=creation_time, file_to_upload= dataset.file_to_upload)
     with Session(engine) as session:
         session.add(ingestion_request)
         session.commit()
+        print('committed')
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
     send_pika_message(message = dataset.file_to_upload, exchange= "", routing_key= "ingest-newapi", user = 'admin', rmq_pw= rmq_pw)
-
+    print('message received')
     return ingestion_request
 
 

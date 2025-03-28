@@ -284,7 +284,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
     return ds
 
 
-@app.post("/datasets/{dsid}/upload", response_model = Dataset)
+@app.post("/datasets/{dsid}/upload", response_model = IngestionRequest)
 async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(description="A file read as UploadFile")],
                                           ag_ids:  Annotated[str, Depends(authorize_user)],
                                           dsid: str):
@@ -307,19 +307,24 @@ async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(descr
     # get the dataset
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-    ds.file_to_upload == file.filename
-    session.add(ds)
-    session.commit()
-
+        ds.file_to_upload == file.filename
+        session.add(ds)
+        session.commit()
+        session.refresh(ds)
     # call ingest endpoint 
     print('connecting to ingestion endpoint')
     #payload  = {"dataset": dict(ds)}
-
+    import time
+    stime = time.time()
     apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/3")
+    tmp = time.time() - stime
+    print(round(tmp,2))
     ing_req = requests.post(url = f"{api_url}/datasets/{dsid}/ingest",  
                        headers = {"Authorization":f"Bearer {apikey}"}, 
-                       json = dict(ds)   #TODO: check this request format
+                       json = {"dataset":dict(ds)}   #TODO: check this request format
                         )
+    tmp = time.time() - stime
+    print(round(tmp,2))
     print('sent ingestion request')
     return(ing_req)
 
@@ -335,12 +340,13 @@ def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], d
       - rmq consumer needs to be updated to expect a dsid
       - ingestion class methods need to use the dsid provided ...
       - Need to consider how the system works when a dsid exists INSIDE the file
-
+Dataset
     Done - To follow the setup of the other "request functions" this should result in a record being created in the "IngestionRequest" table. 
 
 
     '''
     print("request received")
+    print(dict(dataset))
     pst= pytz.timezone("America/Los_Angeles")
     creation_time = datetime.datetime.now(pst).isoformat()
     ingestion_request = IngestionRequest(dataset_id= dsid, time_created=creation_time, file_to_upload= dataset.file_to_upload)
@@ -350,7 +356,7 @@ def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], d
         print('committed')
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
     send_pika_message(message = dataset.file_to_upload, exchange= "", routing_key= "ingest-newapi", user = 'admin', rmq_pw= rmq_pw)
-    print('message received')
+    print('message sent')
     return ingestion_request
 
 

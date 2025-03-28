@@ -316,13 +316,7 @@ async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(descr
     #payload  = {"dataset": dict(ds)}
     import time
     stime = time.time()
-    apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/3")
-    tmp = time.time() - stime
-    print(round(tmp,2))
-    ing_req = requests.post(url = f"{api_url}/datasets/{dsid}/ingest",  
-                       headers = {"Authorization":f"Bearer {apikey}"}, 
-                       json = {"dataset":dict(ds)}   #TODO: check this request format
-                        )
+    ing_req = request_dataset_ingestion(ag_ids, dsid, ds)
     tmp = time.time() - stime
     print(round(tmp,2))
     print('sent ingestion request')
@@ -349,7 +343,7 @@ Dataset
     print(dict(dataset))
     pst= pytz.timezone("America/Los_Angeles")
     creation_time = datetime.datetime.now(pst).isoformat()
-    ingestion_request = IngestionRequest(dataset_id= dsid, time_created=creation_time, file_to_upload= dataset.file_to_upload)
+    ingestion_request = IngestionRequest(dataset_id = dsid, time_created=creation_time, file_to_upload= dataset.file_to_upload)
     with Session(engine) as session:
         session.add(ingestion_request)
         session.commit()

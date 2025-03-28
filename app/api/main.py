@@ -313,15 +313,15 @@ async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(descr
 
     # call ingest endpoint 
     print('connecting to ingestion endpoint')
-    payload  = {"dataset": dsid}
+    #payload  = {"dataset": dict(ds)}
 
     apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/3")
-    ds = requests.post(url = f"{api_url}/datasets/{dsid}/ingest",  
-                        headers = {"Authorization":f"Bearer {apikey}"}, 
-                        data = payload   #TODO: check this request format
+    ing_req = requests.post(url = f"{api_url}/datasets/{dsid}/ingest",  
+                       headers = {"Authorization":f"Bearer {apikey}"}, 
+                       json = dict(ds)   #TODO: check this request format
                         )
     print('sent ingestion request')
-
+    return(ing_req)
 
 
 @app.post("/datasets/{dsid}/ingest", response_model = IngestionRequest)

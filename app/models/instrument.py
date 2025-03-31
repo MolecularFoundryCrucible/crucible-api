@@ -1,22 +1,18 @@
 from typing import Optional
 from sqlmodel import Field, SQLModel
+from mfid import mfid
 
 
-# class DatasetInstrumentLink(SQLModel, table=True):
-#     instrument_id: Optional[int] = Field(
-#         default=None, foreign_key="instrument.id", primary_key=True,
-#         index=True
-#     )
-#     dataset_id: Optional[int] = Field(
-#         default=None, foreign_key="dataset.id", primary_key=True
-#     )
+def get_mfid_value():
+    x = mfid()[0]
+    return(x)
 
 
 class Instrument(SQLModel, table = True):
     id: int = Field(default=None, primary_key=True)
-    unique_id: str 
-    other_id: str
-    other_id_source: str
+    unique_id: Optional[str] = Field(default_factory=get_mfid_value)
+    other_id: Optional[str]
+    other_id_source: Optional[str]
     instrument_name: str
     manufacturer: Optional[str]
     model: Optional[str]

@@ -1061,7 +1061,7 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
     return(user_info)
 
 
-@app.get("/users/{orcid}/datasets", response_model = List[Dataset])
+@app.get("/users/{orcid}/datasets", response_model = List[str])
 def read_user_datasets(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     '''
     Returns a list of all the datasets the user has access to based on the ORCID provided. 
@@ -1070,7 +1070,7 @@ def read_user_datasets(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]
         ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.orcid == orcid)).all()
         ag_ids = [x.accessgroup_id for x in ag]
         ds_list =session.exec(select(Dataset).select_from(join(DatasetACL, Dataset, DatasetACL.dataset_id == Dataset.id)).where(DatasetACL.accessgroup_id.in_(ag_ids))).all()
-        return ds_list
+        return [ds.unique_id for ds in ds_list]
 
 
 @app.get("/users/{orcid}/datasets/{dsid}", response_model = Dict)

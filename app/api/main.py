@@ -221,7 +221,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
     with Session(engine) as session:
 
         #newds = table_obj_to_dict(dataset)
-        ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id, **dict(Dataset))
+        ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id, **dict(dataset))
         print(ds)
         print("added ds")
         session.commit()
@@ -801,10 +801,9 @@ def list_dataset_collections(admin_acct: Annotated[str, Depends(is_admin)], requ
 @app.post("/access_groups", response_model = AccessGroup)
 def create_access_group(admin_acct: Annotated[str, Depends(is_admin)], ag: AccessGroup):
     with Session(engine) as session:
-        ag_ob = session.add(ag)
+        session.add(ag)
         session.commit()
-        session.refresh(ag_ob)
-    return(ag_ob)
+    return(ag)
 
 
 @app.get("/access_groups/{group_name}", response_model = Union[None, AccessGroup])

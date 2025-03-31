@@ -583,15 +583,17 @@ def read_thumbnails(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
 
 
 @app.post("/datasets/{dsid}/thumbnails", response_model = Thumbnail)
-def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, thumbnail: str):
+def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)], 
+                  dsid: str, 
+                  thumbnail: Thumbnail):
     '''
     Adds a thumbnail to a dataset. If the thumbnail exists, it will simply add the existing thumbnail to the dataset object. 
     Otherwise, the thumbnail will be created and then added to the dataset. 
     '''
     with Session(engine) as session:
-        tn_obj = add_or_update(session, Thumbnail, where=(Thumbnail.thumbnail_b64str == thumbnail['thumbnail']),
-                        thumbnail_name = thumbnail['caption'], 
-                        thumbnail_b64str = thumbnail['thumbnail'])
+        tn_obj = add_or_update(session, Thumbnail, where=(Thumbnail.thumbnail_b64str == thumbnail.thumbnail_b64str),
+                        thumbnail_name = thumbnail.thumbnail_name, 
+                        thumbnail_b64str = thumbnail.thumbnail_b64str)
         
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
     
@@ -791,9 +793,10 @@ def list_dataset_collections(admin_acct: Annotated[str, Depends(is_admin)], requ
 @app.post("/access_groups", response_model = AccessGroup)
 def create_access_group(admin_acct: Annotated[str, Depends(is_admin)], ag: AccessGroup):
     with Session(engine) as session:
-        session.add(ag)
+        ag_ob = session.add(ag)
         session.commit()
-    return(ag)
+        session.refresh(ag_ob)
+    return(ag_ob)
 
 
 @app.get("/access_groups/{group_name}", response_model = Union[None, AccessGroup])
@@ -815,6 +818,7 @@ def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orci
             ag.users.append(user)
 
         session.commit()
+        session.refresh(ag)
     return(ag)
 
 

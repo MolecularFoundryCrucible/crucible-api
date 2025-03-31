@@ -476,7 +476,6 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
     else:
         pass
     
-    apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/3")
 
     with Session(engine) as session:
         ds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **dict(updated_dataset))
@@ -498,7 +497,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
             inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
             inst_acl = sql_create_ds_acl(inst_ag, ds, read = True, write = True, session=session) 
             print('add instrument group access')
-
+        
         session.commit()
         session.refresh(ds)
         message = json.dumps(dict(ds))
@@ -729,6 +728,10 @@ def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user
     elif len(ds_list) == 0:
         raise HTTPException(status_code=402, detail="Dataset not found")
     else:
+        add_or_update(session, GoogleDrives, GoogleDrives.drive_id == drive_info.drive_id, drive_name = drive_info.drive_name)
+        session.commit()
+
+    with Session(engine) as session:
         add_or_update(session, 
                       DataDriveLocation,
                       DataDriveLocation.folder_id == drive_info.folder_id, 

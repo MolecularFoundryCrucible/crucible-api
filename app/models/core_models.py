@@ -54,6 +54,7 @@ class DatasetCollectionLink(SQLModel, table=True):
 class DatasetCollection(SQLModel, table = True):
     id: Optional[int] = Field(default=None, primary_key=True)
     unique_id: str = Field(default_factory = get_mfid_value, index = True)
+    other_id: Optional[str] = None
     date_created: Optional[str] = None
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="collections", link_model=DatasetCollectionLink)

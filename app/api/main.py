@@ -231,7 +231,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         # if dataset.id is None:
         #     add_ds.pop("id")
         print(dict(dataset))
-        ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id, **dict(dataset))
+        ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id)
         print(ds)
         print("added ds")
         session.commit()
@@ -470,6 +470,8 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
         raise HTTPException(status_code=402, detail="Dataset not found")
     elif len(ds_list) == 0:
         raise HTTPException(status_code=402, detail="Dataset not found")
+    elif len(ds_list) == 1:
+        updated_dataset.id = ds_list[-1].id
     else:
         pass
     
@@ -497,9 +499,9 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
                             url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
                             params = {"group_name": inst_name, "read": True, "write": False}, 
                             headers = {"Authorization":f"Bearer {apikey}"})
-            
-
-        message = json.dumps(updated_dataset)
+        session.commit()
+        session.refresh(updated_dataset)
+        message = json.dumps(dict(updated_dataset))
         rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
     
         # TODO: check how dsupdate and dsupdate-owner consumers differ / what are the inputs expected --- can we consolidate?
@@ -511,7 +513,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
         # message = json.dumps({"dataset_to_update": updated_dataset.unique_id, "updated_info": dict(updated_dataset)})
         # and for ownership it would look like: 
         # message = json.dumps({"dataset_to_update": updated_dataset.unique_id, "updated_ownership_info": dict(Owner(subset of updated_dataset))})
-        send_pika_message(message, exchange = "", routing_key= "dsupdate", user = 'admin', rmq_pw= rmq_pw)
+        send_pika_message(message, exchange = "", routing_key= "dsupdate-newapi", user = 'admin', rmq_pw= rmq_pw)
 
         return ds
 

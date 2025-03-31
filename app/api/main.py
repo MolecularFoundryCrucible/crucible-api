@@ -624,7 +624,9 @@ def read_associated_files(ag_ids: Annotated[str, Depends(authorize_user)], dsid:
 
 
 @app.post("/datasets/{dsid}/associated_files", response_model = AssociatedFile)
-def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, associated_file: AssociatedFile):
+def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)], 
+                        dsid: str, 
+                        associated_file: AssociatedFile):
     '''
     Adds an associated file to a dataset. 
     Creates the AF object if it doesn't already exist.
@@ -635,7 +637,9 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)], dsid: s
                                        size = associated_file.size,
                                        sha256_hash = associated_file.sha256_hash)
 
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    
+    with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:

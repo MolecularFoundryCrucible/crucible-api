@@ -1158,7 +1158,7 @@ def read_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_admin)]):
     Returns the project object for the provided ID
     '''
     with Session(engine) as session:
-        prop = session.exec(select(Project).where(Project.id == proj_id)).one_or_none()
+        prop = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         return(prop)
 
 

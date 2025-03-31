@@ -85,7 +85,7 @@ class Dataset(SQLModel, table=True):
     dataset_name: Optional[str] = Field(default = "") 
     file_to_upload: Optional[str] = Field(default = None)  
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
-    project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.id")
+    project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")
     instrument_id: Optional[int]  = Field(default = None, index = True, foreign_key = "instrument.id")
     source_folder: Optional[str] # folder where the data was synced from (on instrument PC)
     creation_time: Optional[str]
@@ -139,7 +139,7 @@ class UserProjectLink(SQLModel, table=True):
         default=None, foreign_key="user.id", primary_key=True
     )
     project_id: Optional[str] = Field(
-        default=None, foreign_key="project.id", primary_key=True
+        default=None, foreign_key="project.project_id", primary_key=True
     )
 
 
@@ -161,7 +161,7 @@ class Project(SQLModel, table=True):
     assigned_scientist >> project lead
     '''
     id: Optional[int] = Field(default=None, primary_key=True)
-    project_name: str = Field(index=True, unique=True)
+    project_id: str = Field(index=True, unique=True)
     organization: str 
     status: Optional[str]
     title: Optional[str]

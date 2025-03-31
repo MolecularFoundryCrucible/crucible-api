@@ -243,7 +243,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
             print('add owner orcid access')
 
         if dataset.project_id is not None:
-            prop_name = session.exec(select(Project.project_name).where(Project.id == dataset.project_id))
+            prop_name = session.exec(select(Project.project_name).where(Project.project_id == dataset.project_id))
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
             prop_acl = sql_create_ds_acl(prop_ag, ds, read = True, write = True, session=session)
             print('add proposal access')
@@ -477,7 +477,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
             print('add owner orcid access')
 
         if updated_dataset.project_id is not None:
-            prop_name = session.exec(select(Project.project_name).where(Project.id == updated_dataset.project_id))
+            prop_name = session.exec(select(Project.project_name).where(Project.project_id == updated_dataset.project_id))
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
             prop_acl = sql_create_ds_acl(prop_ag, ds, read = True, write = True, session=session)
             print('add proposal access')
@@ -1101,7 +1101,7 @@ def read_projects_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_ad
     with Session(engine) as session:
         user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
         user_id = user.id
-        projects = session.exec(select(Project).select_from(join(Project, UserProjectLink, Project.id == UserProjectLink.project_id)).where(UserProjectLink.user_id == user_id)).all()
+        projects = session.exec(select(Project).select_from(join(Project, UserProjectLink, Project.project_id == UserProjectLink.project_id)).where(UserProjectLink.user_id == user_id)).all()
         return projects
     
 

@@ -1070,6 +1070,7 @@ def read_user_datasets(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]
         ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.orcid == orcid)).all()
         ag_ids = [x.accessgroup_id for x in ag]
         ds_list =session.exec(select(Dataset).select_from(join(DatasetACL, Dataset, DatasetACL.dataset_id == Dataset.id)).where(DatasetACL.accessgroup_id.in_(ag_ids))).all()
+        
         return [ds.unique_id for ds in ds_list]
 
 
@@ -1120,8 +1121,8 @@ def create_project(admin_acct:  Annotated[str, Depends(is_admin)], P: Project):
         prop = add_or_update(session, Project,  Project.id == P.id, **dict(P))
         ag = add_or_update(session, 
                       AccessGroup, 
-                      AccessGroup.group_name==P.name, 
-                      group_name=P.name)
+                      AccessGroup.group_name==P.project_name, 
+                      group_name=P.project_name)
         
         r1 = session.exec(select(User).where(User.lbl_email.ilike(f"%{P.project_lead_email}%"))).one_or_none()
         r2 = session.exec(select(User).where(User.email.ilike(f"%{P.project_lead_email}%"))).one_or_none()

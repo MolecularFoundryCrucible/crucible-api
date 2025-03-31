@@ -160,7 +160,7 @@ class Project(SQLModel, table=True):
     add project name and "project" to prefix of field names
     assigned_scientist >> project lead
     '''
-    id: str = Field(default=None, primary_key=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
     project_name: str = Field(index=True, unique=True)
     organization: str 
     status: Optional[str]

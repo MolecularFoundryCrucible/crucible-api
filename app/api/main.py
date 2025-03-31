@@ -1027,7 +1027,8 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
     with Session(engine) as session:
         if True:
             # add user to user table
-            user = add_or_update(session, User, User.orcid == user_info.orcid, **dict(user_info))
+            user_dict = table_obj_to_dict(user_info)
+            user = add_or_update(session, User, User.orcid == user_info.orcid, **user_dict)
             session.commit()
             
             apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/3")

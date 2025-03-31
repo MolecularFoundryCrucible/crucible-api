@@ -731,8 +731,7 @@ def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user
     else:
         add_or_update(session, 
                       DataDriveLocation,
-                      DataDriveLocation.folder_id == drive_info.folder_id,
-                      dataset_id = dsid, 
+                      DataDriveLocation.folder_id == drive_info.folder_id, 
                       **dict(drive_info))
         session.commit()
         session.refresh(drive_info)

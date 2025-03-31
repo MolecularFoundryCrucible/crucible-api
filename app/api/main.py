@@ -472,6 +472,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
         raise HTTPException(status_code=402, detail="Dataset not found")
     elif len(ds_list) == 1:
         updated_dataset.id = ds_list[-1].id
+        print(f"{updated_dataset=}")
     else:
         pass
     
@@ -479,29 +480,28 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
 
     with Session(engine) as session:
         ds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **dict(updated_dataset))
+
         if updated_dataset.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == updated_dataset.owner_user_id))
-            user_ag = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
-                            params = {"group_name": user_orcid, "read": True, "write": True}, 
-                            headers = {"Authorization":f"Bearer {apikey}"})
+            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
+            user_acl = sql_create_ds_acl(user_ag, ds, read = True, write = True, session=session)
+            print('add owner orcid access')
 
         if updated_dataset.project_id is not None:
             prop_name = session.exec(select(Project.project_name).where(Project.id == updated_dataset.project_id))
-            prop_ag = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
-                            params = {"group_name": prop_name, "read": True, "write": False}, 
-                            headers = {"Authorization":f"Bearer {apikey}"})
+            prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
+            prop_acl = sql_create_ds_acl(prop_ag, ds, read = True, write = True, session=session)
+            print('add proposal access')
 
         if updated_dataset.instrument_id is not None:
             inst_name = session.exec(select(Instrument.name).where(Instrument.id == updated_dataset.instrument_id))
-            inst_ag = requests.request("post",
-                            url =  f"{api_url}/datasets/{ds.unique_id}/access_groups", 
-                            params = {"group_name": inst_name, "read": True, "write": False}, 
-                            headers = {"Authorization":f"Bearer {apikey}"})
+            inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
+            inst_acl = sql_create_ds_acl(inst_ag, ds, read = True, write = True, session=session) 
+            print('add instrument group access')
+
         session.commit()
-        session.refresh(updated_dataset)
-        message = json.dumps(dict(updated_dataset))
+        session.refresh(ds)
+        message = json.dumps(dict(ds))
         rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
     
         # TODO: check how dsupdate and dsupdate-owner consumers differ / what are the inputs expected --- can we consolidate?

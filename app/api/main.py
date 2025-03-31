@@ -1008,7 +1008,7 @@ def read_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
 
 
 @app.post("/users", response_model = User)
-def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User, project_names: List[str] = Body(...)):  
+def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User, project_ids: List[str] = Body(...)):  
     """
     Add or update a user record in the database.
     Add the user to an Access Group with their ORCID
@@ -1037,8 +1037,8 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
             # 1. get the project object from the database
             # 2. add the project to the user object
             # 3. add an access group for the project, named by the project and add the user to the access group
-            for pname in project_names:
-                props = session.exec(select(Project).where(Project.project_name == pname)).all()
+            for pname in project_ids:
+                props = session.exec(select(Project).where(Project.project_id == pname)).all()
                 if len(props) != 1:
                     print(f"Projects found for {pname}: {props} --- skipping.  Please ensure a project exists with a unique name.")
                     continue

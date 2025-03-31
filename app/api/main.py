@@ -607,6 +607,7 @@ def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)],
             ds.thumbnails.append(tn_obj)
         session.add(ds)
         session.commit()
+        session.refresh(tn_obj)
         return(tn_obj)
 
 
@@ -630,7 +631,9 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)], dsid: s
     '''
     with Session(engine) as session:
         af_obj = add_or_update(session, AssociatedFile, where=(AssociatedFile.filename == associated_file.filename),
-                                       **dict(associated_file))
+                                       filename = associated_file.filename, 
+                                       size = associated_file.size,
+                                       sha256_hash = associated_file.sha256_hash)
 
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
         ds = session.exec(ds_cmd).one_or_none()
@@ -643,6 +646,7 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)], dsid: s
 
         session.add(ds)
         session.commit()
+        session.refresh(af_obj)
         return(af_obj)
  
 
@@ -681,6 +685,7 @@ def add_keyword(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, keyw
         session.add(kw_obj)
         session.add(ds)
         session.commit()
+        session.refresh(kw_obj)
         return(kw_obj)
 
 
@@ -724,7 +729,7 @@ def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user
                       dataset_id = dsid, 
                       **dict(drive_info))
         session.commit()
-
+        session.refresh(drive_info)
     return(drive_info)
 
 
@@ -745,6 +750,7 @@ def sql_create_ds_acl(ag, ds, read, write, session):
         acl.write = write
         session.add(acl)
         session.commit()
+        session.refresh(acl)
     return(acl)
 
 
@@ -764,6 +770,7 @@ def create_dataset_collection(ag_ids:  Annotated[str, Depends(authorize_user)], 
     with Session(engine) as session:
         session.add(dc)
         session.commit()
+        session.refresh(dc)
     return(dc)
 
 
@@ -895,6 +902,7 @@ def create_instrument(ag_ids:  Annotated[str, Depends(authorize_user)], instrume
     with Session(engine) as session:
         session.add(instrument)
         session.commit()
+        session.refresh(instrument)
     return(instrument)
 
 
@@ -957,6 +965,7 @@ def create_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], D
                                    **D)
                 
                 session.commit()
+                session.refresh(dr)
             except Exception as err:
                 print(err)
 

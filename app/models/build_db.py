@@ -6,7 +6,7 @@ from app.models.misc import *
 from app.models.tasks import *
 from app.utils.sql_utils import setup_engine
 
-engine = setup_engine("conf/crucible-db-local.yaml")
+engine = setup_engine("~/Git/CrucibleRefactor/crucible-api/app/conf/crucible-db-local.yaml")
 SQLModel.metadata.create_all(engine)
 
 

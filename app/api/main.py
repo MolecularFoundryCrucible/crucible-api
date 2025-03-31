@@ -243,7 +243,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
             print('add owner orcid access')
 
         if dataset.project_id is not None:
-            prop_name = session.exec(select(Project.project_name).where(Project.project_id == dataset.project_id))
+            prop_name = session.exec(select(Project.project_id).where(Project.project_id == dataset.project_id))
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
             prop_acl = sql_create_ds_acl(prop_ag, ds, read = True, write = True, session=session)
             print('add proposal access')
@@ -1122,8 +1122,8 @@ def create_project(admin_acct:  Annotated[str, Depends(is_admin)], P: Project):
         prop = add_or_update(session, Project,  Project.id == P.id, **dict(P))
         ag = add_or_update(session, 
                       AccessGroup, 
-                      AccessGroup.group_name==P.project_name, 
-                      group_name=P.project_name)
+                      AccessGroup.group_name==P.project_id, 
+                      group_name=P.project_id)
         
         r1 = session.exec(select(User).where(User.lbl_email.ilike(f"%{P.project_lead_email}%"))).one_or_none()
         r2 = session.exec(select(User).where(User.email.ilike(f"%{P.project_lead_email}%"))).one_or_none()

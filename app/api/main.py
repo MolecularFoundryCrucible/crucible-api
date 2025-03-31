@@ -19,7 +19,7 @@ from sqlalchemy import join, func
 from sqlalchemy.sql import and_
 
 from app.general_utils import get_secret
-from app.utils.sql_utils import setup_engine, add_or_update
+from app.utils.sql_utils import setup_engine, add_or_update, table_obj_to_dict
 from app.utils.rmq_utils import send_pika_message
 
 
@@ -226,12 +226,8 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
     # apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/3")
     with Session(engine) as session:
 
-        # add any existing information about the dataset to the SQL database
-        # add_ds = dict(dataset)
-        # if dataset.id is None:
-        #     add_ds.pop("id")
-        print(dict(dataset))
-        ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id)
+        #newds = table_obj_to_dict(dataset)
+        ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id, **dict(Dataset))
         print(ds)
         print("added ds")
         session.commit()
@@ -460,7 +456,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
     Updates a dataset in SQL and returns the Updated Dataset object. 
     Sends a message to RabbitMQ to alert RMQ that updates have been made.
     '''
-
+    #newds = table_obj_to_dict(updated_dataset)
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
     
     with Session(engine) as session:
@@ -728,18 +724,21 @@ def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user
     elif len(ds_list) == 0:
         raise HTTPException(status_code=402, detail="Dataset not found")
     else:
-        add_or_update(session, GoogleDrives, GoogleDrives.drive_id == drive_info.drive_id, drive_name = drive_info.drive_name)
-        session.commit()
-
+        pass
     with Session(engine) as session:
-        add_or_update(session, 
+        d_info = table_obj_to_dict(drive_info)
+        add_or_update(session, GoogleDrives, GoogleDrives.drive_id == drive_info.drive_id, drive_id = drive_info.drive_id, drive_name = drive_info.drive_name)
+        drive_loc = add_or_update(session, 
                       DataDriveLocation,
                       DataDriveLocation.folder_id == drive_info.folder_id, 
-                      **dict(drive_info))
+                      **d_info)
         session.commit()
-        session.refresh(drive_info)
-    return(drive_info)
+        session.refresh(drive_loc)
+    return(drive_loc)
 
+
+
+    
 
 @app.get("/datasets/{dsid}/access_groups", response_model = Union[None,DatasetACL])
 def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):

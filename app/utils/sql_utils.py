@@ -44,7 +44,17 @@ def get_any(d, keys, default=None):
            return d[k]
     return default
 
-
+def table_obj_to_dict(obj):
+    d = dict(obj)
+    if not 'id' in d.keys():
+        return(d)
+    elif d['id'] is not None:
+        return(d)
+    else:
+        d.pop('id')
+        return(d)
+    
+    
 def add_or_update(session, cls, where, **kwargs):
     statement = select(cls).where(where)
     obj = session.exec(statement).one_or_none()

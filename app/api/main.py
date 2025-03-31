@@ -40,14 +40,8 @@ app = FastAPI()
 security = HTTPBearer()
 
 
-
-
-
 # ====== Database config
 connect_args = {"check_same_thread": False}
-
-
-
 
 home_dir = os.getenv("HOME")
 db_config_tmp = os.getenv("DB_CONF_FILE")
@@ -1015,7 +1009,7 @@ def read_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
 
 
 @app.post("/users", response_model = User)
-def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User, project_names: List):  
+def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User, project_names: List[str] = Body(...)):  
     """
     Add or update a user record in the database.
     Add the user to an Access Group with their ORCID
@@ -1090,11 +1084,13 @@ def read_user_access_to_dataset(dsid: str, orcid: str, admin_acct: Annotated[str
         ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.orcid == orcid)).all()
         ag_ids = [x.accessgroup_id for x in ag]
         ds_acl = session.exec(select(DatasetACL).select_from(join(DatasetACL, Dataset, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))).all()
-        if len(ds_acl) > 0:
-            return {"read": ds_acl.read, "write": ds_acl.write}
-        else:
-            return {"read": False, "write": False}
-
+        perms = {"read": False, "write": False}
+        for acc in ds_acl:
+            if acc.read is True:
+                perms['read'] = True
+            if acc.write is True:
+                perms['write'] = True
+        return(perms)
 
 @app.get("/users/{orcid}/projects", response_model = List[Project])
 def read_projects_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):

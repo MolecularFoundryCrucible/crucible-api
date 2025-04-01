@@ -26,7 +26,7 @@ from app.utils.rmq_utils import send_pika_message
 from app.models.core_models import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile, User, AccessGroup, Project, UserAccessGroupLink, UserProjectLink, DatasetCollection, DatasetCollectionLink
 from app.models.instrument import Instrument
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
-from app.models.tasks import TransferRequest, SciCatUpdateRequest, IngestionRequest
+from app.models.tasks import GoogleDriveTransferRequest, SciCatUpdateRequest, IngestionRequest
 
 # import argparse
 
@@ -344,24 +344,10 @@ Dataset
     return ingestion_request
 
 
-@app.post("/datasets/{dsid}/transfer", response_model = TransferRequest)
-def request_dataset_transfer(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, source_path: str, destination_path: str):
+@app.post("/datasets/{dsid}/google_drive_transfer", response_model = GoogleDriveTransferRequest)
+def request_dataset_transfer_to_drive(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     '''
-    This concept is fairly different from what we currently have ..
-
-    Here you could put the logic from the CrucibleDatasetTransfer Object in pycrucible into an actual python client. 
-    Then the client supplies the transfer info to the API. 
-    This endpoint uploads the dsid and destination info to a database record. 
-    Additionally it will send the RMQ message with bindings for the transfer queue
-    The downstream consumer then has the majority of the info it needs and can do the transfer (maybe without reading the json)
-
-    **you could also replace source/destination "paths" with some sort of schema that tells what type of path this is / what type of program should interpret it? 
-    Will it always be rclone? I guess so..... 
-
-    Also worth noting --- the endpoint will need to be called multiple times per dataset (x4 prob)
-    User Drive, Prop Drive x Organized, Flat
-
-    **** google drive transfer with semi hardcoded paths
+    For now keep simple - Input is a dataset. Drive info is derived from Project and Owner.  Location within drive is hardcoded.  
     '''
 
     with Session(engine) as session:
@@ -380,11 +366,11 @@ def request_dataset_transfer(ag_ids: Annotated[str, Depends(authorize_user)], ds
         else:
             pass
 
-        transfer_request = TransferRequest({"dataset_id": dsid, "time_created": creation_time, "source_path": source_path, "destination_path": destination_path})
+        transfer_request = GoogleDriveTransferRequest({"dataset_id": dsid, "time_created": creation_time})
         session.add(transfer_request)
         session.commit()
         # TODO: probably want to update this on the rabbit mq side .. 
-        # 1) to match the request and be more general dsid, source, dest and 
+        # 1) to match the request
         # 2) exchange name is potentially limiting / inaccurate in new set up?
         # kind of brings into question the design choice of having a topic exchange since the WHOLE point of this is to allow multiple points of entry...
         # and the whole point of that was to send one message from ingestion to all the services that should happen if data is ingested.. (not very modular)
@@ -397,14 +383,8 @@ def request_dataset_transfer(ag_ids: Annotated[str, Depends(authorize_user)], ds
         # channel.exchange_declare(exchange='raw-data-processing', exchange_type='topic')
         # transfer_queue = channel.queue_declare(queue='q-transfer-to-drive')
         # channel.queue_bind(exchange='raw-data-processing', queue=transfer_queue.method.queue, routing_key = '#.transfer-request.#')
-
-        send_pika_message(message, exchange = "raw-data-processing", routing_key= "#.transfer-request.#", user = 'admin', rmq_pw= rmq_pw)
-
-        # send rabbitMQ message to transfer
-        #message = json.dumps({"dsid": dsid, "source_bucket": source_path, "destination_path": destination_path, "request_id": transfer_request.id})
-        #connect_and_publish(message, "ingested-data", "transfer-request")
-
-
+        send_pika_message(message, exchange = "", routing_key= "transfer-newapi", user = "admin", rmq_pw = rmq_pw)
+       # send_pika_message(message, exchange = "raw-data-processing", routing_key= "#.transfer-request.#", user = 'admin', rmq_pw= rmq_pw)
         return(transfer_request)
 
 
@@ -440,8 +420,8 @@ def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)
     # channel.exchange_declare(exchange='raw-data-processing', exchange_type='topic')
     # transfer_queue = channel.queue_declare(queue='q-transfer-to-drive')
     # channel.queue_bind(exchange='raw-data-processing', queue=transfer_queue.method.queue, routing_key = '#.transfer-request.#')
-
-    send_pika_message(message, exchange = "raw-data-processing", routing_key= "#.scicat-request.#", user = 'admin', rmq_pw= rmq_pw)
+    send_pika_message(message, exchange = "", routing_key= "scicat-newapi", user = 'admin', rmq_pw= rmq_pw)
+    #send_pika_message(message, exchange = "raw-data-processing", routing_key= "#.scicat-request.#", user = 'admin', rmq_pw= rmq_pw)
 
 
 @app.patch("/datasets/{dsid}", response_model = Dataset)

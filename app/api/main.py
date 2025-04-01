@@ -333,16 +333,27 @@ Dataset
     print(dict(dataset))
     pst= pytz.timezone("America/Los_Angeles")
     creation_time = datetime.datetime.now(pst).isoformat()
-    ingestion_request = IngestionRequest(dataset_id = dsid, time_created=creation_time, file_to_upload= dataset.file_to_upload)
+    ingestion_request = IngestionRequest(dataset_id = dsid, time_created=creation_time, file_to_upload= dataset.file_to_upload, status = "requested")
     with Session(engine) as session:
         session.add(ingestion_request)
         session.commit()
         session.refresh(ingestion_request)
         print('committed')
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
-    send_pika_message(message = dataset.file_to_upload, exchange= "", routing_key= "ingest-newapi", user = 'admin', rmq_pw= rmq_pw)
+    send_pika_message(message = json.dumps({"filename":dataset.file_to_upload, "reqid": ingestion_request.id, "dsid": dataset.id}), exchange= "", routing_key= "ingest-newapi", user = 'admin', rmq_pw= rmq_pw)
     print('message sent')
     return ingestion_request
+
+
+@app.patch("/datasets/{dsid}/ingest", response_model = IngestionRequest)
+def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], dsid: str, ing_req: IngestionRequest):
+    with Session(engine) as session:
+        updated_req = add_or_update(session, IngestionRequest, IngestionRequest.id == ing_req.id, **dict(ing_req))
+        session.commit()
+        session.refresh(updated_req)
+    return(updated_req)
+
+
 
 
 @app.post("/datasets/{dsid}/google_drive_transfer", response_model = GoogleDriveTransferRequest)
@@ -367,35 +378,30 @@ def request_dataset_transfer_to_drive(ag_ids: Annotated[str, Depends(authorize_u
         else:
             pass
 
-        transfer_request = GoogleDriveTransferRequest(dataset_id = dsid, time_created=creation_time)
+        transfer_request = GoogleDriveTransferRequest(dataset_id = dsid, time_created=creation_time, status = "requested")
         session.add(transfer_request)
         session.commit()
         session.refresh(transfer_request)
-        # TODO: probably want to update this on the rabbit mq side .. 
-        # 1) to match the request
-        # 2) exchange name is potentially limiting / inaccurate in new set up?
-        # kind of brings into question the design choice of having a topic exchange since the WHOLE point of this is to allow multiple points of entry...
-        # and the whole point of that was to send one message from ingestion to all the services that should happen if data is ingested.. (not very modular)
-        # maybe thats not true bc you can still send the other message with full bindings to the same exchange and this one just has the partial binding to do this one thing..
-        # see other notes in comment above
-        message = json.dumps({"dsid":dsid, "source_bucket":"mf-storage-prod"})
+
+        message = json.dumps({"dsid":dsid, "source_bucket":"mf-storage-prod", "reqid":transfer_request.id})
         rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
         
-        # TODO: this will need to live somewhere - see if there is a way to check exchange / channel / binding existence and establish if not ///// then can live in rmq_utils OR crucible-rabbit-mq but make sure that you don't forget to make it!
-        # channel.exchange_declare(exchange='raw-data-processing', exchange_type='topic')
-        # transfer_queue = channel.queue_declare(queue='q-transfer-to-drive')
-        # channel.queue_bind(exchange='raw-data-processing', queue=transfer_queue.method.queue, routing_key = '#.transfer-request.#')
         send_pika_message(message, exchange = "", routing_key= "transfer-newapi", user = "admin", rmq_pw = rmq_pw)
        # send_pika_message(message, exchange = "raw-data-processing", routing_key= "#.transfer-request.#", user = 'admin', rmq_pw= rmq_pw)
         return(transfer_request)
 
 
+@app.patch("/datasets/{dsid}/google_drive_transfer", response_model = GoogleDriveTransferRequest)
+def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], dsid: str, xfer_req: GoogleDriveTransferRequest):
+    with Session(engine) as session:
+        updated_req = add_or_update(session, GoogleDriveTransferRequest, GoogleDriveTransferRequest.id == xfer_req.id, **dict(xfer_req))
+        session.commit()
+        session.refresh(updated_req)
+    return(updated_req)
+
+
 @app.post("/datasets/{dsid}/scicat_update", response_model = SciCatUpdateRequest)
 def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
-    # this endpoint would send rmq message that would call scicat API 
-    # does it even make sense?
-    # consumer would do more than that but still...
-    # add for now though for gradual compatibilty
     pst= pytz.timezone("America/Los_Angeles")
     creation_time = datetime.datetime.now(pst).isoformat()
 
@@ -411,21 +417,27 @@ def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)
     else:
         pass
 
-    scicat_request = SciCatUpdateRequest(dataset_id = dsid, time_created = creation_time)
+    scicat_request = SciCatUpdateRequest(dataset_id = dsid, time_created = creation_time, status = "requested")
     session.add(scicat_request)
     session.commit()
     session.refresh(scicat_request)
-    # TODO: confirm rabbit mq side matches // could make new vs. update field in message?
-    message = json.dumps({"dsid": dsid, "source_bucket":"mf-storage-prod"})
+
+    message = json.dumps({"dsid": dsid, "source_bucket":"mf-storage-prod", "reqid": scicat_request.id})
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
-    
-    # TODO: this will need to live somewhere - see if there is a way to check exchange / channel / binding existence and establish if not ///// then can live in rmq_utils OR crucible-rabbit-mq but make sure that you don't forget to make it!
-    # channel.exchange_declare(exchange='raw-data-processing', exchange_type='topic')
-    # transfer_queue = channel.queue_declare(queue='q-transfer-to-drive')
-    # channel.queue_bind(exchange='raw-data-processing', queue=transfer_queue.method.queue, routing_key = '#.transfer-request.#')
+
     send_pika_message(message, exchange = "", routing_key= "scicat-newapi", user = 'admin', rmq_pw= rmq_pw)
     #send_pika_message(message, exchange = "raw-data   -processing", routing_key= "#.scicat-request.#", user = 'admin', rmq_pw= rmq_pw)
     return(scicat_request)
+
+
+@app.patch("/datasets/{dsid}/scicat_update", response_model = SciCatUpdateRequest)
+def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], dsid: str, sc_req: SciCatUpdateRequest):
+    with Session(engine) as session:
+        updated_req = add_or_update(session, SciCatUpdateRequest, SciCatUpdateRequest.id == sc_req.id, **dict(sc_req))
+        session.commit()
+        session.refresh(updated_req)
+    return(updated_req)
+
 
 @app.patch("/datasets/{dsid}", response_model = Dataset)
 def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, updated_dataset: Dataset):
@@ -713,9 +725,6 @@ def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user
         session.refresh(drive_loc)
     return(drive_loc)
 
-
-
-    
 
 @app.get("/datasets/{dsid}/access_groups", response_model = Union[None,DatasetACL])
 def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):

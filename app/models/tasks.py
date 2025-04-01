@@ -9,6 +9,7 @@ class GoogleDriveTransferRequest(SQLModel, table = True):
     dataset_id: str = Field(default = None, index = True)
     time_created: Optional[str] = None
     time_completed: Optional[str] = None
+    status: Optional[str] = None
 
 
 class SciCatUpdateRequest(SQLModel, table = True):
@@ -16,7 +17,7 @@ class SciCatUpdateRequest(SQLModel, table = True):
     dataset_id: str = Field(default = None, index = True)
     time_created: Optional[str] = None
     time_completed: Optional[str] = None
-
+    status: Optional[str] = None
 
 class IngestionRequest(SQLModel, table = True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -24,3 +25,4 @@ class IngestionRequest(SQLModel, table = True):
     file_to_upload: str = None
     time_created: Optional[str] = None
     time_completed: Optional[str] = None
+    status: Optional[str] = None

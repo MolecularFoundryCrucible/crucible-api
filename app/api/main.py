@@ -337,6 +337,7 @@ Dataset
     with Session(engine) as session:
         session.add(ingestion_request)
         session.commit()
+        session.refresh(ingestion_request)
         print('committed')
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
     send_pika_message(message = dataset.file_to_upload, exchange= "", routing_key= "ingest-newapi", user = 'admin', rmq_pw= rmq_pw)
@@ -366,9 +367,10 @@ def request_dataset_transfer_to_drive(ag_ids: Annotated[str, Depends(authorize_u
         else:
             pass
 
-        transfer_request = GoogleDriveTransferRequest({"dataset_id": dsid, "time_created": creation_time})
+        transfer_request = GoogleDriveTransferRequest(dataset_id = dsid, time_created=creation_time)
         session.add(transfer_request)
         session.commit()
+        session.refresh(transfer_request)
         # TODO: probably want to update this on the rabbit mq side .. 
         # 1) to match the request
         # 2) exchange name is potentially limiting / inaccurate in new set up?
@@ -409,9 +411,10 @@ def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)
     else:
         pass
 
-    scicat_request = SciCatUpdateRequest({"dataset_id": dsid, "time_created": creation_time})
+    scicat_request = SciCatUpdateRequest(dataset_id = dsid, time_created = creation_time)
     session.add(scicat_request)
     session.commit()
+    session.refresh(scicat_request)
     # TODO: confirm rabbit mq side matches // could make new vs. update field in message?
     message = json.dumps({"dsid": dsid, "source_bucket":"mf-storage-prod"})
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")

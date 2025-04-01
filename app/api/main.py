@@ -424,8 +424,8 @@ def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)
     # transfer_queue = channel.queue_declare(queue='q-transfer-to-drive')
     # channel.queue_bind(exchange='raw-data-processing', queue=transfer_queue.method.queue, routing_key = '#.transfer-request.#')
     send_pika_message(message, exchange = "", routing_key= "scicat-newapi", user = 'admin', rmq_pw= rmq_pw)
-    #send_pika_message(message, exchange = "raw-data-processing", routing_key= "#.scicat-request.#", user = 'admin', rmq_pw= rmq_pw)
-
+    #send_pika_message(message, exchange = "raw-data   -processing", routing_key= "#.scicat-request.#", user = 'admin', rmq_pw= rmq_pw)
+    return(scicat_request)
 
 @app.patch("/datasets/{dsid}", response_model = Dataset)
 def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, updated_dataset: Dataset):

@@ -805,6 +805,7 @@ def read_access_group(admin_acct: Annotated[str, Depends(is_admin)], group_name:
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
         return(ag)
 
+
 @app.post("/users/{orcid}/access_groups/{group_name}", response_model = AccessGroup)
 def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orcid: str, group_name: str):
     with Session(engine) as session:
@@ -820,6 +821,13 @@ def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orci
         session.commit()
         session.refresh(ag)
     return(ag)
+
+
+@app.get("/users/{orcid}/access_groups", response_model = List[str])
+def list_user_access_groups(ag_ids:  Annotated[str, Depends(authorize_user)], orcid: str):
+    with Session(engine) as session:
+        ags = session.exec(select(AccessGroup).where(AccessGroup.id).in_(ag_ids)).all()
+        return([ag.group_name for ag in ags])
 
 
 

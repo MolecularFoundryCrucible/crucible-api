@@ -869,16 +869,17 @@ def list_instrument(ag_ids: Annotated[str, Depends(authorize_user)], request: Re
     query_params = request.query_params
     params_dict = dict(query_params)
 
+    statement = select(Instrument)
     for k,v, in params_dict.items():
         if hasattr(Instrument, k):
             statement = statement.where(getattr(Instrument, k) == v.lower().strip())
     with Session(engine) as session: 
         all_inst = session.exec(statement).all()
 
-        return(all_inst)
+    return(all_inst)
 
 
-@app.get("instruments/{instrument_unique_id}", response_model = Union[None, Instrument])
+@app.get("/instruments/{instrument_unique_id}", response_model = Union[None, Instrument])
 def read_instrument(admin_acct: Annotated[str, Depends(is_admin)], instrument_unique_id: str):
     '''
     Returns an instrument with the provided ID if one exists. Otherwise returns None. 

@@ -390,7 +390,7 @@ def request_dataset_transfer_to_drive(ag_ids: Annotated[str, Depends(authorize_u
         return(transfer_request)
 
 
-@app.post("datasets/{dsid}/scicat_update", response_model = SciCatUpdateRequest)
+@app.post("/datasets/{dsid}/scicat_update", response_model = SciCatUpdateRequest)
 def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     # this endpoint would send rmq message that would call scicat API 
     # does it even make sense?

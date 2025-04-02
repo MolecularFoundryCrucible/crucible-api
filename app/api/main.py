@@ -274,6 +274,140 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
     return ds
 
 
+@app.patch("/datasets/{dsid}", response_model = Dataset)
+def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, updated_dataset: Dataset):
+    '''
+    Updates a dataset in SQL and returns the Updated Dataset object. 
+    Sends a message to RabbitMQ to alert RMQ that updates have been made.
+    '''
+    #newds = table_obj_to_dict(updated_dataset)
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    
+    with Session(engine) as session:
+        ds_list = session.exec(ds_cmd).all()
+
+    if ds_list is None:
+        raise HTTPException(status_code=402, detail="Dataset not found")
+    elif len(ds_list) == 0:
+        raise HTTPException(status_code=402, detail="Dataset not found")
+    else:
+        pass
+    
+
+    with Session(engine) as session:
+        stored_ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        if stored_ds:   
+            stored_ds_dict = dict(stored_ds)
+
+        update_attr = updated_dataset.model_dump(exclude_unset=True)
+
+        filtered_updates = {k:v for k,v in update_attr.items() if stored_ds_dict[k] == None}
+        
+        #TODO --- is this going to work with add or update?
+        upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **filtered_updates)
+
+
+        if upds.owner_user_id is not None:
+            user_orcid = session.exec(select(User.orcid).where(User.id == updated_dataset.owner_user_id))
+            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
+            user_acl = sql_create_ds_acl(user_ag, upds, read = True, write = True, session=session)
+            print('add owner orcid access')
+
+        if upds.project_id is not None:
+            prop_name = session.exec(select(Project.project_name).where(Project.project_id == updated_dataset.project_id))
+            prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
+            prop_acl = sql_create_ds_acl(prop_ag, upds, read = True, write = True, session=session)
+            print('add proposal access')
+
+        if upds.instrument_id is not None:
+            inst_name = session.exec(select(Instrument.name).where(Instrument.id == updated_dataset.instrument_id))
+            inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
+            inst_acl = sql_create_ds_acl(inst_ag, upds, read = True, write = True, session=session) 
+            print('add instrument group access')
+        
+        session.commit()
+        session.refresh(upds)
+        '''
+        message = json.dumps(dict(ds))
+        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
+    
+        TODO: check how dsupdate and dsupdate-owner consumers differ / what are the inputs expected --- can we consolidate?
+        
+        ds update needs to be separate ...............
+            - This endpoint is getting called by the regular ingest function when it extracts info from a file
+            - Ingestion consumer calls transfer / scicat endpoints, but maybe it shouldn't ...
+            - Change to ds record in DB results in a transfer / scicat update ...
+             OR
+            - If you are updating a ds record with new info not coming from ingestion consumer - you need to explicitly call transfer and scicat endpoints your self... I like that for now. 
+         
+        note: dsupdate-owner is expected the message to contain the field updated_ownership_info whereas dsupdate is expected updated_info
+              both are expecting "dataset_to_update": pid
+              update_info can be any dictionary
+              updated_ownership_info is an instance of the Owner schema
+        Really this will have to change to work but the current format would look like: 
+        message = json.dumps({"dataset_to_update": updated_dataset.unique_id, "updated_info": dict(updated_dataset)})
+        and for ownership it would look like: 
+        message = json.dumps({"dataset_to_update": updated_dataset.unique_id, "updated_ownership_info": dict(Owner(subset of updated_dataset))})
+        send_pika_message(message, exchange = "", routing_key= "dsupdate-newapi", user = 'admin', rmq_pw= rmq_pw)
+        '''
+        return upds
+
+
+@app.get("/datasets", response_model = List[str])
+def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request: Request):
+    '''
+    Returns a list of all dataset IDs the requesting user is authorized to view. 
+    If no dataset IDs are authorized for the user, an empty list will be returned. 
+
+    '''
+    query_params = request.query_params
+    print(query_params)
+    params_dict = dict(query_params)
+
+    if 'keyword' in list(params_dict.keys()):
+        K = session.exec(select(Keyword).where(Keyword.keyword.ilike(f"%{v}%"))).all()
+        if K:
+            k_ids = [k.id for k in K]
+            ds_cmd = select(Dataset).select_from(join(DatasetKeywordLink,
+                                                join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id),
+                                                     DatasetKeywordLink.dataset_id == Dataset.id))\
+                                                .filter(DatasetACL.accessgroup_id.in_(ag_ids))\
+                                                .filter(DatasetKeywordLink.keyword_id.in_(k_ids))
+        
+        del params_dict[k]
+
+    else:
+        ds_cmd = select(Dataset.unique_id).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    
+
+    for k, v in params_dict.items():
+        if hasattr(Dataset, k):
+            ds_cmd = ds_cmd.where(getattr(Dataset, k) == v)
+
+    with Session(engine) as session:
+        ds_list = session.exec(ds_cmd).all()
+        return ds_list
+    
+    
+@app.get("/datasets/{dsid}", response_model = Union[Dataset, None])
+def read_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+    '''
+    Returns a dataset found with the provided unique ID if one is exists and the requesting user is authorized to view the dataset. 
+    Otherwise, returns None
+    '''
+    with Session(engine) as session:
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds = session.exec(ds_cmd).one_or_none()
+        return ds
+    
+
+@app.delete("/datasets/{dsid}", response_model = Dataset)
+def delete_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid = str):
+    # TODO: DEFINE THIS
+    pass
+
+
+
 @app.post("/datasets/{dsid}/upload", response_model = IngestionRequest)
 async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(description="A file read as UploadFile")],
                                           ag_ids:  Annotated[str, Depends(authorize_user)],
@@ -352,8 +486,6 @@ def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], dsid: s
         session.commit()
         session.refresh(updated_req)
     return(updated_req)
-
-
 
 
 @app.post("/datasets/{dsid}/google_drive_transfer", response_model = GoogleDriveTransferRequest)
@@ -437,120 +569,6 @@ def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], dsid: st
         session.commit()
         session.refresh(updated_req)
     return(updated_req)
-
-
-@app.patch("/datasets/{dsid}", response_model = Dataset)
-def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, updated_dataset: Dataset):
-    '''
-    Updates a dataset in SQL and returns the Updated Dataset object. 
-    Sends a message to RabbitMQ to alert RMQ that updates have been made.
-    '''
-    #newds = table_obj_to_dict(updated_dataset)
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
-    
-    with Session(engine) as session:
-        ds_list = session.exec(ds_cmd).all()
-
-    if ds_list is None:
-        raise HTTPException(status_code=402, detail="Dataset not found")
-    elif len(ds_list) == 0:
-        raise HTTPException(status_code=402, detail="Dataset not found")
-    else:
-        pass
-    
-
-    with Session(engine) as session:
-        ds = add_or_update(session, Dataset, Dataset.unique_id == dsid, updated_dataset.model_dump(exclude_unset=True))
-
-        if updated_dataset.owner_user_id is not None:
-            user_orcid = session.exec(select(User.orcid).where(User.id == updated_dataset.owner_user_id))
-            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
-            user_acl = sql_create_ds_acl(user_ag, ds, read = True, write = True, session=session)
-            print('add owner orcid access')
-
-        if updated_dataset.project_id is not None:
-            prop_name = session.exec(select(Project.project_name).where(Project.project_id == updated_dataset.project_id))
-            prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
-            prop_acl = sql_create_ds_acl(prop_ag, ds, read = True, write = True, session=session)
-            print('add proposal access')
-
-        if updated_dataset.instrument_id is not None:
-            inst_name = session.exec(select(Instrument.name).where(Instrument.id == updated_dataset.instrument_id))
-            inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
-            inst_acl = sql_create_ds_acl(inst_ag, ds, read = True, write = True, session=session) 
-            print('add instrument group access')
-        
-        session.commit()
-        session.refresh(ds)
-        message = json.dumps(dict(ds))
-        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
-    
-        # TODO: check how dsupdate and dsupdate-owner consumers differ / what are the inputs expected --- can we consolidate?
-        # note: dsupdate-owner is expected the message to contain the field updated_ownership_info whereas dsupdate is expected updated_info
-        #       both are expecting "dataset_to_update": pid
-        #       update_info can be any dictionary
-        #       updated_ownership_info is an instance of the Owner schema
-        # Really this will have to change to work but the current format would look like: 
-        # message = json.dumps({"dataset_to_update": updated_dataset.unique_id, "updated_info": dict(updated_dataset)})
-        # and for ownership it would look like: 
-        # message = json.dumps({"dataset_to_update": updated_dataset.unique_id, "updated_ownership_info": dict(Owner(subset of updated_dataset))})
-        send_pika_message(message, exchange = "", routing_key= "dsupdate-newapi", user = 'admin', rmq_pw= rmq_pw)
-
-        return ds
-
-
-@app.get("/datasets", response_model = List[str])
-def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request: Request):
-    '''
-    Returns a list of all dataset IDs the requesting user is authorized to view. 
-    If no dataset IDs are authorized for the user, an empty list will be returned. 
-
-    '''
-    query_params = request.query_params
-    print(query_params)
-    params_dict = dict(query_params)
-
-    if 'keyword' in list(params_dict.keys()):
-        K = session.exec(select(Keyword).where(Keyword.keyword.ilike(f"%{v}%"))).all()
-        if K:
-            k_ids = [k.id for k in K]
-            ds_cmd = select(Dataset).select_from(join(DatasetKeywordLink,
-                                                join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id),
-                                                     DatasetKeywordLink.dataset_id == Dataset.id))\
-                                                .filter(DatasetACL.accessgroup_id.in_(ag_ids))\
-                                                .filter(DatasetKeywordLink.keyword_id.in_(k_ids))
-        
-        del params_dict[k]
-
-    else:
-        ds_cmd = select(Dataset.unique_id).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).filter(DatasetACL.accessgroup_id.in_(ag_ids))
-    
-
-    for k, v in params_dict.items():
-        if hasattr(Dataset, k):
-            ds_cmd = ds_cmd.where(getattr(Dataset, k) == v)
-
-    with Session(engine) as session:
-        ds_list = session.exec(ds_cmd).all()
-        return ds_list
-    
-    
-@app.get("/datasets/{dsid}", response_model = Union[Dataset, None])
-def read_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
-    '''
-    Returns a dataset found with the provided unique ID if one is exists and the requesting user is authorized to view the dataset. 
-    Otherwise, returns None
-    '''
-    with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
-        ds = session.exec(ds_cmd).one_or_none()
-        return ds
-    
-
-@app.delete("/datasets/{dsid}", response_model = Dataset)
-def delete_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid = str):
-    # TODO: DEFINE THIS
-    pass
 
 
 @app.get("/datasets/{dsid}/thumbnails", response_model = List[Thumbnail])

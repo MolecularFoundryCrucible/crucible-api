@@ -303,7 +303,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
 
         filtered_updates = {k:v for k,v in update_attr.items() if stored_ds_dict[k] == None}
         
-        #TODO --- is this going to work with add or update?
+        #Is this going to work with add or update? yes : )
         upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **filtered_updates)
 
 

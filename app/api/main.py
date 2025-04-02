@@ -348,7 +348,7 @@ Dataset
 @app.patch("/datasets/{dsid}/ingest", response_model = IngestionRequest)
 def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], dsid: str, ing_req: IngestionRequest):
     with Session(engine) as session:
-        updated_req = add_or_update(session, IngestionRequest, IngestionRequest.id == ing_req.id, **dict(ing_req))
+        updated_req = add_or_update(session, IngestionRequest, IngestionRequest.id == ing_req.id, ing_req.model_dump(exclude_unset=True))
         session.commit()
         session.refresh(updated_req)
     return(updated_req)
@@ -394,7 +394,7 @@ def request_dataset_transfer_to_drive(ag_ids: Annotated[str, Depends(authorize_u
 @app.patch("/datasets/{dsid}/google_drive_transfer", response_model = GoogleDriveTransferRequest)
 def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], dsid: str, xfer_req: GoogleDriveTransferRequest):
     with Session(engine) as session:
-        updated_req = add_or_update(session, GoogleDriveTransferRequest, GoogleDriveTransferRequest.id == xfer_req.id, **dict(xfer_req))
+        updated_req = add_or_update(session, GoogleDriveTransferRequest, GoogleDriveTransferRequest.id == xfer_req.id, xfer_req.model_dump(exclude_unset=True))
         session.commit()
         session.refresh(updated_req)
     return(updated_req)
@@ -433,7 +433,7 @@ def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)
 @app.patch("/datasets/{dsid}/scicat_update", response_model = SciCatUpdateRequest)
 def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], dsid: str, sc_req: SciCatUpdateRequest):
     with Session(engine) as session:
-        updated_req = add_or_update(session, SciCatUpdateRequest, SciCatUpdateRequest.id == sc_req.id, **dict(sc_req))
+        updated_req = add_or_update(session, SciCatUpdateRequest, SciCatUpdateRequest.id == sc_req.id, sc_req.model_dump(exclude_unset=True))
         session.commit()
         session.refresh(updated_req)
     return(updated_req)
@@ -455,15 +455,12 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
         raise HTTPException(status_code=402, detail="Dataset not found")
     elif len(ds_list) == 0:
         raise HTTPException(status_code=402, detail="Dataset not found")
-    elif len(ds_list) == 1:
-        updated_dataset.id = ds_list[-1].id
-        print(f"{updated_dataset=}")
     else:
         pass
     
 
     with Session(engine) as session:
-        ds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **dict(updated_dataset))
+        ds = add_or_update(session, Dataset, Dataset.unique_id == dsid, updated_dataset.model_dump(exclude_unset=True))
 
         if updated_dataset.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == updated_dataset.owner_user_id))

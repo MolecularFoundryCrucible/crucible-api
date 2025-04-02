@@ -1,6 +1,5 @@
 
 ** Test and connect the task request endpoints
-- clean up transfer (should only go to google drive)
 - create queues / exchanges 
 - new consumers need to: 
  ----- parse new message formats
@@ -9,7 +8,7 @@
  ----- then there will be a question of pycrucible...
 
  ** Make download data endpoint
- ** Make read user access groups endpoint
+
 
 
 3. How are you going to get all the existing data into the new database ...

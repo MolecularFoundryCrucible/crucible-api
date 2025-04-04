@@ -240,7 +240,7 @@ spec:
         volumeMounts:
         - mountPath: /mnt/gcs
           name: cruc-upload-vol2
-          readOnly: true
+          readOnly: false
       initContainers:
         - name: cloud-sql-proxy
           restartPolicy: Always
@@ -261,7 +261,7 @@ spec:
 
             # Replace DB_PORT with the port the proxy should listen on
             - "--port=5432"
-            - "mf-crucible:us-central1:testdb2"
+            - "mf-crucible:us-central1:crucible-db"
 
           securityContext:
             runAsNonRoot: true
@@ -287,7 +287,7 @@ spec:
       - name: cruc-upload-vol2
         persistentVolumeClaim:
           claimName: cruc-upload-pvc2
-          readOnly: true
+          readOnly: false
 
 
 

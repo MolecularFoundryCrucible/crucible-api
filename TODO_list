@@ -1,11 +1,17 @@
+- 
 
-** Test and connect the task request endpoints
-- create queues / exchanges 
-- new consumers need to: 
- ----- parse new message formats
- ----- read and write to new API
- ----- check order of operations ?
- ----- then there will be a question of pycrucible...
+- Test transfer
+- Test scicat-consumer
+
+Issues: 
+- Ingestors now "skip" files if they are relying on file path name to determine compatibility - need to update this logic
+- DSID are generated at various points if not provided (At dataset creation, During ingestion, In ScopeFoundry outputs) 
+        --- need to make it obvious which one will be the one in use
+        --- previously we ingest - then assign if not found
+        --- now we create, assign, ingest --- if uuid is in file then you would have to do a little ingest at the time you upload and if you don't have the file before creating the dataset then you don't even have a choice
+- 
+
+
 
  ** Make download data endpoint
 

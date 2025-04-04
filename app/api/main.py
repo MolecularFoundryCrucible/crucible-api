@@ -440,7 +440,7 @@ async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(descr
     #payload  = {"dataset": dict(ds)}
     import time
     stime = time.time()
-    ing_req = request_dataset_ingestion(ag_ids, dsid, ds)
+    ing_req = request_dataset_ingestion(ag_ids, dsid, ds.file_to_upload)
     tmp = time.time() - stime
     print(round(tmp,2))
     print('sent ingestion request')
@@ -448,7 +448,7 @@ async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(descr
 
 
 @app.post("/datasets/{dsid}/ingest", response_model = IngestionRequest)
-def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str,  dataset: Dataset):
+def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str,  file_to_upload: Optional[str]=None):
     '''
     This sends a rabbitMQ message to the ingestion queue.
     The current ingestion queue is only expecting a "file_to_upload" value which this has enough information to provide. 
@@ -464,18 +464,34 @@ Dataset
 
     '''
     print("request received")
-    print(dict(dataset))
+    # for this to work you should add the person who creates the dataset ID to the access groups when they create the dataset
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
+
+    if ds is None:
+        raise HTTPException(status_code=402, detail="Dataset not found")
+    
+    elif file_to_upload is None:
+        file_to_upload = ds.file_to_upload
+
+    else:
+        pass
+
+    if not file_to_upload:
+        raise HTTPException(status_code=402, detail="No file listed to ingest")
+
     pst= pytz.timezone("America/Los_Angeles")
     creation_time = datetime.datetime.now(pst).isoformat()
-    ingestion_request = IngestionRequest(dataset_id = dsid, time_created=creation_time, file_to_upload= dataset.file_to_upload, status = "requested")
+    ingestion_request = IngestionRequest(dataset_id = dsid, time_created=creation_time, file_to_upload= file_to_upload, status = "requested")
     with Session(engine) as session:
         session.add(ingestion_request)
         session.commit()
         session.refresh(ingestion_request)
         print('committed')
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
-    send_pika_message(message = json.dumps({"filename":dataset.file_to_upload, "reqid": ingestion_request.id, "dsid": dataset.unique_id}), exchange= "", routing_key= "ingest-newapi", user = 'admin', rmq_pw= rmq_pw)
-    print('message sent')
+    send_pika_message(message = json.dumps({"filename": file_to_upload, "reqid": ingestion_request.id, "dsid": ds}))
     return ingestion_request
 
 

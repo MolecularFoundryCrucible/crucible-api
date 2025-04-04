@@ -424,7 +424,7 @@ async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(descr
     print(dsid)
     print(file)
     # upload the file
-    save_file_path = f"/root/uploads/{file.filename}"
+    save_file_path = f"/mnt/gcs/{file.filename}"
     with open(save_file_path, "wb") as f:
         f.write(await file.read())
 

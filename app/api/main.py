@@ -491,7 +491,7 @@ Dataset
         session.refresh(ingestion_request)
         print('committed')
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
-    send_pika_message(message = json.dumps({"filename": file_to_upload, "reqid": ingestion_request.id, "dsid": ds}))
+    send_pika_message(message = json.dumps({"filename": file_to_upload, "reqid": ingestion_request.id, "dsid": dsid}), exchange= "", routing_key= "ingest-newapi", user = 'admin', rmq_pw= rmq_pw)
     return ingestion_request
 
 

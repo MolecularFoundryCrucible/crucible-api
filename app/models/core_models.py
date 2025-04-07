@@ -157,10 +157,6 @@ class User(SQLModel, table=True):
 
 
 class Project(SQLModel, table=True):
-    '''
-    add project name and "project" to prefix of field names
-    assigned_scientist >> project lead
-    '''
     id: Optional[int] = Field(default=None, primary_key=True)
     project_id: str = Field(index=True, unique=True)
     organization: str 
@@ -171,7 +167,10 @@ class Project(SQLModel, table=True):
     users: List[User] = Relationship(back_populates="projects", link_model=UserProjectLink)
 
 
-
+class ScientificMetadata(SQLModel, table = True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ds_unique_id: str
+    metadata_dictionary: dict = Field(sa_column=Column(JSON), default={})
 
 
 

@@ -170,7 +170,7 @@ class Project(SQLModel, table=True):
 class ScientificMetadata(SQLModel, table = True):
     id: Optional[int] = Field(default=None, primary_key=True)
     dataset_unique_id: str
-    metadata: dict = Field(sa_column=Column(JSON), default={})
+    scientific_metadata: dict = Field(sa_column=Column(JSON), default={})
 
 
 

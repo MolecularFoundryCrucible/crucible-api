@@ -606,7 +606,7 @@ def add_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], dsi
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), metadata = scientific_md)
+        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), scientific_metadata = scientific_md)
 
         session.commit()
         session.refresh(md_obj)
@@ -626,7 +626,7 @@ def update_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], 
         stored_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == dsid)).one_or_none()
         
         if stored_md:
-            md_dict = stored_md.metadata
+            md_dict = stored_md.scientific_metadata
 
         else:
             md_dict = {}
@@ -636,7 +636,7 @@ def update_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], 
         for k,v in scientific_md_updates.items():
             md_dict[k] = v
 
-        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), metadata = md_dict)
+        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), scientific_metadata = md_dict)
 
         session.commit()
         session.refresh(md_obj)

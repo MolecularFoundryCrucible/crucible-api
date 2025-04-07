@@ -1160,7 +1160,7 @@ def create_project(admin_acct:  Annotated[str, Depends(is_admin)], P: Project):
         
         r1 = session.exec(select(User).where(User.lbl_email.ilike(f"%{P.project_lead_email}%"))).all()
         r2 = session.exec(select(User).where(User.email.ilike(f"%{P.project_lead_email}%"))).all()
-        all_found_accounts = [x for x in r1 + r2 if x['orcid'] is not None]
+        all_found_accounts = [x for x in r1 + r2 if x.orcid is not None]
         
         print(f"found accounts for user: {all_found_accounts}")
 

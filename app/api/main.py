@@ -23,7 +23,7 @@ from app.utils.sql_utils import setup_engine, add_or_update, table_obj_to_dict
 from app.utils.rmq_utils import send_pika_message
 
 
-from app.models.core_models import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile, User, AccessGroup, Project, UserAccessGroupLink, UserProjectLink, DatasetCollection, DatasetCollectionLink
+from app.models.core_models import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile, User, AccessGroup, Project, UserAccessGroupLink, UserProjectLink, DatasetCollection, DatasetCollectionLink, ScientificMetadata
 from app.models.instrument import Instrument
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import GoogleDriveTransferRequest, SciCatUpdateRequest, IngestionRequest
@@ -586,6 +586,62 @@ def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], dsid: st
         session.commit()
         session.refresh(updated_req)
     return(updated_req)
+
+
+@app.get("/datasets/{dsid}/scientific_metadata", response_model = ScientificMetadata)
+def read_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+    with Session(engine) as session:
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds = session.exec(ds_cmd).one_or_none()
+        ds_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == ds.unique_id)).one_or_none()
+        return ds_md
+
+
+@app.post("/datasets/{dsid}/scientific_metadata", response_model = ScientificMetadata)
+def add_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, scientific_md: dict):
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), metadata_dictionary = scientific_md)
+
+        session.commit()
+        session.refresh(md_obj)
+        return(md_obj)
+
+
+@app.patch("/datasets/{dsid}/scientific_metadata", response_model = ScientificMetadata)
+def update_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, scientific_md_updates: dict):
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        stored_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == dsid)).one_or_none()
+        
+        if stored_md:
+            md_dict = stored_md.metadata_dictionary
+
+        else:
+            md_dict = {}
+
+        # this doesn't allow for updating nested fields without providing the whole tree from the first level down. 
+        # could make recursive?
+        for k,v in scientific_md_updates.items():
+            md_dict[k] = v
+
+        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), metadata_dictionary = md_dict)
+
+        session.commit()
+        session.refresh(md_obj)
+        return(md_obj)
 
 
 @app.get("/datasets/{dsid}/thumbnails", response_model = List[Thumbnail])

@@ -298,11 +298,12 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
         stored_ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if stored_ds:   
             stored_ds_dict = dict(stored_ds)
+        print(f"{stored_ds_dict=}")
 
         update_attr = updated_dataset.model_dump(exclude_unset=True)
-
+        print(f"{update_attr=}")
         filtered_updates = {k:v for k,v in update_attr.items() if stored_ds_dict[k] == None}
-        
+        print(f"{filtered_updates=}")
         #Is this going to work with add or update? yes : )
         upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **filtered_updates)
 

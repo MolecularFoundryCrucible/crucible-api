@@ -315,7 +315,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
             print('add owner orcid access')
 
         if upds.project_id is not None:
-            prop_name = session.exec(select(Project.project_name).where(Project.project_id == updated_dataset.project_id))
+            prop_name = session.exec(select(Project.project_id).where(Project.project_id == updated_dataset.project_id))
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
             prop_acl = sql_create_ds_acl(prop_ag, upds, read = True, write = True, session=session)
             print('add proposal access')

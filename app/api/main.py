@@ -408,7 +408,6 @@ def delete_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid = str):
     pass
 
 
-
 @app.post("/datasets/{dsid}/upload", response_model = IngestionRequest)
 async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(description="A file read as UploadFile")],
                                           ag_ids:  Annotated[str, Depends(authorize_user)],
@@ -580,7 +579,7 @@ def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)
 
 
 @app.patch("/datasets/{dsid}/scicat_update", response_model = SciCatUpdateRequest)
-def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], dsid: str, sc_req: SciCatUpdateRequest):
+def patch_scicat_request(is_admin: Annotated[str, Depends(is_admin)], dsid: str, sc_req: SciCatUpdateRequest):
     with Session(engine) as session:
         updated_req = add_or_update(session, SciCatUpdateRequest, SciCatUpdateRequest.id == sc_req.id, **sc_req.model_dump(exclude_unset=True))
         session.commit()
@@ -607,7 +606,7 @@ def add_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], dsi
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), metadata_dictionary = scientific_md)
+        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), metadata = scientific_md)
 
         session.commit()
         session.refresh(md_obj)
@@ -627,7 +626,7 @@ def update_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], 
         stored_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == dsid)).one_or_none()
         
         if stored_md:
-            md_dict = stored_md.metadata_dictionary
+            md_dict = stored_md.metadata
 
         else:
             md_dict = {}
@@ -637,7 +636,7 @@ def update_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], 
         for k,v in scientific_md_updates.items():
             md_dict[k] = v
 
-        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), metadata_dictionary = md_dict)
+        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), metadata = md_dict)
 
         session.commit()
         session.refresh(md_obj)

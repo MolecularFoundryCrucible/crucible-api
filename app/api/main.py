@@ -663,11 +663,6 @@ def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)],
     Adds a thumbnail to a dataset. If the thumbnail exists, it will simply add the existing thumbnail to the dataset object. 
     Otherwise, the thumbnail will be created and then added to the dataset. 
     '''
-    with Session(engine) as session:
-        tn_obj = add_or_update(session, Thumbnail, where=(Thumbnail.thumbnail_b64str == thumbnail.thumbnail_b64str),
-                        thumbnail_name = thumbnail.thumbnail_name, 
-                        thumbnail_b64str = thumbnail.thumbnail_b64str)
-        
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
     
     with Session(engine) as session:
@@ -676,12 +671,18 @@ def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)],
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         
+        tn_obj = add_or_update(session, Thumbnail, where=(Thumbnail.thumbnail_b64str == thumbnail.thumbnail_b64str),
+                        thumbnail_name = thumbnail.thumbnail_name, 
+                        thumbnail_b64str = thumbnail.thumbnail_b64str)
+        
         if not (tn_obj in ds.thumbnails):  
             ds.thumbnails.append(tn_obj)
-        session.add(ds)
+            session.add(ds)
+
         session.commit()
         session.refresh(tn_obj)
-        return(tn_obj)
+    
+    return(tn_obj)
 
 
 @app.get("/datasets/{dsid}/associated_files", response_model = List[AssociatedFile])
@@ -704,24 +705,24 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)],
     Adds an associated file to a dataset. 
     Creates the AF object if it doesn't already exist.
     '''
-    with Session(engine) as session:
-        af_obj = add_or_update(session, AssociatedFile, where=(AssociatedFile.filename == associated_file.filename),
-                                       filename = associated_file.filename, 
-                                       size = associated_file.size,
-                                       sha256_hash = associated_file.sha256_hash)
-
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
     
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         
+        af_obj = add_or_update(session, AssociatedFile, where=(AssociatedFile.filename == associated_file.filename),
+                                       filename = associated_file.filename, 
+                                       size = associated_file.size,
+                                       sha256_hash = associated_file.sha256_hash)
+        
         if not (af_obj in ds.associated_files):  
             ds.associated_files.append(af_obj)
+            session.add(ds)
 
-        session.add(ds)
         session.commit()
         session.refresh(af_obj)
         return(af_obj)

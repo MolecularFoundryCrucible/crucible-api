@@ -21,6 +21,13 @@ gcloud artifacts repositories create crucible-api \
 --async \
 --disable-vulnerability-scanning
 
+gcloud artifacts repositories create crucible-rabbit-mq \
+--repository-format=docker \
+--location=us-central1 \
+--description="Crucible Rabbit MQ Consumers" \
+--async \
+--disable-vulnerability-scanning
+
 # check that it was created
 gcloud artifacts repositories describe crucible-api --location=us-central1
 
@@ -47,6 +54,10 @@ gcloud secrets add-iam-policy-binding rabbitmq_default_pw \
 
 
 gcloud secrets add-iam-policy-binding pgcloud_pw \
+    --role=roles/secretmanager.secretAccessor \
+    --member=principal://iam.googleapis.com/projects/776258882599/locations/global/workloadIdentityPools/mf-crucible.svc.id.goog/subject/ns/default/sa/default
+
+gcloud secrets add-iam-policy-binding gcs_client_secret \
     --role=roles/secretmanager.secretAccessor \
     --member=principal://iam.googleapis.com/projects/776258882599/locations/global/workloadIdentityPools/mf-crucible.svc.id.goog/subject/ns/default/sa/default
 

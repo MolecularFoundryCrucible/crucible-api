@@ -1,32 +1,14 @@
-- 
 
-- Test transfer
-- Test scicat-consumer
-
-Issues: 
-- Ingestors now "skip" files if they are relying on file path name to determine compatibility - need to update this logic
-- DSID are generated at various points if not provided (At dataset creation, During ingestion, In ScopeFoundry outputs) 
-        --- need to make it obvious which one will be the one in use
-        --- previously we ingest - then assign if not found
-        --- now we create, assign, ingest --- if uuid is in file then you would have to do a little ingest at the time you upload and if you don't have the file before creating the dataset then you don't even have a choice
-- 
-
-
-
- ** Make download data endpoint
-
-
-
-3. How are you going to get all the existing data into the new database ...
-4. What needs to get cleaned up in process
+1. Connect Transfer Consumer
+2. Connect SciCat Consumer
+3. Add download data endpoint 
+4. Migrate existing data to new database
+        Consider - what needs to get cleaned up in process
         - raw vs. processed
         - duplicates
         - test datasets
-5. Do that
-6. RabbitMQ queues that connect to these endpoints in the expected way
-7. Consumers in those queues reference this API
-8. Transfer data endpoint goes back to more standard
-9. Where are you going to put scientific metadata and in what format // if as is ... are you going to connect Elastic search
+5. Updating datasets
+6. How are you going to migrate existing instruments
 
 
 
@@ -34,34 +16,7 @@ Issues:
 
 
 
-
-# ======================= Notes / API design to do
-Create Datasets
-- Check post request formats (especially when passing in pydantic objs)
-
-Ingest Datasets RMQ: 
-TODO: In order to associate the ingested data back to the dsid provided:
-- the dsid needs to be sent with the message
-- rmq consumer needs to be updated to expect a dsid
-- ingestion class methods need to use the dsid provided ...
-- Need to consider how the system works when a dsid exists INSIDE the file
-
-
-
-Transfer Datasets RMQ messaging mismatch: 
-    probably want to update this on the rabbit mq side .. 
-        # 1) to match the request and be more general dsid, source, dest and 
-        # 2) exchange name is potentially limiting / inaccurate in new set up?
-        # kind of brings into question the design choice of having a topic exchange since the WHOLE point of this is to allow multiple points of entry...
-        # and the whole point of that was to send one message from ingestion to all the services that should happen if data is ingested.. (not very modular)
-        # maybe thats not true bc you can still send the other message with full bindings to the same exchange and this one just has the partial binding to do this one thing..
-        # see other notes in comment above
-
-Also in Transfer Datasets : this will need to live somewhere - see if there is a way to check exchange / channel / binding existence and establish if not ///// then can live in rmq_utils OR crucible-rabbit-mq but make sure that you don't forget to make it!
-        # channel.exchange_declare(exchange='raw-data-processing', exchange_type='topic')
-        # transfer_queue = channel.queue_declare(queue='q-transfer-to-drive')
-        # channel.queue_bind(exchange='raw-data-processing', queue=transfer_queue.method.queue, routing_key = '#.transfer-request.#')
-
+# ======================= Notes 
 Update datasets: check how dsupdate and dsupdate-owner consumers differ / what are the inputs expected --- can we consolidate?
         # note: dsupdate-owner is expected the message to contain the field updated_ownership_info whereas dsupdate is expected updated_info
         #       both are expecting "dataset_to_update": pid
@@ -73,7 +28,13 @@ Update datasets: check how dsupdate and dsupdate-owner consumers differ / what a
         # message = json.dumps({"dataset_to_update": updated_dataset.unique_id, "updated_ownership_info": dict(Owner(subset of updated_dataset))})
 
 
-Scientific metadata
+Issues: 
+- Ingestors now "skip" files if they are relying on file path name to determine compatibility - need to update this logic
+- DSID are generated at various points if not provided (At dataset creation, During ingestion, In ScopeFoundry outputs) 
+        --- need to make it obvious which one will be the one in use
+        --- previously we ingest - then assign if not found
+        --- now we create, assign, ingest --- if uuid is in file then you would have to do a little ingest at the time you upload and if you don't have the file before creating the dataset then you don't even have a choice
+- 
 
 
 # ========================== Other To Do Items
@@ -84,6 +45,7 @@ Scientific metadata
 4. Define the delete endpoint for datasets (and everything...)
 5. Endpoint for /datasets/{dsid}/stream
 6. Sample endpoints
+7. Elastic search
 
 
 

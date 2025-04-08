@@ -636,7 +636,7 @@ def update_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], 
         for k,v in scientific_md_updates.items():
             md_dict[k] = v
 
-        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), scientific_metadata = md_dict)
+        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), dataset_unique_id = dsid, scientific_metadata = md_dict)
 
         session.commit()
         session.refresh(md_obj)

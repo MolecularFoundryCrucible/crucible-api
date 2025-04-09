@@ -1016,20 +1016,18 @@ def list_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], req
     return(drives)
 
 
-@app.get("/google_drives/{drive_id}", response_model = Union[None, GoogleDrives])
-def read_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], drive_id: str):
+@app.get("/google_drives/{drive_name}", response_model = Union[None, GoogleDrives])
+def read_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], drive_name: str):
     """
-    Add or update a Google Drive record in the database.
-    
     Args:
         ag_ids: List of access group IDs the user belongs to ** should update to is_admin
-        drive_id: Google Drive ID to query
+        drive_id: Google Drive Name to query
         
     Returns:
         Google Drive object if found, otherwise None
     """
     with Session(engine) as session:
-        drive = session.exec(select(GoogleDrives).where(GoogleDrives.drive_id == drive_id)).one_or_none()
+        drive = session.exec(select(GoogleDrives).where(GoogleDrives.drive_name == drive_name)).all()
 
     return(drive)
 

@@ -767,7 +767,7 @@ def add_keyword(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, keyw
         return(kw_obj)
 
 
-@app.get("/datasets/{dsid}/drive_location", response_model = Union[None, DataDriveLocation])
+@app.get("/datasets/{dsid}/drive_location", response_model = List[DataDriveLocation])
 def read_dataset_drive_location(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of DataDriveLocation objects with one object for each location in google drive where the dataset is currently located.
@@ -814,7 +814,7 @@ def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user
     return(drive_loc)
 
 
-@app.get("/datasets/{dsid}/access_groups", response_model = Union[None,DatasetACL])
+@app.get("/datasets/{dsid}/access_groups", response_model = List[DatasetACL])
 def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     with Session(engine) as session:
         ds_acl = session.exec(select(AccessGroup).select_from(join(AccessGroup, join(DatasetACL, 

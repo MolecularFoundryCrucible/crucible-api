@@ -237,22 +237,24 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         print("add ro access")
 
         if dataset.owner_user_id is not None:
+            print('adding owner orcid access')
             user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id))
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
             user_acl = sql_create_ds_acl(user_ag, ds, read = True, write = True, session=session)
-            print('add owner orcid access')
+            print('added owner orcid access')
 
         if dataset.project_id is not None:
-            prop_name = session.exec(select(Project.project_id).where(Project.project_id == dataset.project_id))
-            prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
+            print('adding proposal access')
+            prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset.project_id)).one_or_none()
             prop_acl = sql_create_ds_acl(prop_ag, ds, read = True, write = True, session=session)
-            print('add proposal access')
+            print('added proposal access')
 
         if dataset.instrument_id is not None:
+            print('adding instrument group access')
             inst_name = session.exec(select(Instrument.name).where(Instrument.id == dataset.instrument_id))
             inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
             inst_acl = sql_create_ds_acl(inst_ag, ds, read = True, write = True, session=session) 
-            print('add instrument group access')
+            print('added instrument group access')
 
         add_or_update(session, IdType, where=(IdType.unique_id == dataset.unique_id), unique_id = dataset.unique_id, object_type = "dataset")
         print('added the ID type')

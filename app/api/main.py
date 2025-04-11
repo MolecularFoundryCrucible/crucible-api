@@ -665,6 +665,7 @@ def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)],
     Adds a thumbnail to a dataset. If the thumbnail exists, it will simply add the existing thumbnail to the dataset object. 
     Otherwise, the thumbnail will be created and then added to the dataset. 
     '''
+    print('accepted args')
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
     
     with Session(engine) as session:
@@ -675,13 +676,16 @@ def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)],
         
         tn_obj = add_or_update(session, Thumbnail, where=(Thumbnail.thumbnail_b64str == thumbnail.thumbnail_b64str),
                         thumbnail_name = thumbnail.thumbnail_name, 
-                        thumbnail_b64str = thumbnail.thumbnail_b64str)
-        
+                        thumbnail_b64str = thumbnail.thumbnail_b64str, 
+                        dataset_id = ds.id)
+        print('added tnobj')
         if not (tn_obj in ds.thumbnails):  
+            print("adding tnobj to ds")
             ds.thumbnails.append(tn_obj)
             session.add(ds)
-
+            print("added tnobj to ds")
         session.commit()
+        print("committed session")
         session.refresh(tn_obj)
     
     return(tn_obj)
@@ -707,7 +711,7 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)],
     Adds an associated file to a dataset. 
     Creates the AF object if it doesn't already exist.
     '''
-    
+    print("accepted args")
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
 
     with Session(engine) as session:
@@ -719,13 +723,16 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)],
         af_obj = add_or_update(session, AssociatedFile, where=(AssociatedFile.filename == associated_file.filename),
                                        filename = associated_file.filename, 
                                        size = associated_file.size,
-                                       sha256_hash = associated_file.sha256_hash)
-        
+                                       sha256_hash = associated_file.sha256_hash, 
+                                       dataset_id = ds.id)
+        print("added af_obj")
         if not (af_obj in ds.associated_files):  
+            print("adding afobj to ds")
             ds.associated_files.append(af_obj)
             session.add(ds)
-
+            print("added afobj to ds")
         session.commit()
+        print("committed session")
         session.refresh(af_obj)
         return(af_obj)
  

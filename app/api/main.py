@@ -254,7 +254,11 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
             print('adding instrument group access')
             inst_name = session.exec(select(Instrument.instrument_name).where(Instrument.id == dataset.instrument_id)).one_or_none()
             inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
-            inst_acl = sql_create_ds_acl(inst_ag, ds, read = True, write = True, session=session) 
+            if inst_ag is not None:
+                inst_acl = sql_create_ds_acl(inst_ag, ds, read = True, write = True, session=session) 
+            else:
+                inst_ag = add_or_update(session, AccessGroup, AccessGroup.group_name == inst_name, group_name = inst_name)
+                inst_acl = sql_create_ds_acl(inst_ag, ds, read = True, write = True, session=session)
             print('added instrument group access')
 
         add_or_update(session, IdType, where=(IdType.unique_id == dataset.unique_id), unique_id = dataset.unique_id, object_type = "dataset")

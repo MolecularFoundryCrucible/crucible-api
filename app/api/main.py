@@ -221,7 +221,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
     with Session(engine) as session:
 
         #newds = table_obj_to_dict(dataset)
-        ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id, dataset.model_dump(exclude_unset = True))
+        ds = add_or_update(session, Dataset, Dataset.unique_id == dataset.unique_id, **dataset.model_dump(exclude_unset = True))
         print(ds)
         print("added ds")
         session.commit()

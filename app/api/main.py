@@ -742,7 +742,7 @@ def list_keywords_for_dataset(ag_ids: Annotated[str, Depends(authorize_user)], d
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
         ds = session.exec(ds_cmd).one_or_none()
-        ds_keywords = session.exec(select(Keyword).select_from(join(DatasetKeywordLink, DatasetKeywordLink.keyword_id == Keyword.id)).where(DatasetKeywordLink.dataset_id == ds.id)).all()
+        ds_keywords = session.exec(select(Keyword).select_from(join(Keyword, DatasetKeywordLink, DatasetKeywordLink.keyword_id == Keyword.id)).where(DatasetKeywordLink.dataset_id == ds.id)).all()
         return ds_keywords
 
 

@@ -236,9 +236,10 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         ro_acl = sql_create_ds_acl(ro, ds, read = True, write = False, session=session)
         print("add ro access")
 
+        #All this logic is so backward because we literally have the instrument name and orcid then we do get requests to get the "IDs" now we have to do the get requests AGAIN to get the information we actually want and had the whole time
         if dataset.owner_user_id is not None:
             print('adding owner orcid access')
-            user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id))
+            user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id)).one_or_none()
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
             user_acl = sql_create_ds_acl(user_ag, ds, read = True, write = True, session=session)
             print('added owner orcid access')
@@ -251,7 +252,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
 
         if dataset.instrument_id is not None:
             print('adding instrument group access')
-            inst_name = session.exec(select(Instrument.name).where(Instrument.id == dataset.instrument_id))
+            inst_name = session.exec(select(Instrument.name).where(Instrument.id == dataset.instrument_id)).one_or_none()
             inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
             inst_acl = sql_create_ds_acl(inst_ag, ds, read = True, write = True, session=session) 
             print('added instrument group access')

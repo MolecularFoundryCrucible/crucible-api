@@ -1,20 +1,8 @@
 
-1. Connect Transfer Consumer
-2. Connect SciCat Consumer
+
 3. Add download data endpoint 
 4. Migrate existing data to new database
-        Consider - what needs to get cleaned up in process
-        - raw vs. processed
-        - duplicates
-        - test datasets
 5. Updating datasets
-6. How are you going to migrate existing instruments
-
-
-
-
-
-
 
 # ======================= Notes 
 Update datasets: check how dsupdate and dsupdate-owner consumers differ / what are the inputs expected --- can we consolidate?

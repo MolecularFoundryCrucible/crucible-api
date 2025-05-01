@@ -427,13 +427,19 @@ def download_dataset_files(ag_ids:  Annotated[str, Depends(authorize_user)], dsi
     zip_path =f"./download-zips/{dsid}.zip"
     data_path = f"/mnt/mf-storage-prod/{dsid}"
     if not os.path.exists(zip_path):
-        if not os.path.exists(data_path):
+        print('zip not created yet')
+        try:
+           print(os.listdir(data_path))
+        except:
+            print(f'Failed to list {data_path}')
             __ = os.listdir("/mnt/mf-storage-prod/")
-
+            print('finished listing the mount directory')
         with zipfile.ZipFile(zip_path, "w") as z:
             for root, dirs, files in os.walk(data_path):
                 for file_name in files:
+                    print(f'adding {file_name}')
                     z.write(os.path.join(root, file_name))
+    print(os.path.getsize(zip_path) / 1e9)
 
     # return the zip as a FileResponse
     return FileResponse(zip_path, media_type="application/octet-stream", filename=zip_path)

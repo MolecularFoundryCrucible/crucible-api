@@ -415,34 +415,29 @@ def delete_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid = str):
     # TODO: DEFINE THIS
     pass
 
-@app.get("/datasets/{dsid}/download")
-def download_dataset_files(ag_ids:  Annotated[str, Depends(authorize_user)], dsid: str):
+
+
+@app.get("/datasets/{dsid}/download/{file_name}")
+def download_dataset_files(ag_ids:  Annotated[str, Depends(authorize_user)], dsid: str, file_name: str):
     '''
-    Download the files associated with a dataset ID
+    Download an associated file.  Doing this by file_name for now after discussing with Ed. This is the most intuitive and human readable. 
+    This solution also avoids exposing the internal ID which is the only feature of the AF that is currently guaranteed unique.  
+    The file_name is actually a relative path which reduces the "intuition" fairly drastically in the case that your "dataset"
+    has subdirectories of associated files. 
     '''
     # check dataset access
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
+    if ds:
+        download_file_crux_path = f"/mnt/mf-storage-prod/{dsid}/{file_name}"
 
-    # zip the folder: mf-cloud-storage:/mf-storage-prod/{dsid} # is this bucket mounted?? can rclone do the zip?
-    import zipfile
-    zip_path =f"./download-zips/{dsid}.zip"
-    data_path = f"/mnt/mf-storage-prod/{dsid}"
-    if not os.path.exists(zip_path):
-        print('zip not created yet')
-        try:
-           print(os.listdir(data_path))
-        except:
-            print(f'Failed to list {data_path}')
-            __ = os.listdir("/mnt/mf-storage-prod/")
-            print('finished listing the mount directory')
-        with zipfile.ZipFile(zip_path, "w") as z:
-            for root, dirs, files in os.walk(data_path):
-                for file_name in files:
-                    print(f'adding {file_name}')
-                    z.write(os.path.join(root, file_name))
-    print(os.path.getsize(zip_path) / 1e9)
+    if os.path.exists(download_file_crux_path):
+        return FileResponse(download_file_crux_path, media_type="application/octet-stream", filename=file_name)
+    else:
+        raise HTTPException(status_code=404, detail="File not found for requested dataset ID.")
 
-    # return the zip as a FileResponse
-    return FileResponse(zip_path, media_type="application/octet-stream", filename=zip_path)
+
 
 
 @app.post("/datasets/{dsid}/upload", response_model = IngestionRequest)

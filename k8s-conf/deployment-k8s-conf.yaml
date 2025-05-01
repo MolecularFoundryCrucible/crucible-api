@@ -241,6 +241,9 @@ spec:
         - mountPath: /mnt/gcs
           name: cruc-upload-vol2
           readOnly: false
+        - mountPath: /mnt/mf-storage-prod
+          name: mf-storage-prod
+          readOnly: true
       initContainers:
         - name: cloud-sql-proxy
           restartPolicy: Always
@@ -288,6 +291,11 @@ spec:
         persistentVolumeClaim:
           claimName: cruc-upload-pvc2
           readOnly: false
+      - name: mf-storage-prod
+        persistentVolumeClaim:
+          claimName: mf-storage-prod-pvc
+          readOnly: true
+
 
 
 

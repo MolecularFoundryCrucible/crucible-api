@@ -10,7 +10,7 @@ import os
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File, Body
 from starlette.requests import Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.security import HTTPBearer
 
 
@@ -407,12 +407,32 @@ def read_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
         ds = session.exec(ds_cmd).one_or_none()
         return ds
-    
+
+
 
 @app.delete("/datasets/{dsid}", response_model = Dataset)
 def delete_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid = str):
     # TODO: DEFINE THIS
     pass
+
+@app.get("/datasets/{dsid}/download")
+def download_dataset_files(ag_ids:  Annotated[str, Depends(authorize_user)], dsid: str):
+    '''
+    Download the files associated with a dataset ID
+    '''
+    # check dataset access
+
+    # zip the folder: mf-cloud-storage:/mf-storage-prod/{dsid} # is this bucket mounted?? can rclone do the zip?
+    import zipfile
+    zip_path =f"./zips/{dsid}.zip"
+    if not os.path.exists(zip_path)
+    with zipfile.ZipFile(zip_path, "w") as z:
+        for root, dirs, files in os.walk(f"/mnt/mf-storage-prod/{dsid}"):
+            for file_name in files:
+                z.write(os.path.join(root, file_name))
+
+    # return the zip as a FileResponse
+    return FileResponse(zip_path, media_type="application/octet-stream", filename=zip_path)
 
 
 @app.post("/datasets/{dsid}/upload", response_model = IngestionRequest)

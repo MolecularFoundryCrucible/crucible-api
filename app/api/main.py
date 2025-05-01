@@ -10,6 +10,7 @@ import os
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File, Body
 from starlette.requests import Request
+from starlette.background import BackgroundTasks
 from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.security import HTTPBearer
 
@@ -18,7 +19,7 @@ from sqlmodel import Session, select
 from sqlalchemy import join, func
 from sqlalchemy.sql import and_
 
-from app.general_utils import get_secret, run_rclone_command
+from app.general_utils import get_secret, run_rclone_command, remove_file
 from app.utils.sql_utils import setup_engine, add_or_update, table_obj_to_dict
 from app.utils.rmq_utils import send_pika_message
 
@@ -418,13 +419,15 @@ def delete_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid = str):
 
 
 @app.get("/datasets/{dsid}/download/{file_name}")
-def download_dataset_files(ag_ids:  Annotated[str, Depends(authorize_user)], dsid: str, file_name: str):
+async def download_dataset_files(ag_ids:  Annotated[str, Depends(authorize_user)], dsid: str, file_name: str):
     '''
     Download an associated file.  Doing this by file_name for now after discussing with Ed. This is the most intuitive and human readable. 
     This solution also avoids exposing the internal ID which is the only feature of the AF that is currently guaranteed unique.  
     The file_name is actually a relative path which reduces the "intuition" fairly drastically in the case that your "dataset"
     has subdirectories of associated files. 
     '''
+    tasks = BackgroundTasks()
+    
     # check dataset access
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
     with Session(engine) as session:
@@ -435,16 +438,14 @@ def download_dataset_files(ag_ids:  Annotated[str, Depends(authorize_user)], dsi
         rclone_out = run_rclone_command(source_path=f":gcs:/mf-storage-prod/{dsid}/{file_name}", destination_path=f"/tmp/data/{dsid}/{file_name}", cmd = "copyto", gcs_config_name= apiconf['gcs_config_name'])
         print(rclone_out.stdout)
         print(rclone_out.stderr)
-        
+
     # return file as FileResponse
     download_path = f"/tmp/data/{dsid}/{file_name}"
-
+    tasks.add_task(remove_file, download_path)
     if os.path.exists(download_path):
-        return FileResponse(download_path, media_type="application/octet-stream", filename=file_name)
+        return FileResponse(download_path, media_type="application/octet-stream", filename=file_name, background = tasks)
     else:
         raise HTTPException(status_code=404, detail="File not found for requested dataset ID.")
-
-
 
 
 @app.post("/datasets/{dsid}/upload", response_model = IngestionRequest)

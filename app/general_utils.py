@@ -2,7 +2,8 @@ import os
 import subprocess as sp
 import json
 
-
+def remove_file(filepath):
+    os.remove(filepath)
 
 def run_shell(cmd, checkflag = True, background = False):
     if background:

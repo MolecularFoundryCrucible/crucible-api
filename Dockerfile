@@ -29,6 +29,7 @@ RUN pip install -r requirements.txt
 
 COPY app/ /root/app/
 RUN mkdir uploads
+RUN mkdir download-zips
 
 # Run app
 #CMD python -m app.api.test

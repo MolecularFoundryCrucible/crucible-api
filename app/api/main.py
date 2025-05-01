@@ -424,12 +424,12 @@ def download_dataset_files(ag_ids:  Annotated[str, Depends(authorize_user)], dsi
 
     # zip the folder: mf-cloud-storage:/mf-storage-prod/{dsid} # is this bucket mounted?? can rclone do the zip?
     import zipfile
-    zip_path =f"./zips/{dsid}.zip"
-    if not os.path.exists(zip_path)
-    with zipfile.ZipFile(zip_path, "w") as z:
-        for root, dirs, files in os.walk(f"/mnt/mf-storage-prod/{dsid}"):
-            for file_name in files:
-                z.write(os.path.join(root, file_name))
+    zip_path =f"./download-zips/{dsid}.zip"
+    if not os.path.exists(zip_path):
+        with zipfile.ZipFile(zip_path, "w") as z:
+            for root, dirs, files in os.walk(f"/mnt/mf-storage-prod/{dsid}"):
+                for file_name in files:
+                    z.write(os.path.join(root, file_name))
 
     # return the zip as a FileResponse
     return FileResponse(zip_path, media_type="application/octet-stream", filename=zip_path)

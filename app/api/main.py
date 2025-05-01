@@ -18,7 +18,7 @@ from sqlmodel import Session, select
 from sqlalchemy import join, func
 from sqlalchemy.sql import and_
 
-from app.general_utils import get_secret
+from app.general_utils import get_secret, run_rclone_command
 from app.utils.sql_utils import setup_engine, add_or_update, table_obj_to_dict
 from app.utils.rmq_utils import send_pika_message
 
@@ -429,11 +429,18 @@ def download_dataset_files(ag_ids:  Annotated[str, Depends(authorize_user)], dsi
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
-    if ds:
-        download_file_crux_path = f"/mnt/mf-storage-prod/{dsid}/{file_name}"
 
-    if os.path.exists(download_file_crux_path):
-        return FileResponse(download_file_crux_path, media_type="application/octet-stream", filename=file_name)
+    # get data from cloud storage
+    if ds:
+        rclone_out = run_rclone_command(source_path=f":gcs:/mf-storage-prod/{dsid}/{file_name}", destination_path=f"/tmp/data/{dsid}/{file_name}", cmd = "copyto", gcs_config_name= apiconf['gcs_config_name'])
+        print(rclone_out.stdout)
+        print(rclone_out.stderr)
+        
+    # return file as FileResponse
+    download_path = f"/tmp/data/{dsid}/{file_name}"
+
+    if os.path.exists(download_path):
+        return FileResponse(download_path, media_type="application/octet-stream", filename=file_name)
     else:
         raise HTTPException(status_code=404, detail="File not found for requested dataset ID.")
 

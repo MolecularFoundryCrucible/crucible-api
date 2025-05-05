@@ -1,14 +1,7 @@
 
-1. Connect Transfer Consumer
-2. Connect SciCat Consumer
-3. Add download data endpoint 
-4. Migrate existing data to new database
-        Consider - what needs to get cleaned up in process
-        - raw vs. processed
-        - duplicates
-        - test datasets
-5. Updating datasets
-6. How are you going to migrate existing instruments
+- Document how does updating datasets work and ... does it work
+- Refactor ingestors where they are relying on file path to parse instrument or other features of the dataset...  
+
 
 
 

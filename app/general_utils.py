@@ -1,6 +1,8 @@
 import os
 import subprocess as sp
 import json
+import pytz
+from datetime import datetime
 
 def remove_file(filepath):
     os.remove(filepath)
@@ -99,3 +101,8 @@ def run_rclone_command(source_path= "", destination_path= "", cmd="copy", client
     # RUN THE COMMAND
     run_shell_out = run_shell(rclone_cmd, background = background, checkflag=checkflag)
     return(run_shell_out)
+
+def get_tz_isoformat(timezone = "America/Los_Angeles"):
+    pst= pytz.timezone(timezone)
+    curr_pct_time = datetime.now(pst).isoformat()
+    return(curr_pct_time)

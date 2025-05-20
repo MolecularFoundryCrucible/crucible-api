@@ -19,10 +19,10 @@ from sqlmodel import Session, select
 from sqlalchemy import join, func
 from sqlalchemy.sql import and_
 
-from app.general_utils import get_secret, run_rclone_command, remove_file
+from app.general_utils import get_secret, run_rclone_command, remove_file, get_tz_isoformat
 from app.utils.sql_utils import setup_engine, add_or_update, table_obj_to_dict
 from app.utils.rmq_utils import send_pika_message
-from crucible_utils.general_utils import get_tz_isoformat
+
 
 from app.models.core_models import (Dataset, 
                                     DatasetACL,

@@ -22,9 +22,23 @@ from sqlalchemy.sql import and_
 from app.general_utils import get_secret, run_rclone_command, remove_file
 from app.utils.sql_utils import setup_engine, add_or_update, table_obj_to_dict
 from app.utils.rmq_utils import send_pika_message
+from crucible_utils.general_utils import get_tz_isoformat
 
+from app.models.core_models import (Dataset, 
+                                    DatasetACL,
+                                    Keyword,
+                                    DatasetKeywordLink,
+                                    Thumbnail,
+                                    AssociatedFile,
+                                    User,
+                                    AccessGroup,
+                                    Project,
+                                    UserAccessGroupLink,
+                                    UserProjectLink,
+                                    DatasetCollection,
+                                    DatasetCollectionLink,
+                                    ScientificMetadata)
 
-from app.models.core_models import Dataset, DatasetACL, Keyword, DatasetKeywordLink, Thumbnail, AssociatedFile, User, AccessGroup, Project, UserAccessGroupLink, UserProjectLink, DatasetCollection, DatasetCollectionLink, ScientificMetadata
 from app.models.instrument import Instrument
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import GoogleDriveTransferRequest, SciCatUpdateRequest, IngestionRequest
@@ -488,24 +502,24 @@ async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(descr
 
 
 @app.post("/datasets/{dsid}/ingest", response_model = IngestionRequest)
-def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str,  file_to_upload: Optional[str]=None):
+def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)],
+                              dsid: str,
+                              file_to_upload: Optional[str]=None,
+                              ingestion_class: Optional[str]=None):
     '''
     This sends a rabbitMQ message to the ingestion queue.
     The current ingestion queue is only expecting a "file_to_upload" value which this has enough information to provide. 
 
-    TODO: In order to associate the ingested data back to the dsid provided:
-      - the dsid needs to be sent with the message
-      - rmq consumer needs to be updated to expect a dsid
-      - ingestion class methods need to use the dsid provided ...
+    TODO: 
       - Need to consider how the system works when a dsid exists INSIDE the file
-Dataset
-    Done - To follow the setup of the other "request functions" this should result in a record being created in the "IngestionRequest" table. 
-
-
     '''
     print("request received")
-    # for this to work you should add the person who creates the dataset ID to the access groups when they create the dataset
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    # for this to work you should add the person who creates
+    # the dataset ID to the access groups when they create the dataset
+    ds_cmd = select(Dataset).select_from(
+                                    join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(
+                                        Dataset.unique_id == dsid).filter(
+                                            DatasetACL.accessgroup_id.in_(ag_ids))
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
@@ -523,7 +537,7 @@ Dataset
         raise HTTPException(status_code=402, detail="No file listed to ingest")
 
     pst= pytz.timezone("America/Los_Angeles")
-    creation_time = datetime.datetime.now(pst).isoformat()
+    creation_time = get_tz_isoformat()
     ingestion_request = IngestionRequest(dataset_id = dsid, time_created=creation_time, file_to_upload= file_to_upload, status = "requested")
     with Session(engine) as session:
         session.add(ingestion_request)
@@ -531,7 +545,10 @@ Dataset
         session.refresh(ingestion_request)
         print('committed')
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
-    send_pika_message(message = json.dumps({"filename": file_to_upload, "reqid": ingestion_request.id, "dsid": dsid}), exchange= "", routing_key= "ingest-newapi", user = 'admin', rmq_pw= rmq_pw)
+    send_pika_message(message = json.dumps({"filename": file_to_upload,
+                                            "reqid": ingestion_request.id,
+                                            "dsid": dsid, 
+                                            "ingestion_class":ingestion_class}), exchange= "", routing_key= "ingest-newapi", user = 'admin', rmq_pw= rmq_pw)
     return ingestion_request
 
 

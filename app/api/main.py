@@ -20,7 +20,7 @@ from sqlalchemy import join, func
 from sqlalchemy.sql import and_
 
 from app.general_utils import get_secret, run_rclone_command, remove_file, get_tz_isoformat
-from app.utils.sql_utils import setup_engine, add_or_update, table_obj_to_dict
+from app.utils.sql_utils import setup_engine, add_or_update, only_update, table_obj_to_dict
 from app.utils.rmq_utils import send_pika_message
 
 
@@ -553,10 +553,12 @@ def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)],
     return ingestion_request
 
 
-@app.patch("/datasets/{dsid}/ingest", response_model = IngestionRequest)
-def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], dsid: str, ing_req: IngestionRequest):
+@app.patch("/datasets/{dsid}/ingest/{reqid}", response_model = IngestionRequest)
+def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], reqid: str, dsid: str, ing_req: IngestionRequest):
+    if ing_req.id:
+        assert reqid == ing_req.id
     with Session(engine) as session:
-        updated_req = add_or_update(session, IngestionRequest, IngestionRequest.id == ing_req.id, **ing_req.model_dump(exclude_unset=True))
+        updated_req = only_update(session, IngestionRequest, (IngestionRequest.id == ing_req.id) & (IngestionRequest.dataset_id == dsid), **ing_req.model_dump(exclude_unset=True))
         session.commit()
         session.refresh(updated_req)
     return(updated_req)
@@ -597,10 +599,12 @@ def request_dataset_transfer_to_drive(ag_ids: Annotated[str, Depends(authorize_u
         return(transfer_request)
 
 
-@app.patch("/datasets/{dsid}/google_drive_transfer", response_model = GoogleDriveTransferRequest)
-def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], dsid: str, xfer_req: GoogleDriveTransferRequest):
+@app.patch("/datasets/{dsid}/google_drive_transfer/{reqid}", response_model = GoogleDriveTransferRequest)
+def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], reqid: str, dsid: str, xfer_req: GoogleDriveTransferRequest):
+    if xfer_req.id:
+        assert reqid == xfer_req.id
     with Session(engine) as session:
-        updated_req = add_or_update(session, GoogleDriveTransferRequest, GoogleDriveTransferRequest.id == xfer_req.id, **xfer_req.model_dump(exclude_unset=True))
+        updated_req = only_update(session, GoogleDriveTransferRequest, (GoogleDriveTransferRequest.id == xfer_req.id) & (GoogleDriveTransferRequest.dataset_id == dsid), **xfer_req.model_dump(exclude_unset=True))
         session.commit()
         session.refresh(updated_req)
     return(updated_req)
@@ -636,10 +640,12 @@ def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)
     return(scicat_request)
 
 
-@app.patch("/datasets/{dsid}/scicat_update", response_model = SciCatUpdateRequest)
-def patch_scicat_request(is_admin: Annotated[str, Depends(is_admin)], dsid: str, sc_req: SciCatUpdateRequest):
+@app.patch("/datasets/{dsid}/scicat_update/{reqid}", response_model = SciCatUpdateRequest)
+def patch_scicat_request(is_admin: Annotated[str, Depends(is_admin)], reqid: str, dsid: str, sc_req: SciCatUpdateRequest):
+    if sc_req.id:
+        assert reqid == sc_req.id
     with Session(engine) as session:
-        updated_req = add_or_update(session, SciCatUpdateRequest, SciCatUpdateRequest.id == sc_req.id, **sc_req.model_dump(exclude_unset=True))
+        updated_req = only_update(session, SciCatUpdateRequest, (SciCatUpdateRequest.id == sc_req.id) & (SciCatUpdateRequest.dataset_id == dsid), **sc_req.model_dump(exclude_unset=True))
         session.commit()
         session.refresh(updated_req)
     return(updated_req)

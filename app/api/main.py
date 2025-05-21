@@ -556,6 +556,8 @@ def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)],
 @app.patch("/datasets/{dsid}/ingest/{reqid}", response_model = IngestionRequest)
 def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], reqid: str, dsid: str, ing_req: IngestionRequest):
     if ing_req.id:
+        print(reqid)
+        print(ing_req.id)
         assert reqid == ing_req.id
     with Session(engine) as session:
         updated_req = only_update(session, IngestionRequest, (IngestionRequest.id == ing_req.id) & (IngestionRequest.dataset_id == dsid), **ing_req.model_dump(exclude_unset=True))

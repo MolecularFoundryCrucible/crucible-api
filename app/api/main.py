@@ -418,6 +418,7 @@ def read_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     Returns a dataset found with the provided unique ID if one is exists and the requesting user is authorized to view the dataset. 
     Otherwise, returns None
     '''
+    print(f"{ag_ids=}")
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
         ds = session.exec(ds_cmd).one_or_none()

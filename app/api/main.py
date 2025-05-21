@@ -554,7 +554,7 @@ def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)],
 
 
 @app.patch("/datasets/{dsid}/ingest/{reqid}", response_model = IngestionRequest)
-def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], reqid: str, dsid: str, ing_req: IngestionRequest):
+def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], reqid: int, dsid: str, ing_req: IngestionRequest):
     if ing_req.id:
         print(reqid)
         print(ing_req.id)

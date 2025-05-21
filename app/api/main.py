@@ -1039,7 +1039,7 @@ def list_instrument(ag_ids: Annotated[str, Depends(authorize_user)], request: Re
 
 
 @app.get("/instruments/{instrument_unique_id}", response_model = Union[None, Instrument])
-def read_instrument(admin_acct: Annotated[str, Depends(is_admin)], instrument_unique_id: str):
+def read_instrument(ag_ids: Annotated[str, Depends(authorize_user)], instrument_unique_id: str):
     '''
     Returns an instrument with the provided ID if one exists. Otherwise returns None. 
     '''

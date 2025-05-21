@@ -561,6 +561,9 @@ def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], reqid: 
         assert reqid == ing_req.id
     with Session(engine) as session:
         updated_req = only_update(session, IngestionRequest, (IngestionRequest.id == ing_req.id) & (IngestionRequest.dataset_id == dsid), **ing_req.model_dump(exclude_unset=True))
+        if updated_req is None:
+            raise HTTPException(status_code=400, detail="No ingestion request found for the provided dataset and request ID combination")
+        
         session.commit()
         session.refresh(updated_req)
     return(updated_req)

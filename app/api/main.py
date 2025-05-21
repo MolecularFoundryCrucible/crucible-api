@@ -303,7 +303,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
     Sends a message to RabbitMQ to alert RMQ that updates have been made.
     '''
     #newds = table_obj_to_dict(updated_dataset)
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
     with Session(engine) as session:
         ds_list = session.exec(ds_cmd).all()
@@ -420,7 +420,7 @@ def read_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     '''
     print(f"{ag_ids=}")
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         return ds
 
@@ -444,7 +444,7 @@ async def download_dataset_files(ag_ids:  Annotated[str, Depends(authorize_user)
     tasks = BackgroundTasks()
     
     # check dataset access
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
 
@@ -572,7 +572,7 @@ def request_dataset_transfer_to_drive(ag_ids: Annotated[str, Depends(authorize_u
         pst= pytz.timezone("America/Los_Angeles")
         creation_time = datetime.datetime.now(pst).isoformat()
 
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
         with Session(engine) as session:
             ds_list = session.exec(ds_cmd).all()
@@ -611,7 +611,7 @@ def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)
     pst= pytz.timezone("America/Los_Angeles")
     creation_time = datetime.datetime.now(pst).isoformat()
 
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
         ds_list = session.exec(ds_cmd).all()
@@ -648,7 +648,7 @@ def patch_scicat_request(is_admin: Annotated[str, Depends(is_admin)], dsid: str,
 @app.get("/datasets/{dsid}/scientific_metadata", response_model = ScientificMetadata)
 def read_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         ds_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == ds.unique_id)).one_or_none()
         return ds_md
@@ -656,7 +656,7 @@ def read_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], ds
 
 @app.post("/datasets/{dsid}/scientific_metadata", response_model = ScientificMetadata)
 def add_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, scientific_md: dict):
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
@@ -673,7 +673,7 @@ def add_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], dsi
 
 @app.patch("/datasets/{dsid}/scientific_metadata", response_model = ScientificMetadata)
 def update_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, scientific_md_updates: dict):
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
@@ -707,7 +707,7 @@ def read_thumbnails(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     Returns a list of thumbnail objects associated with the dataset ID provided
     '''
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         ds_thumbnails = session.exec(select(Thumbnail).where(Thumbnail.dataset_id == ds.id)).all()
         return ds_thumbnails
@@ -722,7 +722,7 @@ def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)],
     Otherwise, the thumbnail will be created and then added to the dataset. 
     '''
     print('accepted args')
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
@@ -753,7 +753,7 @@ def read_associated_files(ag_ids: Annotated[str, Depends(authorize_user)], dsid:
     Returns a list of the files associated with the dataset ID provided. 
     '''
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         ds_files = session.exec(select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)).all()
         return ds_files
@@ -768,7 +768,7 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)],
     Creates the AF object if it doesn't already exist.
     '''
     print("accepted args")
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
@@ -796,7 +796,7 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)],
 @app.get("/datasets/{dsid}/keywords", response_model = List[Keyword])
 def list_keywords_for_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         ds_keywords = session.exec(select(Keyword).select_from(join(Keyword, DatasetKeywordLink, DatasetKeywordLink.keyword_id == Keyword.id)).where(DatasetKeywordLink.dataset_id == ds.id)).all()
         return ds_keywords
@@ -808,7 +808,7 @@ def add_keyword(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, keyw
     Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object. 
     Otherwise, the keyword will be created and then added to the dataset. 
     '''
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
     with Session(engine) as session:
         kw_obj = add_or_update(session, Keyword, where=(Keyword.keyword == keyword), keyword=keyword)
@@ -856,7 +856,7 @@ def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user
         Added DataDriveLocation object
 
     """
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
     with Session(engine) as session:
         ds_list = session.exec(ds_cmd).all()

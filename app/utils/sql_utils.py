@@ -54,7 +54,19 @@ def table_obj_to_dict(obj):
         d.pop('id')
         return(d)
     
+def only_update(session, cls, where, **kwargs):
+    statement = select(cls).where(where)
+    obj = session.exec(statement).one_or_none()
+    print(obj)
+    if not obj:
+        return None
     
+    for key, value in kwargs.items():
+        print(key)
+        setattr(obj, key, value)
+    session.add(obj)
+    return obj
+
 def add_or_update(session, cls, where, **kwargs):
     statement = select(cls).where(where)
     obj = session.exec(statement).one_or_none()

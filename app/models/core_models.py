@@ -90,6 +90,7 @@ class Dataset(SQLModel, table=True):
     project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")
     instrument_id: Optional[int]  = Field(default = None, index = True, foreign_key = "instrument.id")
     source_folder: Optional[str] # folder where the data was synced from (on instrument PC)
+    instrument_name: Optional[str]
     creation_time: Optional[str]
     size: Optional[int] = Field(sa_column=Column(BigInteger())) 
     data_format: Optional[str]

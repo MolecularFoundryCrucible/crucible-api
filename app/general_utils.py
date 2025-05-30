@@ -3,7 +3,7 @@ import subprocess as sp
 import json
 import pytz
 from datetime import datetime
-from utils.constants import secret_store
+from app.utils.constants import secret_store
 
 
 def remove_file(filepath):

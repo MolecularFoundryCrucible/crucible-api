@@ -72,7 +72,7 @@ hostname = apiconf['hostname']
 api_path = apiconf['api_path']
 api_url = f"https://{hostname}/{api_path}"
 orcid_client_id = apiconf['orcid_client_id']
-orcid_client_secret = get_secret("CLIENT_SECRET", "projects/776258882599/secrets/orcid_client_secret/versions/2")
+orcid_client_secret = get_secret("CLIENT_SECRET", "orcid_client_secret/versions/2")
 redirect_uri = urllib.parse.quote_plus(f"{api_url}/auth")
 
 
@@ -232,7 +232,7 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
     #     dataset.file_to_upload == file.filename
 
 
-    # apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/3")
+    # apikey = get_secret("ADMIN_APIKEY", "crucible_admin_apikey/versions/3")
     with Session(engine) as session:
 
         #newds = table_obj_to_dict(dataset)
@@ -352,7 +352,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
         session.refresh(upds)
         '''
         message = json.dumps(dict(ds))
-        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
+        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
     
         TODO: check how dsupdate and dsupdate-owner consumers differ / what are the inputs expected --- can we consolidate?
         
@@ -545,7 +545,7 @@ def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)],
         session.commit()
         session.refresh(ingestion_request)
         print('committed')
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
+    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
     send_pika_message(message = json.dumps({"filename": file_to_upload,
                                             "reqid": ingestion_request.id,
                                             "dsid": dsid, 
@@ -597,7 +597,7 @@ def request_dataset_transfer_to_drive(ag_ids: Annotated[str, Depends(authorize_u
         session.refresh(transfer_request)
 
         message = json.dumps({"dsid":dsid, "source_bucket":"mf-storage-prod", "reqid":transfer_request.id})
-        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
+        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
         
         send_pika_message(message, exchange = "", routing_key= "transfer-newapi", user = "admin", rmq_pw = rmq_pw)
        # send_pika_message(message, exchange = "raw-data-processing", routing_key= "#.transfer-request.#", user = 'admin', rmq_pw= rmq_pw)
@@ -638,7 +638,7 @@ def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)
     session.refresh(scicat_request)
 
     message = json.dumps({"dsid": dsid, "source_bucket":"mf-storage-prod", "reqid": scicat_request.id})
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "projects/776258882599/secrets/rabbitmq_default_pw/versions/1")
+    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
 
     send_pika_message(message, exchange = "", routing_key= "scicat-newapi", user = 'admin', rmq_pw= rmq_pw)
     #send_pika_message(message, exchange = "raw-data   -processing", routing_key= "#.scicat-request.#", user = 'admin', rmq_pw= rmq_pw)
@@ -1196,7 +1196,7 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
             user = add_or_update(session, User, User.orcid == user_info.orcid, **user_dict)
             session.commit()
             
-            apikey = get_secret("ADMIN_APIKEY", "projects/776258882599/secrets/crucible_admin_apikey/versions/3")
+            apikey = get_secret("ADMIN_APIKEY", "crucible_admin_apikey/versions/3")
             requests.request("post", url =  f"{api_url}/users/{user.orcid}/access_groups/{user.orcid}", headers = {"Authorization":f"Bearer {apikey}"})
         
             # for each project that the user is a USER on: 

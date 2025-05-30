@@ -3,6 +3,8 @@ import subprocess as sp
 import json
 import pytz
 from datetime import datetime
+from utils.constants import secret_store
+
 
 def remove_file(filepath):
     os.remove(filepath)
@@ -13,7 +15,8 @@ def run_shell(cmd, checkflag = True, background = False):
     return(sp.run(cmd, stdout = sp.PIPE, stderr = sp.STDOUT, shell = True, universal_newlines = True, check = checkflag))
 
 
-def get_secret(secret_env_var, gcs_secret_path = None, sa_creds: str = None, cred_file: bool = False): 
+
+def get_secret(secret_env_var, gcs_secret_name = None, sa_creds: str = None, cred_file: bool = False): 
     '''
     sa_creds defaults to None in which case it is assumed that you are running the function from a GCP instance with a service account that can authenticate itself. 
     If a value is provided, the function will check to see if the argument cred_file is set to True or False (default).
@@ -22,6 +25,8 @@ def get_secret(secret_env_var, gcs_secret_path = None, sa_creds: str = None, cre
     If cred_file is False, then sa_creds should be the name of an environment variable in which the credentials are stored. 
 
     '''
+    if gcs_secret_name is not None:
+        gcs_secret_path = f"{secret_store}/{gcs_secret_name}"
     secret = os.getenv(secret_env_var)
     if secret is None:
         secret = get_gcs_secret(gcs_secret_path, sa_creds, cred_file)
@@ -60,7 +65,7 @@ def run_rclone_command(source_path= "", destination_path= "", cmd="copy", client
     
     # GET THE CLIENT SECRET
     if client_secret is None:
-        client_secret = get_secret("GCS_CLIENT_SECRET", "projects/776258882599/secrets/gcs_client_secret/versions/1")
+        client_secret = get_secret("GCS_CLIENT_SECRET", "gcs_client_secret/versions/1")
         
     if client_secret is None:
         client_secret = os.getenv("GCS_CLIENT_SECRET")
@@ -73,7 +78,7 @@ def run_rclone_command(source_path= "", destination_path= "", cmd="copy", client
             sa_creds = None
             
     if sa_creds is None:
-        sa_creds = get_secret("GCS_SA", "projects/776258882599/secrets/service-account-cred/versions/1")
+        sa_creds = get_secret("GCS_SA", "service-account-cred/versions/1")
 
     if sa_creds is None:
         sa_creds = os.getenv("GCS_SA")

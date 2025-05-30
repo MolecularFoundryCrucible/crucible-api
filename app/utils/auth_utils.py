@@ -18,7 +18,7 @@ from datetime import date, timedelta
 
 
 # ====== Constants
-SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "projects/776258882599/secrets/crucible_secret_key/versions/1")
+SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "crucible_secret_key/versions/1")
 ALGORITHM = "HS256"
 security = HTTPBearer()
 

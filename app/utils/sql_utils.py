@@ -7,7 +7,7 @@ from sqlmodel import create_engine, select
 
 
 def setup_engine(env_config_file = None):
-    password = get_secret('PGDB_PW', 'projects/776258882599/secrets/pgcloud_pw/versions/1')
+    password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1')
     if env_config_file is not None:
         db_url = parse_db_url_from_config_file(env_config_file, password)
     else:

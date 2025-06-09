@@ -331,19 +331,19 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
 
 
         if upds.owner_user_id is not None:
-            user_orcid = session.exec(select(User.orcid).where(User.id == updated_dataset.owner_user_id)).one_or_none()
+            user_orcid = session.exec(select(User.orcid).where(User.id == upds.owner_user_id)).one_or_none()
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
             user_acl = sql_create_ds_acl(user_ag, upds, read = True, write = True, session=session)
             print('add owner orcid access')
 
         if upds.project_id is not None:
-            prop_name = session.exec(select(Project.project_id).where(Project.project_id == updated_dataset.project_id)).one_or_none()
+            prop_name = session.exec(select(Project.project_id).where(Project.project_id == upds.project_id)).one_or_none()
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
             prop_acl = sql_create_ds_acl(prop_ag, upds, read = True, write = True, session=session)
             print('add proposal access')
 
         if upds.instrument_id is not None:
-            inst_name = session.exec(select(Instrument.name).where(Instrument.id == updated_dataset.instrument_id)).one_or_none()
+            inst_name = session.exec(select(Instrument.name).where(Instrument.id == upds.instrument_id)).one_or_none()
             inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
             inst_acl = sql_create_ds_acl(inst_ag, upds, read = True, write = True, session=session) 
             print('add instrument group access')

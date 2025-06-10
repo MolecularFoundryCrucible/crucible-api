@@ -343,7 +343,7 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
             print('add proposal access')
 
         if upds.instrument_id is not None:
-            inst_name = session.exec(select(Instrument.name).where(Instrument.id == upds.instrument_id)).one_or_none()
+            inst_name = session.exec(select(Instrument.instrument_name).where(Instrument.id == upds.instrument_id)).one_or_none()
             inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
             inst_acl = sql_create_ds_acl(inst_ag, upds, read = True, write = True, session=session) 
             print('add instrument group access')

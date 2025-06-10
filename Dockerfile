@@ -33,4 +33,4 @@ RUN mkdir download-zips
 
 # Run app
 #CMD python -m app.api.test
-CMD exec uvicorn app.api.main:app --host 0.0.0.0 --reload --port 7777  --limit-max-requests 500000000 --root-path "/testapi"
+CMD exec uvicorn app.api.main:app --host 0.0.0.0 --reload --port 7777  --root-path "/testapi"

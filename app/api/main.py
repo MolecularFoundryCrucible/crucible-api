@@ -480,17 +480,17 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
     print(files)
     # upload the file
     for file in files:
-        save_file_path = f"/mnt/gcs/{file.filename}"
+        save_file_path = f"/mnt/gcs/api-uploads/{file.filename}"
         with open(save_file_path, "wb") as f:
             f.write(await file.read())
 
-    main_file_for_ingestion = files[0]
+    main_file_for_ingestion = files[0].filename
 
         
     # get the dataset
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        ds.file_to_upload = main_file_for_ingestion.filename
+        ds.file_to_upload = os.path.join("api-uploads", main_file_for_ingestion)
         session.add(ds)
         session.commit()
         session.refresh(ds)

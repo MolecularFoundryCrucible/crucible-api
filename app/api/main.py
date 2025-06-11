@@ -510,7 +510,7 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
 
     import time
     stime = time.time()
-    ing_req = request_dataset_ingestion(ag_ids, dsid, ds.file_to_upload)
+    ing_req = request_dataset_ingestion(auth_res, dsid, ds.file_to_upload)
     tmp = time.time() - stime
     print(round(tmp,2))
     print('sent ingestion request')

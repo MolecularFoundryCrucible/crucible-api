@@ -529,6 +529,7 @@ def request_dataset_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)
     TODO: 
       - Need to consider how the system works when a dsid exists INSIDE the file
     '''
+    print(auth_res)
     access_group_name, ag_ids = auth_res
     print("request received")
     # for this to work you should add the person who creates

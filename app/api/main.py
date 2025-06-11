@@ -224,15 +224,6 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
     The dataset ID is recorded in a table to track that the mfid corresponds to a dataset. 
     """
 
-    # if file:
-    #     # save the file to crucible-uploads
-    #     save_file_path = f"/root/uploads/{file.filename}"
-    #     with open(save_file_path, "wb") as f:
-    #         f.write(await file.read())
-    #     dataset.file_to_upload == file.filename
-
-
-    # apikey = get_secret("ADMIN_APIKEY", "crucible_admin_apikey/versions/3")
     with Session(engine) as session:
 
         #newds = table_obj_to_dict(dataset)
@@ -464,7 +455,7 @@ async def download_dataset_files(ag_ids:  Annotated[str, Depends(authorize_user)
 
 
 @app.post("/datasets/{dsid}/upload", response_model = IngestionRequest)
-async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(description="A file read as UploadFile")],
+async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], File(description="List of files")],
                                           ag_ids:  Annotated[str, Depends(authorize_user)],
                                           dsid: str):
     '''
@@ -477,22 +468,27 @@ async def create_dataset_from_file_upload(file: Annotated[UploadFile, File(descr
     Better than the other way because you would have to use FormData instead of "Dataset" model to combo with File
     '''
     print(dsid)
-    print(file)
+    print(files)
     # upload the file
-    save_file_path = f"/mnt/gcs/{file.filename}"
-    with open(save_file_path, "wb") as f:
-        f.write(await file.read())
+    for file in files:
+        save_file_path = f"/mnt/gcs/{file.filename}"
+        with open(save_file_path, "wb") as f:
+            f.write(await file.read())
 
+    main_file_for_ingestion = files[0]
+
+        
     # get the dataset
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        ds.file_to_upload = file.filename
+        ds.file_to_upload = main_file_for_ingestion.filename
         session.add(ds)
         session.commit()
         session.refresh(ds)
+        
     # call ingest endpoint 
     print('connecting to ingestion endpoint')
-    #payload  = {"dataset": dict(ds)}
+
     import time
     stime = time.time()
     ing_req = request_dataset_ingestion(ag_ids, dsid, ds.file_to_upload)

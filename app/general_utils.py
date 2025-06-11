@@ -1,6 +1,7 @@
 import os
 import subprocess as sp
 import json
+import re
 import pytz
 from datetime import datetime
 from app.utils.constants import secret_store
@@ -9,11 +10,17 @@ from app.utils.constants import secret_store
 def remove_file(filepath):
     os.remove(filepath)
 
+def is_orcid(val):
+    pattern= re.compile("[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$")
+    if re.match(pattern, val):
+        return True
+    else:
+        return False
+    
 def run_shell(cmd, checkflag = True, background = False):
     if background:
         return(sp.Popen(cmd, stdout = sp.PIPE, stderr = sp.STDOUT, shell = True, universal_newlines = True))
     return(sp.run(cmd, stdout = sp.PIPE, stderr = sp.STDOUT, shell = True, universal_newlines = True, check = checkflag))
-
 
 
 def get_secret(secret_env_var, gcs_secret_name = None, sa_creds: str = None, cred_file: bool = False): 

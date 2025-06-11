@@ -224,7 +224,6 @@ async def create_dataset(auth_res:  Annotated[tuple, Depends(authorize_user)],
     The dataset ID is recorded in a table to track that the mfid corresponds to a dataset. 
     """
     print(auth_res)
-    print(access_group_name)
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
 

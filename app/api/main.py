@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 from sqlalchemy import join, func
 from sqlalchemy.sql import and_
 
-from app.general_utils import get_secret, run_rclone_command, remove_file, get_tz_isoformat
+from app.general_utils import get_secret, run_rclone_command, remove_file, get_tz_isoformat, is_orcid
 from app.utils.sql_utils import setup_engine, add_or_update, only_update, table_obj_to_dict
 from app.utils.rmq_utils import send_pika_message
 
@@ -191,7 +191,7 @@ def regenerate_apikey(request: Request):
 # TODO: public datasets rate limited but dont require orcid
 # TODO: use agids to authorize for all endpoints
 @app.post("/datasets", response_model = Dataset)
-async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
+async def create_dataset(auth_res:  Annotated[tuple, Depends(authorize_user)],
                          dataset: Dataset):
     """
     Create a new dataset in Crucible by provided a dataset object and optionally the file that you wish to create the dataset from. 
@@ -223,7 +223,9 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
 
     The dataset ID is recorded in a table to track that the mfid corresponds to a dataset. 
     """
-
+    print(auth_res)
+    print(access_group_name)
+    access_group_name, ag_ids = auth_res
     with Session(engine) as session:
 
         #newds = table_obj_to_dict(dataset)
@@ -242,13 +244,25 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
         ro_acl = sql_create_ds_acl(ro, ds, read = True, write = False, session=session)
         print("add ro access")
 
-        #All this logic is so backward because we literally have the instrument name and orcid then we do get requests to get the "IDs" now we have to do the get requests AGAIN to get the information we actually want and had the whole time
+
+        #All this logic is so backward because we literally have the instrument name and orcid then we do get requests to get the "IDs" now we have to do the get requests AGAIN to get the information we actually want and had the whole time  
         if dataset.owner_user_id is not None:
             print('adding owner orcid access')
             user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id)).one_or_none()
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
             user_acl = sql_create_ds_acl(user_ag, ds, read = True, write = True, session=session)
             print('added owner orcid access')
+
+        else:
+            # use the apikey associated accessgroup as owner
+            creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
+            creator_acl = sql_create_ds_acl(creator, ds, read = True, write = True, session=session)
+            print('add creator access')
+
+            if is_orcid(access_group_name):
+                dataset.owner_orcid = access_group_name
+                creator_user_id = session.exec(select(User.id).where(User.orcid == dataset.owner_orcid)).one_or_none()
+                dataset.owner_user_id = creator_user_id
 
         if dataset.project_id is not None:
             print('adding proposal access')
@@ -288,11 +302,12 @@ async def create_dataset(ag_ids:  Annotated[str, Depends(authorize_user)],
 
 
 @app.patch("/datasets/{dsid}", response_model = Dataset)
-def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, updated_dataset: Dataset):
+def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, updated_dataset: Dataset):
     '''
     Updates a dataset in SQL and returns the Updated Dataset object. 
     Sends a message to RabbitMQ to alert RMQ that updates have been made.
     '''
+    access_group_name, ag_ids = auth_res
     #newds = table_obj_to_dict(updated_dataset)
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
@@ -368,12 +383,13 @@ def update_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, u
 
 
 @app.get("/datasets", response_model = List[str])
-def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request: Request):
+def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
     '''
     Returns a list of all dataset IDs the requesting user is authorized to view. 
     If no dataset IDs are authorized for the user, an empty list will be returned. 
 
     '''
+    access_group_name, ag_ids = auth_res
     query_params = request.query_params
     print(query_params)
     params_dict = dict(query_params)
@@ -404,11 +420,12 @@ def list_datasets(ag_ids: Annotated[str, Depends(authorize_user)], request: Requ
     
     
 @app.get("/datasets/{dsid}", response_model = Union[Dataset, None])
-def read_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
     Returns a dataset found with the provided unique ID if one is exists and the requesting user is authorized to view the dataset. 
     Otherwise, returns None
     '''
+    access_group_name, ag_ids = auth_res
     print(f"{ag_ids=}")
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
@@ -418,20 +435,22 @@ def read_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
 
 
 @app.delete("/datasets/{dsid}", response_model = Dataset)
-def delete_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid = str):
+def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid = str):
+    access_group_name, ag_ids = auth_res
     # TODO: DEFINE THIS
     pass
 
 
 
 @app.get("/datasets/{dsid}/download/{file_name}")
-async def download_dataset_files(ag_ids:  Annotated[str, Depends(authorize_user)], dsid: str, file_name: str):
+async def download_dataset_files(auth_res:  Annotated[tuple, Depends(authorize_user)], dsid: str, file_name: str):
     '''
     Download an associated file.  Doing this by file_name for now after discussing with Ed. This is the most intuitive and human readable. 
     This solution also avoids exposing the internal ID which is the only feature of the AF that is currently guaranteed unique.  
     The file_name is actually a relative path which reduces the "intuition" fairly drastically in the case that your "dataset"
     has subdirectories of associated files. 
     '''
+    access_group_name, ag_ids = auth_res
     tasks = BackgroundTasks()
     
     # check dataset access
@@ -456,7 +475,7 @@ async def download_dataset_files(ag_ids:  Annotated[str, Depends(authorize_user)
 
 @app.post("/datasets/{dsid}/upload", response_model = IngestionRequest)
 async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], File(description="List of files")],
-                                          ag_ids:  Annotated[str, Depends(authorize_user)],
+                                          auth_res:  Annotated[tuple, Depends(authorize_user)],
                                           dsid: str):
     '''
     Given an existing dataset record - adds data from an uploaded file
@@ -467,6 +486,7 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
 
     Better than the other way because you would have to use FormData instead of "Dataset" model to combo with File
     '''
+    access_group_name, ag_ids = auth_res
     print(dsid)
     print(files)
     # upload the file
@@ -499,7 +519,7 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
 
 
 @app.post("/datasets/{dsid}/ingest", response_model = IngestionRequest)
-def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)],
+def request_dataset_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
                               dsid: str,
                               file_to_upload: Optional[str]=None,
                               ingestion_class: Optional[str]=None):
@@ -510,6 +530,7 @@ def request_dataset_ingestion(ag_ids: Annotated[str, Depends(authorize_user)],
     TODO: 
       - Need to consider how the system works when a dsid exists INSIDE the file
     '''
+    access_group_name, ag_ids = auth_res
     print("request received")
     # for this to work you should add the person who creates
     # the dataset ID to the access groups when they create the dataset
@@ -566,11 +587,11 @@ def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], reqid: 
 
 
 @app.post("/datasets/{dsid}/google_drive_transfer", response_model = GoogleDriveTransferRequest)
-def request_dataset_transfer_to_drive(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+def request_dataset_transfer_to_drive(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
     For now keep simple - Input is a dataset. Drive info is derived from Project and Owner.  Location within drive is hardcoded.  
     '''
-
+    access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         pst= pytz.timezone("America/Los_Angeles")
         creation_time = datetime.datetime.now(pst).isoformat()
@@ -612,10 +633,10 @@ def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], reqid: s
 
 
 @app.post("/datasets/{dsid}/scicat_update", response_model = SciCatUpdateRequest)
-def request_update_scicat_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+def request_update_scicat_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     pst= pytz.timezone("America/Los_Angeles")
     creation_time = datetime.datetime.now(pst).isoformat()
-
+    access_group_name, ag_ids = auth_res
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
@@ -653,7 +674,8 @@ def patch_scicat_request(is_admin: Annotated[str, Depends(is_admin)], reqid: str
 
 
 @app.get("/datasets/{dsid}/scientific_metadata", response_model = ScientificMetadata)
-def read_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
+    access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
@@ -662,7 +684,8 @@ def read_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], ds
 
 
 @app.post("/datasets/{dsid}/scientific_metadata", response_model = ScientificMetadata)
-def add_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, scientific_md: dict):
+def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md: dict):
+    access_group_name, ag_ids = auth_res
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
     with Session(engine) as session:
@@ -679,7 +702,8 @@ def add_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], dsi
 
 
 @app.patch("/datasets/{dsid}/scientific_metadata", response_model = ScientificMetadata)
-def update_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, scientific_md_updates: dict):
+def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md_updates: dict):
+    access_group_name, ag_ids = auth_res
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
     with Session(engine) as session:
@@ -709,7 +733,7 @@ def update_scientific_metadata(ag_ids: Annotated[str, Depends(authorize_user)], 
 
 
 @app.get("/datasets/{dsid}/thumbnails", response_model = List[Thumbnail])
-def read_thumbnails(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of thumbnail objects associated with the dataset ID provided
     '''
@@ -721,7 +745,7 @@ def read_thumbnails(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
 
 
 @app.post("/datasets/{dsid}/thumbnails", response_model = Thumbnail)
-def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)], 
+def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)], 
                   dsid: str, 
                   thumbnail: Thumbnail):
     '''
@@ -729,6 +753,7 @@ def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)],
     Otherwise, the thumbnail will be created and then added to the dataset. 
     '''
     print('accepted args')
+    access_group_name, ag_ids = auth_res
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
     with Session(engine) as session:
@@ -755,7 +780,7 @@ def add_thumbnail(ag_ids: Annotated[str, Depends(authorize_user)],
 
 
 @app.get("/datasets/{dsid}/associated_files", response_model = List[AssociatedFile])
-def read_associated_files(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of the files associated with the dataset ID provided. 
     '''
@@ -767,7 +792,7 @@ def read_associated_files(ag_ids: Annotated[str, Depends(authorize_user)], dsid:
 
 
 @app.post("/datasets/{dsid}/associated_files", response_model = AssociatedFile)
-def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)], 
+def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)], 
                         dsid: str, 
                         associated_file: AssociatedFile):
     '''
@@ -775,6 +800,7 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)],
     Creates the AF object if it doesn't already exist.
     '''
     print("accepted args")
+    access_group_name, ag_ids = auth_res
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
@@ -801,7 +827,7 @@ def add_associated_file(ag_ids: Annotated[str, Depends(authorize_user)],
  
 
 @app.get("/datasets/{dsid}/keywords", response_model = List[Keyword])
-def list_keywords_for_dataset(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+def list_keywords_for_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
@@ -810,11 +836,12 @@ def list_keywords_for_dataset(ag_ids: Annotated[str, Depends(authorize_user)], d
 
 
 @app.post("/datasets/{dsid}/keywords", response_model = Keyword)
-def add_keyword(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, keyword: str):
+def add_keyword(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, keyword: str):
     '''
     Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object. 
     Otherwise, the keyword will be created and then added to the dataset. 
     '''
+    access_group_name, ag_ids = auth_res
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
     with Session(engine) as session:
@@ -840,7 +867,7 @@ def add_keyword(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str, keyw
 
 
 @app.get("/datasets/{dsid}/drive_location", response_model = List[DataDriveLocation])
-def read_dataset_drive_location(ag_ids: Annotated[str, Depends(authorize_user)], dsid: str):
+def read_dataset_drive_location(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of DataDriveLocation objects with one object for each location in google drive where the dataset is currently located.
     '''
@@ -850,7 +877,7 @@ def read_dataset_drive_location(ag_ids: Annotated[str, Depends(authorize_user)],
 
 
 @app.post("/datasets/{dsid}/drive_location", response_model = DataDriveLocation)
-def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user)], dsid: str, drive_info: DataDriveLocation):   
+def create_dataset_drive_location(auth_res:  Annotated[tuple, Depends(authorize_user)], dsid: str, drive_info: DataDriveLocation):   
     """
     Add a Google Drive location record to the database.
     
@@ -863,6 +890,7 @@ def create_dataset_drive_location(ag_ids:  Annotated[str, Depends(authorize_user
         Added DataDriveLocation object
 
     """
+    access_group_name, ag_ids = auth_res
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
     with Session(engine) as session:
@@ -920,7 +948,8 @@ def create_dataset_acl(group_name: str, dsid: str, read: bool, write: bool, admi
 
 
 @app.post("/dataset_collections", response_model = DatasetCollection)
-def create_dataset_collection(ag_ids:  Annotated[str, Depends(authorize_user)], dc: DatasetCollection):
+def create_dataset_collection(auth_res:  Annotated[tuple, Depends(authorize_user)], dc: DatasetCollection):
+    access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         session.add(dc)
         session.commit()
@@ -984,7 +1013,8 @@ def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orci
 
 
 @app.get("/users/{orcid}/access_groups", response_model = List[str])
-def list_user_access_groups(ag_ids:  Annotated[str, Depends(authorize_user)], orcid: str):
+def list_user_access_groups(auth_res:  Annotated[tuple, Depends(authorize_user)], orcid: str):
+    access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         ags = session.exec(select(AccessGroup).where(AccessGroup.id).in_(ag_ids)).all()
         return([ag.group_name for ag in ags])
@@ -1011,7 +1041,7 @@ def read_keyword(keyword: str, permissive: bool = True):
 
 
 @app.get("/instruments", response_model = List[Instrument])
-def list_instrument(ag_ids: Annotated[str, Depends(authorize_user)], request: Request):
+def list_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
     '''
     Returns a list of instruments filtered by any provided search terms that are attributes of the instrument Class. 
     If no instruments matching the search criteria are found, an empty list is returned.  
@@ -1026,6 +1056,7 @@ def list_instrument(ag_ids: Annotated[str, Depends(authorize_user)], request: Re
         description: str
         instrument_type: str
     '''
+    access_group_name, ag_ids = auth_res
     query_params = request.query_params
     params_dict = dict(query_params)
 
@@ -1040,17 +1071,18 @@ def list_instrument(ag_ids: Annotated[str, Depends(authorize_user)], request: Re
 
 
 @app.get("/instruments/{instrument_unique_id}", response_model = Union[None, Instrument])
-def read_instrument(ag_ids: Annotated[str, Depends(authorize_user)], instrument_unique_id: str):
+def read_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instrument_unique_id: str):
     '''
     Returns an instrument with the provided ID if one exists. Otherwise returns None. 
     '''
+    access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         inst = session.exec(select(Instrument).where(Instrument.unique_id == instrument_unique_id)).one_or_none()
         return(inst)
 
 
 @app.post("/instruments", response_model = Instrument)
-def create_instrument(ag_ids:  Annotated[str, Depends(authorize_user)], instrument: Instrument):   
+def create_instrument(auth_res:  Annotated[tuple, Depends(authorize_user)], instrument: Instrument):   
     """
     Add a new instrument record to the database.
     
@@ -1061,6 +1093,7 @@ def create_instrument(ag_ids:  Annotated[str, Depends(authorize_user)], instrume
     Returns:
         Added instrument object
     """
+    access_group_name, ag_ids = auth_res
     instrument.instrument_name = instrument.instrument_name.lower()
     with Session(engine) as session:
         session.add(instrument)
@@ -1070,7 +1103,7 @@ def create_instrument(ag_ids:  Annotated[str, Depends(authorize_user)], instrume
 
 
 @app.get("/google_drives", response_model = List[GoogleDrives])
-def list_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], request: Request):
+def list_google_drive_info(auth_res:  Annotated[tuple, Depends(authorize_user)], request: Request):
     """
     Returns a list of google drive information
     """
@@ -1090,7 +1123,7 @@ def list_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], req
 
 
 @app.get("/google_drives/{drive_name}", response_model = Union[None, GoogleDrives])
-def read_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], drive_name: str):
+def read_google_drive_info(auth_res:  Annotated[tuple, Depends(authorize_user)], drive_name: str):
     """
     Args:
         ag_ids: List of access group IDs the user belongs to ** should update to is_admin
@@ -1099,6 +1132,7 @@ def read_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], dri
     Returns:
         Google Drive object if found, otherwise None
     """
+    access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         drive = session.exec(select(GoogleDrives).where(GoogleDrives.drive_name == drive_name)).all()
 
@@ -1106,7 +1140,7 @@ def read_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], dri
 
 
 @app.post("/google_drives", response_model = GoogleDrives)
-def create_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], D: Dict):
+def create_google_drive_info(auth_res:  Annotated[tuple, Depends(authorize_user)], D: Dict):
     """
     Add or update a Google Drive record in the database.
     
@@ -1117,6 +1151,7 @@ def create_google_drive_info(ag_ids:  Annotated[str, Depends(authorize_user)], D
     Returns:
         Added or updated Google Drive object
     """
+    access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         if True:
             try:

@@ -232,6 +232,7 @@ async def create_dataset(auth_res:  Annotated[tuple, Depends(authorize_user)],
         print(ds)
         print("added ds")
         session.commit()
+        session.refresh(ds)
         print("committed")
         
         # set appropriate access controls
@@ -259,9 +260,9 @@ async def create_dataset(auth_res:  Annotated[tuple, Depends(authorize_user)],
             print('add creator access')
 
             if is_orcid(access_group_name):
-                dataset.owner_orcid = access_group_name
+                ds.owner_orcid = access_group_name
                 creator_user_id = session.exec(select(User.id).where(User.orcid == dataset.owner_orcid)).one_or_none()
-                dataset.owner_user_id = creator_user_id
+                ds.owner_user_id = creator_user_id
 
         if dataset.project_id is not None:
             print('adding proposal access')
@@ -285,17 +286,6 @@ async def create_dataset(auth_res:  Annotated[tuple, Depends(authorize_user)],
         session.commit()
         print('committed')
         session.refresh(ds)
-
-    # if dataset.file_to_upload is not None:
-    #     # call ingest endpoint 
-    #     print('connecting to ingestion endpoint')
-    #     payload  = {"dataset": dataset}
-
-    #     ds = requests.post(url = f"{api_url}/datasets/{dataset.unique_id}/ingest",  
-    #                         headers = {"Authorization":f"Bearer {apikey}"}, 
-    #                         data = payload   #TODO: check this request format
-    #                       )
-    #     print('sent ingestion request')
 
     return ds
 

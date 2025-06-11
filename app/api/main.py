@@ -539,7 +539,7 @@ def request_dataset_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)
         file_to_upload = ds.file_to_upload
 
     else:
-        pass
+        ds.file_to_upload = file_to_upload
 
     if not file_to_upload:
         raise HTTPException(status_code=402, detail="No file listed to ingest")

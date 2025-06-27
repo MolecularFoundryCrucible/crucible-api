@@ -85,7 +85,7 @@ def run_rclone_command(source_path= "", destination_path= "", cmd="copy", client
             sa_creds = None
             
     if sa_creds is None:
-        sa_creds = get_secret("GCS_SA", "service-account-cred/versions/1")
+        sa_creds = get_secret("GCS_SA", "service-account-cred/versions/6")
 
     if sa_creds is None:
         sa_creds = os.getenv("GCS_SA")

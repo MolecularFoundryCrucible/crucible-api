@@ -614,6 +614,8 @@ def request_dataset_transfer_to_drive(auth_res: Annotated[tuple, Depends(authori
 @app.patch("/datasets/{dsid}/google_drive_transfer/{reqid}", response_model = GoogleDriveTransferRequest)
 def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], reqid: str, dsid: str, xfer_req: GoogleDriveTransferRequest):
     if xfer_req.id:
+        print(f"{reqid=}")
+        print(f"{xfer_req.id=}")
         assert reqid == xfer_req.id
     with Session(engine) as session:
         updated_req = only_update(session, GoogleDriveTransferRequest, (GoogleDriveTransferRequest.id == xfer_req.id) & (GoogleDriveTransferRequest.dataset_id == dsid), **xfer_req.model_dump(exclude_unset=True))

@@ -612,7 +612,7 @@ def request_dataset_transfer_to_drive(auth_res: Annotated[tuple, Depends(authori
 
 
 @app.patch("/datasets/{dsid}/google_drive_transfer/{reqid}", response_model = GoogleDriveTransferRequest)
-def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], reqid: str, dsid: str, xfer_req: GoogleDriveTransferRequest):
+def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], reqid: int, dsid: str, xfer_req: GoogleDriveTransferRequest):
     if xfer_req.id:
         print(f"{reqid=}")
         print(f"{xfer_req.id=}")
@@ -655,7 +655,7 @@ def request_update_scicat_dataset(auth_res: Annotated[tuple, Depends(authorize_u
 
 
 @app.patch("/datasets/{dsid}/scicat_update/{reqid}", response_model = SciCatUpdateRequest)
-def patch_scicat_request(is_admin: Annotated[str, Depends(is_admin)], reqid: str, dsid: str, sc_req: SciCatUpdateRequest):
+def patch_scicat_request(is_admin: Annotated[str, Depends(is_admin)], reqid: int, dsid: str, sc_req: SciCatUpdateRequest):
     if sc_req.id:
         assert reqid == sc_req.id
     with Session(engine) as session:

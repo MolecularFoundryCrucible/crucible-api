@@ -399,13 +399,11 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             jsonpath += f'.{json_path[-1]}'
             
             # Use jsonb_path_exists to check if the value exists at that path
+            print(jsonpath)
             ds_cmd = ds_cmd.where(
-                func.jsonb_path_exists(
-                    ScientificMetadata.scientific_metadata,
-                    text(f"'{jsonpath}'"),
-                    text(f"'{v}'")
-                )
-            )
+                            func.jsonb_extract_path_text(ScientificMetadata.scientific_metadata, *json_path) == v
+                            )
+            
             
             # json_col = ScientificMetadata.scientific_metadata
             # for key in json_path[:-1]:

@@ -689,10 +689,10 @@ def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)],
 
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        scientific_md['dataset_unique_id'] = dsid
         md_obj = add_or_update(session, 
                                ScientificMetadata,
                                where=(ScientificMetadata.dataset_unique_id == dsid),
+                               dataset_unique_id = dsid,
                                scientific_metadata = scientific_md)
 
         session.commit()

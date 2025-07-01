@@ -345,29 +345,6 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         
         session.commit()
         session.refresh(upds)
-        '''
-        message = json.dumps(dict(ds))
-        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    
-        TODO: check how dsupdate and dsupdate-owner consumers differ / what are the inputs expected --- can we consolidate?
-        
-        ds update needs to be separate ...............
-            - This endpoint is getting called by the regular ingest function when it extracts info from a file
-            - Ingestion consumer calls transfer / scicat endpoints, but maybe it shouldn't ...
-            - Change to ds record in DB results in a transfer / scicat update ...
-             OR
-            - If you are updating a ds record with new info not coming from ingestion consumer - you need to explicitly call transfer and scicat endpoints your self... I like that for now. 
-         
-        note: dsupdate-owner is expected the message to contain the field updated_ownership_info whereas dsupdate is expected updated_info
-              both are expecting "dataset_to_update": pid
-              update_info can be any dictionary
-              updated_ownership_info is an instance of the Owner schema
-        Really this will have to change to work but the current format would look like: 
-        message = json.dumps({"dataset_to_update": updated_dataset.unique_id, "updated_info": dict(updated_dataset)})
-        and for ownership it would look like: 
-        message = json.dumps({"dataset_to_update": updated_dataset.unique_id, "updated_ownership_info": dict(Owner(subset of updated_dataset))})
-        send_pika_message(message, exchange = "", routing_key= "dsupdate-newapi", user = 'admin', rmq_pw= rmq_pw)
-        '''
         return upds
 
 
@@ -376,7 +353,6 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     '''
     Returns a list of all dataset IDs the requesting user is authorized to view. 
     If no dataset IDs are authorized for the user, an empty list will be returned. 
-
     '''
     access_group_name, ag_ids = auth_res
     query_params = request.query_params
@@ -384,25 +360,41 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     params_dict = dict(query_params)
 
     if 'keyword' in list(params_dict.keys()):
-        K = session.exec(select(Keyword).where(Keyword.keyword.ilike(f"%{v}%"))).all()
+        with Session(engine) as session:
+            K = session.exec(select(Keyword).where(Keyword.keyword.ilike(f"%{v}%"))).all()
+            
         if K:
             k_ids = [k.id for k in K]
             ds_cmd = select(Dataset).select_from(join(DatasetKeywordLink,
-                                                join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id),
-                                                     DatasetKeywordLink.dataset_id == Dataset.id))\
-                                                .filter(DatasetACL.accessgroup_id.in_(ag_ids))\
-                                                .filter(DatasetKeywordLink.keyword_id.in_(k_ids))
+                                                 join(Dataset, DatasetACL, 
+                                                      DatasetACL.dataset_id == Dataset.id),
+                                                      DatasetKeywordLink.dataset_id == Dataset.id)).filter(
+                                                      DatasetACL.accessgroup_id.in_(ag_ids)).filter(
+                                                      DatasetKeywordLink.keyword_id.in_(k_ids))
         
         del params_dict[k]
 
     else:
-        ds_cmd = select(Dataset.unique_id).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).filter(DatasetACL.accessgroup_id.in_(ag_ids))
-    
+        ds_cmd = select(Dataset.unique_id).select_from(
+                                                join(Dataset, 
+                                                     DatasetACL,
+                                                     DatasetACL.dataset_id == Dataset.id)
+                                                ).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+        ds_cmd = ds_cmd.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id, isouter=True)
+
 
     for k, v in params_dict.items():
         if hasattr(Dataset, k):
             ds_cmd = ds_cmd.where(getattr(Dataset, k) == v)
-
+        else:
+            # Support nested JSON keys with double underscores
+            json_path = k.split('__')
+            json_col = ScientificMetadata.scientific_metadata
+            for key in json_path[:-1]:
+                json_col = json_col.op('->')(key)
+            json_col = json_col.op('->>')(json_path[-1])
+            ds_cmd = ds_cmd.where(json_col == v)
+            
     with Session(engine) as session:
         ds_list = session.exec(ds_cmd).all()
         return ds_list

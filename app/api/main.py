@@ -376,7 +376,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                                                       DatasetACL.accessgroup_id.in_(ag_ids)).filter(
                                                       DatasetKeywordLink.keyword_id.in_(k_ids))
         
-        del params_dict[k]
+        del params_dict['keyword']
 
     else:
         ds_cmd = select(Dataset.unique_id).select_from(

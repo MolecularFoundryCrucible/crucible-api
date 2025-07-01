@@ -393,15 +393,26 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         else:
             # Support nested JSON keys with double underscores
             json_path = k.split('__')
-            print(json_path)
-            json_path = [x for x in json_path if len(x) > 0]
-            print(json_path)
-            json_col = ScientificMetadata.scientific_metadata
-            for key in json_path[:-1]:
-                json_col = json_col.op('->')(key)
-            json_col = json_col.op('->>')(json_path[-1])
-            print(json_col)
-            ds_cmd = ds_cmd.where(json_col == v)
+            jsonpath = "$." + json_path[0] + "[*]"
+            for part in json_path[1:-1]:
+                jsonpath += f".{part}"
+            jsonpath += f'.{json_path[-1]}'
+            
+            # Use jsonb_path_exists to check if the value exists at that path
+            ds_cmd = ds_cmd.where(
+                func.jsonb_path_exists(
+                    ScientificMetadata.scientific_metadata,
+                    text(f"'{jsonpath}'"),
+                    text(f"'{v}'")
+                )
+            )
+            
+            # json_col = ScientificMetadata.scientific_metadata
+            # for key in json_path[:-1]:
+            #     json_col = json_col.op('->')(key)
+            # json_col = json_col.op('->>')(json_path[-1])
+            # print(json_col)
+            # ds_cmd = ds_cmd.where(json_col == v)
             
     with Session(engine) as session:
         ds_list = session.exec(ds_cmd).all()

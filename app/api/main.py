@@ -1348,12 +1348,13 @@ def list_projects(admin_acct:  Annotated[str, Depends(is_admin)]):
 
 
 @app.get("/projects/{proj_id}", response_model = Union[None, Project])
-def read_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_admin)]):
+def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns the project object for the provided ID
     '''
     with Session(engine) as session:
         prop = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
+        # should check user is in prop group
         return(prop)
 
 

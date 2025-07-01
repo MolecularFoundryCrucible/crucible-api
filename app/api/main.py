@@ -678,15 +678,22 @@ def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
 @app.post("/datasets/{dsid}/scientific_metadata", response_model = ScientificMetadata)
 def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md: dict):
     access_group_name, ag_ids = auth_res
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+    ds_cmd = select(Dataset).select_from(join(Dataset, 
+                                              DatasetACL,
+                                              DatasetACL.dataset_id == Dataset.id)).where(
+                                                  Dataset.unique_id == dsid).filter(
+                                                        DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-
-        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), scientific_metadata = scientific_md)
+        scientific_md['dataset_unique_id'] = dsid
+        md_obj = add_or_update(session, 
+                               ScientificMetadata,
+                               where=(ScientificMetadata.dataset_unique_id == dsid),
+                               scientific_metadata = scientific_md)
 
         session.commit()
         session.refresh(md_obj)

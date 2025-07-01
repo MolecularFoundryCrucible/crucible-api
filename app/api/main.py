@@ -16,7 +16,7 @@ from fastapi.security import HTTPBearer
 
 
 from sqlmodel import Session, select
-from sqlalchemy import join, func
+from sqlalchemy import join, func,text
 from sqlalchemy.sql import and_
 
 from app.general_utils import get_secret, run_rclone_command, remove_file, get_tz_isoformat, is_orcid
@@ -348,7 +348,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         return upds
 
 
-@app.get("/datasets", response_model = List[str])
+@app.get("/datasets", response_model = List[Dataset])
 def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
     '''
     Returns a list of all dataset IDs the requesting user is authorized to view. 

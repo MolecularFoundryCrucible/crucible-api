@@ -355,11 +355,15 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     If no dataset IDs are authorized for the user, an empty list will be returned. 
     '''
     access_group_name, ag_ids = auth_res
+    
     query_params = request.query_params
     print(query_params)
+    
     params_dict = dict(query_params)
-
+    print(params_dict)
+    
     if 'keyword' in list(params_dict.keys()):
+        v = params_dict['keyword']
         with Session(engine) as session:
             K = session.exec(select(Keyword).where(Keyword.keyword.ilike(f"%{v}%"))).all()
             
@@ -389,10 +393,14 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         else:
             # Support nested JSON keys with double underscores
             json_path = k.split('__')
+            print(json_path)
+            json_path = [x for x in json_path if len(x) > 0]
+            print(json_path)
             json_col = ScientificMetadata.scientific_metadata
             for key in json_path[:-1]:
                 json_col = json_col.op('->')(key)
             json_col = json_col.op('->>')(json_path[-1])
+            print(json_col)
             ds_cmd = ds_cmd.where(json_col == v)
             
     with Session(engine) as session:

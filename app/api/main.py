@@ -379,7 +379,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         del params_dict['keyword']
 
     else:
-        ds_cmd = select(Dataset.unique_id).select_from(
+        ds_cmd = select(Dataset).select_from(
                                                 join(Dataset, 
                                                      DatasetACL,
                                                      DatasetACL.dataset_id == Dataset.id)

@@ -1301,12 +1301,12 @@ def read_projects_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_ad
     
 
 @app.post("/projects", response_model = Project)
-def create_project(admin_acct:  Annotated[str, Depends(is_admin)], P: Project):
+def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Project):
     """
     Add or update a project record in the database.
     
     Args:
-        ag_ids: List of access group IDs the user belongs to ** should update to is_admin
+        auth_res: ACL info for user
         P: Project object to be added or updated
         
     Returns:

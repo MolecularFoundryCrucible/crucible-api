@@ -480,7 +480,6 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
     - makes user call 2 endpoints 1) /datasets 2) /datasets/{dsid}/upload
     - json info added during step 1
     - If dsid in file then its a little convoluted ... but you could always pull it out and then send it in first request json
-    Calls ingestion request
 
     Better than the other way because you would have to use FormData instead of "Dataset" model to combo with File
     '''
@@ -507,13 +506,9 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
     # call ingest endpoint 
     print('connecting to ingestion endpoint')
 
-    import time
-    stime = time.time()
-    ing_req = request_dataset_ingestion(auth_res, dsid, ds.file_to_upload)
-    tmp = time.time() - stime
-    print(round(tmp,2))
-    print('sent ingestion request')
-    return(ing_req)
+    # ing_req = request_dataset_ingestion(auth_res, dsid, ds.file_to_upload)
+
+    return(ds)
 
 
 @app.post("/datasets/{dsid}/ingest", response_model = IngestionRequest)
@@ -565,7 +560,11 @@ def request_dataset_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)
     send_pika_message(message = json.dumps({"filename": file_to_upload,
                                             "reqid": ingestion_request.id,
                                             "dsid": dsid, 
-                                            "ingestion_class":ingestion_class}), exchange= "", routing_key= "ingest-newapi", user = 'admin', rmq_pw= rmq_pw)
+                                            "ingestion_class":ingestion_class}),
+                      exchange= "",
+                      routing_key= "ingest-newapi",
+                      user = 'admin',
+                      rmq_pw= rmq_pw)
     return ingestion_request
 
 

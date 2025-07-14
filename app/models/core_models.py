@@ -73,11 +73,12 @@ class DatasetSampleLink(SQLModel, table=True):
 class Sample(SQLModel, table = True):
     id: Optional[int] = Field(default = None, primary_key = True)
     unique_id: str = Field(default_factory= get_mfid_value, index = True, unique = True)
-    owner_user_id: int = Field(default=None, index=True, foreign_key="user.id")
+    owner_orcid: Optional[str]
+    owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     date_created: Optional[str] = None
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
-
+    #related_to: List["Samples"] ?? How do you connect sample to batch / batch to campaign / etc if you are going to consider a batch a sample and a sample a sample?
 
 class Dataset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

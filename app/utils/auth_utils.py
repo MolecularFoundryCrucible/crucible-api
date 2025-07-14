@@ -9,7 +9,7 @@ from fastapi import Depends,  HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.general_utils import  get_secret
+from app.general_utils import  get_secret, is_orcid
 from app.utils.sql_utils import setup_engine
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
@@ -18,22 +18,14 @@ from datetime import date, timedelta
 
 
 # ====== Constants
-SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "projects/776258882599/secrets/crucible_secret_key/versions/1")
+SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "crucible_secret_key/versions/1")
 ALGORITHM = "HS256"
 security = HTTPBearer()
 
 db_config_file = f'{os.getenv("HOME")}/{os.getenv("DB_CONF_FILE")}'
 engine = setup_engine(env_config_file = db_config_file)
 
-# ====== Functions 
-def is_orcid(val):
-    pattern= re.compile("[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$")
-    if re.match(pattern, val):
-        return True
-    else:
-        return False
-        
-        
+# ====== Functions
 def find_or_add_api_access(orcid: str, engine, regenerate = False):
     from app.models.misc import ApiToken
 
@@ -144,19 +136,21 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
     
     if api_acct is None:
         raise HTTPException(status_code=400, detail="Incorrect apikey.  Please try again or visit https://crucible.lbl.gov/api/regenerate_apikey to create a new key.")
-        
-    elif is_orcid(api_acct[0].access_group_id):
-        orcid = api_acct[0].access_group_id
+    else:
+        access_group_name = api_acct[0].access_group_id
+
+    # If the APIKEY is associated with an ORCID; make sure that ORCID is a user in our database
+    if is_orcid(access_group_name):
         with Session(engine) as session:
-            ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.orcid == orcid)).all()
+            ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.orcid == access_group_name)).all()
         ag_ids = [x[0].accessgroup_id for x in ag]
-        return(ag_ids)
+        return(access_group_name, ag_ids)
         
     else:
         with Session(engine) as session:
-            ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == api_acct[0].access_group_id)).all()
+            ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).all()
         ag_ids = [x[0].id for x in ag]
-        return(ag_ids)  
+        return(access_group_name, ag_ids)  
 
 
 def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):

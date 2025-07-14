@@ -7,7 +7,7 @@ from sqlmodel import create_engine, select
 
 
 def setup_engine(env_config_file = None):
-    password = get_secret('PGDB_PW', 'projects/776258882599/secrets/pgcloud_pw/versions/1')
+    password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1')
     if env_config_file is not None:
         db_url = parse_db_url_from_config_file(env_config_file, password)
     else:
@@ -54,7 +54,19 @@ def table_obj_to_dict(obj):
         d.pop('id')
         return(d)
     
+def only_update(session, cls, where, **kwargs):
+    statement = select(cls).where(where)
+    obj = session.exec(statement).one_or_none()
+    print(obj)
+    if not obj:
+        return None
     
+    for key, value in kwargs.items():
+        print(key)
+        setattr(obj, key, value)
+    session.add(obj)
+    return obj
+
 def add_or_update(session, cls, where, **kwargs):
     statement = select(cls).where(where)
     obj = session.exec(statement).one_or_none()

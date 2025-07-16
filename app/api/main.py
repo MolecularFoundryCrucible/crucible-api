@@ -1462,18 +1462,17 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
     Returns the sample for the provided ID
     '''
     with Session(engine) as session:
-        query = select(Sample).where(Sample.unique_id == sample_id).options(selectinload(Sample.datasets))
-        samp = session.exec(query).all()
-        q2 =  select(Sample).options(joinedload(Sample.datasets)).where(Sample.unique_id == sample_id)
-        s2 = session.exec(q2).unique()
+        query = select(Sample).where(Sample.unique_id == sample_id)
+        samp = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
         print(samp)
-        print(s2)
-        # refresh to get datasets
-        session.refresh(samp)
-        session.refresh(s2)
-        print(samp)
-        print(s2)
-        return(s2)
+        if samp is not None:
+            q2 =  select(Sample).options(selectinload(Sample.datasets)).where(Sample.id == samp.id)
+            full_samp = session.exec(q2).first()
+            print(full_samp)
+        else:
+            full_samp = None
+        
+        return(full_samp)
 
 
 @app.get("/datasets/{dsid}/samples", response_model = List[Sample])

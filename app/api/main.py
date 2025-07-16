@@ -508,10 +508,9 @@ def request_dataset_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)
     print("request received")
     # for this to work you should add the person who creates
     # the dataset ID to the access groups when they create the dataset
-    ds_cmd = select(Dataset).select_from(
-                                    join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(
                                         Dataset.unique_id == dsid).filter(
-                                            DatasetACL.accessgroup_id.in_(ag_ids))
+                                        DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()

@@ -1431,7 +1431,7 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
 
 
 @app.get("/samples", response_model = List[Sample])
-def list_samples(admin_acct:  Annotated[str, Depends(is_admin)], request: Request):
+def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
     '''
     Returns the project object for the provided ID
     '''

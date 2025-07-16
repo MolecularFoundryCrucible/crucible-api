@@ -1396,11 +1396,11 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             pass
             
         session.add(sample)
-        idtype = add_or_update(session,
-                              IdType,
-                              where=(IdType.unique_id == sample.unique_id),
-                              unique_id = sample.unique_id,
-                              object_type = "sample")
+        add_or_update(session,
+                      IdType,
+                      where=(IdType.unique_id == sample.unique_id),
+                      unique_id = sample.unique_id,
+                      object_type = "sample")
         
         session.commit()
         return(sample)
@@ -1460,7 +1460,8 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
     Returns the sample for the provided ID
     '''
     with Session(engine) as session:
-        samp = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
+        query = select(Sample).where(Sample.unique_id == sample_id).options(selectinload(Sample.datasets))
+        samp = session.exec(query).one_or_none()
         return(samp)
 
 

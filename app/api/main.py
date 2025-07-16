@@ -1465,8 +1465,9 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
         query = select(Sample).where(Sample.unique_id == sample_id).options(selectinload(Sample.datasets))
         samp = session.exec(query).all()
         q2 =  select(Sample).options(joinedload(Sample.datasets)).where(Sample.unique_id == sample_id)
-        s2 = session.exec(q2).all()
-        
+        s2 = session.exec(q2).unique()
+        print(samp)
+        print(s2)
         # refresh to get datasets
         session.refresh(samp)
         session.refresh(s2)

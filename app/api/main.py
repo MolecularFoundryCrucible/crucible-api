@@ -1403,6 +1403,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                       object_type = "sample")
         
         session.commit()
+        session.refresh(sample)
         return(sample)
 
 

@@ -1463,7 +1463,8 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
     '''
     with Session(engine) as session:
         query = select(Sample).where(Sample.unique_id == sample_id).options(selectinload(Sample.datasets))
-        samp = session.exec(query).one_or_none()
+        samp = session.exec(query).first()
+        print(samp)
         return(samp)
 
 

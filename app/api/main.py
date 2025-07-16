@@ -1380,29 +1380,31 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                            **S.model_dump(exclude_unset = True))
         session.commit()
         session.refresh(sample)
-    
-    if sample.owner_user_id is None and sample.owner_orcid is None:
-        creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
-        if is_orcid(access_group_name):
-            sample.owner_orcid = access_group_name
+
+        if sample.owner_user_id is None and sample.owner_orcid is None:
+            creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
+            if is_orcid(access_group_name):
+                sample.owner_orcid = access_group_name
+                creator_user_id = session.exec(select(User.id).where(User.orcid == sample.owner_orcid)).one_or_none()
+                sample.owner_user_id = creator_user_id
+                
+        elif sample.owner_user_id is None:
             creator_user_id = session.exec(select(User.id).where(User.orcid == sample.owner_orcid)).one_or_none()
             sample.owner_user_id = creator_user_id
             
-    elif sample.owner_user_id is None:
-        creator_user_id = session.exec(select(User.id).where(User.orcid == sample.owner_orcid)).one_or_none()
-        sample.owner_user_id = creator_user_id
+        else:
+            pass
+            
+        session.add(sample)
+        idtype = add_or_update(session,
+                              IdType,
+                              where=(IdType.unique_id == sample.unique_id),
+                              unique_id = sample.unique_id,
+                              object_type = "sample")
         
-    else:
-        pass
+        session.commit()
+        return(sample)
 
-    add_or_update(session,
-                  IdType,
-                  where=(IdType.unique_id == sample.unique_id),
-                  unique_id = sample.unique_id,
-                  object_type = "sample")
-    
-    session.commit()
-    session.refresh(sample)
 
 
 @app.post("/datasets/{dsid}/samples/{sample_id}")

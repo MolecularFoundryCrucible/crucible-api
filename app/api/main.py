@@ -17,7 +17,7 @@ from fastapi.security import HTTPBearer
 
 from sqlmodel import Session, select
 from sqlalchemy import join, func,text
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy.sql import and_
 
 from app.general_utils import get_secret, run_rclone_command, remove_file, get_tz_isoformat, is_orcid
@@ -1463,12 +1463,16 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
     '''
     with Session(engine) as session:
         query = select(Sample).where(Sample.unique_id == sample_id).options(selectinload(Sample.datasets))
-        samp = session.exec(query).first()
-
+        samp = session.exec(query).all()
+        q2 =  select(Sample).options(joinedload(Sample.datasets)).where(Sample.unique_id == sample_id)
+        s2 = session.exec(q2).all()
+        
         # refresh to get datasets
         session.refresh(samp)
+        session.refresh(s2)
         print(samp)
-        return(samp)
+        print(s2)
+        return(s2)
 
 
 @app.get("/datasets/{dsid}/samples", response_model = List[Sample])

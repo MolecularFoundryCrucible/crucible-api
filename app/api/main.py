@@ -17,6 +17,7 @@ from fastapi.security import HTTPBearer
 
 from sqlmodel import Session, select
 from sqlalchemy import join, func,text
+from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import and_
 
 from app.general_utils import get_secret, run_rclone_command, remove_file, get_tz_isoformat, is_orcid

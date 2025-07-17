@@ -45,6 +45,7 @@ from app.models.core_models import (Dataset,
 from app.models.instrument import Instrument
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import GoogleDriveTransferRequest, SciCatUpdateRequest, IngestionRequest
+from app.models.response_schemas import SampleWithDatasetsResponse
 
 # import argparse
 
@@ -1430,7 +1431,7 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
     return newlink
 
 
-@app.get("/samples", response_model = List[Sample])
+@app.get("/samples", response_model = List[SampleWithDatasetResponse])
 def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
     '''
     Returns the project object for the provided ID
@@ -1446,7 +1447,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
 
     for k, v in params_dict.items():
         if hasattr(Sample, k) and v is not None:
-            samp_cmd = samp_cmd.where(getattr(Sample, k) == v)
+            samp_cmd = samp_cmd.where(getattr(Sample, k) == v).options(selectinload(Sample.datasets))
         else:
            pass
             
@@ -1455,23 +1456,15 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         return samp_list
 
 
-@app.get("/samples/{sample_id}", response_model = Union[None, Sample])
+@app.get("/samples/{sample_id}", response_model = Union[None, SampleWithDatasetsResponse])
 def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns the sample for the provided ID
     '''
     with Session(engine) as session:
-        query = select(Sample).where(Sample.unique_id == sample_id)
-        samp = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
-        print(samp)
-        if samp is not None:
-            q2 =  select(Sample).options(selectinload(Sample.datasets)).where(Sample.id == samp.id)
-            full_samp = session.exec(q2).first()
-            print(full_samp)
-        else:
-            full_samp = None
-        
-        return(full_samp)
+        query = select(Sample).options(selectinload(Sample.datasets)).where(Sample.unique_id == sample_id)
+        samp = session.exec(query).first()
+        return(samp)
 
 
 @app.get("/datasets/{dsid}/samples", response_model = List[Sample])

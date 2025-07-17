@@ -1442,16 +1442,16 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
     params_dict = dict(query_params)
     print(params_dict)
     
-    
-    samp_cmd = select(Sample)
-
-    for k, v in params_dict.items():
-        if hasattr(Sample, k) and v is not None:
-            samp_cmd = samp_cmd.where(getattr(Sample, k) == v).options(selectinload(Sample.datasets))
-        else:
-           pass
-            
     with Session(engine) as session:
+        samp_cmd = select(Sample)
+    
+        for k, v in params_dict.items():
+            if hasattr(Sample, k) and v is not None:
+                samp_cmd = samp_cmd.where(getattr(Sample, k) == v)
+            else:
+               pass
+            
+        samp_cmd = samp_cmd.options(selectinload(Sample.datasets))
         samp_list = session.exec(samp_cmd).all()
         return samp_list
 

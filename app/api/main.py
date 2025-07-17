@@ -1431,7 +1431,7 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
     return newlink
 
 
-@app.get("/samples", response_model = List[SampleWithDatasetResponse])
+@app.get("/samples", response_model = List[SampleWithDatasetsResponse])
 def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
     '''
     Returns the project object for the provided ID

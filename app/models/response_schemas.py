@@ -7,12 +7,12 @@ class DatasetResponse(BaseModel):
     dataset_name: Optional[str]
 
     class Config:
-        from_attributes = True  # For SQLModel compatibility
-
+        from_attributes = True  
+        
 class SampleWithDatasetsResponse(BaseModel):
     id: int
     unique_id: str
-    sample_name: str = Field(index = True, unique = True) 
+    sample_name: str 
     owner_orcid: Optional[str]
     date_created: Optional[str] = None
     description: Optional[str]

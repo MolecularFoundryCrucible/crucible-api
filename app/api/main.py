@@ -7,7 +7,7 @@ import urllib.parse
 import datetime
 import pytz
 import os
-
+from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File, Body
 from starlette.requests import Request
 from starlette.background import BackgroundTasks
@@ -483,8 +483,8 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
     # upload the file
     for file in files:
         dest_dir = f"/mnt/gcs/api-uploads/{os.path.dirname(file.filename)}"
-        if not os.path.exists(dest_dir):
-            os.mkdir(dest_dir)
+            
+        Path(dest_dir).mkdir(parents=True, exist_ok=True)
         save_file_path = f"/mnt/gcs/api-uploads/{file.filename}"
         with open(save_file_path, "wb") as f:
             f.write(await file.read())

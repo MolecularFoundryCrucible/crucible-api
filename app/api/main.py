@@ -482,6 +482,9 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
     print(files)
     # upload the file
     for file in files:
+        dest_dir = f"/mnt/gcs/api-uploads/{os.path.dirname(file.filename)}"
+        if not os.path.exists(dest_dir):
+            os.mkdir(dest_dir)
         save_file_path = f"/mnt/gcs/api-uploads/{file.filename}"
         with open(save_file_path, "wb") as f:
             f.write(await file.read())

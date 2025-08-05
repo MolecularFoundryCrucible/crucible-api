@@ -79,7 +79,12 @@ class Sample(SQLModel, table = True):
     date_created: Optional[str] = None
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
-    #related_to: List["Samples"] ?? How do you connect sample to batch / batch to campaign / etc if you are going to consider a batch a sample and a sample a sample?
+    parent_sample: Optional["Sample"] = Relationship(
+        back_populates="child_samples", sa_relationship_kwargs={"uselist": False}
+    )
+    child_samples: List["Sample"] = Relationship(
+        back_populates="parent_sample", sa_relationship_kwargs={"uselist": True}
+    )
 
 class Dataset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

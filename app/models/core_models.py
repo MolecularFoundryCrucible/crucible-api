@@ -90,16 +90,16 @@ class Sample(SQLModel, table = True):
         back_populates="children",
         link_model=SampleLink,
         sa_relationship_kwargs={
-            "primaryjoin": "Sample.id==SampleLink.child_id",
-            "secondaryjoin": "Sample.id==SampleLink.parent_id"
+            "primaryjoin": "Sample.id==SampleLink.sample_id",
+            "secondaryjoin": "Sample.id==SampleLink.parent_sample_id"
         }
     )
     children: List["Sample"] = Relationship(
         back_populates="parents",
         link_model=SampleLink,
         sa_relationship_kwargs={
-            "primaryjoin": "Sample.id==SampleLink.parent_id",
-            "secondaryjoin": "Sample.id==SampleLink.child_id"
+            "primaryjoin": "Sample.id==SampleLink.parent_sample_id",
+            "secondaryjoin": "Sample.id==SampleLink.sample_id"
         }
     )
 class Dataset(SQLModel, table=True):

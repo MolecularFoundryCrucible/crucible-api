@@ -69,6 +69,13 @@ class DatasetSampleLink(SQLModel, table=True):
         default=None, foreign_key="dataset.id", primary_key=True
     )
 
+class SampleLink(SQLModel, table=True):
+    sample_id: Optional[int] = Field(
+        default=None, foreign_key="sample.id", primary_key=True, index=True
+    )
+    parent_sample_id: Optional[int] = Field(
+        default=None, foreign_key="sample.id", primary_key=True
+    )
 
 class Sample(SQLModel, table = True):
     id: Optional[int] = Field(default = None, primary_key = True)
@@ -79,13 +86,22 @@ class Sample(SQLModel, table = True):
     date_created: Optional[str] = None
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
-    parent_sample: Optional["Sample"] = Relationship(
-        back_populates="child_samples", sa_relationship_kwargs={"uselist": False}
+    parents: List["Sample"] = Relationship(
+        back_populates="children",
+        link_model=SampleLink,
+        sa_relationship_kwargs={
+            "primaryjoin": "Sample.id==SampleLink.child_id",
+            "secondaryjoin": "Sample.id==SampleLink.parent_id"
+        }
     )
-    child_samples: List["Sample"] = Relationship(
-        back_populates="parent_sample", sa_relationship_kwargs={"uselist": True}
+    children: List["Sample"] = Relationship(
+        back_populates="parents",
+        link_model=SampleLink,
+        sa_relationship_kwargs={
+            "primaryjoin": "Sample.id==SampleLink.parent_id",
+            "secondaryjoin": "Sample.id==SampleLink.child_id"
+        }
     )
-
 class Dataset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     unique_id: str = Field(default_factory = get_mfid_value, index=True, unique=True)

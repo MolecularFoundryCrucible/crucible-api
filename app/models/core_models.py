@@ -102,6 +102,12 @@ class Sample(SQLModel, table = True):
             "secondaryjoin": "Sample.id==SampleLink.sample_id"
         }
     )
+
+    class Config:
+        arbitrary_types_allowed = True
+        orm_mode = True
+
+
 class Dataset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     unique_id: str = Field(default_factory = get_mfid_value, index=True, unique=True)

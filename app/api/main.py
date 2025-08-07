@@ -1377,6 +1377,7 @@ def read_users_on_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_a
 @app.post("/samples", response_model = Sample)
 def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample):
     access_group_name, ag_ids = auth_res
+
     with Session(engine) as session:
         sample = add_or_update(session,
                            Sample,
@@ -1384,6 +1385,20 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                            **S.model_dump(exclude_unset = True))
         session.commit()
         session.refresh(sample)
+
+        if S.parents:
+            for parent in S.parents:
+                parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent.unique_id)).first()
+                if parent_sample:
+                    link = SampleLink(parent_sample_id=parent_sample.id, child_sample_id=sample.id)
+                    session.add(link)
+        
+        if S.children:
+            for child in S.children:
+                child_sample = session.exec(select(Sample).where(Sample.unique_id == child.unique_id)).first()
+                if child_sample:
+                    link = SampleLink(parent_sample_id=sample.id, sample_id=child_sample.id)
+                    session.add(link)
 
         if sample.owner_user_id is None and sample.owner_orcid is None:
             creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()

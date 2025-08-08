@@ -1374,7 +1374,7 @@ def read_users_on_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_a
         users = session.exec(select(User).select_from(join(User, UserProjectLink, UserProjectLink.user_id == User.id)).where(UserProjectLink.project_id == proj_id)).all()
         return users
         
-@app.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model = SampleLink):
+@app.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model = SampleLink)
 def link_parent_child(parent_sample_id, child_sample_id):
     parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()
     child_sample = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).first()

@@ -1379,6 +1379,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
     access_group_name, ag_ids = auth_res
 
     with Session(engine) as session:
+        print("starting sample addition")
         sample = add_or_update(session,
                            Sample,
                            Sample.unique_id == S.unique_id,

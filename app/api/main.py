@@ -1390,7 +1390,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             for parent in S.parents:
                 print(f'getting parent: {parent}')
                 parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent.unique_id)).first()
-                print(f'got parent: {parent_sample}'
+                print(f'got parent: {parent_sample}')
                 if parent_sample:
                     link = SampleLink(parent_sample_id=parent_sample.id, child_sample_id=sample.id)
                     session.add(link)
@@ -1400,7 +1400,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             for child in S.children:
                 print(f'getting child: {child}')
                 child_sample = session.exec(select(Sample).where(Sample.unique_id == child.unique_id)).first()
-                print(f'got child: {child_sample}'
+                print(f'got child: {child_sample}')
                 if child_sample:
                     link = SampleLink(parent_sample_id=sample.id, sample_id=child_sample.id)
                     session.add(link)

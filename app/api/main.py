@@ -1377,35 +1377,33 @@ def read_users_on_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_a
 @app.post("/samples", response_model = Sample)
 def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample):
     access_group_name, ag_ids = auth_res
-
+   
     with Session(engine) as session:
         print("starting sample addition")
         sample = add_or_update(session,
                            Sample,
                            Sample.unique_id == S.unique_id,
-                           **S.model_dump(exclude_unset = True))
+                           **S.model_dump(exclude_unset = True, exclude = {"parents", "children"}))
         session.commit()
         session.refresh(sample)
 
-        if S.parents:
-            for parent in S.parents:
-                print(f'getting parent: {parent}')
-                parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent.unique_id)).first()
-                print(f'got parent: {parent_sample}')
-                if parent_sample:
-                    link = SampleLink(parent_sample_id=parent_sample.id, child_sample_id=sample.id)
-                    session.add(link)
-                    print('parent link added to session')
-        
-        if S.children:
-            for child in S.children:
-                print(f'getting child: {child}')
-                child_sample = session.exec(select(Sample).where(Sample.unique_id == child.unique_id)).first()
-                print(f'got child: {child_sample}')
-                if child_sample:
-                    link = SampleLink(parent_sample_id=sample.id, sample_id=child_sample.id)
-                    session.add(link)
-                    print('child link added to session')
+        for parent in S.parents:
+            print(f'getting parent: {parent}')
+            parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent.unique_id)).first()
+            print(f'got parent: {parent_sample}')
+            if parent_sample:
+                link = SampleLink(parent_sample_id=parent_sample.id, child_sample_id=sample.id)
+                session.add(link)
+                print('parent link added to session')
+    
+        for child in S.children:
+            print(f'getting child: {child}')
+            child_sample = session.exec(select(Sample).where(Sample.unique_id == child.unique_id)).first()
+            print(f'got child: {child_sample}')
+            if child_sample:
+                link = SampleLink(parent_sample_id=sample.id, sample_id=child_sample.id)
+                session.add(link)
+                print('child link added to session')
         
         session.commit()
         print('committed session')

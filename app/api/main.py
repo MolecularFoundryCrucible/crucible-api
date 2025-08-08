@@ -1426,7 +1426,6 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         return(sample)
 
 
-
 @app.post("/datasets/{dsid}/samples/{sample_id}")
 def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, sample_id:str):
     access_group_name, ag_ids = auth_res

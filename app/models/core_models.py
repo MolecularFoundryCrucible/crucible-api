@@ -80,7 +80,7 @@ class SampleLink(SQLModel, table=True):
 class Sample(SQLModel, table = True):
     id: Optional[int] = Field(default = None, primary_key = True)
     unique_id: str = Field(default_factory= get_mfid_value, index = True, unique = True)
-    sample_name: str = Field(index = True, unique = True) 
+    sample_name: str = Field(index = True) 
     owner_orcid: Optional[str]
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     date_created: Optional[str] = None

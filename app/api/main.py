@@ -1375,7 +1375,7 @@ def read_users_on_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_a
         return users
     
 @app.post("/samples", response_model = Sample)
-def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample):
+def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample, parents: List, children: List):
     access_group_name, ag_ids = auth_res
    
     with Session(engine) as session:
@@ -1387,16 +1387,16 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         session.commit()
         session.refresh(sample)
 
-        for parent in S.parents:
+        for parent in parents:
             print(f'getting parent: {parent}')
             parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent.unique_id)).first()
             print(f'got parent: {parent_sample}')
             if parent_sample:
-                link = SampleLink(parent_sample_id=parent_sample.id, child_sample_id=sample.id)
+                link = SampleLink(parent_sample_id=parent_sample.id, sample_id=sample.id)
                 session.add(link)
                 print('parent link added to session')
     
-        for child in S.children:
+        for child in children:
             print(f'getting child: {child}')
             child_sample = session.exec(select(Sample).where(Sample.unique_id == child.unique_id)).first()
             print(f'got child: {child_sample}')

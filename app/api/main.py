@@ -1377,12 +1377,15 @@ def read_users_on_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_a
         
 @app.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model = SampleLink)
 def link_parent_child(parent_sample_id, child_sample_id):
-    parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()
-    child_sample = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).first()
-    link = SampleLink(parent_sample_id=parent_sample.id, sample_id=child_sample.id)
-    session.add(link)
-    session.commit()
-    session.refresh(link)
+
+    with Session(engine) as session:
+        parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()
+        child_sample = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).first()
+        link = SampleLink(parent_sample_id=parent_sample.id, sample_id=child_sample.id)
+        session.add(link)
+        session.commit()
+        session.refresh(link)
+        
     return(link)
 
     

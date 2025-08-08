@@ -1399,7 +1399,9 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                 if child_sample:
                     link = SampleLink(parent_sample_id=sample.id, sample_id=child_sample.id)
                     session.add(link)
-
+        
+        session.commit()
+        
         if sample.owner_user_id is None and sample.owner_orcid is None:
             creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
             if is_orcid(access_group_name):

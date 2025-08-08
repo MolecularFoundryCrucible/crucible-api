@@ -1388,20 +1388,26 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
 
         if S.parents:
             for parent in S.parents:
+                print(f'getting parent: {parent}')
                 parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent.unique_id)).first()
+                print(f'got parent: {parent_sample}'
                 if parent_sample:
                     link = SampleLink(parent_sample_id=parent_sample.id, child_sample_id=sample.id)
                     session.add(link)
+                    print('parent link added to session')
         
         if S.children:
             for child in S.children:
+                print(f'getting child: {child}')
                 child_sample = session.exec(select(Sample).where(Sample.unique_id == child.unique_id)).first()
+                print(f'got child: {child_sample}'
                 if child_sample:
                     link = SampleLink(parent_sample_id=sample.id, sample_id=child_sample.id)
                     session.add(link)
+                    print('child link added to session')
         
         session.commit()
-        
+        print('committed session')
         if sample.owner_user_id is None and sample.owner_orcid is None:
             creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
             if is_orcid(access_group_name):
@@ -1417,6 +1423,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             pass
             
         session.add(sample)
+        print('readded sample')
         add_or_update(session,
                       IdType,
                       where=(IdType.unique_id == sample.unique_id),
@@ -1424,6 +1431,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                       object_type = "sample")
         
         session.commit()
+        print('final commit')
         session.refresh(sample)
         return(sample)
 

@@ -80,6 +80,9 @@ class SampleLink(SQLModel, table=True):
 class Sample(SQLModel, table = True):
     id: Optional[int] = Field(default = None, primary_key = True)
     unique_id: str = Field(default_factory= get_mfid_value, index = True, unique = True)
+    #crucible_id: str = Field(default_factory= get_mfid_value, index = True, unique = True)
+    #sample_type: str = Field(default = "general")
+    #sample_id: str = Field(default_factory = increment increasing, index = True, unique = True)
     sample_name: str = Field(index = True) 
     owner_orcid: Optional[str]
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
@@ -105,7 +108,7 @@ class Sample(SQLModel, table = True):
 
     class Config:
         arbitrary_types_allowed = True
-        orm_mode = True
+        from_attributes = True
 
 
 class Dataset(SQLModel, table=True):

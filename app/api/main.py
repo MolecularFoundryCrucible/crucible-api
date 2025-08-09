@@ -322,8 +322,8 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
         update_attr = updated_dataset.model_dump(exclude_unset=True)
         print(f"{update_attr=}")
-        filtered_updates = {k:v for k,v in update_attr.items() if stored_ds_dict[k] == None}
-        print(f"{filtered_updates=}")
+        filtered_updates = {k:v for k,v in update_attr.items()} # I think this got solved in the io instead..
+
         
         upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **filtered_updates)
 

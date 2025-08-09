@@ -384,7 +384,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                                                 join(Dataset, 
                                                      DatasetACL,
                                                      DatasetACL.dataset_id == Dataset.id)
-                                                ).filter(DatasetACL.accessgroup_id.in_(ag_ids).distinct())
+                                                ).filter(DatasetACL.accessgroup_id.in_(ag_ids))
     
     ds_cmd = ds_cmd.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id, isouter=True)
 

@@ -1493,7 +1493,8 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
 @app.get("/samples", response_model = List[SampleWithDatasetsResponse])
 def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
     '''
-    Returns a list of samples where the owner_orcid matches the orcid of the person who made the request
+    Returns a list of samples where the owner_orcid matches the orcid of the person who made the request.
+    If an admin API key is used, returns all samples.
     '''
     access_group_name, ag_ids = auth_res
     query_params = request.query_params
@@ -1505,11 +1506,15 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
     with Session(engine) as session:
         samp_cmd = select(Sample)
         
+        # Admin API keys can see all samples
+        if access_group_name == 'admin':
+            # No owner filter for admin - they can see all samples
+            pass
         # Filter by owner_orcid matching requester's ORCID (access_group_name when using ORCID-based API key)
-        if is_orcid(access_group_name):
+        elif is_orcid(access_group_name):
             samp_cmd = samp_cmd.where(Sample.owner_orcid == access_group_name)
         else:
-            # If not an ORCID-based request, return empty list for security
+            # If not an ORCID-based request and not admin, return empty list for security
             return []
     
         for k, v in params_dict.items():

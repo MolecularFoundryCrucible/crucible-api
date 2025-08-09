@@ -434,33 +434,29 @@ def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid = s
 @app.get("/datasets/{dsid}/download/{file_name}")
 async def download_dataset_files(auth_res:  Annotated[tuple, Depends(authorize_user)], dsid: str, file_name: str):
     '''
-    Download an associated file.  Doing this by file_name for 
-    now after discussing with Ed. This is the most intuitive and human readable. 
-    This solution also avoids exposing the internal ID which is the 
-    only feature of the AF that is currently guaranteed unique.  
+    Download an associated file directly from mounted GCS storage without copying.
+    Doing this by file_name for now after discussing with Ed. This is the most 
+    intuitive and human readable. This solution also avoids exposing the internal 
+    ID which is the only feature of the AF that is currently guaranteed unique.  
     The file_name is actually a relative path which reduces the "intuition" 
-    fairly drastically in the case that your "dataset"
-    has subdirectories of associated files. 
+    fairly drastically in the case that your "dataset" has subdirectories of 
+    associated files. 
     '''
     access_group_name, ag_ids = auth_res
-    tasks = BackgroundTasks()
     
     # check dataset access
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
 
-    # get data from cloud storage
-    if ds:
-        rclone_out = run_rclone_command(source_path=f":gcs:/mf-storage-prod/{dsid}/{file_name}", destination_path=f"/tmp/data/{dsid}/{file_name}", cmd = "copyto", gcs_config_name= apiconf['gcs_config_name'])
-        print(rclone_out.stdout)
-        print(rclone_out.stderr)
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found or access denied.")
 
-    # return file as FileResponse
-    download_path = f"/tmp/data/{dsid}/{file_name}"
-    tasks.add_task(remove_file, download_path)
-    if os.path.exists(download_path):
-        return FileResponse(download_path, media_type="application/octet-stream", filename=file_name, background = tasks)
+    # Use mounted GCS storage directly - no copying needed
+    file_path = f"/mnt/gcs/{dsid}/{file_name}"
+    
+    if os.path.exists(file_path):
+        return FileResponse(file_path, media_type="application/octet-stream", filename=file_name)
     else:
         raise HTTPException(status_code=404, detail="File not found for requested dataset ID.")
 
@@ -1493,8 +1489,10 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
 @app.get("/samples", response_model = List[SampleWithDatasetsResponse])
 def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
     '''
-    Returns the project object for the provided ID
+    Returns a list of samples where the owner_orcid matches the orcid of the person who made the request.
+    If an admin API key is used, returns all samples.
     '''
+    access_group_name, ag_ids = auth_res
     query_params = request.query_params
     print(query_params)
     
@@ -1503,6 +1501,17 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
     
     with Session(engine) as session:
         samp_cmd = select(Sample)
+        
+        # Admin API keys can see all samples
+        if access_group_name == 'admin':
+            # No owner filter for admin - they can see all samples
+            pass
+        # Filter by owner_orcid matching requester's ORCID (access_group_name when using ORCID-based API key)
+        elif is_orcid(access_group_name):
+            samp_cmd = samp_cmd.where(Sample.owner_orcid == access_group_name)
+        else:
+            # If not an ORCID-based request and not admin, return empty list for security
+            return []
     
         for k, v in params_dict.items():
             if hasattr(Sample, k) and v is not None:
@@ -1527,15 +1536,18 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
 
 
 @app.get("/datasets/{dsid}/samples", response_model = List[Sample])
-def read_samples_in_dataset(dsid: str, auth_res:  Annotated[str, Depends(authorize_user)]):
+def read_samples_in_dataset(dsid: str, auth_res:  Annotated[tuple, Depends(authorize_user)]):
     '''
-    Returns a list of users associated with the project ID provided
+    Returns a list of samples associated with the dataset ID provided
     '''
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
-
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
+        
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+        
         samples = session.exec(select(Sample).select_from(join(Sample, DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)).where(DatasetSampleLink.dataset_id == ds.id)).all()
         return samples
 
@@ -1560,4 +1572,26 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
             .distinct()
         ).all()
         return datasets
+
+
+@app.get("/samples/{parent_sample_id}/children", response_model = List[Sample])
+def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a list of child samples for a given parent sample
+    '''
+    access_group_name, ag_ids = auth_res
+    with Session(engine) as session:
+        # Get parent sample
+        parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
+        
+        if parent_sample is None:
+            raise HTTPException(status_code=404, detail="Parent sample not found")
+        
+        # Get child samples
+        child_samples = session.exec(
+            select(Sample)
+            .select_from(join(Sample, SampleLink, SampleLink.sample_id == Sample.id))
+            .where(SampleLink.parent_sample_id == parent_sample.id)
+        ).all()
+        return child_samples
     

@@ -403,7 +403,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             ds_cmd = ds_cmd.where(json_col == v)
             
     with Session(engine) as session:
-        ds_list = session.exec(ds_cmd).all()
+        ds_list = session.exec(ds_cmd.distinct()).all()
         return ds_list
     
     

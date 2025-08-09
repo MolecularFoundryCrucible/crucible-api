@@ -351,22 +351,6 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         return upds
 
 
-@app.get("/samples/{sample_id}/datasets", response_model = List[Dataset])
-def list_sample_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id = sample_id):
-    access_group_name, ag_ids = auth_res
-
-    ds_cmd = select(Dataset).select_from(join(Dataset, 
-                                              DatasetACL,
-                                              DatasetACL.dataset_id == Dataset.id)).filter(DatasetACL.accessgroup_id.in_(ag_ids))
-    
-    ds_cmd = ds_cmd.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id, isouter=True)
-    
-    with Session(engine) as session:
-        ds_list = session.exec(ds_cmd).all()
-        return ds_list
-
-    
-
 @app.get("/datasets", response_model = List[Dataset])
 def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
     '''
@@ -400,7 +384,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                                                 join(Dataset, 
                                                      DatasetACL,
                                                      DatasetACL.dataset_id == Dataset.id)
-                                                ).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+                                                ).filter(DatasetACL.accessgroup_id.in_(ag_ids).distinct())
     
     ds_cmd = ds_cmd.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id, isouter=True)
 

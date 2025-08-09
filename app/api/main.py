@@ -672,7 +672,7 @@ def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], reqid: i
 
 
 @app.post("/datasets/{dsid}/scicat_update", response_model = SciCatUpdateRequest)
-def request_update_scicat_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
+def request_update_scicat_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, overwrite_data: bool = False):
     pst= pytz.timezone("America/Los_Angeles")
     creation_time = datetime.datetime.now(pst).isoformat()
     access_group_name, ag_ids = auth_res
@@ -688,12 +688,13 @@ def request_update_scicat_dataset(auth_res: Annotated[tuple, Depends(authorize_u
     else:
         pass
 
+    # Should add this to database table but it is okay for now
     scicat_request = SciCatUpdateRequest(dataset_id = dsid, time_created = creation_time, status = "requested")
     session.add(scicat_request)
     session.commit()
     session.refresh(scicat_request)
 
-    message = json.dumps({"dsid": dsid, "source_bucket":"mf-storage-prod", "reqid": scicat_request.id})
+    message = json.dumps({"dsid": dsid, "source_bucket":"mf-storage-prod", "reqid": scicat_request.id, 'overwrite_data': overwrite_data})
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
 
     send_pika_message(message, exchange = "", routing_key= "scicat-newapi", user = 'admin', rmq_pw= rmq_pw)

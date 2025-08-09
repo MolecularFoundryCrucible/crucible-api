@@ -558,6 +558,45 @@ def request_dataset_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)
     return ingestion_request
 
 
+@app.get("/datasets/{dsid}/ingest/{reqid}", response_model = IngestionRequest)
+def get_ingestion_request(auth_res: Annotated[tuple, Depends(authorize_user)], reqid: int, dsid: str):
+    """
+    Get a specific ingestion request by dataset ID and request ID.
+    
+    Args:
+        auth_res: Authorization result containing access group info
+        reqid: Ingestion request ID
+        dsid: Dataset ID
+        
+    Returns:
+        IngestionRequest object if found and user has access
+        
+    Raises:
+        HTTPException: If request not found or access denied
+    """
+    access_group_name, ag_ids = auth_res
+    
+    # Check dataset access first
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(
+        Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+    
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
+        
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+        
+        # Get the ingestion request
+        ing_req = session.exec(select(IngestionRequest).where(
+            (IngestionRequest.id == reqid) & (IngestionRequest.dataset_id == dsid)
+        )).one_or_none()
+        
+        if ing_req is None:
+            raise HTTPException(status_code=404, detail="Ingestion request not found")
+        
+        return ing_req
+
+
 @app.patch("/datasets/{dsid}/ingest/{reqid}", response_model = IngestionRequest)
 def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], reqid: int, dsid: str, ing_req: IngestionRequest):
     if ing_req.id:

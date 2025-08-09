@@ -434,33 +434,29 @@ def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid = s
 @app.get("/datasets/{dsid}/download/{file_name}")
 async def download_dataset_files(auth_res:  Annotated[tuple, Depends(authorize_user)], dsid: str, file_name: str):
     '''
-    Download an associated file.  Doing this by file_name for 
-    now after discussing with Ed. This is the most intuitive and human readable. 
-    This solution also avoids exposing the internal ID which is the 
-    only feature of the AF that is currently guaranteed unique.  
+    Download an associated file directly from mounted GCS storage without copying.
+    Doing this by file_name for now after discussing with Ed. This is the most 
+    intuitive and human readable. This solution also avoids exposing the internal 
+    ID which is the only feature of the AF that is currently guaranteed unique.  
     The file_name is actually a relative path which reduces the "intuition" 
-    fairly drastically in the case that your "dataset"
-    has subdirectories of associated files. 
+    fairly drastically in the case that your "dataset" has subdirectories of 
+    associated files. 
     '''
     access_group_name, ag_ids = auth_res
-    tasks = BackgroundTasks()
     
     # check dataset access
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
 
-    # get data from cloud storage
-    if ds:
-        rclone_out = run_rclone_command(source_path=f":gcs:/mf-storage-prod/{dsid}/{file_name}", destination_path=f"/tmp/data/{dsid}/{file_name}", cmd = "copyto", gcs_config_name= apiconf['gcs_config_name'])
-        print(rclone_out.stdout)
-        print(rclone_out.stderr)
+    if not ds:
+        raise HTTPException(status_code=404, detail="Dataset not found or access denied.")
 
-    # return file as FileResponse
-    download_path = f"/tmp/data/{dsid}/{file_name}"
-    tasks.add_task(remove_file, download_path)
-    if os.path.exists(download_path):
-        return FileResponse(download_path, media_type="application/octet-stream", filename=file_name, background = tasks)
+    # Use mounted GCS storage directly - no copying needed
+    file_path = f"/mnt/gcs/{dsid}/{file_name}"
+    
+    if os.path.exists(file_path):
+        return FileResponse(file_path, media_type="application/octet-stream", filename=file_name)
     else:
         raise HTTPException(status_code=404, detail="File not found for requested dataset ID.")
 

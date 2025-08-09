@@ -443,13 +443,14 @@ async def download_dataset_files(auth_res:  Annotated[tuple, Depends(authorize_u
     associated files. 
     '''
     access_group_name, ag_ids = auth_res
-    
+    print("got auth")
     # check dataset access
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
 
     if not ds:
+        print('no ds found')
         raise HTTPException(status_code=404, detail="Dataset not found or access denied.")
 
     # Use mounted GCS storage directly - no copying needed

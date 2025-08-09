@@ -1493,8 +1493,9 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
 @app.get("/samples", response_model = List[SampleWithDatasetsResponse])
 def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
     '''
-    Returns the project object for the provided ID
+    Returns a list of samples where the owner_orcid matches the orcid of the person who made the request
     '''
+    access_group_name, ag_ids = auth_res
     query_params = request.query_params
     print(query_params)
     
@@ -1503,6 +1504,13 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
     
     with Session(engine) as session:
         samp_cmd = select(Sample)
+        
+        # Filter by owner_orcid matching requester's ORCID (access_group_name when using ORCID-based API key)
+        if is_orcid(access_group_name):
+            samp_cmd = samp_cmd.where(Sample.owner_orcid == access_group_name)
+        else:
+            # If not an ORCID-based request, return empty list for security
+            return []
     
         for k, v in params_dict.items():
             if hasattr(Sample, k) and v is not None:
@@ -1527,15 +1535,18 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
 
 
 @app.get("/datasets/{dsid}/samples", response_model = List[Sample])
-def read_samples_in_dataset(dsid: str, auth_res:  Annotated[str, Depends(authorize_user)]):
+def read_samples_in_dataset(dsid: str, auth_res:  Annotated[tuple, Depends(authorize_user)]):
     '''
-    Returns a list of users associated with the project ID provided
+    Returns a list of samples associated with the dataset ID provided
     '''
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
-
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
+        
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+        
         samples = session.exec(select(Sample).select_from(join(Sample, DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)).where(DatasetSampleLink.dataset_id == ds.id)).all()
         return samples
 
@@ -1560,4 +1571,26 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
             .distinct()
         ).all()
         return datasets
+
+
+@app.get("/samples/{parent_sample_id}/children", response_model = List[Sample])
+def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a list of child samples for a given parent sample
+    '''
+    access_group_name, ag_ids = auth_res
+    with Session(engine) as session:
+        # Get parent sample
+        parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
+        
+        if parent_sample is None:
+            raise HTTPException(status_code=404, detail="Parent sample not found")
+        
+        # Get child samples
+        child_samples = session.exec(
+            select(Sample)
+            .select_from(join(Sample, SampleLink, SampleLink.sample_id == Sample.id))
+            .where(SampleLink.parent_sample_id == parent_sample.id)
+        ).all()
+        return child_samples
     

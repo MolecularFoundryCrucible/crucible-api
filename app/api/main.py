@@ -1515,4 +1515,26 @@ def read_samples_in_dataset(dsid: str, auth_res:  Annotated[str, Depends(authori
         ds = session.exec(ds_cmd).one_or_none()
         samples = session.exec(select(Sample).select_from(join(Sample, DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)).where(DatasetSampleLink.dataset_id == ds.id)).all()
         return samples
+
+
+@app.get("/samples/{sample_id}/datasets", response_model = List[Dataset])
+def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a list of all datasets linked to a given sample
+    '''
+    access_group_name, ag_ids = auth_res
+    with Session(engine) as session:
+        datasets = session.exec(
+            select(Dataset)
+            .select_from(
+                join(Dataset, DatasetSampleLink, DatasetSampleLink.dataset_id == Dataset.id)
+                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id)
+            )
+            .where(DatasetSampleLink.sample_id == 
+                   select(Sample.id).where(Sample.unique_id == sample_id)
+            )
+            .filter(DatasetACL.accessgroup_id.in_(ag_ids))
+            .distinct()
+        ).all()
+        return datasets
     

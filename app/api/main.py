@@ -381,13 +381,15 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         
         del params_dict['keyword']
 
+        
     else:
         ds_cmd = select(Dataset).select_from(
                                                 join(Dataset, 
                                                      DatasetACL,
                                                      DatasetACL.dataset_id == Dataset.id)
                                                 ).filter(DatasetACL.accessgroup_id.in_(ag_ids))
-        ds_cmd = ds_cmd.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id, isouter=True)
+    
+    ds_cmd = ds_cmd.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id, isouter=True)
 
 
     for k, v in params_dict.items():
@@ -1402,26 +1404,6 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         session.commit()
         session.refresh(sample)
 
-        # for parent in parents:
-        #     print(f'getting parent: {parent}')
-        #     parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent.unique_id)).first()
-        #     print(f'got parent: {parent_sample}')
-        #     if parent_sample:
-        #         link = SampleLink(parent_sample_id=parent_sample.id, sample_id=sample.id)
-        #         session.add(link)
-        #         print('parent link added to session')
-    
-        # for child in children:
-        #     print(f'getting child: {child}')
-        #     child_sample = session.exec(select(Sample).where(Sample.unique_id == child.unique_id)).first()
-        #     print(f'got child: {child_sample}')
-        #     if child_sample:
-        #         link = SampleLink(parent_sample_id=sample.id, sample_id=child_sample.id)
-        #         session.add(link)
-        #         print('child link added to session')
-        
-        # session.commit()
-        # print('committed session')
         if sample.owner_user_id is None and sample.owner_orcid is None:
             creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
             if is_orcid(access_group_name):

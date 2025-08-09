@@ -1424,7 +1424,7 @@ def link_parent_child(parent_sample_id, child_sample_id):
         session.commit()
         session.refresh(link)
         
-    return(link)
+        return(link)
 
     
 @app.post("/samples", response_model = Sample)

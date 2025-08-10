@@ -960,12 +960,16 @@ def create_dataset_drive_location(auth_res:  Annotated[tuple, Depends(authorize_
     return(drive_loc)
 
 
-@app.get("/datasets/{dsid}/access_groups", response_model = List[DatasetACL])
+@app.get("/datasets/{dsid}/access_groups", response_model = List[AccessGroup])
 def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     with Session(engine) as session:
-        ds_acl = session.exec(select(AccessGroup).select_from(join(AccessGroup, join(DatasetACL, 
-                                                                                     Dataset, DatasetACL.dataset_id == Dataset.id),
-                                                                                     AccessGroup.id == DatasetACL.accessgroup_id)).where(Dataset.unique_id == dsid)).all()
+        dscmd = select(AccessGroup).select_from(join(AccessGroup, join(DatasetACL, 
+                                                                     Dataset,
+                                                                     DatasetACL.dataset_id == Dataset.id),
+                                                    AccessGroup.id == DatasetACL.accessgroup_id))
+        dscmd = dscmd.where(Dataset.unique_id == dsid)
+        ds_acl = session.exec(dscmd).all()
+        
         return ds_acl
 
 

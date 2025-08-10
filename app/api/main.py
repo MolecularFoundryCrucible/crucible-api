@@ -558,6 +558,32 @@ def request_dataset_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)
     return ingestion_request
 
 
+@app.get("/datasets/{dsid}/scicat_update/{reqid}", response_model = SciCatUpdateRequest)
+def get_scicat_update_request(auth_res: Annotated[tuple, Depends(authorize_user)], reqid: int, dsid: str):
+
+    access_group_name, ag_ids = auth_res
+    
+    # Check dataset access first
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(
+        Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+    
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
+        
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+        
+        # Get the scicat update request
+        sc_req = session.exec(select(SciCatUpdateRequest).where(
+            (SciCatUpdateRequest.id == reqid) & (SciCatUpdateRequest.dataset_id == dsid)
+        )).one_or_none()
+        
+        if sc_req is None:
+            raise HTTPException(status_code=404, detail="Scicat Update request not found")
+        
+        return sc_req
+        
+
 @app.get("/datasets/{dsid}/ingest/{reqid}", response_model = IngestionRequest)
 def get_ingestion_request(auth_res: Annotated[tuple, Depends(authorize_user)], reqid: int, dsid: str):
     """

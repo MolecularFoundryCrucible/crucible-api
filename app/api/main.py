@@ -810,6 +810,7 @@ def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: s
     '''
     Returns a list of thumbnail objects associated with the dataset ID provided
     '''
+    access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
@@ -856,6 +857,8 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
     '''
     Returns a list of the files associated with the dataset ID provided. 
     '''
+    access_group_name, ag_ids = auth_res
+    
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
         ds = session.exec(ds_cmd).one_or_none()

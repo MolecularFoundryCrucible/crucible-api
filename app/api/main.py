@@ -900,6 +900,9 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
 
 @app.get("/datasets/{dsid}/keywords", response_model = List[Keyword])
 def list_keywords_for_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
+    
+    access_group_name, ag_ids = auth_res
+    
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
         ds = session.exec(ds_cmd).one_or_none()

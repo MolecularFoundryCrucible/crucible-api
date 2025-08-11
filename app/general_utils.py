@@ -44,8 +44,10 @@ def get_secret(secret_env_var, gcs_secret_name = None, sa_creds: str = None, cre
 def get_gcs_secret(secret_name, sa_creds, cred_file):
     from google.cloud import secretmanager
     from google.oauth2 import service_account
-
-    if sa_creds is None:
+    import os
+    home = os.getenv("HOME")
+    
+    if 'root' in home:
         # Assume you are running from a GCP service with SA that can auth itself 
         client = secretmanager.SecretManagerServiceClient() 
 

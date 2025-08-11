@@ -18,7 +18,6 @@ class DatasetKeywordLink(SQLModel, table=True):
         default=None, foreign_key="dataset.id", primary_key=True
     )
 
-
 class Keyword(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     keyword: str
@@ -205,49 +204,6 @@ class ScientificMetadata(SQLModel, table = True):
     id: Optional[int] = Field(default=None, primary_key=True)
     dataset_unique_id: str
     scientific_metadata: dict = Field(sa_column=Column(JSON), default={})
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

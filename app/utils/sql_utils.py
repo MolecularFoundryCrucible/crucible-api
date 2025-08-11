@@ -7,9 +7,17 @@ from sqlmodel import create_engine, select
 
 
 def setup_engine(env_config_file = None):
-    password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1')
+    import os
+    home = os.getenv("HOME")
     if env_config_file is not None:
-        db_url = parse_db_url_from_config_file(env_config_file, password)
+        with open(env_config_file) as f:
+            env_config = yaml.safe_load(f)
+        if 'root' in home:
+            password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1')
+        else:
+            password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1', sa_creds = f'{home}/.conf/mf-crucible-6cd684804246.json', cred_file = True)
+        db_url = parse_db_url_from_config(env_config, password)
+            
     else:
         db_type = os.getenv("DB_TYPE")
         if db_type == 'sqlite':
@@ -23,10 +31,7 @@ def setup_engine(env_config_file = None):
     return(engine)
 
 
-def parse_db_url_from_config_file(env_config_file, password):
-    with open(env_config_file) as f:
-        env_config = yaml.safe_load(f)
-    
+def parse_db_url_from_config(env_config, password):
     C = env_config.copy()
 
     if C['db_type'] == 'sqlite':

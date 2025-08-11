@@ -23,6 +23,7 @@ from sqlalchemy.sql import and_
 from app.general_utils import get_secret, run_rclone_command, remove_file, get_tz_isoformat, is_orcid
 from app.utils.sql_utils import setup_engine, add_or_update, only_update, table_obj_to_dict
 from app.utils.rmq_utils import send_pika_message
+from app.utils.constants import SAMPLE_TYPE_MAPPING
 
 
 from app.models.core_models import (Dataset, 
@@ -47,6 +48,7 @@ from app.models.instrument import Instrument
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import GoogleDriveTransferRequest, SciCatUpdateRequest, IngestionRequest
 from app.models.response_schemas import SampleWithDatasetsResponse
+from app.models.sample_metadata_models import SpinbotBatchMetadata
 
 # import argparse
 
@@ -1635,4 +1637,70 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends
             .where(SampleLink.parent_sample_id == parent_sample.id)
         ).all()
         return child_samples
+
+
+@app.post("/samples/{sample_id}/metadata/{sample_type}")
+def create_sample_metadata(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    sample_id: str,
+    sample_type: str,
+    metadata: dict
+):
+    """
+    Create or update metadata for a sample based on sample_type.
+    
+    Args:
+        auth_res: Authorization result containing access group info
+        sample_id: Unique identifier for the sample
+        sample_type: Type of sample metadata (e.g., 'spinbot_batch')
+        metadata: Dictionary containing metadata fields
+        
+    Returns:
+        Created/updated metadata object
+        
+    Raises:
+        HTTPException: If sample not found, invalid sample_type, or validation errors
+    """
+    access_group_name, ag_ids = auth_res
+    
+    # Validate sample_type
+    if sample_type not in SAMPLE_TYPE_MAPPING:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid sample_type '{sample_type}'. Supported types: {list(SAMPLE_TYPE_MAPPING.keys())}"
+        )
+    
+    with Session(engine) as session:
+        # Verify sample exists
+        sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
+        if sample is None:
+            raise HTTPException(status_code=404, detail="Sample not found")
+        
+        # Get the appropriate model class based on sample_type
+        model_class_name = SAMPLE_TYPE_MAPPING[sample_type]
+        
+        if model_class_name == "SpinbotBatchMetadata":
+            model_class = SpinbotBatchMetadata
+        else:
+            raise HTTPException(status_code=500, detail=f"Model class {model_class_name} not implemented")
+        
+        # Create metadata object with sample_id and sample_type
+        metadata_dict = {
+            "sample_id": sample_id,
+            "sample_type": sample_type,
+            **metadata
+        }
+        
+        # Add or update metadata
+        metadata_obj = add_or_update(
+            session,
+            model_class,
+            model_class.sample_id == sample_id,
+            **metadata_dict
+        )
+        
+        session.commit()
+        session.refresh(metadata_obj)
+        
+        return metadata_obj
     

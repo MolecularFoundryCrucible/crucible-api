@@ -4,8 +4,8 @@ from sqlmodel import Field, SQLModel, Relationship
 
 
 class SpinbotBatchMetadata(SQLModel, table = True):
-    id: Optional[int] = Field(default=None, primary_key=True, sa_column_kwargs={"autoincrement": True})
-    sample_id: str = Field(default=None, unique=True)
+    id: Optional[int] = Field(default=None, primary_key=True, index = True, sa_column_kwargs={"autoincrement": True})
+    sample_id: str = Field(default=None, unique=True, index = True)
     sample_type: str = Field(default = 'spinbot_batch')
     spin_duration_s: Optional[int]
     spin_velocity_rpm: Optional[int]

@@ -1639,6 +1639,63 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends
         return child_samples
 
 
+@app.get("/samples/{sample_id}/metadata/{sample_type}")
+def get_sample_metadata(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    sample_id: str,
+    sample_type: str
+):
+    """
+    Get metadata for a sample based on sample_type.
+    
+    Args:
+        auth_res: Authorization result containing access group info
+        sample_id: Unique identifier for the sample
+        sample_type: Type of sample metadata (e.g., 'spinbot_batch')
+        
+    Returns:
+        Sample metadata object if found
+        
+    Raises:
+        HTTPException: If sample not found, invalid sample_type, or metadata not found
+    """
+    access_group_name, ag_ids = auth_res
+    
+    # Validate sample_type
+    if sample_type not in SAMPLE_TYPE_MAPPING:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid sample_type '{sample_type}'. Supported types: {list(SAMPLE_TYPE_MAPPING.keys())}"
+        )
+    
+    with Session(engine) as session:
+        # Verify sample exists
+        sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
+        if sample is None:
+            raise HTTPException(status_code=404, detail="Sample not found")
+        
+        # Get the appropriate model class based on sample_type
+        model_class_name = SAMPLE_TYPE_MAPPING[sample_type]
+        
+        if model_class_name == "SpinbotBatchMetadata":
+            model_class = SpinbotBatchMetadata
+        else:
+            raise HTTPException(status_code=500, detail=f"Model class {model_class_name} not implemented")
+        
+        # Get metadata
+        metadata_obj = session.exec(
+            select(model_class).where(model_class.sample_id == sample_id)
+        ).one_or_none()
+        
+        if metadata_obj is None:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No {sample_type} metadata found for sample {sample_id}"
+            )
+        
+        return metadata_obj
+
+
 @app.post("/samples/{sample_id}/metadata/{sample_type}")
 def create_sample_metadata(
     auth_res: Annotated[tuple, Depends(authorize_user)],

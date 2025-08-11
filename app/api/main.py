@@ -1526,9 +1526,8 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
         newlink = DatasetSampleLink(sample_id = samp.id, dataset_id = ds.id)
         session.add(newlink)
         session.commit()
-        session.refresh(newlink)
 
-        info = DatasetSampleLinkResponse(link_id = newlink.id, dataset_id = ds.unique_id, dataset_name = ds.dataset_name, sample_id = samp.unique_id, sample_name = samp.sample_name)
+        info = DatasetSampleLinkResponse(dataset_id = ds.unique_id, dataset_name = ds.dataset_name, sample_id = samp.unique_id, sample_name = samp.sample_name)
     return info
 
 

@@ -22,7 +22,6 @@ class SampleWithDatasetsResponse(BaseModel):
         from_attributes = True
 
 class DatasetSampleLinkResponse(BaseModel):
-    link_id: str
     dataset_id: str
     dataset_name: str
     sample_id: str

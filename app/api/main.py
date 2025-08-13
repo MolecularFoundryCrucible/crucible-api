@@ -423,7 +423,7 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str)
     access_group_name, ag_ids = auth_res
     print(f"{ag_ids=}")
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         return ds
 
@@ -453,9 +453,9 @@ async def download_dataset_files(auth_res:  Annotated[tuple, Depends(authorize_u
     
     # check dataset access
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, 
-                                              DatasetACL.dataset_id == Dataset.id)
+                                              DatasetACL.dataset_id == Dataset.id, isouter=True)
                                         ).where(Dataset.unique_id == dsid
-                                               ).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+                                               ).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
 
@@ -749,7 +749,7 @@ def patch_scicat_request(is_admin: Annotated[str, Depends(is_admin)], reqid: int
 def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         ds_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == ds.unique_id)).one_or_none()
         return ds_md
@@ -818,7 +818,7 @@ def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: s
     '''
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         ds_thumbnails = session.exec(select(Thumbnail).where(Thumbnail.dataset_id == ds.id)).all()
         return ds_thumbnails
@@ -866,7 +866,7 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
     access_group_name, ag_ids = auth_res
     
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         ds_files = session.exec(select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)).all()
         return ds_files
@@ -913,7 +913,7 @@ def list_keywords_for_dataset(auth_res: Annotated[tuple, Depends(authorize_user)
     access_group_name, ag_ids = auth_res
     
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         ds_keywords = session.exec(select(Keyword).select_from(join(Keyword, DatasetKeywordLink, DatasetKeywordLink.keyword_id == Keyword.id)).where(DatasetKeywordLink.dataset_id == ds.id)).all()
         return ds_keywords
@@ -1591,7 +1591,7 @@ def read_samples_in_dataset(dsid: str, auth_res:  Annotated[tuple, Depends(autho
     '''
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         
         if ds is None:

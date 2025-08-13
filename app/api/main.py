@@ -373,9 +373,10 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             k_ids = [k.id for k in K]
             ds_cmd = select(Dataset).select_from(join(DatasetKeywordLink,
                                                  join(Dataset, DatasetACL, 
-                                                      DatasetACL.dataset_id == Dataset.id),
+                                                      DatasetACL.dataset_id == Dataset.id, isouter=True),
                                                       DatasetKeywordLink.dataset_id == Dataset.id)).filter(
-                                                      DatasetACL.accessgroup_id.in_(ag_ids)).filter(
+                                                      (DatasetACL.accessgroup_id.in_(ag_ids)) | 
+                                                      (Dataset.public == True)).filter(
                                                       DatasetKeywordLink.keyword_id.in_(k_ids))
         
         del params_dict['keyword']
@@ -385,8 +386,11 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         ds_cmd = select(Dataset).select_from(
                                                 join(Dataset, 
                                                      DatasetACL,
-                                                     DatasetACL.dataset_id == Dataset.id)
-                                                ).filter(DatasetACL.accessgroup_id.in_(ag_ids))
+                                                     DatasetACL.dataset_id == Dataset.id, isouter=True)
+                                                ).filter(
+                                                    (DatasetACL.accessgroup_id.in_(ag_ids)) | 
+                                                    (Dataset.public == True)
+                                                )
     
     ds_cmd = ds_cmd.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id, isouter=True)
 
@@ -1608,12 +1612,15 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
             select(Dataset)
             .select_from(
                 join(Dataset, DatasetSampleLink, DatasetSampleLink.dataset_id == Dataset.id)
-                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id)
+                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
             )
             .where(DatasetSampleLink.sample_id == 
                    select(Sample.id).where(Sample.unique_id == sample_id)
             )
-            .filter(DatasetACL.accessgroup_id.in_(ag_ids))
+            .filter(
+                (DatasetACL.accessgroup_id.in_(ag_ids)) | 
+                (Dataset.public == True)
+            )
             .distinct()
         ).all()
         return datasets

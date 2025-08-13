@@ -47,7 +47,7 @@ from app.models.core_models import (Dataset,
 from app.models.instrument import Instrument
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import GoogleDriveTransferRequest, SciCatUpdateRequest, IngestionRequest
-from app.models.response_schemas import SampleWithDatasetsResponse
+from app.models.response_schemas import SampleWithDatasetsResponse, DatasetSampleLinkResponse
 from app.models.sample_metadata_models import SpinbotBatchMetadata
 
 # import argparse
@@ -1507,7 +1507,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         return(sample)
 
 
-@app.post("/datasets/{dsid}/samples/{sample_id}")
+@app.post("/datasets/{dsid}/samples/{sample_id}", response_model = DatasetSampleLinkResponse)
 def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, sample_id:str):
     access_group_name, ag_ids = auth_res
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
@@ -1522,11 +1522,13 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found or access denied")
 
+        
         newlink = DatasetSampleLink(sample_id = samp.id, dataset_id = ds.id)
         session.add(newlink)
         session.commit()
 
-    return newlink
+        info = DatasetSampleLinkResponse(dataset_id = ds.unique_id, dataset_name = ds.dataset_name, sample_id = samp.unique_id, sample_name = samp.sample_name)
+    return info
 
 
 @app.get("/samples", response_model = List[SampleWithDatasetsResponse])

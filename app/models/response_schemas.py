@@ -20,3 +20,12 @@ class SampleWithDatasetsResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+class DatasetSampleLinkResponse(BaseModel):
+    dataset_id: str
+    dataset_name: str
+    sample_id: str
+    sample_name: str
+    
+    class Config:
+        from_attributes = True

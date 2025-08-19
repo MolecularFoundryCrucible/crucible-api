@@ -236,6 +236,8 @@ async def create_dataset(auth_res:  Annotated[tuple, Depends(authorize_user)],
         else:
             # use the apikey associated accessgroup as owner
             creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
+            print(f'{access_group_name=}')
+            print(f'{creator=}')
             creator_acl = sql_create_ds_acl(creator, ds, read = True, write = True, session=session)
             print('add creator access')
 

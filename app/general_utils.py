@@ -5,7 +5,7 @@ import re
 import pytz
 from datetime import datetime
 from app.utils.constants import secret_store
-
+import hashlib
 
 def remove_file(filepath):
     os.remove(filepath)
@@ -120,3 +120,17 @@ def get_tz_isoformat(timezone = "America/Los_Angeles"):
     pst= pytz.timezone(timezone)
     curr_pct_time = datetime.now(pst).isoformat()
     return(curr_pct_time)
+
+def checkhash(file):
+    """Calculate SHA256 hash of a file.
+    
+    Args:
+        file (str): Path to the file to hash
+        
+    Returns:
+        str: Hexadecimal SHA256 hash of the file
+    """
+    with open(file,"rb") as f:
+        fdata = f.read() 
+        readable_hash = hashlib.sha256(fdata).hexdigest()
+    return(readable_hash)

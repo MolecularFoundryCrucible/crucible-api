@@ -317,10 +317,10 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         ds_list = session.exec(ds_cmd).all()
 
     if ds_list is None:
-        raise HTTPException(status_code=402,
+        raise HTTPException(status_code=404,
                             detail="Dataset not found")
     elif len(ds_list) == 0:
-        raise HTTPException(status_code=402,
+        raise HTTPException(status_code=404,
                             detail="Dataset not found")
     else:
         pass
@@ -536,7 +536,7 @@ def request_dataset_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)
         ds = session.exec(ds_cmd).one_or_none()
 
     if ds is None:
-        raise HTTPException(status_code=402, detail="Dataset not found")
+        raise HTTPException(status_code=404, detail="Dataset not found")
     
     elif file_to_upload is None:
         file_to_upload = ds.file_to_upload
@@ -545,7 +545,7 @@ def request_dataset_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)
         ds.file_to_upload = file_to_upload
 
     if not file_to_upload:
-        raise HTTPException(status_code=402, detail="No file listed to ingest")
+        raise HTTPException(status_code=400, detail="No file listed to ingest")
 
     pst= pytz.timezone("America/Los_Angeles")
     creation_time = get_tz_isoformat()
@@ -682,9 +682,9 @@ def request_dataset_transfer_to_drive(auth_res: Annotated[tuple, Depends(authori
             ds_list = session.exec(ds_cmd).all()
     
         if ds_list is None:
-            raise HTTPException(status_code=402, detail="Dataset not found")
+            raise HTTPException(status_code=404, detail="Dataset not found")
         elif len(ds_list) == 0:
-            raise HTTPException(status_code=402, detail="Dataset not found")
+            raise HTTPException(status_code=404, detail="Dataset not found")
         else:
             pass
 
@@ -724,9 +724,9 @@ def request_update_scicat_dataset(auth_res: Annotated[tuple, Depends(authorize_u
         ds_list = session.exec(ds_cmd).all()
 
     if ds_list is None:
-        raise HTTPException(status_code=402, detail="Dataset not found")
+        raise HTTPException(status_code=404, detail="Dataset not found")
     elif len(ds_list) == 0:
-        raise HTTPException(status_code=402, detail="Dataset not found")
+        raise HTTPException(status_code=404, detail="Dataset not found")
     else:
         pass
 
@@ -991,9 +991,9 @@ def create_dataset_drive_location(auth_res:  Annotated[tuple, Depends(authorize_
         ds_list = session.exec(ds_cmd).all()
 
     if ds_list is None:
-        raise HTTPException(status_code=402, detail="Dataset not found")
+        raise HTTPException(status_code=404, detail="Dataset not found")
     elif len(ds_list) == 0:
-        raise HTTPException(status_code=402, detail="Dataset not found")
+        raise HTTPException(status_code=404, detail="Dataset not found")
     else:
         pass
     with Session(engine) as session:

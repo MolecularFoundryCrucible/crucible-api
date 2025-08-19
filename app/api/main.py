@@ -162,6 +162,14 @@ def get_apikey(request: Request):
     user_info = decode_token(user_info_jwt)
     orcid = user_info['orcid']
     crucible_token = find_or_add_api_access(orcid, engine, regenerate = False)
+
+    with Session(engine) as session:
+        # confirm access group exists:
+        new_access_group = add_or_update(session,
+                                        AccessGroup,
+                                        AccessGroup.group_name == orcid,
+                                        group_name = orcid)
+        
     return(f"Your Crucible APIkey is: {crucible_token}")
 
 

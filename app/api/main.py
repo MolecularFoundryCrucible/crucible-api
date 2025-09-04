@@ -47,7 +47,7 @@ from app.models.core_models import (Dataset,
 from app.models.instrument import Instrument
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
 from app.models.tasks import GoogleDriveTransferRequest, SciCatUpdateRequest, IngestionRequest
-from app.models.response_schemas import SampleWithDatasetsResponse, DatasetSampleLinkResponse
+from app.models.response_schemas import SampleWithDatasetsResponse, DatasetSampleLinkResponse, AccountInfo
 from app.models.sample_metadata_models import SpinbotBatchMetadata
 
 # import argparse
@@ -200,7 +200,27 @@ def regenerate_apikey(request: Request):
 
 
 
-######################## =============================DATASETS ==========================================================================================================  
+######################## 
+
+@app.get("/account", response_model = AccountInfo)
+def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    use API key to get basic info about your access in Crucible
+    '''
+    access_group_name, ag_ids = auth_res
+    with Session(engine) as session:
+        is_user = session.exec(select(User).where(User.orcid == access_group_name)).one_or_none()
+
+    if is_user is not None:
+        user_info = is_user.model_dump()
+    else:
+        user_info ={}
+
+    account_info = AccountInfo(access_group_name = access_group_name, access_group_ids = ag_ids, user_info = user_info)
+    return account_info
+
+
+
 
 # TODO: person creating dataset must exist in create data set access group
 # TODO: public datasets rate limited but dont require orcid

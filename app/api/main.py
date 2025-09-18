@@ -872,9 +872,9 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
             raise HTTPException(status_code=404, detail="Dataset not found")
         
         tn_obj = add_or_update(session, Thumbnail, where=(Thumbnail.thumbnail_b64str == thumbnail.thumbnail_b64str),
-                        thumbnail_name = thumbnail.thumbnail_name, 
-                        thumbnail_b64str = thumbnail.thumbnail_b64str, 
-                        dataset_id = ds.id)
+                                thumbnail_name = thumbnail.thumbnail_name, 
+                                thumbnail_b64str = thumbnail.thumbnail_b64str, 
+                                dataset_id = ds.id)
         print('added tnobj')
         if not (tn_obj in ds.thumbnails):  
             print("adding tnobj to ds")

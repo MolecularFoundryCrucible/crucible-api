@@ -1177,11 +1177,14 @@ def list_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], request
     access_group_name, ag_ids = auth_res
     query_params = request.query_params
     params_dict = dict(query_params)
-
+    print(params_dict)
     statement = select(Instrument)
     for k,v, in params_dict.items():
         if hasattr(Instrument, k):
+            print(f'has attr {k=}')
             statement = statement.where(getattr(Instrument, k) == v.lower().strip())
+        else:
+            print(f'does not have attr {k=}')
     with Session(engine) as session: 
         all_inst = session.exec(statement).all()
 
@@ -1457,7 +1460,7 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
 
 
 @app.get("/projects", response_model = List[Project])
-def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)]):
+def list_projects(admin_acct:  Annotated[str, Depends(is_admin)]):
     '''
     Returns the project object for the provided ID
     '''

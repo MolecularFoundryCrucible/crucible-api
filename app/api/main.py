@@ -1457,7 +1457,7 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
 
 
 @app.get("/projects", response_model = List[Project])
-def list_projects(admin_acct:  Annotated[str, Depends(is_admin)]):
+def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns the project object for the provided ID
     '''

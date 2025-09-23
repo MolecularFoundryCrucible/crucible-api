@@ -27,7 +27,7 @@ from app.utils.constants import SAMPLE_TYPE_MAPPING
 
 
 from app.models.core_models import (Dataset, 
-associt                                    DatasetACL,
+                                    DatasetACL,
                                     Keyword,
                                     DatasetKeywordLink,
                                     Thumbnail,

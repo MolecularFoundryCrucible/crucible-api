@@ -1,24 +1,22 @@
-from typing import Annotated, List, Tuple, Dict, Optional, Union
-import json
-import yaml
-import requests
-from jose import jwt
-import urllib.parse
 import datetime
-import pytz
+import json
 import os
+import urllib.parse
 from pathlib import Path
-from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File, Body
-from starlette.requests import Request
-from starlette.background import BackgroundTasks
-from fastapi.responses import RedirectResponse, FileResponse
+from typing import Annotated, Dict, List, Optional, Tuple, Union
+
+import pytz
+import requests
+import yaml
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPBearer
-
-
-from sqlmodel import Session, select
-from sqlalchemy import join, func,text
-from sqlalchemy.orm import selectinload, joinedload
+from jose import jwt
+from sqlalchemy import func, join, text
+from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.sql import and_
+from sqlmodel import Session, select
+from starlette.background import BackgroundTasks
 
 from app.general_utils import get_secret, run_rclone_command, remove_file, get_tz_isoformat, is_orcid
 from app.utils.sql_utils import setup_engine, add_or_update, only_update, table_obj_to_dict
@@ -26,23 +24,25 @@ from app.utils.rmq_utils import send_pika_message
 from app.utils.constants import SAMPLE_TYPE_MAPPING
 
 
-from app.models.core_models import (Dataset, 
-associt                                    DatasetACL,
-                                    Keyword,
-                                    DatasetKeywordLink,
-                                    Thumbnail,
-                                    AssociatedFile,
-                                    User,
-                                    AccessGroup,
-                                    Project,
-                                    UserAccessGroupLink,
-                                    UserProjectLink,
-                                    Sample,
-                                    SampleLink,
-                                    DatasetSampleLink,
-                                    DatasetCollection,
-                                    DatasetCollectionLink,
-                                    ScientificMetadata)
+from app.models.core_models import (
+    AccessGroup,
+    AssociatedFile,
+    Dataset,
+    DatasetACL,
+    DatasetCollection,
+    DatasetCollectionLink,
+    DatasetKeywordLink,
+    DatasetSampleLink,
+    Keyword,
+    Project,
+    Sample,
+    SampleLink,
+    ScientificMetadata,
+    Thumbnail,
+    User,
+    UserAccessGroupLink,
+    UserProjectLink,
+)
 
 from app.models.instrument import Instrument
 from app.models.misc import IdType, DataDriveLocation, GoogleDrives
@@ -50,12 +50,6 @@ from app.models.tasks import GoogleDriveTransferRequest, SciCatUpdateRequest, In
 from app.models.response_schemas import SampleWithDatasetsResponse, DatasetSampleLinkResponse, AccountInfo
 from app.models.sample_metadata_models import SpinbotBatchMetadata
 
-# import argparse
-
-# parser = argparse.ArgumentParser()
-# parser.add_argument('--db_config', help='Database config file', required=False)
-# parser.add_argument('--api_config', help='API config file', required = False)
-# args = parser.parse_args()
 
 # ======================= APP
 app = FastAPI()
@@ -90,37 +84,44 @@ from app.utils.auth_utils import authorize_user, is_admin
 
 @app.get("/login")
 def orcid_login() -> RedirectResponse:
-    """
-    Redirect the user to the ORCID login page for authentication.
-    
+    """Redirect the user to the ORCID login page for authentication.
+
     Returns:
-        RedirectResponse to the ORCID login page
+        RedirectResponse to the ORCID login page.
     """
-    orcid_auth_url = f"https://orcid.org/oauth/authorize?response_type=code&redirect_uri={redirect_uri}&client_id={orcid_client_id}&scope=openid&nonce=whatever"
+    orcid_auth_url = (
+        f"https://orcid.org/oauth/authorize?response_type=code&"
+        f"redirect_uri={redirect_uri}&client_id={orcid_client_id}&"
+        f"scope=openid&nonce=whatever"
+    )
     response = RedirectResponse(orcid_auth_url)
     return response
 
 
 @app.get("/auth")
-def redirect_exchange(request: Request, code: str, state: str=None):
-    """
-    Exchange the ORCID authorization code for an access token and user information.
-    
+def redirect_exchange(request: Request, code: str, state: str = None):
+    """Exchange the ORCID authorization code for an access token and user information.
+
     Args:
-        request: Request object containing the HTTP request
-        code: ORCID authorization code
-        state: Optional state parameter (default is None)
-        
+        request: Request object containing the HTTP request.
+        code: ORCID authorization code.
+        state: Optional state parameter (default is None).
+
     Returns:
-        RedirectResponse to the appropriate page after successful authentication
+        RedirectResponse to the appropriate page after successful authentication.
     """
     from app.utils.auth_utils import SECRET_KEY, ALGORITHM, code_for_token_exchange
-    token = code_for_token_exchange(code, orcid_client_id, orcid_client_secret, f"{api_url}/auth")                                
-    user_from_orcid = requests.get(url = "https://orcid.org/oauth/userinfo", headers = {"Authorization": f"Bearer {token}"})
+    token = code_for_token_exchange(
+        code, orcid_client_id, orcid_client_secret, f"{api_url}/auth"
+    )                                
+    user_from_orcid = requests.get(
+        url="https://orcid.org/oauth/userinfo",
+        headers={"Authorization": f"Bearer {token}"}
+    )
     try:
         user = user_from_orcid.json()
         exp_time = datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
-        user_info_payload = { "orcid": user["sub"], "exp": exp_time }
+        user_info_payload = {"orcid": user["sub"], "exp": exp_time}
         user_info_jwt = jwt.encode(user_info_payload, SECRET_KEY, algorithm=ALGORITHM)
         
     except Exception as err:
@@ -131,32 +132,43 @@ def redirect_exchange(request: Request, code: str, state: str=None):
         response = RedirectResponse("/")
     else:
         response = RedirectResponse(next_page)
-    response.set_cookie("after_login_return_to_page", value = None, httponly = True, secure = True)
-    response.set_cookie("crucible_user_token",
-                         value=user_info_jwt,
-                         httponly=True,
-                         secure=True,
-                         max_age=60 )
+    response.set_cookie(
+        "after_login_return_to_page",
+        value=None,
+        httponly=True,
+        secure=True
+    )
+    response.set_cookie(
+        "crucible_user_token",
+        value=user_info_jwt,
+        httponly=True,
+        secure=True,
+        max_age=60
+    )
     return response
 
 
 @app.get("/user_apikey")
 def get_apikey(request: Request):
-    """
-    Get the user's API key based on their authentication token.
-    
+    """Get the user's API key based on their authentication token.
+
     Args:
-        request: Request object containing the HTTP request
-        
+        request: Request object containing the HTTP request.
+
     Returns:
-        API key if the user is authenticated, redirects to login page otherwise
+        API key if the user is authenticated, redirects to login page otherwise.
     """
     from app.utils.auth_utils import decode_token, find_or_add_api_access
     user_info_jwt = request.cookies.get("crucible_user_token")
     
     if user_info_jwt is None:
         response = RedirectResponse(f"/{api_path}/login")
-        response.set_cookie("after_login_return_to_page", value = f"/{api_path}/user_apikey", httponly = True, secure = True)
+        response.set_cookie(
+            "after_login_return_to_page",
+            value=f"/{api_path}/user_apikey",
+            httponly=True,
+            secure=True
+        )
         return response
     
     user_info = decode_token(user_info_jwt)
@@ -165,48 +177,51 @@ def get_apikey(request: Request):
 
     with Session(engine) as session:
         # confirm access group exists:
-        new_access_group = add_or_update(session,
-                                        AccessGroup,
-                                        AccessGroup.group_name == orcid,
-                                        group_name = orcid)
+        new_access_group = add_or_update(
+            session,
+            AccessGroup,
+            AccessGroup.group_name == orcid,
+            group_name=orcid
+        )
         
-    return(f"Your Crucible APIkey is: {crucible_token}")
+    return f"Your Crucible APIkey is: {crucible_token}"
 
 
 @app.get("/regenerate_apikey")
 def regenerate_apikey(request: Request):
-    """
-    Regenerate the user's API key based on their authentication token.
-    
+    """Regenerate the user's API key based on their authentication token.
+
     Args:
-        request: Request object containing the HTTP request
-        
+        request: Request object containing the HTTP request.
+
     Returns:
-        New API key if the user is authenticated, redirects to login page otherwise
+        New API key if the user is authenticated, redirects to login page otherwise.
     """
     from app.utils.auth_utils import decode_token, find_or_add_api_access
     user_info_jwt = request.cookies.get("crucible_user_token")
     
     if user_info_jwt is None:
         response = RedirectResponse(f"/{api_path}/login")
-        response.set_cookie("after_login_return_to_page", value = f"/{api_path}/regenerate_apikey", httponly = True, secure = True)
+        response.set_cookie(
+            "after_login_return_to_page",
+            value=f"/{api_path}/regenerate_apikey",
+            httponly=True,
+            secure=True
+        )
         return response
             
     user_info = decode_token(user_info_jwt)
     orcid = user_info['orcid']
     crucible_token = find_or_add_api_access(orcid, engine, regenerate = True)
 
-    return(f"Your New Crucible APIkey is: {crucible_token}")
+    return f"Your New Crucible APIkey is: {crucible_token}"
 
 
+########################
 
-######################## 
-
-@app.get("/account", response_model = AccountInfo)
+@app.get("/account", response_model=AccountInfo)
 def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
-    '''
-    use API key to get basic info about your access in Crucible
-    '''
+    """Use API key to get basic info about your access in Crucible."""
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         is_user = session.exec(select(User).where(User.orcid == access_group_name)).one_or_none()
@@ -214,20 +229,24 @@ def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
     if is_user is not None:
         user_info = is_user.model_dump()
     else:
-        user_info ={}
+        user_info = {}
 
-    account_info = AccountInfo(access_group_name = access_group_name, access_group_ids = ag_ids, user_info = user_info)
+    account_info = AccountInfo(
+        access_group_name=access_group_name,
+        access_group_ids=ag_ids,
+        user_info=user_info
+    )
     return account_info
-
-
 
 
 # TODO: person creating dataset must exist in create data set access group
 # TODO: public datasets rate limited but dont require orcid
 # TODO: use agids to authorize for all endpoints
-@app.post("/datasets", response_model = Dataset)
-async def create_dataset(auth_res:  Annotated[tuple, Depends(authorize_user)],
-                         dataset: Dataset):
+@app.post("/datasets", response_model=Dataset)
+async def create_dataset(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    dataset: Dataset
+):
     
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
@@ -240,34 +259,39 @@ async def create_dataset(auth_res:  Annotated[tuple, Depends(authorize_user)],
         
         # set appropriate access controls
         admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
-        admin_acl = sql_create_ds_acl(admin, ds, read = True, write = True, session=session)
+        admin_acl = sql_create_ds_acl(
+            admin, ds, read=True, write=True, session=session
+        )
 
         ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
-        ro_acl = sql_create_ds_acl(ro, ds, read = True, write = False, session=session)
+        ro_acl = sql_create_ds_acl(
+            ro, ds, read=True, write=False, session=session
+        )
         print("add ro access")
 
-        '''
+        """
         All this logic is so backward because we literally
-        have the instrument name and orcid then we do get 
-        requests to get the "IDs" now we have to do the get 
-        requests AGAIN to get the information we actually want 
-        and had the whole time  
-        '''
+        have the instrument name and orcid then we do get
+        requests to get the "IDs" now we have to do the get
+        requests AGAIN to get the information we actually want
+        and had the whole time
+        """
         
         if dataset.owner_user_id is not None:
-            print('adding owner orcid access')
-            user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id)).one_or_none()
-            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
-            user_acl = sql_create_ds_acl(user_ag, ds, read = True, write = True, session=session)
-            print('added owner orcid access')
+            user_orcid = session.exec(
+                select(User.orcid).where(User.id == dataset.owner_user_id)
+            ).one_or_none()
+            user_ag = session.exec(
+                select(AccessGroup).where(AccessGroup.group_name == user_orcid)
+            ).one_or_none()
+            user_acl = sql_create_ds_acl(
+                user_ag, ds, read=True, write=True, session=session
+            )
 
         else:
             # use the apikey associated accessgroup as owner
             creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
-            print(f'{access_group_name=}')
-            print(f'{creator=}')
             creator_acl = sql_create_ds_acl(creator, ds, read = True, write = True, session=session)
-            print('add creator access')
 
             if is_orcid(access_group_name):
                 ds.owner_orcid = access_group_name
@@ -320,12 +344,16 @@ async def create_dataset(auth_res:  Annotated[tuple, Depends(authorize_user)],
     return ds
 
 
-@app.patch("/datasets/{dsid}", response_model = Dataset)
-def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, updated_dataset: Dataset):
-    '''
-    Updates a dataset in SQL and returns the Updated Dataset object. 
+@app.patch("/datasets/{dsid}", response_model=Dataset)
+def update_dataset(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    dsid: str,
+    updated_dataset: Dataset
+):
+    """Update a dataset in SQL and return the Updated Dataset object.
+
     Sends a message to RabbitMQ to alert RMQ that updates have been made.
-    '''
+    """
     access_group_name, ag_ids = auth_res
     #newds = table_obj_to_dict(updated_dataset)
     ds_cmd = select(Dataset).select_from(
@@ -362,7 +390,9 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
         if upds.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == upds.owner_user_id)).one_or_none()
-            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
+            user_ag = session.exec(
+                select(AccessGroup).where(AccessGroup.group_name == user_orcid)
+            ).one_or_none()
             user_acl = sql_create_ds_acl(user_ag, upds, read = True, write = True, session=session)
             print('add owner orcid access')
 
@@ -383,12 +413,15 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         return upds
 
 
-@app.get("/datasets", response_model = List[Dataset])
-def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
-    '''
-    Returns a list of all dataset IDs the requesting user is authorized to view. 
-    If no dataset IDs are authorized for the user, an empty list will be returned. 
-    '''
+@app.get("/datasets", response_model=List[Dataset])
+def list_datasets(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    request: Request
+):
+    """Return a list of all dataset IDs the requesting user is authorized to view.
+
+    If no dataset IDs are authorized for the user, an empty list will be returned.
+    """
     access_group_name, ag_ids = auth_res
     
     query_params = request.query_params
@@ -443,13 +476,16 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         return ds_list
     
     
-@app.get("/datasets/{dsid}", response_model = Union[Dataset, None])
-def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
-    '''
-    Returns a dataset found with the provided unique ID
-    if one is exists and the requesting user is
-    authorized to view the dataset. Otherwise, returns None
-    '''
+@app.get("/datasets/{dsid}", response_model=Union[Dataset, None])
+def read_dataset(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    dsid: str
+):
+    """Return a dataset found with the provided unique ID.
+
+    Returns None if the dataset doesn't exist or the requesting user is
+    not authorized to view the dataset.
+    """
     access_group_name, ag_ids = auth_res
     print(f"{ag_ids=}")
     with Session(engine) as session:
@@ -459,25 +495,35 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str)
 
 
 
-@app.delete("/datasets/{dsid}", response_model = Dataset)
-def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid = str):
+@app.delete("/datasets/{dsid}", response_model=Dataset)
+def delete_dataset(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    dsid: str
+):
+    """Delete a dataset.
+
+    TODO: DEFINE THIS
+    """
     access_group_name, ag_ids = auth_res
-    # TODO: DEFINE THIS
     pass
 
 
 
 @app.get("/datasets/{dsid}/download/{file_name}")
-async def download_dataset_files(auth_res:  Annotated[tuple, Depends(authorize_user)], dsid: str, file_name: str):
-    '''
-    Download an associated file directly from mounted GCS storage without copying.
-    Doing this by file_name for now after discussing with Ed. This is the most 
-    intuitive and human readable. This solution also avoids exposing the internal 
-    ID which is the only feature of the AF that is currently guaranteed unique.  
-    The file_name is actually a relative path which reduces the "intuition" 
-    fairly drastically in the case that your "dataset" has subdirectories of 
-    associated files. 
-    '''
+async def download_dataset_files(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    dsid: str,
+    file_name: str
+):
+    """Download an associated file directly from mounted GCS storage without copying.
+
+    Doing this by file_name for now after discussing with Ed. This is the most
+    intuitive and human readable. This solution also avoids exposing the internal
+    ID which is the only feature of the AF that is currently guaranteed unique.
+    The file_name is actually a relative path which reduces the "intuition"
+    fairly drastically in the case that your "dataset" has subdirectories of
+    associated files.
+    """
     access_group_name, ag_ids = auth_res
     print("got auth")
     

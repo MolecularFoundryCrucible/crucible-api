@@ -27,7 +27,7 @@ from app.utils.constants import SAMPLE_TYPE_MAPPING
 
 
 from app.models.core_models import (Dataset, 
-                                    DatasetACL,
+associt                                    DatasetACL,
                                     Keyword,
                                     DatasetKeywordLink,
                                     Thumbnail,
@@ -920,7 +920,7 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         
-        af_obj = add_or_update(session, AssociatedFile, where=(AssociatedFile.filename == associated_file.filename),
+        af_obj = add_or_update(session, AssociatedFile, where=(AssociatedFile.sha256_hash == associated_file.sha256_hash),
                                        filename = associated_file.filename, 
                                        size = associated_file.size,
                                        sha256_hash = associated_file.sha256_hash, 

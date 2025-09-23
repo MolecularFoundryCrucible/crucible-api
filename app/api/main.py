@@ -89,12 +89,27 @@ def orcid_login() -> RedirectResponse:
     Returns:
         RedirectResponse to the ORCID login page.
     """
+    from app.utils.auth_utils import generate_csrf_state
+
+    # Generate CSRF state parameter
+    csrf_state = generate_csrf_state()
+
     orcid_auth_url = (
         f"https://orcid.org/oauth/authorize?response_type=code&"
         f"redirect_uri={redirect_uri}&client_id={orcid_client_id}&"
-        f"scope=openid&nonce=whatever"
+        f"scope=openid&state={csrf_state}"
     )
     response = RedirectResponse(orcid_auth_url)
+
+    # Store CSRF state in secure cookie for validation
+    response.set_cookie(
+        "crucible_csrf_state",
+        value=csrf_state,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        max_age=1800  # 30 minutes
+    )
     return response
 
 
@@ -105,45 +120,66 @@ def redirect_exchange(request: Request, code: str, state: str = None):
     Args:
         request: Request object containing the HTTP request.
         code: ORCID authorization code.
-        state: Optional state parameter (default is None).
+        state: Optional state parameter for CSRF protection.
 
     Returns:
         RedirectResponse to the appropriate page after successful authentication.
     """
     from app.utils.auth_utils import SECRET_KEY, ALGORITHM, code_for_token_exchange
+
+    # Validate CSRF state
+    stored_state = request.cookies.get("crucible_csrf_state")
+    if not state or not stored_state or state != stored_state:
+        raise HTTPException(status_code=400, detail="Invalid or missing CSRF state parameter")
+
     token = code_for_token_exchange(
         code, orcid_client_id, orcid_client_secret, f"{api_url}/auth"
-    )                                
+    )
     user_from_orcid = requests.get(
         url="https://orcid.org/oauth/userinfo",
         headers={"Authorization": f"Bearer {token}"}
     )
     try:
         user = user_from_orcid.json()
-        exp_time = datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
+        # Extended JWT expiry to 30 minutes for better UX
+        exp_time = datetime.datetime.utcnow() + datetime.timedelta(minutes=30)
         user_info_payload = {"orcid": user["sub"], "exp": exp_time}
         user_info_jwt = jwt.encode(user_info_payload, SECRET_KEY, algorithm=ALGORITHM)
-        
+
     except Exception as err:
         print(err)
         user_info_jwt = None
+
     next_page = request.cookies.get("after_login_return_to_page")
     if next_page == 'None':
         response = RedirectResponse("/")
     else:
         response = RedirectResponse(next_page)
+
+    # Clear temporary cookies
     response.set_cookie(
         "after_login_return_to_page",
         value=None,
         httponly=True,
-        secure=True
+        secure=True,
+        samesite="strict"
     )
+    response.set_cookie(
+        "crucible_csrf_state",
+        value=None,
+        httponly=True,
+        secure=True,
+        samesite="strict"
+    )
+
+    # Set user token with improved security
     response.set_cookie(
         "crucible_user_token",
         value=user_info_jwt,
         httponly=True,
         secure=True,
-        max_age=60
+        samesite="strict",
+        max_age=1800  # 30 minutes
     )
     return response
 
@@ -156,35 +192,54 @@ def get_apikey(request: Request):
         request: Request object containing the HTTP request.
 
     Returns:
-        API key if the user is authenticated, redirects to login page otherwise.
+        JSON response with API key if the user is authenticated, redirects to login page otherwise.
     """
     from app.utils.auth_utils import decode_token, find_or_add_api_access
     user_info_jwt = request.cookies.get("crucible_user_token")
-    
+
     if user_info_jwt is None:
         response = RedirectResponse(f"/{api_path}/login")
         response.set_cookie(
             "after_login_return_to_page",
             value=f"/{api_path}/user_apikey",
             httponly=True,
-            secure=True
+            secure=True,
+            samesite="strict"
         )
         return response
-    
-    user_info = decode_token(user_info_jwt)
-    orcid = user_info['orcid']
-    crucible_token = find_or_add_api_access(orcid, engine, regenerate = False)
 
-    with Session(engine) as session:
-        # confirm access group exists:
-        new_access_group = add_or_update(
-            session,
-            AccessGroup,
-            AccessGroup.group_name == orcid,
-            group_name=orcid
+    try:
+        user_info = decode_token(user_info_jwt)
+        orcid = user_info['orcid']
+        crucible_token = find_or_add_api_access(orcid, engine, regenerate=False)
+
+        with Session(engine) as session:
+            # confirm access group exists:
+            new_access_group = add_or_update(
+                session,
+                AccessGroup,
+                AccessGroup.group_name == orcid,
+                group_name=orcid
+            )
+
+        return {
+            "api_key": crucible_token,
+            "user_orcid": orcid,
+            "message": "API key generated successfully",
+            "usage": "Include this key in the Authorization header as 'Bearer <api_key>' for API requests"
+        }
+
+    except Exception as e:
+        # Handle token decode errors or other issues
+        response = RedirectResponse(f"/{api_path}/login")
+        response.set_cookie(
+            "after_login_return_to_page",
+            value=f"/{api_path}/user_apikey",
+            httponly=True,
+            secure=True,
+            samesite="strict"
         )
-        
-    return f"Your Crucible APIkey is: {crucible_token}"
+        return response
 
 
 @app.get("/regenerate_apikey")
@@ -195,26 +250,46 @@ def regenerate_apikey(request: Request):
         request: Request object containing the HTTP request.
 
     Returns:
-        New API key if the user is authenticated, redirects to login page otherwise.
+        JSON response with new API key if the user is authenticated, redirects to login page otherwise.
     """
     from app.utils.auth_utils import decode_token, find_or_add_api_access
     user_info_jwt = request.cookies.get("crucible_user_token")
-    
+
     if user_info_jwt is None:
         response = RedirectResponse(f"/{api_path}/login")
         response.set_cookie(
             "after_login_return_to_page",
             value=f"/{api_path}/regenerate_apikey",
             httponly=True,
-            secure=True
+            secure=True,
+            samesite="strict"
         )
         return response
-            
-    user_info = decode_token(user_info_jwt)
-    orcid = user_info['orcid']
-    crucible_token = find_or_add_api_access(orcid, engine, regenerate = True)
 
-    return f"Your New Crucible APIkey is: {crucible_token}"
+    try:
+        user_info = decode_token(user_info_jwt)
+        orcid = user_info['orcid']
+        crucible_token = find_or_add_api_access(orcid, engine, regenerate=True)
+
+        return {
+            "api_key": crucible_token,
+            "user_orcid": orcid,
+            "message": "New API key generated successfully",
+            "warning": "Your previous API key has been invalidated",
+            "usage": "Include this key in the Authorization header as 'Bearer <api_key>' for API requests"
+        }
+
+    except Exception as e:
+        # Handle token decode errors or other issues
+        response = RedirectResponse(f"/{api_path}/login")
+        response.set_cookie(
+            "after_login_return_to_page",
+            value=f"/{api_path}/regenerate_apikey",
+            httponly=True,
+            secure=True,
+            samesite="strict"
+        )
+        return response
 
 
 ########################

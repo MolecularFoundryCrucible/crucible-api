@@ -5,7 +5,7 @@ import re
 import pytz
 from datetime import datetime
 from app.utils.constants import secret_store
-
+import hashlib
 
 def remove_file(filepath):
     os.remove(filepath)
@@ -44,8 +44,10 @@ def get_secret(secret_env_var, gcs_secret_name = None, sa_creds: str = None, cre
 def get_gcs_secret(secret_name, sa_creds, cred_file):
     from google.cloud import secretmanager
     from google.oauth2 import service_account
-
-    if sa_creds is None:
+    import os
+    home = os.getenv("HOME")
+    
+    if 'root' in home:
         # Assume you are running from a GCP service with SA that can auth itself 
         client = secretmanager.SecretManagerServiceClient() 
 
@@ -118,3 +120,17 @@ def get_tz_isoformat(timezone = "America/Los_Angeles"):
     pst= pytz.timezone(timezone)
     curr_pct_time = datetime.now(pst).isoformat()
     return(curr_pct_time)
+
+def checkhash(file):
+    """Calculate SHA256 hash of a file.
+    
+    Args:
+        file (str): Path to the file to hash
+        
+    Returns:
+        str: Hexadecimal SHA256 hash of the file
+    """
+    with open(file,"rb") as f:
+        fdata = f.read() 
+        readable_hash = hashlib.sha256(fdata).hexdigest()
+    return(readable_hash)

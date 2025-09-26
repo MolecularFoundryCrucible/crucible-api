@@ -84,3 +84,7 @@ ENVMAP = {
           "production": {"storage_bucket":":gcs:/mf-storage-prod"},
           "development": {"storage_bucket":":gcs:/mf-storage-test-1"}
           }
+
+SAMPLE_TYPE_MAPPING = {
+    "spinbot_batch": "SpinbotBatchMetadata"
+}

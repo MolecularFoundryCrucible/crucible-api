@@ -107,6 +107,7 @@ def find_key(credentials, engine):
     from app.models.misc import ApiToken
     apikey = credentials.credentials
     one_year_ago = (date.today()-timedelta(365)).isoformat()
+    print(f"{one_year_ago=}")
     with Session(engine) as session:
         api_acct = session.exec(select(ApiToken).where(and_(ApiToken.token == apikey, ApiToken.token_created > one_year_ago))).one_or_none()
     return(api_acct)
@@ -166,6 +167,10 @@ def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(securi
     This function validates the provided API credentials and checks if the user belongs to the 'admin' access group.
     """
     api_acct = find_key(credentials, engine)
+    print(api_acct)
+    print(api_acct[0])
+    print(api_acct[0].access_group_id)
+    print(api_acct[0].access_group_id == 'admin')
     if api_acct[0].access_group_id == 'admin':
         return(api_acct[0].access_group_id)
     else:

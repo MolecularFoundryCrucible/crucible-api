@@ -18,7 +18,6 @@ class DatasetKeywordLink(SQLModel, table=True):
         default=None, foreign_key="dataset.id", primary_key=True
     )
 
-
 class Keyword(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     keyword: str
@@ -69,14 +68,46 @@ class DatasetSampleLink(SQLModel, table=True):
         default=None, foreign_key="dataset.id", primary_key=True
     )
 
+class SampleLink(SQLModel, table=True):
+    sample_id: Optional[int] = Field(
+        default=None, foreign_key="sample.id", primary_key=True, index=True
+    )
+    parent_sample_id: Optional[int] = Field(
+        default=None, foreign_key="sample.id", primary_key=True
+    )
 
 class Sample(SQLModel, table = True):
     id: Optional[int] = Field(default = None, primary_key = True)
     unique_id: str = Field(default_factory= get_mfid_value, index = True, unique = True)
-    owner_user_id: int = Field(default=None, index=True, foreign_key="user.id")
+    #crucible_id: str = Field(default_factory= get_mfid_value, index = True, unique = True)
+    #sample_type: str = Field(default = "general")
+    #sample_id: str = Field(default_factory = increment increasing, index = True, unique = True)
+    sample_name: str = Field(index = True) 
+    owner_orcid: Optional[str]
+    owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     date_created: Optional[str] = None
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
+    parents: List["Sample"] = Relationship(
+        back_populates="children",
+        link_model=SampleLink,
+        sa_relationship_kwargs={
+            "primaryjoin": "Sample.id==SampleLink.sample_id",
+            "secondaryjoin": "Sample.id==SampleLink.parent_sample_id"
+        }
+    )
+    children: List["Sample"] = Relationship(
+        back_populates="parents",
+        link_model=SampleLink,
+        sa_relationship_kwargs={
+            "primaryjoin": "Sample.id==SampleLink.parent_sample_id",
+            "secondaryjoin": "Sample.id==SampleLink.sample_id"
+        }
+    )
+
+    class Config:
+        arbitrary_types_allowed = True
+        from_attributes = True
 
 
 class Dataset(SQLModel, table=True):
@@ -173,49 +204,6 @@ class ScientificMetadata(SQLModel, table = True):
     id: Optional[int] = Field(default=None, primary_key=True)
     dataset_unique_id: str
     scientific_metadata: dict = Field(sa_column=Column(JSON), default={})
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

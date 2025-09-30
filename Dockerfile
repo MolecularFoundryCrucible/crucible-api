@@ -20,7 +20,7 @@ ENV GITHASH=$githash
 # packages
 COPY requirements.txt ./requirements.txt
 RUN pip install -r requirements.txt
-RUN pip install python2-secrets openssl==3.4.0
+RUN pip install python2-secrets
 
 # rclone
 RUN curl https://rclone.org/install.sh | bash

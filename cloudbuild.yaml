@@ -1,4 +1,3 @@
-# TODO: MOVE THIS TO ARTIFACT REGISTRY
 steps:
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'

@@ -1,32 +1,32 @@
-FROM ubuntu:focal
-USER root
-
-# settings
+FROM python:3.11-slim
 USER root
 WORKDIR /root/
-ARG DEBIAN_FRONTEND=noninteractive
 
+# git
+RUN apt-get update && apt-get install -y git \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV TZ=Etc/UTC
+# python packages
+RUN pip install pyyaml \
+                Flask==3.0.0 \
+                gunicorn==20.1.0 \
+                cloudevents==1.10.1 \
+                requests \
+                google-cloud-secret-manager 
 
-
-# basic utility packages
-RUN apt-get update && apt-get install -yq --no-upgrade wget zip make curl git nano
-
-
-# python / miniconda
-RUN mkdir -p /root/miniconda3 && wget https://repo.anaconda.com/miniconda/Miniconda3-py311_24.1.2-0-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh && bash /root/miniconda3/miniconda.sh -b -u -p /root/miniconda3 && rm -rf /root/miniconda3/miniconda.sh
-ENV PATH "/root/miniconda3/bin:$PATH"
-
+ARG githash
+ENV GITHASH=$githash
 
 # packages
 COPY requirements.txt ./requirements.txt
-RUN conda install -c conda-forge rclone==1.65.2 python2-secrets openssl==3.4.0 && conda install -c anaconda -y pip 
 RUN pip install -r requirements.txt
+RUN pip install python2-secrets openssl==3.4.0
+
+# rclone
+RUN curl https://rclone.org/install.sh | bash
 
 
 # files
-
 COPY app/ /root/app/
 RUN mkdir uploads
 RUN mkdir download-zips

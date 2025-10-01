@@ -145,7 +145,7 @@ def decode_token(token: str, secret_key = SECRET_KEY, alg = ALGORITHM):
         payload = jwt.decode(token, secret_key, algorithms=[alg])
         return payload
     except JWTError:
-        return RedirectResponse("/testapi/login")
+        return RedirectResponse("/testapi2/login")
 
 
 def find_key(credentials, engine):

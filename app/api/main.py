@@ -51,11 +51,6 @@ from app.models.response_schemas import SampleWithDatasetsResponse, DatasetSampl
 from app.models.sample_metadata_models import SpinbotBatchMetadata
 
 
-# ======================= APP
-app = FastAPI()
-security = HTTPBearer()
-
-
 # ====== Database config
 connect_args = {"check_same_thread": False}
 
@@ -72,6 +67,10 @@ with open(f"{home_dir}/{api_config_file}", 'r') as f:
 hostname = apiconf['hostname']
 api_path = apiconf['api_path']
 api_url = f"https://{hostname}/{api_path}"
+
+# ======================= APP
+app = FastAPI(root_path=f"/{api_path}")
+security = HTTPBearer()
 orcid_client_id = apiconf['orcid_client_id']
 orcid_client_secret = get_secret("CLIENT_SECRET", "orcid_client_secret/versions/2")
 redirect_uri = urllib.parse.quote_plus(f"{api_url}/auth")

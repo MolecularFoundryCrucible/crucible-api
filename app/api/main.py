@@ -92,51 +92,33 @@ def orcid_login() -> RedirectResponse:
     Returns:
         RedirectResponse: Redirect to ORCID OAuth authorization URL
 
-    Security Features:
-        - CSRF state parameter generation and validation
-        - Secure, HttpOnly cookie storage for state token
-        - 30-minute expiration for authentication flow
-        - SameSite=strict policy for additional CSRF protection
-
-    OAuth Flow:
-        1. Generate and store CSRF state token
-        2. Redirect to ORCID with authorization request
-        3. User authenticates with ORCID
-        4. ORCID redirects back to /auth endpoint
-        5. State token validated and user session established
-
-    URL Parameters:
-        - response_type=code: Authorization code flow
-        - client_id: Registered ORCID application identifier
-        - scope=openid: Request basic profile access
-        - state: CSRF protection token
-        - redirect_uri: Callback URL for authentication completion
-
-    Note:
-        This begins the OAuth 2.0 authorization code flow with ORCID.
-        Users must have valid ORCID accounts to authenticate.
     """
     from app.utils.auth_utils import generate_csrf_state
 
     # Generate CSRF state parameter
     csrf_state = generate_csrf_state()
+    print('generated the csrf state')
 
+    # Store CSRF state in secure cookie for validation
+    # Note: Set cookie with samesite="lax" to allow it to be sent on redirect from ORCID
     orcid_auth_url = (
         f"https://orcid.org/oauth/authorize?response_type=code&"
         f"redirect_uri={redirect_uri}&client_id={orcid_client_id}&"
         f"scope=openid&state={csrf_state}"
     )
     response = RedirectResponse(orcid_auth_url)
-
-    # Store CSRF state in secure cookie for validation
     response.set_cookie(
         "crucible_csrf_state",
         value=csrf_state,
         httponly=True,
         secure=True,
-        samesite="strict",
+        samesite="lax",  # Changed from "strict" to "lax" to allow cookie on OAuth redirect
         max_age=1800  # 30 minutes
     )
+
+    print('got response')
+    print(f'{response=}')
+
     return response
 
 
@@ -158,34 +140,6 @@ def redirect_exchange(request: Request, code: str, state: str = None):
 
     Raises:
         HTTPException: 400 if CSRF state validation fails
-
-    Security Validation:
-        - CSRF state token comparison with stored cookie
-        - Authorization code verification with ORCID
-        - JWT token generation with expiration
-        - Secure cookie cleanup after authentication
-
-    Authentication Flow:
-        1. Validate CSRF state parameter against stored cookie
-        2. Exchange authorization code for ORCID access token
-        3. Retrieve user profile information from ORCID
-        4. Generate JWT session token with 30-minute expiration
-        5. Set secure session cookie and redirect user
-        6. Clean up temporary authentication cookies
-
-    Session Management:
-        - JWT tokens expire after 30 minutes for security
-        - HttpOnly, Secure, SameSite=strict cookie settings
-        - Automatic cleanup of temporary authentication state
-
-    Error Handling:
-        - Invalid state tokens result in 400 Bad Request
-        - ORCID API failures fall back gracefully
-        - Failed authentication redirects to login
-
-    Note:
-        This completes the OAuth 2.0 flow and establishes user sessions.
-        Subsequent API calls use the JWT token for authentication.
     """
     from app.utils.auth_utils import SECRET_KEY, ALGORITHM, code_for_token_exchange
 
@@ -270,32 +224,6 @@ def get_apikey(request: Request):
             "usage": "Include this key in the Authorization header as 'Bearer <api_key>' for API requests"
         }
         ```
-
-    Authentication Flow:
-        1. Validate JWT session token from cookie
-        2. Extract user ORCID from verified token
-        3. Generate or retrieve existing API key
-        4. Ensure user access group exists
-        5. Return API key with usage instructions
-
-    Access Control Setup:
-        - Creates personal access group named after user's ORCID
-        - Associates user with their personal access group
-        - Enables dataset and resource access control
-
-    Error Handling:
-        - Invalid/expired tokens redirect to login
-        - Missing tokens redirect to login with return path
-        - Token decode failures handled gracefully
-
-    Use Cases:
-        - Programmatic API access for scripts and applications
-        - Integration with external tools and workflows
-        - Automated data processing and analysis
-
-    Note:
-        API keys provide long-term authentication for programmatic access.
-        Store keys securely and use HTTPS for all API requests.
     """
     from app.utils.auth_utils import decode_token, find_or_add_api_access
     user_info_jwt = request.cookies.get("crucible_user_token")

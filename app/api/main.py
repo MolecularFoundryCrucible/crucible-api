@@ -229,15 +229,14 @@ def get_apikey(request: Request):
     user_info_jwt = request.cookies.get("crucible_user_token")
 
     if user_info_jwt is None:
-        
+        response = RedirectResponse(f"/{api_path}/login")
         response.set_cookie(
             "after_login_return_to_page",
             value=f"/{api_path}/user_apikey",
             httponly=True,
             secure=True,
-            samesite="strict"
+            samesite="lax"
         )
-        response = RedirectResponse(f"/{api_path}/login")
 
         return response
 
@@ -264,14 +263,14 @@ def get_apikey(request: Request):
 
     except Exception as e:
         # Handle token decode errors or other issues
+        response = RedirectResponse(f"/{api_path}/login")
         response.set_cookie(
             "after_login_return_to_page",
             value=f"/{api_path}/user_apikey",
             httponly=True,
             secure=True,
-            samesite="strict"
+            samesite="lax"
         )
-        response = RedirectResponse(f"/{api_path}/login")
         return response
 
 
@@ -294,15 +293,14 @@ def regenerate_apikey(request: Request):
     user_info_jwt = request.cookies.get("crucible_user_token")
 
     if user_info_jwt is None:
-        
+        response = RedirectResponse(f"/{api_path}/login")
         response.set_cookie(
             "after_login_return_to_page",
             value=f"/{api_path}/regenerate_apikey",
             httponly=True,
             secure=True,
-            samesite="strict"
+            samesite="lax"
         )
-        response = RedirectResponse(f"/{api_path}/login")
         return response
 
     try:
@@ -320,14 +318,14 @@ def regenerate_apikey(request: Request):
 
     except Exception as e:
         # Handle token decode errors or other issues
+        response = RedirectResponse(f"/{api_path}/login")
         response.set_cookie(
             "after_login_return_to_page",
             value=f"/{api_path}/regenerate_apikey",
             httponly=True,
             secure=True,
-            samesite="strict"
+            samesite="lax"
         )
-        response = RedirectResponse(f"/{api_path}/login")
         return response
 
 

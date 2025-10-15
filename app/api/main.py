@@ -1,89 +1,73 @@
-from typing import Annotated, List, Tuple, Dict, Optional, Union
-import json
-import yaml
-import requests
-from jose import jwt
-import urllib.parse
 import datetime
-import pytz
+import json
 import os
+import urllib.parse
 from pathlib import Path
-from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File, Body
-from starlette.requests import Request
-from starlette.background import BackgroundTasks
-from fastapi.responses import RedirectResponse, FileResponse
+from typing import Annotated, Dict, List, Optional, Union
+
+import pytz
+import requests
+import yaml
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPBearer
-
-
-from sqlmodel import Session, select
-from sqlalchemy import join, func,text
-from sqlalchemy.orm import selectinload, joinedload
+from jose import jwt
+from sqlalchemy import func, join, text
+from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.sql import and_
+from sqlmodel import Session, select
 
-from app.general_utils import get_secret, run_rclone_command, remove_file, get_tz_isoformat, is_orcid
-from app.utils.sql_utils import setup_engine, add_or_update, only_update, table_obj_to_dict
-from app.utils.rmq_utils import send_pika_message
-from app.utils.constants import SAMPLE_TYPE_MAPPING
-
-
-from app.models.core_models import (Dataset, 
-associt                                    DatasetACL,
-                                    Keyword,
-                                    DatasetKeywordLink,
-                                    Thumbnail,
-                                    AssociatedFile,
-                                    User,
-                                    AccessGroup,
-                                    Project,
-                                    UserAccessGroupLink,
-                                    UserProjectLink,
-                                    Sample,
-                                    SampleLink,
-                                    DatasetSampleLink,
-                                    DatasetCollection,
-                                    DatasetCollectionLink,
-                                    ScientificMetadata)
-
+from app.general_utils import get_secret, get_tz_isoformat, is_orcid, remove_file, run_rclone_command
+from app.models.core_models import (
+    AccessGroup,
+    AssociatedFile,
+    Dataset,
+    DatasetACL,
+    DatasetCollection,
+    DatasetCollectionLink,
+    DatasetKeywordLink,
+    DatasetSampleLink,
+    Keyword,
+    Project,
+    Sample,
+    SampleLink,
+    ScientificMetadata,
+    Thumbnail,
+    User,
+    UserAccessGroupLink,
+    UserProjectLink,
+)
 from app.models.instrument import Instrument
-from app.models.misc import IdType, DataDriveLocation, GoogleDrives
-from app.models.tasks import GoogleDriveTransferRequest, SciCatUpdateRequest, IngestionRequest
-from app.models.response_schemas import SampleWithDatasetsResponse, DatasetSampleLinkResponse, AccountInfo
+from app.models.misc import DataDriveLocation, GoogleDrives, IdType
+from app.models.response_schemas import AccountInfo, DatasetSampleLinkResponse, SampleWithDatasetsResponse
 from app.models.sample_metadata_models import SpinbotBatchMetadata
-
-# import argparse
-
-# parser = argparse.ArgumentParser()
-# parser.add_argument('--db_config', help='Database config file', required=False)
-# parser.add_argument('--api_config', help='API config file', required = False)
-# args = parser.parse_args()
-
+from app.models.tasks import GoogleDriveTransferRequest, IngestionRequest, SciCatUpdateRequest
+from app.utils.constants import SAMPLE_TYPE_MAPPING
+from app.utils.rmq_utils import send_pika_message
+from app.utils.sql_utils import add_or_update, only_update, setup_engine, table_obj_to_dict
 
 # ====== Database config
 connect_args = {"check_same_thread": False}
 
 home_dir = os.getenv("HOME")
-db_config_tmp = os.getenv("DB_CONF_FILE")
-db_config_file = f"{home_dir}/{db_config_tmp}"
+db_config_file = f"{home_dir}/{os.getenv('DB_CONF_FILE')}"
 
 engine = setup_engine(db_config_file)
 
 api_config_file = os.getenv("API_CONF_FILE")
-with open(f"{home_dir}/{api_config_file}", 'r') as f:
+with open(f"{home_dir}/{api_config_file}") as f:
     apiconf = yaml.safe_load(f)
 
-hostname = apiconf['hostname']
-api_path = apiconf['api_path']
+hostname = apiconf["hostname"]
+api_path = apiconf["api_path"]
 api_url = f"https://{hostname}/{api_path}"
 
 # ======================= APP
 app = FastAPI(root_path=f"/{api_path}")
 security = HTTPBearer()
-orcid_client_id = apiconf['orcid_client_id']
+orcid_client_id = apiconf["orcid_client_id"]
 orcid_client_secret = get_secret("CLIENT_SECRET", "orcid_client_secret/versions/2")
 redirect_uri = urllib.parse.quote_plus(f"{api_url}/auth")
-
-
-
 
 # ======================= AUTH AND ACCOUNT SET UP ENDPOINTS
 from app.utils.auth_utils import authorize_user, is_admin
@@ -102,41 +86,44 @@ def orcid_login() -> RedirectResponse:
 
 
 @app.get("/auth")
-def redirect_exchange(request: Request, code: str, state: str=None):
+def redirect_exchange(request: Request, code: str, state: str = None):
     """
     Exchange the ORCID authorization code for an access token and user information.
-    
+
     Args:
         request: Request object containing the HTTP request
         code: ORCID authorization code
         state: Optional state parameter (default is None)
-        
+
     Returns:
         RedirectResponse to the appropriate page after successful authentication
     """
-    from app.utils.auth_utils import SECRET_KEY, ALGORITHM, code_for_token_exchange
-    token = code_for_token_exchange(code, orcid_client_id, orcid_client_secret, f"{api_url}/auth")                                
-    user_from_orcid = requests.get(url = "https://orcid.org/oauth/userinfo", headers = {"Authorization": f"Bearer {token}"})
+    from app.utils.auth_utils import ALGORITHM, SECRET_KEY, code_for_token_exchange
+
+    token = code_for_token_exchange(code, orcid_client_id, orcid_client_secret, f"{api_url}/auth")
+    user_from_orcid = requests.get(
+        url="https://orcid.org/oauth/userinfo",
+        headers={"Authorization": f"Bearer {token}"}
+    )
     try:
         user = user_from_orcid.json()
-        exp_time = datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
-        user_info_payload = { "orcid": user["sub"], "exp": exp_time }
+        exp_time = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=1)
+        user_info_payload = {"orcid": user["sub"], "exp": exp_time}
         user_info_jwt = jwt.encode(user_info_payload, SECRET_KEY, algorithm=ALGORITHM)
-        
     except Exception as err:
         print(err)
         user_info_jwt = None
+
     next_page = request.cookies.get("after_login_return_to_page")
-    if next_page == 'None':
-        response = RedirectResponse("/")
-    else:
-        response = RedirectResponse(next_page)
-    response.set_cookie("after_login_return_to_page", value = None, httponly = True, secure = True)
-    response.set_cookie("crucible_user_token",
-                         value=user_info_jwt,
-                         httponly=True,
-                         secure=True,
-                         max_age=60 )
+    response = RedirectResponse("/" if next_page == "None" else next_page)
+    response.set_cookie("after_login_return_to_page", value=None, httponly=True, secure=True)
+    response.set_cookie(
+        "crucible_user_token",
+        value=user_info_jwt,
+        httponly=True,
+        secure=True,
+        max_age=60
+    )
     return response
 
 
@@ -156,21 +143,23 @@ def get_apikey(request: Request):
     
     if user_info_jwt is None:
         response = RedirectResponse(f"/{api_path}/login")
-        response.set_cookie("after_login_return_to_page", value = f"/{api_path}/user_apikey", httponly = True, secure = True)
+        response.set_cookie("after_login_return_to_page", value=f"/{api_path}/user_apikey", httponly=True, secure=True)
         return response
-    
+
     user_info = decode_token(user_info_jwt)
-    orcid = user_info['orcid']
-    crucible_token = find_or_add_api_access(orcid, engine, regenerate = False)
+    orcid = user_info["orcid"]
+    crucible_token = find_or_add_api_access(orcid, engine, regenerate=False)
 
     with Session(engine) as session:
         # confirm access group exists:
-        new_access_group = add_or_update(session,
-                                        AccessGroup,
-                                        AccessGroup.group_name == orcid,
-                                        group_name = orcid)
-        
-    return(f"Your Crucible APIkey is: {crucible_token}")
+        add_or_update(
+            session,
+            AccessGroup,
+            AccessGroup.group_name == orcid,
+            group_name=orcid
+        )
+
+    return f"Your Crucible APIkey is: {crucible_token}"
 
 
 @app.get("/regenerate_apikey")
@@ -189,52 +178,51 @@ def regenerate_apikey(request: Request):
     
     if user_info_jwt is None:
         response = RedirectResponse(f"/{api_path}/login")
-        response.set_cookie("after_login_return_to_page", value = f"/{api_path}/regenerate_apikey", httponly = True, secure = True)
+        response.set_cookie("after_login_return_to_page", value=f"/{api_path}/regenerate_apikey", httponly=True, secure=True)
         return response
-            
-    user_info = decode_token(user_info_jwt)
-    orcid = user_info['orcid']
-    crucible_token = find_or_add_api_access(orcid, engine, regenerate = True)
 
-    return(f"Your New Crucible APIkey is: {crucible_token}")
+    user_info = decode_token(user_info_jwt)
+    orcid = user_info["orcid"]
+    crucible_token = find_or_add_api_access(orcid, engine, regenerate=True)
+
+    return f"Your New Crucible APIkey is: {crucible_token}"
 
 
 
 ######################## 
 
-@app.get("/account", response_model = AccountInfo)
+@app.get("/account", response_model=AccountInfo)
 def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
-    '''
-    use API key to get basic info about your access in Crucible
-    '''
+    """Use API key to get basic info about your access in Crucible"""
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         is_user = session.exec(select(User).where(User.orcid == access_group_name)).one_or_none()
 
-    if is_user is not None:
-        user_info = is_user.model_dump()
-    else:
-        user_info ={}
+    user_info = is_user.model_dump() if is_user else {}
 
-    account_info = AccountInfo(access_group_name = access_group_name, access_group_ids = ag_ids, user_info = user_info)
-    return account_info
-
-
+    return AccountInfo(
+        access_group_name=access_group_name,
+        access_group_ids=ag_ids,
+        user_info=user_info
+    )
 
 
-# TODO: person creating dataset must exist in create data set access group
-# TODO: public datasets rate limited but dont require orcid
-# TODO: use agids to authorize for all endpoints
-@app.post("/datasets", response_model = Dataset)
-async def create_dataset(auth_res:  Annotated[tuple, Depends(authorize_user)],
-                         dataset: Dataset):
+
+
+@app.post("/datasets", response_model=Dataset)
+async def create_dataset(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    dataset: Dataset
+):
     
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
-        ds = add_or_update(session,
-                           Dataset,
-                           Dataset.unique_id == dataset.unique_id,
-                           **dataset.model_dump(exclude_unset = True))
+        ds = add_or_update(
+            session,
+            Dataset,
+            Dataset.unique_id == dataset.unique_id,
+            **dataset.model_dump(exclude_unset=True)
+        )
         session.commit()
         session.refresh(ds)
         
@@ -246,14 +234,6 @@ async def create_dataset(auth_res:  Annotated[tuple, Depends(authorize_user)],
         ro_acl = sql_create_ds_acl(ro, ds, read = True, write = False, session=session)
         print("add ro access")
 
-        '''
-        All this logic is so backward because we literally
-        have the instrument name and orcid then we do get 
-        requests to get the "IDs" now we have to do the get 
-        requests AGAIN to get the information we actually want 
-        and had the whole time  
-        '''
-        
         if dataset.owner_user_id is not None:
             print('adding owner orcid access')
             user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id)).one_or_none()
@@ -336,14 +316,8 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
     with Session(engine) as session:
         ds_list = session.exec(ds_cmd).all()
 
-    if ds_list is None:
-        raise HTTPException(status_code=404,
-                            detail="Dataset not found")
-    elif len(ds_list) == 0:
-        raise HTTPException(status_code=404,
-                            detail="Dataset not found")
-    else:
-        pass
+    if not ds_list:
+        raise HTTPException(status_code=404, detail="Dataset not found")
     
 
     with Session(engine) as session:
@@ -354,7 +328,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
         update_attr = updated_dataset.model_dump(exclude_unset=True)
         print(f"{update_attr=}")
-        filtered_updates = {k:v for k,v in update_attr.items()} # I think this got solved in the io instead..
+        filtered_updates = {k: v for k, v in update_attr.items()}
 
         
         upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **filtered_updates)
@@ -580,16 +554,20 @@ def request_dataset_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)
         print('committed')
         
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    msg = { "filename": file_to_upload,
-            "reqid": ingestion_request.id,
-            "dsid": dsid, 
-            "ingestion_class":ingestion_class}
-    
-    send_pika_message(message = json.dumps(msg),
-                      exchange= "",
-                      routing_key= "ingest-newapi",
-                      user = 'admin',
-                      rmq_pw= rmq_pw)
+    msg = {
+        "filename": file_to_upload,
+        "reqid": ingestion_request.id,
+        "dsid": dsid,
+        "ingestion_class": ingestion_class
+    }
+
+    send_pika_message(
+        message=json.dumps(msg),
+        exchange="",
+        routing_key="ingest-newapi",
+        user="admin",
+        rmq_pw=rmq_pw
+    )
     
     return ingestion_request
 
@@ -684,40 +662,48 @@ def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], reqid: 
     return(updated_req)
 
 
-@app.post("/datasets/{dsid}/google_drive_transfer", response_model = GoogleDriveTransferRequest)
+@app.post("/datasets/{dsid}/google_drive_transfer", response_model=GoogleDriveTransferRequest)
 def request_dataset_transfer_to_drive(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
-    '''
+    """
     For now keep simple - Input is a dataset.
     Drive info is derived from Project and Owner.
-    Location within drive is hardcoded.  
-    '''
+    Location within drive is hardcoded.
+    """
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
-        pst= pytz.timezone("America/Los_Angeles")
-        creation_time = datetime.datetime.now(pst).isoformat()
+        creation_time = get_tz_isoformat()
 
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
-    
-        with Session(engine) as session:
-            ds_list = session.exec(ds_cmd).all()
-    
-        if ds_list is None:
+        ds_cmd = select(Dataset).select_from(
+            join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)
+        ).where(Dataset.unique_id == dsid).filter(
+            DatasetACL.accessgroup_id.in_(ag_ids)
+        ).distinct()
+
+        ds_list = session.exec(ds_cmd).all()
+
+        if not ds_list:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        elif len(ds_list) == 0:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        else:
-            pass
 
         transfer_request = GoogleDriveTransferRequest(dataset_id = dsid, time_created=creation_time, status = "requested")
         session.add(transfer_request)
         session.commit()
         session.refresh(transfer_request)
 
-        message = json.dumps({"dsid":dsid, "source_bucket":"mf-storage-prod", "reqid":transfer_request.id})
+        message = json.dumps({
+            "dsid": dsid,
+            "source_bucket": "mf-storage-prod",
+            "reqid": transfer_request.id
+        })
         rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-        
-        send_pika_message(message, exchange = "", routing_key= "transfer-newapi", user = "admin", rmq_pw = rmq_pw)
-        return(transfer_request)
+
+        send_pika_message(
+            message,
+            exchange="",
+            routing_key="transfer-newapi",
+            user="admin",
+            rmq_pw=rmq_pw
+        )
+        return transfer_request
 
 
 @app.patch("/datasets/{dsid}/google_drive_transfer/{reqid}", response_model = GoogleDriveTransferRequest)
@@ -733,22 +719,25 @@ def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], reqid: i
     return(updated_req)
 
 
-@app.post("/datasets/{dsid}/scicat_update", response_model = SciCatUpdateRequest)
-def request_update_scicat_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, overwrite_data: bool = False):
-    pst= pytz.timezone("America/Los_Angeles")
-    creation_time = datetime.datetime.now(pst).isoformat()
+@app.post("/datasets/{dsid}/scicat_update", response_model=SciCatUpdateRequest)
+def request_update_scicat_dataset(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    dsid: str,
+    overwrite_data: bool = False
+):
+    creation_time = get_tz_isoformat()
     access_group_name, ag_ids = auth_res
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+    ds_cmd = select(Dataset).select_from(
+        join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)
+    ).where(Dataset.unique_id == dsid).filter(
+        DatasetACL.accessgroup_id.in_(ag_ids)
+    ).distinct()
 
     with Session(engine) as session:
         ds_list = session.exec(ds_cmd).all()
 
-    if ds_list is None:
+    if not ds_list:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    elif len(ds_list) == 0:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    else:
-        pass
 
     # Should add this to database table but it is okay for now
     scicat_request = SciCatUpdateRequest(dataset_id = dsid, time_created = creation_time, status = "requested")
@@ -756,12 +745,22 @@ def request_update_scicat_dataset(auth_res: Annotated[tuple, Depends(authorize_u
     session.commit()
     session.refresh(scicat_request)
 
-    message = json.dumps({"dsid": dsid, "source_bucket":"mf-storage-prod", "reqid": scicat_request.id, 'overwrite_data': overwrite_data})
+    message = json.dumps({
+        "dsid": dsid,
+        "source_bucket": "mf-storage-prod",
+        "reqid": scicat_request.id,
+        "overwrite_data": overwrite_data
+    })
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
 
-    send_pika_message(message, exchange = "", routing_key= "scicat-newapi", user = 'admin', rmq_pw= rmq_pw)
-    #send_pika_message(message, exchange = "raw-data   -processing", routing_key= "#.scicat-request.#", user = 'admin', rmq_pw= rmq_pw)
-    return(scicat_request)
+    send_pika_message(
+        message,
+        exchange="",
+        routing_key="scicat-newapi",
+        user="admin",
+        rmq_pw=rmq_pw
+    )
+    return scicat_request
 
 
 @app.patch("/datasets/{dsid}/scicat_update/{reqid}", response_model = SciCatUpdateRequest)
@@ -1274,19 +1273,19 @@ def create_google_drive_info(auth_res:  Annotated[tuple, Depends(authorize_user)
     """
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
-        if True:
-            try:
-                dr = add_or_update(session, 
-                                   GoogleDrives, 
-                                   GoogleDrives.drive_id == D['drive_id'], 
-                                   **D)
-                
-                session.commit()
-                session.refresh(dr)
-            except Exception as err:
-                print(err)
+        try:
+            dr = add_or_update(
+                session,
+                GoogleDrives,
+                GoogleDrives.drive_id == D["drive_id"],
+                **D
+            )
+            session.commit()
+            session.refresh(dr)
+        except Exception as err:
+            print(err)
 
-    return(D)
+    return D
 
 # =======================================
 @app.get("/users", response_model = List[User])
@@ -1342,40 +1341,42 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
         Added or updated user object
     """
     with Session(engine) as session:
-        if True:
-            # add user to user table
-            user_dict = table_obj_to_dict(user_info)
-            user = add_or_update(session, User, User.orcid == user_info.orcid, **user_dict)
-            session.commit()
-            
-            apikey = get_secret("ADMIN_APIKEY", "crucible_admin_apikey/versions/3")
-            requests.request("post", url =  f"{api_url}/users/{user.orcid}/access_groups/{user.orcid}", headers = {"Authorization":f"Bearer {apikey}"})
-        
-            # for each project that the user is a USER on: 
-            # 1. get the project object from the database
-            # 2. add the project to the user object
-            # 3. add an access group for the project, named by the project and add the user to the access group
-            for pname in project_ids:
-                props = session.exec(select(Project).where(Project.project_id == pname)).all()
-                if len(props) != 1:
-                    print(f"Projects found for {pname}: {props} --- skipping.  Please ensure a project exists with a unique name.")
-                    continue
-                else:
-                    prop = props[-1]
-                    
-                    # add project to user
-                    if prop not in user.projects:
-                        user.projects.append(prop)
-                    
-                    # add user to access group
-                    requests.request("post", url =  f"{api_url}/users/{user.orcid}/access_groups/{pname}", headers = {"Authorization":f"Bearer {apikey}"})
-                    #ag = add_or_update(session, AccessGroup, AccessGroup.group_name==pname, group_name=pname)
-                    #if not (user in ag.users):
-                    #    ag.users.append(user)
-        
-            session.add(user)
-            session.commit()
-    return(user_info)
+        # add user to user table
+        user_dict = table_obj_to_dict(user_info)
+        user = add_or_update(session, User, User.orcid == user_info.orcid, **user_dict)
+        session.commit()
+
+        apikey = get_secret("ADMIN_APIKEY", "crucible_admin_apikey/versions/3")
+        requests.post(
+            f"{api_url}/users/{user.orcid}/access_groups/{user.orcid}",
+            headers={"Authorization": f"Bearer {apikey}"}
+        )
+
+        # for each project that the user is a USER on:
+        # 1. get the project object from the database
+        # 2. add the project to the user object
+        # 3. add an access group for the project, named by the project and add the user to the access group
+        for pname in project_ids:
+            props = session.exec(select(Project).where(Project.project_id == pname)).all()
+            if len(props) != 1:
+                print(f"Projects found for {pname}: {props} --- skipping.  Please ensure a project exists with a unique name.")
+                continue
+
+            prop = props[-1]
+
+            # add project to user
+            if prop not in user.projects:
+                user.projects.append(prop)
+
+            # add user to access group
+            requests.post(
+                f"{api_url}/users/{user.orcid}/access_groups/{pname}",
+                headers={"Authorization": f"Bearer {apikey}"}
+            )
+
+        session.add(user)
+        session.commit()
+    return user_info
 
 
 @app.get("/users/{orcid}/datasets", response_model = List[str])

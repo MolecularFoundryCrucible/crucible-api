@@ -89,10 +89,7 @@ def find_or_add_api_access(orcid: str, engine, regenerate = False):
 
     if api_acct is not None and regenerate == False:
         print(f"found an account - cannot return existing token as it's hashed")
-        raise HTTPException(
-            status_code=400,
-            detail="API key already exists. Use regenerate endpoint to create a new one."
-        )
+        return(api_acct['token'])
 
     elif api_acct is not None and regenerate == True:
         delete_apikey(orcid, session)

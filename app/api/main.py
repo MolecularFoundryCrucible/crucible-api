@@ -229,7 +229,7 @@ def get_apikey(request: Request):
     user_info_jwt = request.cookies.get("crucible_user_token")
 
     if user_info_jwt is None:
-        response = RedirectResponse(f"/{api_path}/login")
+        
         response.set_cookie(
             "after_login_return_to_page",
             value=f"/{api_path}/user_apikey",
@@ -237,6 +237,8 @@ def get_apikey(request: Request):
             secure=True,
             samesite="strict"
         )
+        response = RedirectResponse(f"/{api_path}/login")
+
         return response
 
     try:
@@ -262,7 +264,6 @@ def get_apikey(request: Request):
 
     except Exception as e:
         # Handle token decode errors or other issues
-        response = RedirectResponse(f"/{api_path}/login")
         response.set_cookie(
             "after_login_return_to_page",
             value=f"/{api_path}/user_apikey",
@@ -270,6 +271,7 @@ def get_apikey(request: Request):
             secure=True,
             samesite="strict"
         )
+        response = RedirectResponse(f"/{api_path}/login")
         return response
 
 
@@ -287,51 +289,12 @@ def regenerate_apikey(request: Request):
     Returns:
         JSON: New API key information with security warning
         RedirectResponse: To login page if not authenticated
-
-    Response Format:
-        ```json
-        {
-            "api_key": "string",
-            "user_orcid": "0000-0000-0000-0000",
-            "message": "New API key generated successfully",
-            "warning": "Your previous API key has been invalidated",
-            "usage": "Include this key in the Authorization header as 'Bearer <api_key>' for API requests"
-        }
-        ```
-
-    Security Features:
-        - Immediate invalidation of previous API key
-        - New key generation with secure random values
-        - Warning about key invalidation
-        - Session token validation required
-
-    Regeneration Process:
-        1. Validate JWT session token from cookie
-        2. Extract user ORCID from verified token
-        3. Invalidate existing API key
-        4. Generate new secure API key
-        5. Return new key with security warning
-
-    Use Cases:
-        - Security incident response (compromised keys)
-        - Regular security key rotation
-        - Troubleshooting authentication issues
-        - Revoking access for lost/stolen credentials
-
-    Important:
-        - Previous API key becomes immediately invalid
-        - All applications using old key must be updated
-        - New key provides same access permissions as before
-
-    Note:
-        Key regeneration is irreversible. Ensure all applications
-        are updated with the new key to maintain access.
     """
     from app.utils.auth_utils import decode_token, find_or_add_api_access
     user_info_jwt = request.cookies.get("crucible_user_token")
 
     if user_info_jwt is None:
-        response = RedirectResponse(f"/{api_path}/login")
+        
         response.set_cookie(
             "after_login_return_to_page",
             value=f"/{api_path}/regenerate_apikey",
@@ -339,6 +302,7 @@ def regenerate_apikey(request: Request):
             secure=True,
             samesite="strict"
         )
+        response = RedirectResponse(f"/{api_path}/login")
         return response
 
     try:
@@ -356,7 +320,6 @@ def regenerate_apikey(request: Request):
 
     except Exception as e:
         # Handle token decode errors or other issues
-        response = RedirectResponse(f"/{api_path}/login")
         response.set_cookie(
             "after_login_return_to_page",
             value=f"/{api_path}/regenerate_apikey",
@@ -364,6 +327,7 @@ def regenerate_apikey(request: Request):
             secure=True,
             samesite="strict"
         )
+        response = RedirectResponse(f"/{api_path}/login")
         return response
 
 

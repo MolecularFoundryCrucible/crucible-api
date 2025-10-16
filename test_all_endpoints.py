@@ -581,55 +581,275 @@ def test_create_sample_metadata(sample_id: str, sample_type: str, metadata: Dict
 
 def main():
     """
-    Demonstration of API endpoints.
-    Modify the example data below to match your actual data.
+    Comprehensive test of all API endpoints.
+
+    Required arguments (provide these when running the script):
+    - dsid: Dataset ID (e.g., "ds-123456")
+    - orcid: User ORCID ID (e.g., "0000-0001-2345-6789")
+    - reqid: Request ID for ingestion/transfer/scicat operations (integer, e.g., 1)
+    - keyword: Keyword string (e.g., "microscopy")
+    - group_name: Access group name (e.g., "test-group")
+    - dcid: Dataset collection ID (e.g., "dc-123")
+    - instrument_unique_id: Instrument ID (e.g., "instrument-001")
+    - drive_name: Google Drive name (e.g., "my-drive")
+    - proj_id: Project ID (e.g., "proj-123")
+    - sample_id: Sample ID (e.g., "sample-001")
+    - parent_sample_id: Parent sample ID (e.g., "parent-sample-001")
+    - child_sample_id: Child sample ID (e.g., "child-sample-001")
+    - sample_type: Sample type (e.g., "biological")
+    - file_name: File name for download (e.g., "data.txt")
+    - file_path: Local file path for upload (e.g., "/path/to/file.txt")
+    - save_path: Path to save downloaded files (e.g., "/tmp/downloaded.txt")
     """
-    print("Crucible API Endpoint Test Script")
+    print("Crucible API Endpoint Test Script - Comprehensive Test Suite")
     print("=" * 80)
 
-    # Test account endpoint
-    print("\n### TESTING ACCOUNT ENDPOINT ###")
-    account_info = test_get_account()
+    # ======================= CONFIGURE TEST PARAMETERS =======================
+    # TODO: Set these values before running tests
+    dsid = "YOUR_DSID_HERE"  # e.g., "ds-123456"
+    orcid = "YOUR_ORCID_HERE"  # e.g., "0000-0001-2345-6789"
+    reqid = 1  # Request ID for various operations
+    keyword = "test-keyword"
+    group_name = "test-group"
+    dcid = "YOUR_DCID_HERE"
+    instrument_unique_id = "YOUR_INSTRUMENT_ID_HERE"
+    drive_name = "YOUR_DRIVE_NAME_HERE"
+    proj_id = "YOUR_PROJECT_ID_HERE"
+    sample_id = "YOUR_SAMPLE_ID_HERE"
+    parent_sample_id = "YOUR_PARENT_SAMPLE_ID_HERE"
+    child_sample_id = "YOUR_CHILD_SAMPLE_ID_HERE"
+    sample_type = "biological"
+    file_name = "example.txt"
+    file_path = "/path/to/upload/file.txt"
+    save_path = "/tmp/downloaded_file.txt"
 
-    # Test dataset listing
+    # ======================= AUTH AND ACCOUNT ENDPOINTS =======================
+    print("\n### TESTING AUTH AND ACCOUNT ENDPOINTS ###")
+    test_login()
+    test_get_account()
+    test_get_apikey()
+    test_regenerate_apikey()
+
+    # ======================= DATASET ENDPOINTS =======================
     print("\n### TESTING DATASET ENDPOINTS ###")
-    datasets = test_list_datasets()
 
-    # Example: Create a dataset (modify this data as needed)
-    """
-    example_dataset = {
-        "unique_id": "test-dataset-001",
+    # List datasets
+    test_list_datasets()
+    test_list_datasets(query_params={"limit": 10, "offset": 0})
+
+    # Get specific dataset
+    test_get_dataset(dsid)
+
+    # Create dataset
+    dataset_data = {
+        "unique_id": "test-dataset-" + str(int(os.time.time() if hasattr(os, 'time') else 0)),
         "dataset_name": "Test Dataset",
-        "description": "A test dataset",
+        "description": "A test dataset created by automated test script",
         "public": False
     }
-    created_dataset = test_create_dataset(example_dataset)
-    """
+    test_create_dataset(dataset_data)
 
-    # Test instruments
+    # Update dataset
+    update_data = {
+        "dataset_name": "Updated Test Dataset",
+        "description": "Updated description"
+    }
+    test_update_dataset(dsid, update_data)
+
+    # Delete dataset (not implemented)
+    test_delete_dataset(dsid)
+
+    # File operations
+    test_download_dataset_file(dsid, file_name, save_path)
+    test_upload_dataset_file(dsid, file_path)
+
+    # Ingestion
+    test_request_ingestion(dsid)
+    test_request_ingestion(dsid, file_to_upload="data.h5", ingestion_class="HDF5Ingestion")
+    test_get_ingestion_request(dsid, reqid)
+    test_patch_ingestion_request(dsid, reqid, {"status": "completed"})
+
+    # Google Drive transfer
+    test_request_google_drive_transfer(dsid)
+    test_patch_transfer_request(dsid, reqid, {"status": "completed"})
+
+    # SciCat update
+    test_request_scicat_update(dsid, overwrite_data=False)
+    test_get_scicat_update_request(dsid, reqid)
+    test_patch_scicat_request(dsid, reqid, {"status": "completed"})
+
+    # ======================= SCIENTIFIC METADATA ENDPOINTS =======================
+    print("\n### TESTING SCIENTIFIC METADATA ENDPOINTS ###")
+    test_get_scientific_metadata(dsid)
+
+    metadata = {
+        "temperature": {"value": 298, "unit": "K"},
+        "pressure": {"value": 1.0, "unit": "atm"}
+    }
+    test_add_scientific_metadata(dsid, metadata)
+
+    metadata_updates = {
+        "temperature": {"value": 300, "unit": "K"}
+    }
+    test_update_scientific_metadata(dsid, metadata_updates)
+
+    # ======================= THUMBNAIL ENDPOINTS =======================
+    print("\n### TESTING THUMBNAIL ENDPOINTS ###")
+    test_get_thumbnails(dsid)
+
+    thumbnail_data = {
+        "thumbnail": "base64encodedimagedata",
+        "caption": "Test thumbnail"
+    }
+    test_add_thumbnail(dsid, thumbnail_data)
+
+    # ======================= ASSOCIATED FILES ENDPOINTS =======================
+    print("\n### TESTING ASSOCIATED FILES ENDPOINTS ###")
+    test_get_associated_files(dsid)
+
+    file_data = {
+        "file_name": "associated_file.txt",
+        "file_path": "/path/to/file.txt"
+    }
+    test_add_associated_file(dsid, file_data)
+
+    # ======================= KEYWORD ENDPOINTS =======================
+    print("\n### TESTING KEYWORD ENDPOINTS ###")
+    test_get_keywords_for_dataset(dsid)
+    test_add_keyword_to_dataset(dsid, keyword)
+    test_read_keyword(keyword, permissive=True)
+    test_read_keyword(keyword, permissive=False)
+
+    # ======================= DRIVE LOCATION ENDPOINTS =======================
+    print("\n### TESTING DRIVE LOCATION ENDPOINTS ###")
+    test_get_drive_location(dsid)
+
+    drive_info = {
+        "drive_name": drive_name,
+        "folder_id": "google-drive-folder-id"
+    }
+    test_create_drive_location(dsid, drive_info)
+
+    # ======================= ACCESS GROUP ENDPOINTS =======================
+    print("\n### TESTING ACCESS GROUP ENDPOINTS ###")
+    test_read_dataset_acl(dsid)
+    test_create_dataset_acl(dsid, group_name, read=True, write=False)
+
+    access_group = {
+        "group_name": group_name,
+        "description": "Test access group"
+    }
+    test_create_access_group(access_group)
+    test_read_access_group(group_name)
+
+    test_add_user_to_access_group(orcid, group_name)
+    test_list_user_access_groups(orcid)
+
+    # ======================= DATASET COLLECTION ENDPOINTS =======================
+    print("\n### TESTING DATASET COLLECTION ENDPOINTS ###")
+    collection_data = {
+        "unique_id": dcid,
+        "collection_name": "Test Collection",
+        "description": "A test dataset collection"
+    }
+    test_create_dataset_collection(collection_data)
+    test_get_dataset_collection(dcid)
+    test_list_dataset_collections()
+    test_list_dataset_collections(query_params={"limit": 10})
+
+    # ======================= INSTRUMENT ENDPOINTS =======================
     print("\n### TESTING INSTRUMENT ENDPOINTS ###")
-    instruments = test_list_instruments()
+    test_list_instruments()
+    test_list_instruments(query_params={"limit": 10})
+    test_get_instrument(instrument_unique_id)
 
-    # Test samples
+    instrument_data = {
+        "unique_id": instrument_unique_id,
+        "instrument_name": "Test Instrument",
+        "description": "A test instrument"
+    }
+    test_create_instrument(instrument_data)
+
+    # ======================= GOOGLE DRIVE ENDPOINTS =======================
+    print("\n### TESTING GOOGLE DRIVE ENDPOINTS ###")
+    test_list_google_drives()
+    test_list_google_drives(query_params={"limit": 10})
+    test_get_google_drive(drive_name)
+
+    drive_data = {
+        "drive_name": drive_name,
+        "drive_id": "google-drive-id",
+        "description": "Test Google Drive"
+    }
+    test_create_google_drive(drive_data)
+
+    # ======================= USER ENDPOINTS =======================
+    print("\n### TESTING USER ENDPOINTS ###")
+    test_list_users()
+    test_list_users(query_params={"limit": 10}, permissive=True)
+    test_get_user(orcid)
+
+    user_data = {
+        "orcid": orcid,
+        "name": "Test User",
+        "email": "test@example.com"
+    }
+    test_create_user(user_data, project_ids=[proj_id])
+
+    test_read_user_datasets(orcid)
+    test_read_user_access_to_dataset(orcid, dsid)
+    test_read_projects_for_user(orcid)
+
+    # ======================= PROJECT ENDPOINTS =======================
+    print("\n### TESTING PROJECT ENDPOINTS ###")
+    project_data = {
+        "unique_id": proj_id,
+        "project_name": "Test Project",
+        "description": "A test project"
+    }
+    test_create_project(project_data)
+    test_list_projects()
+    test_get_project(proj_id)
+    test_read_users_on_project(proj_id)
+
+    # ======================= SAMPLE ENDPOINTS =======================
     print("\n### TESTING SAMPLE ENDPOINTS ###")
-    samples = test_list_samples()
+    test_list_samples()
+    test_list_samples(query_params={"limit": 10})
+    test_get_sample(sample_id)
 
-    # Example: Create a sample (modify this data as needed)
-    """
-    example_sample = {
-        "unique_id": "test-sample-001",
+    sample_data = {
+        "unique_id": sample_id,
         "sample_name": "Test Sample",
         "description": "A test sample"
     }
-    created_sample = test_create_sample(example_sample)
-    """
+    test_create_sample(sample_data)
 
-    # Add more tests as needed...
+    # Sample relationships
+    test_link_parent_child_samples(parent_sample_id, child_sample_id)
+    test_add_sample_to_dataset(dsid, sample_id)
+    test_get_samples_in_dataset(dsid)
+    test_list_sample_datasets(sample_id)
+    test_list_child_samples(parent_sample_id)
 
+    # Sample metadata
+    test_get_sample_metadata(sample_id, sample_type)
+    sample_metadata = {
+        "composition": "Fe2O3",
+        "preparation_date": "2024-01-01"
+    }
+    test_create_sample_metadata(sample_id, sample_type, sample_metadata)
+
+    # ======================= COMPLETION =======================
     print("\n" + "=" * 80)
     print("Test script completed!")
     print("\nNote: Many endpoints require specific data or admin privileges.")
-    print("Uncomment and modify the example sections above to test creation endpoints.")
+    print("Make sure to update the test parameters at the top of main() before running.")
+    print("\nSome tests may fail if:")
+    print("  - You don't have admin privileges")
+    print("  - The specified IDs don't exist")
+    print("  - You don't have proper access permissions")
+    print("  - Required files don't exist at specified paths")
 
 
 if __name__ == "__main__":

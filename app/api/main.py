@@ -1133,7 +1133,7 @@ def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orci
 def list_user_access_groups(auth_res:  Annotated[tuple, Depends(authorize_user)], orcid: str):
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
-        ags = session.exec(select(AccessGroup).where(AccessGroup.id).in_(ag_ids)).all()
+        ags = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
         return([ag.group_name for ag in ags])
 
 

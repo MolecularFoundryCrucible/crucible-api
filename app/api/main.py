@@ -396,21 +396,22 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                                                     (Dataset.public == True)
                                                 )
     
-    ds_cmd = ds_cmd.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id, isouter=True)
+    # NEED A BETTER WAY TO FILTER ON SCIENTIFIC METADATA FIELDS
+    # ds_cmd = ds_cmd.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id, isouter=True)
 
 
-    for k, v in params_dict.items():
-        if hasattr(Dataset, k):
-            ds_cmd = ds_cmd.where(getattr(Dataset, k) == v)
-        else:
-            # Support nested JSON keys with double underscores
-            json_path = k.split('__')
-            json_col = ScientificMetadata.scientific_metadata
-            for key in json_path[:-1]:
-                json_col = json_col.op('->')(key)
-            json_col = json_col.op('->>')(json_path[-1])
-            print(json_col)
-            ds_cmd = ds_cmd.where(json_col == v)
+    # for k, v in params_dict.items():
+    #     if hasattr(Dataset, k):
+    #         ds_cmd = ds_cmd.where(getattr(Dataset, k) == v)
+    #     else:
+    #         # Support nested JSON keys with double underscores
+    #         json_path = k.split('__')
+    #         json_col = ScientificMetadata.scientific_metadata
+    #         for key in json_path[:-1]:
+    #             json_col = json_col.op('->')(key)
+    #         json_col = json_col.op('->>')(json_path[-1])
+    #         print(json_col)
+    #         ds_cmd = ds_cmd.where(json_col == v)
             
     with Session(engine) as session:
         ds_list = session.exec(ds_cmd.distinct()).all()

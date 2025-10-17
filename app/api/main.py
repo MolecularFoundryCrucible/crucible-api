@@ -854,16 +854,33 @@ def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: s
 
 
 @app.post("/datasets/{dsid}/thumbnails", response_model = Thumbnail)
-def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)], 
-                  dsid: str, 
+def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
+                  dsid: str,
                   thumbnail: Thumbnail):
     '''
-    Adds a thumbnail to a dataset. If the thumbnail exists, it will simply add the existing thumbnail to the dataset object. 
-    Otherwise, the thumbnail will be created and then added to the dataset. 
+    Adds a thumbnail to a dataset. If the thumbnail exists, it will simply add the existing thumbnail to the dataset object.
+    Otherwise, the thumbnail will be created and then added to the dataset.
+
+    Raises:
+        HTTPException: If required thumbnail fields are missing or dataset not found
     '''
     access_group_name, ag_ids = auth_res
+
+    # Validate required fields
+    missing_fields = []
+    if not thumbnail.thumbnail_name or not thumbnail.thumbnail_name.strip():
+        missing_fields.append("thumbnail_name")
+    if not thumbnail.thumbnail_b64str or not thumbnail.thumbnail_b64str.strip():
+        missing_fields.append("thumbnail_b64str")
+
+    if missing_fields:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required thumbnail information: {', '.join(missing_fields)}. Please provide all required fields: thumbnail_name and thumbnail_b64str."
+        )
+
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
-    
+
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
 
@@ -902,15 +919,34 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
 
 
 @app.post("/datasets/{dsid}/associated_files", response_model = AssociatedFile)
-def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)], 
-                        dsid: str, 
+def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
+                        dsid: str,
                         associated_file: AssociatedFile):
     '''
-    Adds an associated file to a dataset. 
+    Adds an associated file to a dataset.
     Creates the AF object if it doesn't already exist.
+
+    Raises:
+        HTTPException: If required associated file fields are missing or dataset not found
     '''
     print("accepted args")
     access_group_name, ag_ids = auth_res
+
+    # Validate required fields
+    missing_fields = []
+    if not associated_file.filename or not associated_file.filename.strip():
+        missing_fields.append("filename")
+    if associated_file.size is None:
+        missing_fields.append("size")
+    if not associated_file.sha256_hash or not associated_file.sha256_hash.strip():
+        missing_fields.append("sha256_hash")
+
+    if missing_fields:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required associated file information: {', '.join(missing_fields)}. Please provide all required fields: filename, size, and sha256_hash."
+        )
+
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
@@ -990,22 +1026,46 @@ def read_dataset_drive_location(auth_res: Annotated[tuple, Depends(authorize_use
 
 
 @app.post("/datasets/{dsid}/drive_location", response_model = DataDriveLocation)
-def create_dataset_drive_location(auth_res:  Annotated[tuple, Depends(authorize_user)], dsid: str, drive_info: DataDriveLocation):   
+def create_dataset_drive_location(auth_res:  Annotated[tuple, Depends(authorize_user)], dsid: str, drive_info: DataDriveLocation):
     """
     Add a Google Drive location record to the database.
-    
+
     Args:
-        ag_ids: List of access group IDs the user belongs to 
+        ag_ids: List of access group IDs the user belongs to
         dsid: Dataset ID
-        D: Google Drive information to be added as DataDriveLocation object 
-        
+        D: Google Drive information to be added as DataDriveLocation object
+
     Returns:
         Added DataDriveLocation object
 
+    Raises:
+        HTTPException: If required drive location fields are missing or dataset not found
     """
     access_group_name, ag_ids = auth_res
+
+    # Validate required fields
+    missing_fields = []
+    if not drive_info.drive_id or not drive_info.drive_id.strip():
+        missing_fields.append("drive_id")
+    if not drive_info.drive_name or not drive_info.drive_name.strip():
+        missing_fields.append("drive_name")
+    if not drive_info.folder_path_in_drive or not drive_info.folder_path_in_drive.strip():
+        missing_fields.append("folder_path_in_drive")
+    if not drive_info.folder_id or not drive_info.folder_id.strip():
+        missing_fields.append("folder_id")
+    if not drive_info.url or not drive_info.url.strip():
+        missing_fields.append("url")
+    if not drive_info.status or not drive_info.status.strip():
+        missing_fields.append("status")
+
+    if missing_fields:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required drive location information: {', '.join(missing_fields)}. Please provide all required fields: drive_id, drive_name, folder_path_in_drive, folder_id, url, and status."
+        )
+
     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
-    
+
     with Session(engine) as session:
         ds_list = session.exec(ds_cmd).all()
 
@@ -1099,6 +1159,30 @@ def list_dataset_collections(admin_acct: Annotated[str, Depends(is_admin)], requ
 
 @app.post("/access_groups", response_model = AccessGroup)
 def create_access_group(admin_acct: Annotated[str, Depends(is_admin)], ag: AccessGroup):
+    """
+    Create a new access group in the database.
+
+    Args:
+        admin_acct: Admin account identifier
+        ag: AccessGroup object to be added
+
+    Returns:
+        Added AccessGroup object
+
+    Raises:
+        HTTPException: If required access group fields are missing
+    """
+    # Validate required fields
+    missing_fields = []
+    if not ag.group_name or not ag.group_name.strip():
+        missing_fields.append("group_name")
+
+    if missing_fields:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required access group information: {', '.join(missing_fields)}. Please provide all required fields: group_name."
+        )
+
     with Session(engine) as session:
         session.add(ag)
         session.commit()
@@ -1202,18 +1286,37 @@ def read_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instrum
 
 
 @app.post("/instruments", response_model = Instrument)
-def create_instrument(auth_res:  Annotated[tuple, Depends(authorize_user)], instrument: Instrument):   
+def create_instrument(auth_res:  Annotated[tuple, Depends(authorize_user)], instrument: Instrument):
     """
     Add a new instrument record to the database.
-    
+
     Args:
         ag_ids: List of access group IDs the user belongs to; here only used to confirm user is in the database
         instrument: Instrument object to be added
-        
+
     Returns:
         Added instrument object
+
+    Raises:
+        HTTPException: If required instrument fields are missing
     """
     access_group_name, ag_ids = auth_res
+
+    # Validate required fields
+    missing_fields = []
+    if not instrument.instrument_name or not instrument.instrument_name.strip():
+        missing_fields.append("instrument_name")
+    if not instrument.owner or not instrument.owner.strip():
+        missing_fields.append("owner")
+    if not instrument.location or not instrument.location.strip():
+        missing_fields.append("location")
+
+    if missing_fields:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required instrument information: {', '.join(missing_fields)}. Please provide all required fields: instrument_name, owner, and location."
+        )
+
     instrument.instrument_name = instrument.instrument_name.lower()
     with Session(engine) as session:
         session.add(instrument)
@@ -1263,15 +1366,32 @@ def read_google_drive_info(auth_res:  Annotated[tuple, Depends(authorize_user)],
 def create_google_drive_info(auth_res:  Annotated[tuple, Depends(authorize_user)], D: Dict):
     """
     Add or update a Google Drive record in the database.
-    
+
     Args:
         ag_ids: List of access group IDs the user belongs to ** should update to is_admin
         D: Google Drive information to be added or updated
-        
+
     Returns:
         Added or updated Google Drive object
+
+    Raises:
+        HTTPException: If required Google Drive fields are missing
     """
     access_group_name, ag_ids = auth_res
+
+    # Validate required fields
+    missing_fields = []
+    if "drive_id" not in D or not D["drive_id"] or not str(D["drive_id"]).strip():
+        missing_fields.append("drive_id")
+    if "drive_name" not in D or not D["drive_name"] or not str(D["drive_name"]).strip():
+        missing_fields.append("drive_name")
+
+    if missing_fields:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required Google Drive information: {', '.join(missing_fields)}. Please provide all required fields: drive_id and drive_name."
+        )
+
     with Session(engine) as session:
         try:
             dr = add_or_update(
@@ -1324,7 +1444,7 @@ def read_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
 
 
 @app.post("/users", response_model = User)
-def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User, project_ids: List[str] = Body(...)):  
+def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User, project_ids: List[str] = Body(...)):
     """
     Add or update a user record in the database.
     Add the user to an Access Group with their ORCID
@@ -1335,11 +1455,29 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
 
     Args:
         ag_ids: List of access group IDs the user belongs to ** should update to is_admin
-        user_info: Instance of class User 
-        
+        user_info: Instance of class User
+
     Returns:
         Added or updated user object
+
+    Raises:
+        HTTPException: If required user fields are missing
     """
+    # Validate required fields
+    missing_fields = []
+    if not user_info.first_name or not user_info.first_name.strip():
+        missing_fields.append("first_name")
+    if not user_info.last_name or not user_info.last_name.strip():
+        missing_fields.append("last_name")
+    if not user_info.orcid or not user_info.orcid.strip():
+        missing_fields.append("orcid")
+
+    if missing_fields:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required user information: {', '.join(missing_fields)}. Please provide all required fields: first_name, last_name, and orcid."
+        )
+
     with Session(engine) as session:
         # add user to user table
         user_dict = table_obj_to_dict(user_info)
@@ -1528,8 +1666,32 @@ def link_parent_child(parent_sample_id, child_sample_id):
     
 @app.post("/samples", response_model = Sample)
 def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample):
+    """
+    Create a new sample in the database.
+
+    Args:
+        auth_res: Authorization result containing access group info
+        S: Sample object to be added
+
+    Returns:
+        Added sample object
+
+    Raises:
+        HTTPException: If required sample fields are missing
+    """
     access_group_name, ag_ids = auth_res
-   
+
+    # Validate required fields
+    missing_fields = []
+    if not S.sample_name or not S.sample_name.strip():
+        missing_fields.append("sample_name")
+
+    if missing_fields:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required sample information: {', '.join(missing_fields)}. Please provide all required fields: sample_name."
+        )
+
     with Session(engine) as session:
         print("starting sample addition")
         sample = add_or_update(session,

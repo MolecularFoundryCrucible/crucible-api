@@ -1036,7 +1036,15 @@ def read_dataset_drive_location(auth_res: Annotated[tuple, Depends(authorize_use
     '''
     Returns a list of DataDriveLocation objects with one object for each location in google drive where the dataset is currently located.
     '''
+    access_group_name, ag_ids = auth_res
     with Session(engine) as session:
+        # Verify dataset exists and user has access
+        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
+        ds = session.exec(ds_cmd).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+
         ds_locs = session.exec(select(DataDriveLocation).where(and_(DataDriveLocation.dataset_id == dsid, DataDriveLocation.status == 'current'))).all()
     return(ds_locs)
 
@@ -1106,13 +1114,19 @@ def create_dataset_drive_location(auth_res:  Annotated[tuple, Depends(authorize_
 @app.get("/datasets/{dsid}/access_groups", response_model = List[AccessGroup])
 def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     with Session(engine) as session:
-        dscmd = select(AccessGroup).select_from(join(AccessGroup, join(DatasetACL, 
+        # Verify dataset exists
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        dscmd = select(AccessGroup).select_from(join(AccessGroup, join(DatasetACL,
                                                                      Dataset,
                                                                      DatasetACL.dataset_id == Dataset.id),
                                                     AccessGroup.id == DatasetACL.accessgroup_id))
         dscmd = dscmd.where(Dataset.unique_id == dsid)
         ds_acl = session.exec(dscmd).all()
-        
+
         return ds_acl
 
 
@@ -1233,6 +1247,12 @@ def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orci
 def list_user_access_groups(auth_res:  Annotated[tuple, Depends(authorize_user)], orcid: str):
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
+        # Verify user exists
+        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
         ags = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
         return([ag.group_name for ag in ags])
 
@@ -1536,13 +1556,19 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
 @app.get("/users/{orcid}/datasets", response_model = List[str])
 def read_user_datasets(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     '''
-    Returns a list of all the datasets the user has access to based on the ORCID provided. 
+    Returns a list of all the datasets the user has access to based on the ORCID provided.
     '''
     with Session(engine) as session:
+        # Verify user exists
+        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
         ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.orcid == orcid)).all()
         ag_ids = [x.accessgroup_id for x in ag]
         ds_list =session.exec(select(Dataset).select_from(join(DatasetACL, Dataset, DatasetACL.dataset_id == Dataset.id)).where(DatasetACL.accessgroup_id.in_(ag_ids))).all()
-        
+
         return [ds.unique_id for ds in ds_list]
 
 
@@ -1663,6 +1689,12 @@ def read_users_on_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_a
     Returns a list of users associated with the project ID provided
     '''
     with Session(engine) as session:
+        # Verify project exists
+        project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
+
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
         users = session.exec(select(User).select_from(join(User, UserProjectLink, UserProjectLink.user_id == User.id)).where(UserProjectLink.project_id == proj_id)).all()
         return users
         
@@ -1849,17 +1881,23 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
     '''
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
+        # Verify sample exists
+        sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
+
+        if sample is None:
+            raise HTTPException(status_code=404, detail="Sample not found")
+
         datasets = session.exec(
             select(Dataset)
             .select_from(
                 join(Dataset, DatasetSampleLink, DatasetSampleLink.dataset_id == Dataset.id)
                 .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
             )
-            .where(DatasetSampleLink.sample_id == 
+            .where(DatasetSampleLink.sample_id ==
                    select(Sample.id).where(Sample.unique_id == sample_id)
             )
             .filter(
-                (DatasetACL.accessgroup_id.in_(ag_ids)) | 
+                (DatasetACL.accessgroup_id.in_(ag_ids)) |
                 (Dataset.public == True)
             )
             .distinct()

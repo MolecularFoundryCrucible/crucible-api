@@ -1518,8 +1518,7 @@ def link_parent_child(parent_sample_id, child_sample_id):
                      SampleLink,
                      where = (and_(SampleLink.parent_sample_id == parent_sample.id, SampleLink.sample_id ==child_sample.id)), 
                      parent_sample_id = parent_sample.id, 
-                     sample_id = child_sample.id, 
-                     object = "samplelink")
+                     sample_id = child_sample.id)
         
         session.commit()
         session.refresh(link)
@@ -1586,8 +1585,8 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
         
         add_or_update(session,
                       DatasetSampleLink,
-                      where=(and_(DatasetSampleLink.sample_id == samp.id, DatasetSampleLink.dataset_id == ds.id)),
-                      object_type = "datasetsamplelink")
+                      where=(and_(DatasetSampleLink.sample_id == samp.id, DatasetSampleLink.dataset_id == ds.id))
+                      )
         
         session.commit()
 

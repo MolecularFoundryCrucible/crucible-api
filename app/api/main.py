@@ -1254,7 +1254,7 @@ def read_google_drive_info(auth_res:  Annotated[tuple, Depends(authorize_user)],
     """
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
-        drive = session.exec(select(GoogleDrives).where(GoogleDrives.drive_name == drive_name)).all()
+        drive = session.exec(select(GoogleDrives).where(GoogleDrives.drive_name == drive_name)).one_or_none()
 
     return(drive)
 
@@ -1427,25 +1427,43 @@ def read_projects_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_ad
 def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Project):
     """
     Add or update a project record in the database.
-    
+
     Args:
         auth_res: ACL info for user
         P: Project object to be added or updated
-        
+
     Returns:
         Added or updated project object
+
+    Raises:
+        HTTPException: If required project fields are missing
     """
+    # Validate required fields before attempting SQL operations
+    missing_fields = []
+    if not P.project_id or not P.project_id.strip():
+        missing_fields.append("project_id")
+    if not P.organization or not P.organization.strip():
+        missing_fields.append("organization")
+    if not P.project_lead_email or not P.project_lead_email.strip():
+        missing_fields.append("project_lead_email")
+
+    if missing_fields:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required project information: {', '.join(missing_fields)}. Please provide all required fields: project_id, organization, and project_lead_email."
+        )
+
     with Session(engine) as session:
         prop = add_or_update(session, Project,  Project.id == P.id, **dict(P))
-        ag = add_or_update(session, 
-                      AccessGroup, 
-                      AccessGroup.group_name==P.project_id, 
+        ag = add_or_update(session,
+                      AccessGroup,
+                      AccessGroup.group_name==P.project_id,
                       group_name=P.project_id)
-        
+
         r1 = session.exec(select(User).where(User.lbl_email.ilike(f"%{P.project_lead_email}%"))).all()
         r2 = session.exec(select(User).where(User.email.ilike(f"%{P.project_lead_email}%"))).all()
         all_found_accounts = [x for x in r1 + r2 if x.orcid is not None]
-        
+
         print(f"found accounts for user: {all_found_accounts}")
 
         if len(all_found_accounts) > 0:
@@ -1496,8 +1514,13 @@ def link_parent_child(parent_sample_id, child_sample_id):
     with Session(engine) as session:
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()
         child_sample = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).first()
-        link = SampleLink(parent_sample_id=parent_sample.id, sample_id=child_sample.id)
-        session.add(link)
+        link = add_or_update(session, 
+                     SampleLink,
+                     where = (and_(SampleLink.parent_sample_id == parent_sample.id, SampleLink.sample_id ==child_sample.id)), 
+                     parent_sample_id = parent_sample.id, 
+                     sample_id = child_sample.id, 
+                     object = "samplelink")
+        
         session.commit()
         session.refresh(link)
         
@@ -1561,8 +1584,11 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
             raise HTTPException(status_code=404, detail="Dataset not found or access denied")
 
         
-        newlink = DatasetSampleLink(sample_id = samp.id, dataset_id = ds.id)
-        session.add(newlink)
+        add_or_update(session,
+                      DatasetSampleLink,
+                      where=(and_(DatasetSampleLink.sample_id == samp.id, DatasetSampleLink.dataset_id == ds.id)),
+                      object_type = "datasetsamplelink")
+        
         session.commit()
 
         info = DatasetSampleLinkResponse(dataset_id = ds.unique_id, dataset_name = ds.dataset_name, sample_id = samp.unique_id, sample_name = samp.sample_name)

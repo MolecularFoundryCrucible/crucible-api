@@ -640,14 +640,14 @@ def get_ingestion_request(auth_res: Annotated[tuple, Depends(authorize_user)], r
 @app.patch("/datasets/{dsid}/ingest/{reqid}", response_model = IngestionRequest)
 def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], reqid: int, dsid: str, ing_req: IngestionRequest):
     if ing_req.id:
-        print(reqid)
-        print(ing_req.id)
+        print(f"{reqid=}")
+        print(f"{ing_req.id=}")
         assert reqid == ing_req.id
         
     with Session(engine) as session:
         updated_req = only_update(session,
                                   IngestionRequest,
-                                  (IngestionRequest.id == ing_req.id) & (IngestionRequest.dataset_id == dsid), 
+                                  (IngestionRequest.id == reqid) & (IngestionRequest.dataset_id == dsid), 
                                   **ing_req.model_dump(exclude_unset=True))
         if updated_req is None:
             errmsg = "No ingestion request found for the \
@@ -713,7 +713,7 @@ def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], reqid: i
         print(f"{xfer_req.id=}")
         assert reqid == xfer_req.id
     with Session(engine) as session:
-        updated_req = only_update(session, GoogleDriveTransferRequest, (GoogleDriveTransferRequest.id == xfer_req.id) & (GoogleDriveTransferRequest.dataset_id == dsid), **xfer_req.model_dump(exclude_unset=True))
+        updated_req = only_update(session, GoogleDriveTransferRequest, (GoogleDriveTransferRequest.id == reqid) & (GoogleDriveTransferRequest.dataset_id == dsid), **xfer_req.model_dump(exclude_unset=True))
         session.commit()
         session.refresh(updated_req)
     return(updated_req)
@@ -768,7 +768,7 @@ def patch_scicat_request(is_admin: Annotated[str, Depends(is_admin)], reqid: int
     if sc_req.id:
         assert reqid == sc_req.id
     with Session(engine) as session:
-        updated_req = only_update(session, SciCatUpdateRequest, (SciCatUpdateRequest.id == sc_req.id) & (SciCatUpdateRequest.dataset_id == dsid), **sc_req.model_dump(exclude_unset=True))
+        updated_req = only_update(session, SciCatUpdateRequest, (SciCatUpdateRequest.id == reqid) & (SciCatUpdateRequest.dataset_id == dsid), **sc_req.model_dump(exclude_unset=True))
         session.commit()
         session.refresh(updated_req)
     return(updated_req)

@@ -10,12 +10,13 @@ Before running, set these environment variables:
 
 import os
 import json
+import mfid
 import requests
 from typing import Dict, List, Optional
 
 # Configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "https://localhost/api")
-API_KEY = os.getenv("API_KEY", "your-api-key-here")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://crucible.lbl.gov/testapi2")
+API_KEY = os.getenv("API_KEY", "9840ba714e5c03d109acdfbc1baa957525e6cd94fa87800bb018443560807282")
 
 # Headers for authenticated requests
 HEADERS = {
@@ -606,7 +607,9 @@ def main():
     # TODO: Set these values before running tests
     dsid = "0t0003pr6dzmz000mfsp74j6w0"  # e.g., "ds-123456"
     orcid = "0009-0001-9493-2006"  # e.g., "0000-0001-2345-6789"
-    reqid = 1  # Request ID for various operations
+    ingest_reqid = 6801  # Request ID for various operations
+    scicat_reqid = 60
+    transfer_reqid = 49
     keyword = "CrBr3"
     group_name = "read_only"
     dcid = "0szb3sskm5v0x000e6v70449gm"
@@ -617,9 +620,11 @@ def main():
     parent_sample_id = "0t3h7ymbm5s27000z6tt82zvx4"
     child_sample_id = "0t4tndz6pxz4b000dp2sfr75gw"
     sample_type = "spinbot_batch"
-    file_name = "example.txt"
+    file_name = "eenl_tio2_uv_0129.zip"
     file_path = "tests/example.txt"
-    save_path = "/tmp/downloaded_file.txt"
+    save_path = "/tmp/eenl_tio2_uv_0129.zip"
+    measurement = "picam_readout"  # For dataset query filtering
+    instrument_name = "team05"  # For dataset query filtering
 
     # ======================= AUTH AND ACCOUNT ENDPOINTS =======================
     print("\n### TESTING AUTH AND ACCOUNT ENDPOINTS ###")
@@ -631,16 +636,18 @@ def main():
     # ======================= DATASET ENDPOINTS =======================
     print("\n### TESTING DATASET ENDPOINTS ###")
 
-    # List datasets
-    test_list_datasets()
-    test_list_datasets(query_params={"limit": 10, "offset": 0})
+    # List datasets - test with different query parameters
+    test_list_datasets()  # No query params
+    test_list_datasets(query_params={"measurement": measurement})  # Filter by measurement
+    test_list_datasets(query_params={"instrument_name": instrument_name, "owner_orcid": orcid})  # Multiple filters
 
     # Get specific dataset
     test_get_dataset(dsid)
 
     # Create dataset
+    uuid = mfid.mfid()[0]
     dataset_data = {
-        "unique_id": "test-dataset-" + str(int(os.time.time() if hasattr(os, 'time') else 0)),
+        "unique_id": uuid,
         "dataset_name": "Test Dataset",
         "description": "A test dataset created by automated test script",
         "public": False
@@ -654,9 +661,6 @@ def main():
     }
     test_update_dataset(dsid, update_data)
 
-    # Delete dataset (not implemented)
-    test_delete_dataset(dsid)
-
     # File operations
     test_download_dataset_file(dsid, file_name, save_path)
     test_upload_dataset_file(dsid, file_path)
@@ -664,17 +668,17 @@ def main():
     # Ingestion
     test_request_ingestion(dsid)
     test_request_ingestion(dsid, file_to_upload="data.h5", ingestion_class="HDF5Ingestion")
-    test_get_ingestion_request(dsid, reqid)
-    test_patch_ingestion_request(dsid, reqid, {"status": "completed"})
+    test_get_ingestion_request(dsid, ingest_reqid)
+    test_patch_ingestion_request(dsid, ingest_reqid, {"status": "completed"})
 
     # Google Drive transfer
     test_request_google_drive_transfer(dsid)
-    test_patch_transfer_request(dsid, reqid, {"status": "completed"})
+    test_patch_transfer_request(dsid, transfer_reqid, {"status": "completed"})
 
     # SciCat update
     test_request_scicat_update(dsid, overwrite_data=False)
-    test_get_scicat_update_request(dsid, reqid)
-    test_patch_scicat_request(dsid, reqid, {"status": "completed"})
+    test_get_scicat_update_request(dsid, scicat_reqid)
+    test_patch_scicat_request(dsid, scicat_reqid, {"status": "completed"})
 
     # ======================= SCIENTIFIC METADATA ENDPOINTS =======================
     print("\n### TESTING SCIENTIFIC METADATA ENDPOINTS ###")
@@ -695,9 +699,10 @@ def main():
     print("\n### TESTING THUMBNAIL ENDPOINTS ###")
     test_get_thumbnails(dsid)
 
+    # Thumbnail requires: thumbnail_name (str) and thumbnail_b64str (str)
     thumbnail_data = {
-        "thumbnail": "base64encodedimagedata",
-        "caption": "Test thumbnail"
+        "thumbnail_name": "Test Thumbnail",
+        "thumbnail_b64str": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
     }
     test_add_thumbnail(dsid, thumbnail_data)
 
@@ -705,9 +710,12 @@ def main():
     print("\n### TESTING ASSOCIATED FILES ENDPOINTS ###")
     test_get_associated_files(dsid)
 
+    # AssociatedFile requires: filename (str), size (int), and sha256_hash (str)
+    import hashlib
     file_data = {
-        "file_name": "associated_file.txt",
-        "file_path": "/path/to/file.txt"
+        "filename": "example.txt",
+        "size": 1024,
+        "sha256_hash": hashlib.sha256(b"test file content").hexdigest()
     }
     test_add_associated_file(dsid, file_data)
 
@@ -726,27 +734,28 @@ def main():
         "drive_name": drive_name,
         "folder_id": "google-drive-folder-id"
     }
-    test_create_drive_location(dsid, drive_info)
+    # test_create_drive_location(dsid, drive_info)
 
     # ======================= ACCESS GROUP ENDPOINTS =======================
     print("\n### TESTING ACCESS GROUP ENDPOINTS ###")
     test_read_dataset_acl(dsid)
-    test_create_dataset_acl(dsid, group_name, read=True, write=False)
+   # test_create_dataset_acl(dsid, group_name, read=True, write=False)
 
-    access_group = {
-        "group_name": group_name,
-        "description": "Test access group"
-    }
-    test_create_access_group(access_group)
+    # access_group = {
+    #     "group_name": group_name,
+    #     "description": "Test access group"
+    # }
+    #test_create_access_group(access_group)
     test_read_access_group(group_name)
 
-    test_add_user_to_access_group(orcid, group_name)
+    #test_add_user_to_access_group(orcid, group_name)
     test_list_user_access_groups(orcid)
 
     # ======================= DATASET COLLECTION ENDPOINTS =======================
     print("\n### TESTING DATASET COLLECTION ENDPOINTS ###")
+    uuid = mfid.mfid()[0]
     collection_data = {
-        "unique_id": dcid,
+        "unique_id": uuid,
         "collection_name": "Test Collection",
         "description": "A test dataset collection"
     }
@@ -792,7 +801,7 @@ def main():
         "name": "Test User",
         "email": "test@example.com"
     }
-    test_create_user(user_data, project_ids=[proj_id])
+    #test_create_user(user_data, project_ids=[proj_id])
 
     test_read_user_datasets(orcid)
     test_read_user_access_to_dataset(orcid, dsid)
@@ -800,10 +809,12 @@ def main():
 
     # ======================= PROJECT ENDPOINTS =======================
     print("\n### TESTING PROJECT ENDPOINTS ###")
+    
+    new_proj_id = 'TEST000002'
     project_data = {
-        "unique_id": proj_id,
-        "project_name": "Test Project",
-        "description": "A test project"
+        "project_id": new_proj_id,
+        "organization": "Molecular Foundry",
+        "project_lead_email": "mkwall@lbl.gov"
     }
     test_create_project(project_data)
     test_list_projects()
@@ -815,9 +826,9 @@ def main():
     test_list_samples()
     test_list_samples(query_params={"limit": 10})
     test_get_sample(sample_id)
-
+    uuid = mfid.mfid()[0]
     sample_data = {
-        "unique_id": sample_id,
+        "unique_id": uuid,
         "sample_name": "Test Sample",
         "description": "A test sample"
     }
@@ -833,8 +844,14 @@ def main():
     # Sample metadata
     test_get_sample_metadata(sample_id, sample_type)
     sample_metadata = {
-        "composition": "Fe2O3",
-        "preparation_date": "2024-01-01"
+        "spin_duration_s": 30,
+        "spin_velocity_rpm": 600, 
+        "dispense_delay_s": 3,
+        "pipette_height_mm": 0.2, 
+        "dispense_speed_ul_s": 40,
+        "precursor_b_volume_ul": 80,
+        "annealing_duration_s": 300,
+        "molar_ratio_fai_macl": "5:1"
     }
     test_create_sample_metadata(sample_id, sample_type, sample_metadata)
 

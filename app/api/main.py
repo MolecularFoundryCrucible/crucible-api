@@ -780,6 +780,10 @@ def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+
         ds_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == ds.unique_id)).one_or_none()
         return ds_md
 
@@ -849,6 +853,10 @@ def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: s
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+
         ds_thumbnails = session.exec(select(Thumbnail).where(Thumbnail.dataset_id == ds.id)).all()
         return ds_thumbnails
 
@@ -907,13 +915,17 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
 @app.get("/datasets/{dsid}/associated_files", response_model = List[AssociatedFile])
 def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
-    Returns a list of the files associated with the dataset ID provided. 
+    Returns a list of the files associated with the dataset ID provided.
     '''
     access_group_name, ag_ids = auth_res
-    
+
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+
         ds_files = session.exec(select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)).all()
         return ds_files
 
@@ -974,12 +986,16 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
 
 @app.get("/datasets/{dsid}/keywords", response_model = List[Keyword])
 def list_keywords_for_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
-    
+
     access_group_name, ag_ids = auth_res
-    
+
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+
         ds_keywords = session.exec(select(Keyword).select_from(join(Keyword, DatasetKeywordLink, DatasetKeywordLink.keyword_id == Keyword.id)).where(DatasetKeywordLink.dataset_id == ds.id)).all()
         return ds_keywords
 
@@ -1552,10 +1568,14 @@ def read_user_access_to_dataset(dsid: str, orcid: str, admin_acct: Annotated[str
 @app.get("/users/{orcid}/projects", response_model = List[Project])
 def read_projects_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
     '''
-    Returns a list of the projects that this User is associated with. 
+    Returns a list of the projects that this User is associated with.
     '''
     with Session(engine) as session:
         user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
         user_id = user.id
         projects = session.exec(select(Project).select_from(join(Project, UserProjectLink, Project.project_id == UserProjectLink.project_id)).where(UserProjectLink.user_id == user_id)).all()
         return projects

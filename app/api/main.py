@@ -358,44 +358,49 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
 
 @app.get("/datasets", response_model = List[Dataset])
-def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
+def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, limit: Optional[int] = None):
     '''
-    Returns a list of all dataset IDs the requesting user is authorized to view. 
-    If no dataset IDs are authorized for the user, an empty list will be returned. 
+    Returns a list of all dataset IDs the requesting user is authorized to view.
+    If no dataset IDs are authorized for the user, an empty list will be returned.
+
+    Args:
+        auth_res: Authorization result containing access group info
+        request: Request object containing query parameters
+        limit: Optional maximum number of datasets to return
     '''
     access_group_name, ag_ids = auth_res
-    
+
     query_params = request.query_params
     params_dict = dict(query_params)
-    
+
     if 'keyword' in list(params_dict.keys()):
         v = params_dict['keyword']
         with Session(engine) as session:
             K = session.exec(select(Keyword).where(Keyword.keyword.ilike(f"%{v}%"))).all()
-            
+
         if K:
             k_ids = [k.id for k in K]
             ds_cmd = select(Dataset).select_from(join(DatasetKeywordLink,
-                                                 join(Dataset, DatasetACL, 
+                                                 join(Dataset, DatasetACL,
                                                       DatasetACL.dataset_id == Dataset.id, isouter=True),
                                                       DatasetKeywordLink.dataset_id == Dataset.id)).filter(
-                                                      (DatasetACL.accessgroup_id.in_(ag_ids)) | 
+                                                      (DatasetACL.accessgroup_id.in_(ag_ids)) |
                                                       (Dataset.public == True)).filter(
                                                       DatasetKeywordLink.keyword_id.in_(k_ids))
-        
+
         del params_dict['keyword']
 
-        
+
     else:
         ds_cmd = select(Dataset).select_from(
-                                                join(Dataset, 
+                                                join(Dataset,
                                                      DatasetACL,
                                                      DatasetACL.dataset_id == Dataset.id, isouter=True)
                                                 ).filter(
-                                                    (DatasetACL.accessgroup_id.in_(ag_ids)) | 
+                                                    (DatasetACL.accessgroup_id.in_(ag_ids)) |
                                                     (Dataset.public == True)
                                                 )
-    
+
     # NEED A BETTER WAY TO FILTER ON SCIENTIFIC METADATA FIELDS
     # ds_cmd = ds_cmd.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id, isouter=True)
 
@@ -412,7 +417,11 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     #         json_col = json_col.op('->>')(json_path[-1])
     #         print(json_col)
     #         ds_cmd = ds_cmd.where(json_col == v)
-            
+
+    # Apply limit if specified
+    if limit is not None:
+        ds_cmd = ds_cmd.limit(limit)
+
     with Session(engine) as session:
         ds_list = session.exec(ds_cmd.distinct()).all()
         return ds_list

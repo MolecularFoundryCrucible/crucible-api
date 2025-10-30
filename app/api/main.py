@@ -1004,7 +1004,7 @@ def list_keywords_for_dataset(auth_res: Annotated[tuple, Depends(authorize_user)
         ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+            raise HTTPException(status_code=403, detail="Dataset not found or access denied")
 
         ds_keywords = session.exec(select(Keyword).select_from(join(Keyword, DatasetKeywordLink, DatasetKeywordLink.keyword_id == Keyword.id)).where(DatasetKeywordLink.dataset_id == ds.id)).all()
         return ds_keywords

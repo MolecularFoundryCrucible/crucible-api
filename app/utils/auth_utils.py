@@ -3,6 +3,7 @@ import re
 import os
 import requests
 import secrets
+import datetime
 from jose import jwt, JWTError
 
 from fastapi import Depends,  HTTPException
@@ -110,6 +111,14 @@ def find_key(credentials, engine):
     print(f"{one_year_ago=}")
     with Session(engine) as session:
         api_acct = session.exec(select(ApiToken).where(and_(ApiToken.token == apikey, ApiToken.token_created > one_year_ago))).one_or_none()
+    if api_acct is None:
+        expired_api_acct = session.exec(select(ApiToken).where(and_(ApiToken.token == apikey))).one_or_none()
+        if expired_api_acct is None:
+            raise HTTPException(status_code=400, detail="No account found for this API key.")
+        else:
+            created_date = datetime.datetime.strptime(expired_api_acct.token_created, '%Y-%m-%d')
+            expiration_date = created_date + timedelta(365).isoformat()
+            raise HTTPException(status_code=400, detail=f"This API key expired on {expiration_date}")
     return(api_acct)
 
 

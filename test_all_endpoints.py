@@ -13,10 +13,13 @@ import json
 import mfid
 import requests
 from typing import Dict, List, Optional
+from dotenv import load_dotenv
 
+env = load_dotenv()
+crucible_admin_api_key = os.environ.get("admin_apikey")
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "https://crucible.lbl.gov/testapi2")
-API_KEY = os.getenv("API_KEY", "9840ba714e5c03d109acdfbc1baa957525e6cd94fa87800bb018443560807282")
+API_KEY = os.getenv("API_KEY", crucible_admin_api_key)
 
 # Headers for authenticated requests
 HEADERS = {
@@ -583,7 +586,7 @@ def main():
     Comprehensive test of all API endpoints.
 
     Required arguments (provide these when running the script):
-    - dsid: Dataset ID (e.g., "ds-123456")
+    - dsid: Dataset ID (e.g., "0t0003pr6dzmz000mfsp74j6w0")
     - orcid: User ORCID ID (e.g., "0000-0001-2345-6789")
     - reqid: Request ID for ingestion/transfer/scicat operations (integer, e.g., 1)
     - keyword: Keyword string (e.g., "microscopy")
@@ -605,11 +608,11 @@ def main():
 
     # ======================= CONFIGURE TEST PARAMETERS =======================
     # TODO: Set these values before running tests
-    dsid = "0t0003pr6dzmz000mfsp74j6w0"  # e.g., "ds-123456"
+    dsid = "0t0003pr6dzmz000mfsp74j6w0"  # e.g., "0t0003pr6dzmz000mfsp74j6w0"
     orcid = "0009-0001-9493-2006"  # e.g., "0000-0001-2345-6789"
-    ingest_reqid = 6801  # Request ID for various operations
-    scicat_reqid = 60
-    transfer_reqid = 49
+    ingest_reqid = '6801'  # Request ID for various operations
+    scicat_reqid = '60'
+    transfer_reqid = '49'
     keyword = "CrBr3"
     group_name = "read_only"
     dcid = "0szb3sskm5v0x000e6v70449gm"

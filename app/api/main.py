@@ -405,9 +405,9 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     # ds_cmd = ds_cmd.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id, isouter=True)
 
 
-    # for k, v in params_dict.items():
-    #     if hasattr(Dataset, k):
-    #         ds_cmd = ds_cmd.where(getattr(Dataset, k) == v)
+    for k, v in params_dict.items():
+        if hasattr(Dataset, k):
+            ds_cmd = ds_cmd.where(getattr(Dataset, k) == v)
     #     else:
     #         # Support nested JSON keys with double underscores
     #         json_path = k.split('__')

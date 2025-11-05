@@ -1624,11 +1624,32 @@ def read_user_access_to_dataset(dsid: str, orcid: str, admin_acct: Annotated[str
                 perms['write'] = True
         return(perms)
 
+# @app.get("/users/{orcid}/projects", response_model = List[Project])
+# def read_projects_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
+#     '''
+#     Returns a list of the projects that this User is associated with.
+#     '''
+#     with Session(engine) as session:
+#         user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+
+#         if user is None:
+#             raise HTTPException(status_code=404, detail="User not found")
+
+#         user_id = user.id
+#         projects = session.exec(select(Project).select_from(join(Project, UserProjectLink, Project.project_id == UserProjectLink.project_id)).where(UserProjectLink.user_id == user_id)).all()
+#         return projects
+    
+
 @app.get("/users/{orcid}/projects", response_model = List[Project])
-def read_projects_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_admin)]):
+def read_projects_for_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of the projects that this User is associated with.
     '''
+    access_group_name, ag_ids = auth_res
+    
+    if access_group_name != 'admin' and access_group_name != orcid:
+        raise HTTPException(status_code = 403, detail="Not authorized to view projects for this user")
+    
     with Session(engine) as session:
         user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
 
@@ -1639,7 +1660,7 @@ def read_projects_for_user(orcid: str, admin_acct:  Annotated[str, Depends(is_ad
         projects = session.exec(select(Project).select_from(join(Project, UserProjectLink, Project.project_id == UserProjectLink.project_id)).where(UserProjectLink.user_id == user_id)).all()
         return projects
     
-
+    
 @app.post("/projects", response_model = Project)
 def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Project):
     """
@@ -1696,14 +1717,23 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
 
 
 @app.get("/projects", response_model = List[Project])
-def list_projects(admin_acct:  Annotated[str, Depends(is_admin)]):
+def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
-    Returns the project object for the provided ID
+    Returns a list of projects the user is authorized to see
     '''
-    with Session(engine) as session:
-        props = session.exec(select(Project)).all()
-        return(props)
-
+    access_group_name, ag_ids = auth_res
+    if access_group_name == 'admin':
+        with Session(engine) as session:
+            props = session.exec(select(Project)).all()
+            return(props)
+        
+    elif is_orcid(access_group_name):
+        props = read_projects_for_user(orcid = access_group_name,
+                                       auth_res = (access_group_name, ag_ids))
+        return props
+    
+    else:
+        raise HTTPException(status_code = 403, detail = "Not authorized to view projects")
 
 @app.get("/projects/{proj_id}", response_model = Union[None, Project])
 def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):

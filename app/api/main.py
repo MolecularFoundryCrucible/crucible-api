@@ -1832,7 +1832,9 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
         
         add_or_update(session,
                       DatasetSampleLink,
-                      where=(and_(DatasetSampleLink.sample_id == samp.id, DatasetSampleLink.dataset_id == ds.id))
+                      where=(and_(DatasetSampleLink.sample_id == samp.id, DatasetSampleLink.dataset_id == ds.id)),
+                      sample_id = samp.id,
+                      dataset_id = ds.id
                       )
         
         session.commit()

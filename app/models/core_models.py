@@ -20,7 +20,7 @@ class DatasetKeywordLink(SQLModel, table=True):
 
 class Keyword(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    keyword: str
+    keyword: str = Field(unique = True)
     datasets: List["Dataset"] = Relationship(back_populates="keywords", link_model=DatasetKeywordLink)
     num_datasets: Optional[int]
 
@@ -86,6 +86,7 @@ class Sample(SQLModel, table = True):
     owner_orcid: Optional[str]
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     date_created: Optional[str] = None
+    project_id: Optional[str] = None
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
     parents: List["Sample"] = Relationship(

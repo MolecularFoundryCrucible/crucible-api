@@ -17,7 +17,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.sql import and_
 from sqlmodel import Session, select
 
-from app.general_utils import get_secret, get_tz_isoformat, is_orcid, remove_file, run_rclone_command
+from app.general_utils import get_secret, get_tz_isoformat, is_orcid, checkhash, remove_file, run_rclone_command
 from app.models.core_models import (
     AccessGroup,
     AssociatedFile,
@@ -513,16 +513,10 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
                                           auth_res:  Annotated[tuple, Depends(authorize_user)],
                                           dsid: str):
     '''
-    Given an existing dataset record - adds data from an uploaded file
-    - makes user call 2 endpoints 1) /datasets 2) /datasets/{dsid}/upload
-    - json info added during step 1
-    - If dsid in file then its a little convoluted ... but you could 
-      always pull it out and then send it in first request json
+    Upload files to cloud bucket and add to associated files list for dataset. 
     '''
     
     access_group_name, ag_ids = auth_res
-    print(dsid)
-    print(files)
     # upload the file
     for file in files:
         dest_dir = f"/mnt/gcs/api-uploads/{os.path.dirname(file.filename)}"
@@ -532,17 +526,14 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
         with open(save_file_path, "wb") as f:
             f.write(await file.read())
 
-    main_file_for_ingestion = files[0].filename
-
-        
-    # get the dataset
-    with Session(engine) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        ds.file_to_upload = os.path.join("api-uploads", main_file_for_ingestion)
-        session.add(ds)
-        session.commit()
-        session.refresh(ds)
-    return(ds)
+    # create associated files record
+    af = {"filename": os.path.join("api-uploads", file.filename), 
+          "size": os.path.getsize(save_file_path),
+          "sha256_hash": checkhash(save_file_path)}
+    
+    # add associated file
+    added_af = add_associated_file(auth_res, dsid, AssociatedFile(**af))
+    return(added_af)
 
 
 @app.post("/datasets/{dsid}/ingest", response_model = IngestionRequest)
@@ -1293,12 +1284,23 @@ def list_user_access_groups(auth_res:  Annotated[tuple, Depends(authorize_user)]
 
 # =====================
 
+@app.get("/keywords", response_model = List[Keyword])
+def list_all_keywords():
+    '''
+    Returns a list of all keywords in the database.
+    Each keyword includes the num_datasets field showing how many datasets use that keyword.
+    '''
+    with Session(engine) as session:
+        keywords = session.exec(select(Keyword)).all()
+    return keywords
+
+
 @app.get("/keywords/{keyword}", response_model = List[Keyword])
 def read_keyword(keyword: str, permissive: bool = True):
     '''
-    Returns a list of all keyword entries that match the provided keyword. 
-    If permissive is set to False, then all returned entries will be an exact match to the provided string. 
-    Otherwise, keywords will be searched as case insensitive.  The default configuration has permissive set to True.  
+    Returns a list of all keyword entries that match the provided keyword.
+    If permissive is set to False, then all returned entries will be an exact match to the provided string.
+    Otherwise, keywords will be searched as case insensitive.  The default configuration has permissive set to True.
     '''
     if permissive:
         cmd = select(Keyword).where(Keyword.keyword.ilike(f"{keyword.lower()}"))

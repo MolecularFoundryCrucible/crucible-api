@@ -508,7 +508,7 @@ async def download_dataset_files(auth_res:  Annotated[tuple, Depends(authorize_u
     )
 
 
-@app.post("/datasets/{dsid}/upload", response_model = IngestionRequest)
+@app.post("/datasets/{dsid}/upload", response_model = AssociatedFile)
 async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], File(description="List of files")],
                                           auth_res:  Annotated[tuple, Depends(authorize_user)],
                                           dsid: str):

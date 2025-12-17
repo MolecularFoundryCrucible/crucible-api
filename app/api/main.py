@@ -812,7 +812,7 @@ def patch_scicat_request(is_admin: Annotated[str, Depends(is_admin)], reqid: int
     return(updated_req)
 
 
-@app.get("/datasets/{dsid}/scientific_metadata", response_model = ScientificMetadata)
+@app.get("/datasets/{dsid}/scientific_metadata")
 def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:

@@ -1762,7 +1762,27 @@ def read_users_on_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_a
 
         users = session.exec(select(User).select_from(join(User, UserProjectLink, UserProjectLink.user_id == User.id)).where(UserProjectLink.project_id == proj_id)).all()
         return users
+
+
+@app.post("/projects/{proj_id}/users/{orcid}", response_model = List[User])
+def add_users_to_project(proj_id: str, orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
+    user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+    if user:
+        # add link between user and project
+        link = add_or_update(session, 
+                             UserProjectLink,
+                             where = (and_(UserProjectLink.user_id == user.id, UserProjectLink.project_id == proj_id)), 
+                             user_id = user.id, 
+                             project_id = proj_id)
+        session.commit()
         
+        # add user to access group
+        add_user_to_access_group(admin_acct = admin_acct, orcid = orcid, group_name = proj_id)
+
+        project_users = read_users_on_project(proj_id, admin_acct)
+        return project_users
+
+
 @app.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model = SampleLink)
 def link_parent_child(parent_sample_id, child_sample_id):
 

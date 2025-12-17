@@ -1663,7 +1663,7 @@ def read_projects_for_user(orcid: str, auth_res: Annotated[tuple, Depends(author
     '''
     access_group_name, ag_ids = auth_res
     
-    if access_group_name != 'admin' and access_group_name != orcid:
+    if not access_group_name.startswith('admin') and access_group_name != orcid:
         raise HTTPException(status_code = 403, detail="Not authorized to view projects for this user")
     
     with Session(engine) as session:
@@ -1738,7 +1738,7 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)]):
     Returns a list of projects the user is authorized to see
     '''
     access_group_name, ag_ids = auth_res
-    if access_group_name == 'admin':
+    if access_group_name.startswith('admin'):
         with Session(engine) as session:
             props = session.exec(select(Project)).all()
             return(props)
@@ -1928,7 +1928,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         samp_cmd = select(Sample)
         
         # Admin API keys can see all samples
-        if access_group_name == 'admin':
+        if access_group_name.startswith('admin'):
             # No owner filter for admin - they can see all samples
             pass
         # Filter by owner_orcid matching requester's ORCID (access_group_name when using ORCID-based API key)

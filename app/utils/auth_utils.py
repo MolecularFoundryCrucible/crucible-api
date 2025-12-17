@@ -27,7 +27,7 @@ db_config_file = f'{os.getenv("HOME")}/{os.getenv("DB_CONF_FILE")}'
 engine = setup_engine(env_config_file = db_config_file)
 
 # ====== Functions
-def find_or_add_api_access(orcid: str, engine, regenerate = False):
+def find_or_add_api_access(orcid: str, engine, instrument_name = None, regenerate = False):
     from app.models.misc import ApiToken
 
     # query the database for orcid
@@ -48,6 +48,28 @@ def find_or_add_api_access(orcid: str, engine, regenerate = False):
     else: 
         new_token = generate_apikey(orcid, session)
         return(new_token)
+
+# def find_or_add_api_access_for_service(service: str, engine, regenerate = False):
+#     from app.models.misc import ApiToken
+
+#     # query the database for orcid
+#     one_year_ago = (date.today()-timedelta(365)).isoformat()
+#     with Session(engine) as session:
+#         api_acct = session.exec(select(ApiToken).where(and_(ApiToken.access_group_id == service,
+#                                                             ApiToken.token_created > one_year_ago))).one_or_none()
+
+#     if api_acct is not None and regenerate == False:
+#         print(f"found an account")
+#         return(api_acct[0].token)
+        
+#     elif api_acct is not None and regenerate == True:
+#         delete_apikey(service, session)
+#         new_token = generate_apikey(orcid, session)
+#         return(new_token)
+        
+#     else: 
+#         new_token = generate_apikey(orcid, session)
+#         return(new_token)
 
 
 def generate_apikey(orcid: str, session):
@@ -176,11 +198,7 @@ def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(securi
     This function validates the provided API credentials and checks if the user belongs to the 'admin' access group.
     """
     api_acct = find_key(credentials, engine)
-    print(api_acct)
-    print(api_acct[0])
-    print(api_acct[0].access_group_id)
-    print(api_acct[0].access_group_id == 'admin')
-    if api_acct[0].access_group_id == 'admin':
+    if api_acct[0].access_group_id.startswith('admin'):
         return(api_acct[0].access_group_id)
     else:
         raise HTTPException(status_code=403, detail="Not authorized for this endpoint")

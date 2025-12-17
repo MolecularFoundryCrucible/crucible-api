@@ -162,6 +162,20 @@ def get_apikey(request: Request):
     return f"Your Crucible APIkey is: {crucible_token}"
 
 
+# @app.post("/service_account/"):
+# def create_service(service_name: str, read:bool = True, write:bool = False, is_admin: Annotated[str, Depends(is_admin)]):
+#     from app.utils.auth_utils import decode_token, find_or_add_api_access
+#     crucible_token = find_or_add_api_access(service_name, engine, regenerate=False)
+#     with Session(engine) as session:
+#         # confirm access group exists:
+#         add_or_update(
+#             session,
+#             AccessGroup,
+#             AccessGroup.group_name == service_name,
+#             group_name=service_name
+#         )
+#     return {service_name, crucible_token}
+
 @app.get("/regenerate_apikey")
 def regenerate_apikey(request: Request):
     """
@@ -1766,15 +1780,17 @@ def read_users_on_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_a
 
 @app.post("/projects/{proj_id}/users/{orcid}", response_model = List[User])
 def add_users_to_project(proj_id: str, orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
-    user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
-    if user:
-        # add link between user and project
-        link = add_or_update(session, 
+
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        if user:
+            # add link between user and project
+            link = add_or_update(session, 
                              UserProjectLink,
                              where = (and_(UserProjectLink.user_id == user.id, UserProjectLink.project_id == proj_id)), 
                              user_id = user.id, 
                              project_id = proj_id)
-        session.commit()
+            session.commit()
         
         # add user to access group
         add_user_to_access_group(admin_acct = admin_acct, orcid = orcid, group_name = proj_id)

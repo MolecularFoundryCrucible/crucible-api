@@ -14,7 +14,7 @@ from fastapi.security import HTTPBearer
 from jose import jwt
 from sqlalchemy import func, join, text
 from sqlalchemy.orm import joinedload, selectinload
-from sqlalchemy.sql import and_
+from sqlalchemy.sql import and_, or_
 from sqlmodel import Session, select
 
 from app.general_utils import get_secret, get_tz_isoformat, is_orcid, checkhash, remove_file, run_rclone_command
@@ -1849,7 +1849,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         print("starting sample addition")
         sample = add_or_update(session,
                            Sample,
-                           Sample.unique_id == S.unique_id,
+                           or_(Sample.unique_id == S.unique_id, and_(Sample.project_id == S.project_id, Sample.sample_name == S.sample_name)),
                            **S.model_dump(exclude_unset = True, exclude = {"parents", "children"}))
         session.commit()
         session.refresh(sample)

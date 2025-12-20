@@ -228,7 +228,7 @@ async def create_dataset(
     auth_res: Annotated[tuple, Depends(authorize_user)],
     dataset: Dataset
 ):
-    
+    print(f"received {Dataset}")
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         ds = add_or_update(
@@ -240,28 +240,29 @@ async def create_dataset(
         session.commit()
         session.refresh(ds)
         
+        print(f'added dataset {ds}')
         # set appropriate access controls
         admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
         admin_acl = sql_create_ds_acl(admin, ds, read = True, write = True, session=session)
 
         ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
         ro_acl = sql_create_ds_acl(ro, ds, read = True, write = False, session=session)
-        print("add ro access")
+        print(f"add ro access to {ds['unique_id']}")
 
         if dataset.owner_user_id is not None:
-            print('adding owner orcid access')
+            print(f'adding owner orcid access to {ds["unique_id"]}')
             user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id)).one_or_none()
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
             user_acl = sql_create_ds_acl(user_ag, ds, read = True, write = True, session=session)
-            print('added owner orcid access')
+            print(f'added owner orcid access to {ds["unique_id"]}')
 
         else:
             # use the apikey associated accessgroup as owner
             creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
-            print(f'{access_group_name=}')
-            print(f'{creator=}')
+            print(f'{access_group_name=} for {ds["unique_id"]}')
+            print(f'{creator=} for {ds["unique_id"]}')
             creator_acl = sql_create_ds_acl(creator, ds, read = True, write = True, session=session)
-            print('add creator access')
+            print(f'add creator access to {ds["unique_id"]}')
 
             if is_orcid(access_group_name):
                 ds.owner_orcid = access_group_name
@@ -269,13 +270,13 @@ async def create_dataset(
                 ds.owner_user_id = creator_user_id
 
         if dataset.project_id is not None:
-            print('adding proposal access')
+            print(f'adding proposal access to {ds["unique_id"]}')
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset.project_id)).one_or_none()
             prop_acl = sql_create_ds_acl(prop_ag, ds, read = True, write = True, session=session)
-            print('added proposal access')
+            print(f'added proposal access to {ds["unique_id"]}')
 
         if dataset.instrument_id is not None:
-            print('adding instrument group access')
+            print(f'adding instrument group access to {ds["unique_id"]}')
             inst_query = select(Instrument.instrument_name).where(Instrument.id == dataset.instrument_id)
             inst_name = session.exec(inst_query).one_or_none()
 
@@ -298,7 +299,7 @@ async def create_dataset(
                                              read = True,
                                              write = True,
                                              session=session)
-            print('added instrument group access')
+            print(f'added instrument group access to {ds["unique_id"]}')
 
         add_or_update(session,
                       IdType,
@@ -1170,7 +1171,7 @@ def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
 
 def sql_create_ds_acl(ag, ds, read, write, session):
     acl = session.exec(select(DatasetACL).where(DatasetACL.accessgroup == ag).where(DatasetACL.dataset == ds)).one_or_none()
-    print(f"{acl=}")
+    print(f"{acl=} for {ds['unique_id']}")
     if not acl:
         acl = DatasetACL(accessgroup_id = ag.id, dataset_id = ds.id, accessgroup=ag, dataset=ds)
         acl.read = read
@@ -1849,7 +1850,8 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         print("starting sample addition")
         sample = add_or_update(session,
                            Sample,
-                           or_(Sample.unique_id == S.unique_id, and_(Sample.project_id == S.project_id, Sample.sample_name == S.sample_name)),
+                           or_(Sample.unique_id == S.unique_id, 
+                               and_(Sample.project_id == S.project_id, Sample.sample_name == S.sample_name)),
                            **S.model_dump(exclude_unset = True, exclude = {"parents", "children"}))
         session.commit()
         session.refresh(sample)

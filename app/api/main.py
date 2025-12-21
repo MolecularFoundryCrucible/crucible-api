@@ -1940,16 +1940,20 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         # Admin API keys can see all samples
         if access_group_name.startswith('admin'):
             # No owner filter for admin - they can see all samples
+            print('using admin account')
             pass
         # Filter by owner_orcid matching requester's ORCID (access_group_name when using ORCID-based API key)
         elif is_orcid(access_group_name):
+            print(f'filtering on owner_orcid={access_group_name}')
             samp_cmd = samp_cmd.where(Sample.owner_orcid == access_group_name)
         else:
             # If not an ORCID-based request and not admin, return empty list for security
+            print(f'apikey does not have access to samples')
             return []
     
         for k, v in params_dict.items():
             if hasattr(Sample, k) and v is not None:
+                print(f'filtering results on {k}={v}')
                 samp_cmd = samp_cmd.where(getattr(Sample, k) == v)
             else:
                pass

@@ -1848,11 +1848,23 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
 
     with Session(engine) as session:
         print("starting sample addition")
+        
         sample = add_or_update(session,
                            Sample,
                            or_(Sample.unique_id == S.unique_id, 
-                               and_(Sample.project_id == S.project_id, Sample.sample_name == S.sample_name)),
-                           **S.model_dump(exclude_unset = True, exclude = {"parents", "children"}))
+                           and_(Sample.project_id == S.project_id, 
+                                Sample.sample_name == S.sample_name)),
+                           )
+        where = or_(Sample.unique_id == S.unique_id, 
+                           and_(Sample.project_id == S.project_id, 
+                                Sample.sample_name == S.sample_name))
+        statement = select(Sample).where(where)
+        sample = session.exec(statement).one_or_none()
+        if sample: 
+            return sample
+        
+        sample = Sample(**S.model_dump(exclude_unset = True, exclude = {"parents", "children"}))
+        session.add(sample)
         session.commit()
         session.refresh(sample)
 

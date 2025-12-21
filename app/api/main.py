@@ -1171,7 +1171,7 @@ def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
 
 def sql_create_ds_acl(ag, ds, read, write, session):
     acl = session.exec(select(DatasetACL).where(DatasetACL.accessgroup == ag).where(DatasetACL.dataset == ds)).one_or_none()
-    print(f"{acl=} for {ds['unique_id']}")
+    print(f"{acl=} for {ds.unique_id}")
     if not acl:
         acl = DatasetACL(accessgroup_id = ag.id, dataset_id = ds.id, accessgroup=ag, dataset=ds)
         acl.read = read

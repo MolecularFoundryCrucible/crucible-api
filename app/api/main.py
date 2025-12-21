@@ -247,22 +247,22 @@ async def create_dataset(
 
         ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
         ro_acl = sql_create_ds_acl(ro, ds, read = True, write = False, session=session)
-        print(f"add ro access to {ds['unique_id']}")
+        print(f"add ro access to {ds.unique_id}")
 
         if dataset.owner_user_id is not None:
-            print(f'adding owner orcid access to {ds["unique_id"]}')
+            print(f'adding owner orcid access to {ds.unique_id}')
             user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id)).one_or_none()
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
             user_acl = sql_create_ds_acl(user_ag, ds, read = True, write = True, session=session)
-            print(f'added owner orcid access to {ds["unique_id"]}')
+            print(f'added owner orcid access to {ds.unique_id}')
 
         else:
             # use the apikey associated accessgroup as owner
             creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
-            print(f'{access_group_name=} for {ds["unique_id"]}')
-            print(f'{creator=} for {ds["unique_id"]}')
+            print(f'{access_group_name=} for {ds.unique_id}')
+            print(f'{creator=} for {ds.unique_id}')
             creator_acl = sql_create_ds_acl(creator, ds, read = True, write = True, session=session)
-            print(f'add creator access to {ds["unique_id"]}')
+            print(f'add creator access to {ds.unique_id}')
 
             if is_orcid(access_group_name):
                 ds.owner_orcid = access_group_name
@@ -270,13 +270,13 @@ async def create_dataset(
                 ds.owner_user_id = creator_user_id
 
         if dataset.project_id is not None:
-            print(f'adding proposal access to {ds["unique_id"]}')
+            print(f'adding proposal access to {ds.unique_id}')
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset.project_id)).one_or_none()
             prop_acl = sql_create_ds_acl(prop_ag, ds, read = True, write = True, session=session)
-            print(f'added proposal access to {ds["unique_id"]}')
+            print(f'added proposal access to {ds.unique_id}')
 
         if dataset.instrument_id is not None:
-            print(f'adding instrument group access to {ds["unique_id"]}')
+            print(f'adding instrument group access to {ds.unique_id}')
             inst_query = select(Instrument.instrument_name).where(Instrument.id == dataset.instrument_id)
             inst_name = session.exec(inst_query).one_or_none()
 
@@ -299,7 +299,7 @@ async def create_dataset(
                                              read = True,
                                              write = True,
                                              session=session)
-            print(f'added instrument group access to {ds["unique_id"]}')
+            print(f'added instrument group access to {ds.unique_id}')
 
         add_or_update(session,
                       IdType,

@@ -1817,7 +1817,26 @@ def link_parent_child(parent_sample_id, child_sample_id):
         
         return(link)
 
+@app.patch('/samples/{sample_id}', response_model = Sample)
+def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id: str, updated_sample: Sample):
+    access_group_name, ag_ids = auth_res
+    cmd = select(Sample).where(unique_id = sample_id)
+    with Session(engine) as session:
+        sample = session.exec(cmd).one_or_none()
+
+    if not sample:
+        raise HTTPException(status_code = 404, detail = 'Sample not found')
     
+    with Session(engine) as session:
+        update_attr = updated_sample.model_dump(exclude_unset = True)
+        filtered_updates = {k:v for k,v in update_attr.items()}
+
+        revised_sample = add_or_update(session, Sample, Sample.unique_id == sample_id, **filtered_updates)
+        session.commit()
+        session.refresh(revised_sample)
+        return revised_sample
+
+
 @app.post("/samples", response_model = Sample)
 def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample):
     """

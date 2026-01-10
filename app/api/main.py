@@ -1820,7 +1820,7 @@ def link_parent_child(parent_sample_id, child_sample_id):
 @app.patch('/samples/{sample_id}', response_model = Sample)
 def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id: str, updated_sample: Sample):
     access_group_name, ag_ids = auth_res
-    cmd = select(Sample).where(unique_id = sample_id)
+    cmd = select(Sample).where(Sample.unique_id == sample_id)
     with Session(engine) as session:
         sample = session.exec(cmd).one_or_none()
 

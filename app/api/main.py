@@ -465,62 +465,78 @@ def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid = s
     pass
 
 
+@app.get('/datasets/{dsid}/download_links')
+def generate_signed_url_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, bucket: str='mf-storage-prod'):
+    from google.cloud import storage
+    from datetime import timedelta
 
-@app.get("/datasets/{dsid}/download/{file_name:path}")
-async def download_dataset_files(auth_res:  Annotated[tuple, Depends(authorize_user)], dsid: str, file_name: str):
-    '''
-    Download an associated file directly from mounted GCS storage without copying.
-    Doing this by file_name for now after discussing with Ed. This is the most
-    intuitive and human readable. This solution also avoids exposing the internal
-    ID which is the only feature of the AF that is currently guaranteed unique.
-    The file_name is actually a relative path which reduces the "intuition"
-    fairly drastically in the case that your "dataset" has subdirectories of
-    associated files.
-    '''
-    access_group_name, ag_ids = auth_res
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(bucket)
+    ds_blobs = bucket.list_blobs(prefix = f'{dsid}/')
+    urls = {}
+    for blob in ds_blobs:
+        urls[blob.name] = blob.generate_signed_url(
+        version="v4",
+        expiration=timedelta(hours=1),
+        method="GET")
 
-    # Security: Prevent path traversal attacks
-    # Normalize the path and ensure it doesn't escape the dataset directory
-    base_dir = Path(f"/mnt/mf-storage-prod/{dsid}").resolve()
-    requested_file = (base_dir / file_name).resolve()
+    return urls
 
-    # Verify the resolved path is still within the base directory
-    try:
-        requested_file.relative_to(base_dir)
-    except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied: Invalid file path.")
+# @app.get("/datasets/{dsid}/download/{file_name:path}")
+# async def download_dataset_files(auth_res:  Annotated[tuple, Depends(authorize_user)], dsid: str, file_name: str):
+#     '''
+#     Download an associated file directly from mounted GCS storage without copying.
+#     Doing this by file_name for now after discussing with Ed. This is the most
+#     intuitive and human readable. This solution also avoids exposing the internal
+#     ID which is the only feature of the AF that is currently guaranteed unique.
+#     The file_name is actually a relative path which reduces the "intuition"
+#     fairly drastically in the case that your "dataset" has subdirectories of
+#     associated files.
+#     '''
+#     access_group_name, ag_ids = auth_res
 
-    # Check file existence FIRST before hitting database (fail fast)
-    if not requested_file.exists():
-        raise HTTPException(status_code=404, detail="File not found for requested dataset ID.")
+#     # Security: Prevent path traversal attacks
+#     # Normalize the path and ensure it doesn't escape the dataset directory
+#     base_dir = Path(f"/mnt/mf-storage-prod/{dsid}").resolve()
+#     requested_file = (base_dir / file_name).resolve()
 
-    # Get file stats for caching headers
-    file_stat = requested_file.stat()
+#     # Verify the resolved path is still within the base directory
+#     try:
+#         requested_file.relative_to(base_dir)
+#     except ValueError:
+#         raise HTTPException(status_code=403, detail="Access denied: Invalid file path.")
 
-    # Check dataset access only after confirming file exists
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL,
-                                              DatasetACL.dataset_id == Dataset.id, isouter=True)
-                                        ).where(Dataset.unique_id == dsid
-                                               ).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
-    with Session(engine) as session:
-        ds = session.exec(ds_cmd).one_or_none()
+#     # Check file existence FIRST before hitting database (fail fast)
+#     if not requested_file.exists():
+#         raise HTTPException(status_code=404, detail="File not found for requested dataset ID.")
 
-    if not ds:
-        raise HTTPException(status_code=403, detail="Dataset not found or access denied.")
+#     # Get file stats for caching headers
+#     file_stat = requested_file.stat()
 
-    # Extract just the filename (not full path) for download header
-    download_filename = requested_file.name
+#     # Check dataset access only after confirming file exists
+#     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL,
+#                                               DatasetACL.dataset_id == Dataset.id, isouter=True)
+#                                         ).where(Dataset.unique_id == dsid
+#                                                ).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
+#     with Session(engine) as session:
+#         ds = session.exec(ds_cmd).one_or_none()
 
-    # Return file with caching headers and optimized settings
-    return FileResponse(
-        str(requested_file),
-        media_type="application/octet-stream",
-        filename=download_filename,
-        headers={
-            "Cache-Control": "private, max-age=3600",  # Private cache for authenticated content
-            "ETag": f'"{file_stat.st_mtime_ns}-{file_stat.st_size}"',
-        }
-    )
+#     if not ds:
+#         raise HTTPException(status_code=403, detail="Dataset not found or access denied.")
+
+#     # Extract just the filename (not full path) for download header
+#     download_filename = requested_file.name
+
+#     # Return file with caching headers and optimized settings
+#     return FileResponse(
+#         str(requested_file),
+#         media_type="application/octet-stream",
+#         filename=download_filename,
+#         headers={
+#             "Cache-Control": "private, max-age=3600",  # Private cache for authenticated content
+#             "ETag": f'"{file_stat.st_mtime_ns}-{file_stat.st_size}"',
+#         }
+#     )
 
 
 @app.post("/datasets/{dsid}/upload", response_model = AssociatedFile)

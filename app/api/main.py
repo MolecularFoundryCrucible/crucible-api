@@ -2058,6 +2058,27 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
         ).all()
         return datasets
 
+@app.get("/samples/{child_sample_id}/parents", response_model = List[Sample])
+def list_child_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a list of child samples for a given parent sample
+    '''
+    access_group_name, ag_ids = auth_res
+    with Session(engine) as session:
+        # Get parent sample
+        child_sample = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).one_or_none()
+        
+        if child_sample is None:
+            raise HTTPException(status_code=404, detail="Child sample not found")
+        
+        # Get child samples
+        parent_samples = session.exec(
+            select(Sample)
+            .select_from(join(Sample, SampleLink, SampleLink.sample_id == Sample.id))
+            .where(SampleLink.sample_id == child_sample.id)
+        ).all()
+        return parent_samples
+    
 
 @app.get("/samples/{parent_sample_id}/children", response_model = List[Sample])
 def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):

@@ -1971,6 +1971,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
     If an admin API key is used, returns all samples.
     '''
     access_group_name, ag_ids = auth_res
+
     query_params = request.query_params
     print(query_params)
     
@@ -1978,6 +1979,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
     print(params_dict)
     
     with Session(engine) as session:
+        
         samp_cmd = select(Sample)
         
         # Admin API keys can see all samples
@@ -1988,7 +1990,10 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         # Filter by owner_orcid matching requester's ORCID (access_group_name when using ORCID-based API key)
         elif is_orcid(access_group_name):
             print(f'filtering on owner_orcid={access_group_name}')
-            samp_cmd = samp_cmd.where(Sample.owner_orcid == access_group_name)
+            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+            associated_group_names = [ag.group_name for ag in associated_groups]
+            samp_cmd = samp_cmd.where(or_(Sample.owner_orcid == access_group_name,
+                                          Sample.project_id.in_(associated_group_names)))
         else:
             # If not an ORCID-based request and not admin, return empty list for security
             print(f'apikey does not have access to samples')

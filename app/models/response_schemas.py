@@ -30,6 +30,7 @@ class DatasetSampleLinkResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class AccountInfo(BaseModel):
     access_group_name: str
     access_group_ids: List[int]

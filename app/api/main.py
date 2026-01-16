@@ -24,7 +24,7 @@ from app.models.core_models import (
     Dataset,
     DatasetACL,
     DatasetCollection,
-    DatasetCollectionLink,
+    DatasetLink,
     DatasetKeywordLink,
     DatasetSampleLink,
     Keyword,
@@ -456,6 +456,71 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str)
         ds = session.exec(ds_cmd).one_or_none()
         return ds
 
+# TODO: NEED POST REQUEST TO LINK DATASETS
+# WHAT ELSE?
+# CAN UPDATE SAMPLE TO ONE SQL QUERY? TIME THIS
+
+@app.get("/samples/{child_dataset_id}/parents", response_model = List[Dataset])
+def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a list of parent datasets for a given dataset
+    '''
+    access_group_name, ag_ids = auth_res
+    with Session(engine) as session:
+        # Get parent sample
+        ds_cmd = select(Dataset).select_from(
+                                            join(Dataset,
+                                                    DatasetACL,
+                                                    DatasetACL.dataset_id == Dataset.id, isouter=True)
+                                            ).filter(
+                                                    (DatasetACL.accessgroup_id.in_(ag_ids)) |
+                                                    (Dataset.public == True)
+                                            )
+        child = session.exec(ds_cmd.where(Dataset.unique_id == child_dataset_id)).one_or_none()
+        
+        if child is None:
+            raise HTTPException(status_code=404, detail="Child dataset not found")
+        
+        # TODO: JOIN ON ACL BUT PERMISSIONS SHOULD PROBABLY INHERIT..
+        # Get child samples
+        parents = session.exec(
+            select(Dataset)
+            .select_from(join(Dataset, DatasetLink, DatasetLink.parent_dataset_id == Dataset.id))
+            .where(DatasetLink.chiod_dataset_id == child.id)
+        ).all()
+        return parents
+    
+
+@app.get("/datasets/{parent_dataset_id}/children", response_model = List[Dataset])
+def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a list of child datasets for a given parent dataset
+    '''
+    access_group_name, ag_ids = auth_res
+    with Session(engine) as session:
+        # Get parent sample
+        ds_cmd = select(Dataset).select_from(
+                                            join(Dataset,
+                                                    DatasetACL,
+                                                    DatasetACL.dataset_id == Dataset.id, isouter=True)
+                                            ).filter(
+                                                    (DatasetACL.accessgroup_id.in_(ag_ids)) |
+                                                    (Dataset.public == True)
+                                            )
+        parent = session.exec(ds_cmd.where(Dataset.unique_id == parent_dataset_id)).one_or_none()
+        
+        if parent is None:
+            raise HTTPException(status_code=404, detail="Parent sample not found")
+        
+        # TODO: JOIN ON ACL BUT PERMISSIONS SHOULD PROBABLY INHERIT..
+        # Get child samples
+        children = session.exec(
+            select(Dataset)
+            .select_from(join(Dataset, DatasetLink, DatasetLink.child_dataset_id == Dataset.id))
+            .where(DatasetLink.parent_dataset_id == parent.id)
+        ).all()
+        return children
+
 
 
 @app.delete("/datasets/{dsid}", response_model = Dataset)
@@ -487,62 +552,6 @@ def generate_signed_url_download_link(auth_res: Annotated[tuple, Depends(authori
         method="GET")
 
     return urls
-
-# @app.get("/datasets/{dsid}/download/{file_name:path}")
-# async def download_dataset_files(auth_res:  Annotated[tuple, Depends(authorize_user)], dsid: str, file_name: str):
-#     '''
-#     Download an associated file directly from mounted GCS storage without copying.
-#     Doing this by file_name for now after discussing with Ed. This is the most
-#     intuitive and human readable. This solution also avoids exposing the internal
-#     ID which is the only feature of the AF that is currently guaranteed unique.
-#     The file_name is actually a relative path which reduces the "intuition"
-#     fairly drastically in the case that your "dataset" has subdirectories of
-#     associated files.
-#     '''
-#     access_group_name, ag_ids = auth_res
-
-#     # Security: Prevent path traversal attacks
-#     # Normalize the path and ensure it doesn't escape the dataset directory
-#     base_dir = Path(f"/mnt/mf-storage-prod/{dsid}").resolve()
-#     requested_file = (base_dir / file_name).resolve()
-
-#     # Verify the resolved path is still within the base directory
-#     try:
-#         requested_file.relative_to(base_dir)
-#     except ValueError:
-#         raise HTTPException(status_code=403, detail="Access denied: Invalid file path.")
-
-#     # Check file existence FIRST before hitting database (fail fast)
-#     if not requested_file.exists():
-#         raise HTTPException(status_code=404, detail="File not found for requested dataset ID.")
-
-#     # Get file stats for caching headers
-#     file_stat = requested_file.stat()
-
-#     # Check dataset access only after confirming file exists
-#     ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL,
-#                                               DatasetACL.dataset_id == Dataset.id, isouter=True)
-#                                         ).where(Dataset.unique_id == dsid
-#                                                ).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
-#     with Session(engine) as session:
-#         ds = session.exec(ds_cmd).one_or_none()
-
-#     if not ds:
-#         raise HTTPException(status_code=403, detail="Dataset not found or access denied.")
-
-#     # Extract just the filename (not full path) for download header
-#     download_filename = requested_file.name
-
-#     # Return file with caching headers and optimized settings
-#     return FileResponse(
-#         str(requested_file),
-#         media_type="application/octet-stream",
-#         filename=download_filename,
-#         headers={
-#             "Cache-Control": "private, max-age=3600",  # Private cache for authenticated content
-#             "ETag": f'"{file_stat.st_mtime_ns}-{file_stat.st_size}"',
-#         }
-#     )
 
 
 @app.post("/datasets/{dsid}/upload", response_model = AssociatedFile)

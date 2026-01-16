@@ -42,22 +42,31 @@ class AssociatedFile(SQLModel, table=True):
     dataset: "Dataset" = Relationship(back_populates = 'associated_files')
 
 
-class DatasetCollectionLink(SQLModel, table=True):
-    collection_id: Optional[int] = Field(
-        default=None, foreign_key="datasetcollection.id", primary_key=True, index=True
-    )
-    dataset_id: Optional[int] = Field(
-        default=None, foreign_key="dataset.id", primary_key=True
-    )
+# class DatasetCollectionLink(SQLModel, table=True):
+#     collection_id: Optional[int] = Field(
+#         default=None, foreign_key="datasetcollection.id", primary_key=True, index=True
+#     )
+#     dataset_id: Optional[int] = Field(
+#         default=None, foreign_key="dataset.id", primary_key=True
+#     )
 
 
-class DatasetCollection(SQLModel, table = True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    unique_id: str = Field(default_factory = get_mfid_value, index = True, unique = True)
-    other_id: Optional[str] = None
-    date_created: Optional[str] = None
-    description: Optional[str]
-    datasets: List["Dataset"] = Relationship(back_populates="collections", link_model=DatasetCollectionLink)
+# class DatasetCollection(SQLModel, table = True):
+#     id: Optional[int] = Field(default=None, primary_key=True)
+#     unique_id: str = Field(default_factory = get_mfid_value, index = True, unique = True)
+#     other_id: Optional[str] = None
+#     date_created: Optional[str] = None
+#     description: Optional[str]
+#     datasets: List["Dataset"] = Relationship(back_populates="collections", link_model=DatasetCollectionLink)
+
+
+class DatasetLink(SQLModel, table = True):
+    child_dataset_id: Optional[int] = Field(
+        default=None, foreign_key="dataset.id", primary_key=True, index=True
+    )
+    parent_dataset_id: Optional[int] = Field(
+        default=None, foreign_key="dataset.id", primary_key=True, index = True
+    )
 
 
 class DatasetSampleLink(SQLModel, table=True):
@@ -68,6 +77,7 @@ class DatasetSampleLink(SQLModel, table=True):
         default=None, foreign_key="dataset.id", primary_key=True
     )
 
+
 class SampleLink(SQLModel, table=True):
     sample_id: Optional[int] = Field(
         default=None, foreign_key="sample.id", primary_key=True, index=True
@@ -75,6 +85,7 @@ class SampleLink(SQLModel, table=True):
     parent_sample_id: Optional[int] = Field(
         default=None, foreign_key="sample.id", primary_key=True
     )
+
 
 class Sample(SQLModel, table = True):
     id: Optional[int] = Field(default = None, primary_key = True)
@@ -133,6 +144,26 @@ class Dataset(SQLModel, table=True):
     thumbnails: List[Thumbnail] = Relationship(back_populates = "dataset")
     associated_files: List[AssociatedFile] = Relationship(back_populates = "dataset")
     acl: List["DatasetACL"] = Relationship(back_populates="dataset")
+    parents: List["Dataset"] = Relationship(
+        back_populates="children",
+        link_model=DatasetLink,
+        sa_relationship_kwargs={
+            "primaryjoin": "Dataset.id==DatasetLink.child_dataset_id",
+            "secondaryjoin": "Dataset.id==DatasetLink.parent_dataset_id"
+        }
+    )
+    children: List["Dataset"] = Relationship(
+        back_populates="parents",
+        link_model=DatasetLink,
+        sa_relationship_kwargs={
+            "primaryjoin": "Dataset.id==DatasetLink.parent_dataset_id",
+            "secondaryjoin": "Dataset.id==DatasetLink.child_dataset_id"
+        }
+    )
+
+    class Config:
+        arbitrary_types_allowed = True
+        from_attributes = True
 
 
 class DatasetACL(SQLModel, table=True):

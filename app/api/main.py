@@ -460,6 +460,39 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str)
 # WHAT ELSE?
 # CAN UPDATE SAMPLE TO ONE SQL QUERY? TIME THIS
 
+@app.post("/datasets/{parent_dataset_id}/children/{child_dataset_id}", response_model = DatasetLink)
+def link_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    access_group_name, ag_ids = auth_res
+    ds_cmd = select(Dataset).select_from(
+                                        join(Dataset,
+                                                DatasetACL,
+                                                DatasetACL.dataset_id == Dataset.id, isouter=True)
+                                        ).filter(
+                                                (DatasetACL.accessgroup_id.in_(ag_ids)) |
+                                                (Dataset.public == True)
+                                        )
+    
+    with Session(engine) as session:
+        parent = session.exec(ds_cmd.where(Dataset.unique_id == parent_dataset_id)).first()
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent dataset not found")
+        
+        child = session.exec(ds_cmd.where(Dataset.unique_id == child_dataset_id)).first()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child dataset not found")
+        
+        link = add_or_update(session, 
+                     DatasetLink,
+                     where = (and_(DatasetLink.parent_dataset_id == parent.id, 
+                                   DatasetLink.child_dataset_id == child.id)), 
+                     parent_sample_id = parent.id, 
+                     sample_id = child.id)
+        
+        session.commit()
+        session.refresh(link)
+        
+        return(link)
+
 @app.get("/samples/{child_dataset_id}/parents", response_model = List[Dataset])
 def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
@@ -486,7 +519,7 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depen
         parents = session.exec(
             select(Dataset)
             .select_from(join(Dataset, DatasetLink, DatasetLink.parent_dataset_id == Dataset.id))
-            .where(DatasetLink.chiod_dataset_id == child.id)
+            .where(DatasetLink.child_dataset_id == child.id)
         ).all()
         return parents
     

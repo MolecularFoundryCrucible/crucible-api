@@ -2070,7 +2070,7 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
         return datasets
 
 @app.get("/samples/{child_sample_id}/parents", response_model = List[Sample])
-def list_child_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of child samples for a given parent sample
     '''
@@ -2085,7 +2085,7 @@ def list_child_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends(
         # Get child samples
         parent_samples = session.exec(
             select(Sample)
-            .select_from(join(Sample, SampleLink, SampleLink.sample_id == Sample.id))
+            .select_from(join(Sample, SampleLink, SampleLink.parent_sample_id == Sample.id))
             .where(SampleLink.sample_id == child_sample.id)
         ).all()
         return parent_samples

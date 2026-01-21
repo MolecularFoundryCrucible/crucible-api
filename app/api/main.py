@@ -40,7 +40,6 @@ from app.models.core_models import (
 from app.models.instrument import Instrument
 from app.models.misc import DataDriveLocation, GoogleDrives, IdType
 from app.models.response_schemas import AccountInfo, DatasetSampleLinkResponse, SampleWithDatasetsResponse
-from app.models.sample_metadata_models import SpinbotBatchMetadata
 from app.models.tasks import GoogleDriveTransferRequest, IngestionRequest, SciCatUpdateRequest
 from app.utils.constants import SAMPLE_TYPE_MAPPING
 from app.utils.rmq_utils import send_pika_message

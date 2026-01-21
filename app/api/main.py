@@ -456,7 +456,7 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str)
         ds = session.exec(ds_cmd).one_or_none()
         return ds
 
-# TODO: NEED POST REQUEST TO LINK DATASETS
+
 # WHAT ELSE?
 # CAN UPDATE SAMPLE TO ONE SQL QUERY? TIME THIS
 

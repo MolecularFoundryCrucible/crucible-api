@@ -42,22 +42,22 @@ class AssociatedFile(SQLModel, table=True):
     dataset: "Dataset" = Relationship(back_populates = 'associated_files')
 
 
-# class DatasetCollectionLink(SQLModel, table=True):
-#     collection_id: Optional[int] = Field(
-#         default=None, foreign_key="datasetcollection.id", primary_key=True, index=True
-#     )
-#     dataset_id: Optional[int] = Field(
-#         default=None, foreign_key="dataset.id", primary_key=True
-#     )
+class DatasetCollectionLink(SQLModel, table=True):
+    collection_id: Optional[int] = Field(
+        default=None, foreign_key="datasetcollection.id", primary_key=True, index=True
+    )
+    dataset_id: Optional[int] = Field(
+        default=None, foreign_key="dataset.id", primary_key=True
+    )
 
 
-# class DatasetCollection(SQLModel, table = True):
-#     id: Optional[int] = Field(default=None, primary_key=True)
-#     unique_id: str = Field(default_factory = get_mfid_value, index = True, unique = True)
-#     other_id: Optional[str] = None
-#     date_created: Optional[str] = None
-#     description: Optional[str]
-#     datasets: List["Dataset"] = Relationship(back_populates="collections", link_model=DatasetCollectionLink)
+class DatasetCollection(SQLModel, table = True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    unique_id: str = Field(default_factory = get_mfid_value, index = True, unique = True)
+    other_id: Optional[str] = None
+    date_created: Optional[str] = None
+    description: Optional[str]
+    datasets: List["Dataset"] = Relationship(back_populates="collections", link_model=DatasetCollectionLink)
 
 
 class DatasetLink(SQLModel, table = True):

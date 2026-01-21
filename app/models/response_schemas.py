@@ -8,7 +8,7 @@ class DatasetResponse(BaseModel):
     measurement: Optional[str]
     class Config:
         from_attributes = True  
-        
+    
 class SampleWithDatasetsResponse(BaseModel):
     id: int
     unique_id: str
@@ -29,6 +29,7 @@ class DatasetSampleLinkResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
 
 class AccountInfo(BaseModel):
     access_group_name: str

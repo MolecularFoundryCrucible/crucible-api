@@ -493,7 +493,7 @@ def link_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[t
         
         return(link)
 
-@app.get("/samples/{child_dataset_id}/parents", response_model = List[Dataset])
+@app.get("/datasets/{child_dataset_id}/parents", response_model = List[Dataset])
 def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of parent datasets for a given dataset

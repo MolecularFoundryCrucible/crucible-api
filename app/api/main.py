@@ -383,62 +383,59 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         limit: Optional maximum number of datasets to return
     '''
     access_group_name, ag_ids = auth_res
-
-    query_params = request.query_params
-    params_dict = dict(query_params)
-
-    if 'keyword' in list(params_dict.keys()):
-        v = params_dict['keyword']
-        with Session(engine) as session:
-            K = session.exec(select(Keyword).where(Keyword.keyword.ilike(f"%{v}%"))).all()
-
-        if K:
-            k_ids = [k.id for k in K]
-            ds_cmd = select(Dataset).select_from(join(DatasetKeywordLink,
-                                                 join(Dataset, DatasetACL,
-                                                      DatasetACL.dataset_id == Dataset.id, isouter=True),
-                                                      DatasetKeywordLink.dataset_id == Dataset.id)).filter(
-                                                      (DatasetACL.accessgroup_id.in_(ag_ids)) |
-                                                      (Dataset.public == True)).filter(
-                                                      DatasetKeywordLink.keyword_id.in_(k_ids))
-
-        del params_dict['keyword']
-
-
-    else:
-        ds_cmd = select(Dataset).select_from(
-                                                join(Dataset,
-                                                     DatasetACL,
-                                                     DatasetACL.dataset_id == Dataset.id, isouter=True)
-                                                ).filter(
-                                                    (DatasetACL.accessgroup_id.in_(ag_ids)) |
-                                                    (Dataset.public == True)
-                                                )
-
-    # NEED A BETTER WAY TO FILTER ON SCIENTIFIC METADATA FIELDS
-    # ds_cmd = ds_cmd.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id, isouter=True)
-
-
-    for k, v in params_dict.items():
-        if hasattr(Dataset, k):
-            ds_cmd = ds_cmd.where(getattr(Dataset, k) == v)
-    #     else:
-    #         # Support nested JSON keys with double underscores
-    #         json_path = k.split('__')
-    #         json_col = ScientificMetadata.scientific_metadata
-    #         for key in json_path[:-1]:
-    #             json_col = json_col.op('->')(key)
-    #         json_col = json_col.op('->>')(json_path[-1])
-    #         print(json_col)
-    #         ds_cmd = ds_cmd.where(json_col == v)
-
-    # Apply limit if specified
-    if limit is not None:
-        ds_cmd = ds_cmd.limit(limit)
+    params_dict = dict(request.query_params)
+    keyword_filter = params_dict.pop('keyword', None)
+    include_metadata = params_dict.pop('include_metadata', False)
 
     with Session(engine) as session:
-        ds_list = session.exec(ds_cmd.distinct()).all()
-        return ds_list
+        # Build authorization filter (user's access groups or public datasets)
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        if keyword_filter:
+            # Find matching keywords
+            keywords = session.exec(
+                select(Keyword).where(Keyword.keyword.ilike(f"%{keyword_filter}%"))
+            ).all()
+
+            if not keywords:
+                return []
+
+            keyword_ids = [keyword.id for keyword in keywords]
+            query = (
+                select(Dataset)
+                .select_from(
+                    join(
+                        DatasetKeywordLink,
+                        join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True),
+                        DatasetKeywordLink.dataset_id == Dataset.id
+                    )
+                )
+                .filter(auth_filter)
+                .filter(DatasetKeywordLink.keyword_id.in_(keyword_ids))
+            )
+        else:
+            query = (
+                select(Dataset)
+                .select_from(
+                    join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                )
+                .filter(auth_filter)
+            )
+
+        # Apply additional filters for Dataset attributes
+        for key, value in params_dict.items():
+            if hasattr(Dataset, key):
+                query = query.where(getattr(Dataset, key) == value)
+
+        # Optionally join on scientific metadata
+        if include_metadata is True:
+            query = query.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id)
+            
+        # Apply limit if specified
+        if limit is not None:
+            query = query.limit(limit)
+
+        return session.exec(query.distinct()).all()
     
     
 @app.get("/datasets/{dsid}", response_model = Union[Dataset, None])

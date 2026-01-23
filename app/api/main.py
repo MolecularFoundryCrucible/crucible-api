@@ -385,11 +385,13 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     access_group_name, ag_ids = auth_res
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
-  #  include_metadata = params_dict.pop('include_metadata', False)
-    print(f'{include_metadata=}')
+
     with Session(engine) as session:
         # Build authorization filter (user's access groups or public datasets)
         auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        # Determine what to select based on include_metadata flag
+        select_entities = (Dataset, ScientificMetadata) if include_metadata else Dataset
 
         if keyword_filter:
             # Find matching keywords
@@ -402,7 +404,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
 
             keyword_ids = [keyword.id for keyword in keywords]
             query = (
-                select(Dataset)
+                select(select_entities)
                 .select_from(
                     join(
                         DatasetKeywordLink,
@@ -415,7 +417,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             )
         else:
             query = (
-                select(Dataset)
+                select(select_entities)
                 .select_from(
                     join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
                 )
@@ -427,9 +429,8 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             if hasattr(Dataset, key):
                 query = query.where(getattr(Dataset, key) == value)
 
-        # Optionally join on scientific metadata
-        if include_metadata is True:
-            print('joining on scientific metadata')
+        # Join scientific metadata if requested
+        if include_metadata:
             query = query.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id)
 
         # Apply limit if specified

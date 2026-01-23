@@ -428,7 +428,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                 query = query.where(getattr(Dataset, key) == value)
 
         # Optionally join on scientific metadata
-        if include_metadata is True:
+        if include_metadata  == 'True':
             print('joining on scientific metadata')
             query = query.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id)
 

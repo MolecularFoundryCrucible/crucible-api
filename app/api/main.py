@@ -477,6 +477,7 @@ def link_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[t
             raise HTTPException(status_code=404, detail="Parent dataset not found")
         
         child = session.exec(ds_cmd.where(Dataset.unique_id == child_dataset_id)).first()
+       # print(f'{child=}')
         if not child:
             raise HTTPException(status_code=404, detail="Child dataset not found")
         
@@ -484,8 +485,8 @@ def link_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[t
                      DatasetLink,
                      where = (and_(DatasetLink.parent_dataset_id == parent.id, 
                                    DatasetLink.child_dataset_id == child.id)), 
-                     parent_sample_id = parent.id, 
-                     sample_id = child.id)
+                     parent_dataset_id = parent.id, 
+                     child_dataset_id = child.id)
         
         session.commit()
         session.refresh(link)

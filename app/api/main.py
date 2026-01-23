@@ -371,7 +371,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         return upds
 
 
-@app.get("/datasets", response_model = List[Dataset])
+@app.get("/datasets")
 def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, limit: Optional[int] = None):
     '''
     Returns a list of all dataset IDs the requesting user is authorized to view.
@@ -430,7 +430,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         # Optionally join on scientific metadata
         if include_metadata is True:
             query = query.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id)
-            
+
         # Apply limit if specified
         if limit is not None:
             query = query.limit(limit)

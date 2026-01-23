@@ -372,7 +372,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
 
 @app.get("/datasets")
-def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, limit: Optional[int] = None):
+def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: Optional[bool] = False, limit: Optional[int] = None):
     '''
     Returns a list of all dataset IDs the requesting user is authorized to view.
     If no dataset IDs are authorized for the user, an empty list will be returned.
@@ -385,7 +385,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     access_group_name, ag_ids = auth_res
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
-    include_metadata = params_dict.pop('include_metadata', False)
+  #  include_metadata = params_dict.pop('include_metadata', False)
     print(f'{include_metadata=}')
     with Session(engine) as session:
         # Build authorization filter (user's access groups or public datasets)
@@ -428,7 +428,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                 query = query.where(getattr(Dataset, key) == value)
 
         # Optionally join on scientific metadata
-        if include_metadata  == 'True':
+        if include_metadata is True:
             print('joining on scientific metadata')
             query = query.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id)
 

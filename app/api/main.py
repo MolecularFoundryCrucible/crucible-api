@@ -386,7 +386,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
     include_metadata = params_dict.pop('include_metadata', False)
-
+    print(f'{include_metadata=}')
     with Session(engine) as session:
         # Build authorization filter (user's access groups or public datasets)
         auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
@@ -429,6 +429,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
 
         # Optionally join on scientific metadata
         if include_metadata is True:
+            print('joining on scientific metadata')
             query = query.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id)
 
         # Apply limit if specified

@@ -369,85 +369,31 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         session.commit()
         session.refresh(upds)
         return upds
+   
+ 
+def generate_kw_query(session, base_query, keyword_filter):
 
-
-
-
-
-
-
-
-@app.get('/datasets/complete')
-def list_datasets_with_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, limit: Optional[int] = None):
-    '''
-    Returns a list of all datasets the requesting user is authorized to view.
-    If no datasets are authorized for the user, an empty list will be returned.
-
-    Args:
-        auth_res: Authorization result containing access group info
-        request: Request object containing query parameters
-        limit: Optional maximum number of datasets to return
-    '''
-    access_group_name, ag_ids = auth_res
-    params_dict = dict(request.query_params)
-    keyword_filter = params_dict.pop('keyword', None)
-
-    with Session(engine) as session:
-        # Build authorization filter (user's access groups or public datasets)
-        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
-
-        if keyword_filter:
-            # Find matching keywords
-            keywords = session.exec(
+    keywords = session.exec(
                 select(Keyword).where(Keyword.keyword.ilike(f"%{keyword_filter}%"))
             ).all()
-
-            if not keywords:
-                return []
-
-            keyword_ids = [keyword.id for keyword in keywords]
-            query = (
-                select(Dataset, ScientificMetadata)
-                .select_from(
-                    join(ScientificMetadata,
-                        join(
-                         DatasetKeywordLink,
-                            join(
-                                Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True),
-                        DatasetKeywordLink.dataset_id == Dataset.id
-                        ),
-                        ScientificMetadata.dataset_unique_id == Dataset.unique_id)
-                )
-                .filter(auth_filter)
-                .filter(DatasetKeywordLink.keyword_id.in_(keyword_ids))
-            )
-        else:
-            query = (
-                select(Dataset, ScientificMetadata)
-                .select_from(ScientificMetadata, 
-                             join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True),
-                             ScientificMetadata.dataset_unique_id == Dataset.unique_id)
-                .filter(auth_filter)
-            )
-
-        # Apply additional filters for Dataset attributes
-        for key, value in params_dict.items():
-            if hasattr(Dataset, key):
-                query = query.where(getattr(Dataset, key) == value)
-
-        # Apply limit if specified
-        if limit is not None:
-            query = query.limit(limit)
-
-        results = session.exec(query.distinct()).all()
-        print(results)
-        return results
     
- 
+    if not keywords:
+        return []
+    
+    keyword_ids = [keyword.id for keyword in keywords]
+    query = (base_query.select_from(
+                    join(
+                        DatasetKeywordLink,
+                        DatasetKeywordLink.dataset_id == Dataset.id
+                    )
+                ).filter(DatasetKeywordLink.keyword_id.in_(keyword_ids))
+            )
+    return(query)
+
 
 
 @app.get("/datasets")
-def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, limit: Optional[int] = None):
+def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: bool = False, limit: Optional[int] = None):
     '''
     Returns a list of all dataset IDs the requesting user is authorized to view.
     If no dataset IDs are authorized for the user, an empty list will be returned.
@@ -460,42 +406,32 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     access_group_name, ag_ids = auth_res
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
-
+    print(f'{include_metadata=}')
     with Session(engine) as session:
         # Build authorization filter (user's access groups or public datasets)
         auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
 
-
-        if keyword_filter:
-            # Find matching keywords
-            keywords = session.exec(
-                select(Keyword).where(Keyword.keyword.ilike(f"%{keyword_filter}%"))
-            ).all()
-
-            if not keywords:
-                return []
-
-            keyword_ids = [keyword.id for keyword in keywords]
+        # if include_metadata - join on scientific metadata
+        if include_metadata:
             query = (
-                select(Dataset)
-                .select_from(
-                    join(
-                        DatasetKeywordLink,
-                        join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True),
-                        DatasetKeywordLink.dataset_id == Dataset.id
-                    )
-                )
+                select(Dataset, ScientificMetadata)
+                .select_from(ScientificMetadata, 
+                             join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True),
+                             ScientificMetadata.dataset_unique_id == Dataset.unique_id)
                 .filter(auth_filter)
-                .filter(DatasetKeywordLink.keyword_id.in_(keyword_ids))
             )
+
         else:
-            query = (
-                select(Dataset)
-                .select_from(
-                    join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
-                )
-                .filter(auth_filter)
-            )
+            query = (select(Dataset)
+                        .select_from(
+                            join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                        )
+                        .filter(auth_filter)
+                    )
+
+        # join and filter on keywords
+        if keyword_filter:
+            query = generate_kw_query(session, query, keyword_filter)
 
         # Apply additional filters for Dataset attributes
         for key, value in params_dict.items():
@@ -2151,8 +2087,8 @@ def read_samples_in_dataset(dsid: str, auth_res:  Annotated[tuple, Depends(autho
         return samples
 
 
-@app.get("/samples/{sample_id}/datasets", response_model = List[Dataset])
-def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(authorize_user)]):
+@app.get("/samples/{sample_id}/datasets")
+def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(authorize_user)], include_metadata: bool = False):
     '''
     Returns a list of all datasets linked to a given sample
     '''
@@ -2164,22 +2100,35 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
         if sample is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        datasets = session.exec(
-            select(Dataset)
-            .select_from(
-                join(Dataset, DatasetSampleLink, DatasetSampleLink.dataset_id == Dataset.id)
-                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        print(f'{include_metadata=}')
+        if include_metadata:
+            query = (
+                select(Dataset, ScientificMetadata)
+                .select_from(ScientificMetadata, 
+                                join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True),
+                                ScientificMetadata.dataset_unique_id == Dataset.unique_id)
+                .filter(auth_filter)
             )
-            .where(DatasetSampleLink.sample_id ==
-                   select(Sample.id).where(Sample.unique_id == sample_id)
-            )
-            .filter(
-                (DatasetACL.accessgroup_id.in_(ag_ids)) |
-                (Dataset.public == True)
-            )
-            .distinct()
-        ).all()
+
+        else:
+            query = (select(Dataset)
+                        .select_from(
+                            join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                        )
+                        .filter(auth_filter)
+                    )
+        
+        full_query = query.join(Dataset, 
+                                DatasetSampleLink, 
+                                DatasetSampleLink.dataset_id == Dataset.id
+                                ).where(
+                                    DatasetSampleLink.sample_id == select(Sample.id).where(Sample.unique_id == sample_id)
+                                ).distinct()
+        datasets = session.exec(full_query).all()
         return datasets
+    
+
 
 @app.get("/samples/{child_sample_id}/parents", response_model = List[Sample])
 def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):

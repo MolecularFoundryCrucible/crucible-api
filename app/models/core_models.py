@@ -136,9 +136,9 @@ class Dataset(SQLModel, table=True):
     data_format: Optional[str]
     measurement: Optional[str]
     session_name: Optional[str]
-    json_link: Optional[str] 
+    json_link: Optional[str]
     sha256_hash_file_to_upload: Optional[str]
-    scientific_metadata: Optional[dict] = Relationship(back_populates = 'dataset')
+    scientific_metadata: Optional["ScientificMetadata"] = Relationship(back_populates = 'dataset')
     samples: List[Sample] = Relationship(back_populates="datasets", link_model = DatasetSampleLink)
     collections: List[DatasetCollection] = Relationship(back_populates = "datasets", link_model = DatasetCollectionLink)
     keywords: List[Keyword] = Relationship(back_populates="datasets", link_model=DatasetKeywordLink)
@@ -232,8 +232,10 @@ class Project(SQLModel, table=True):
 
 class ScientificMetadata(SQLModel, table = True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    dataset_unique_id: str
+    dataset_unique_id: str = Field(foreign_key="dataset.unique_id", index=True)
     scientific_metadata: dict = Field(sa_column=Column(JSON), default={})
+
+    dataset: Optional["Dataset"] = Relationship(back_populates="scientific_metadata")
 
 
 

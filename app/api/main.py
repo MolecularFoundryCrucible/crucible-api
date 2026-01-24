@@ -371,8 +371,83 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         return upds
 
 
+
+
+
+
+
+
+@app.get('/datasets/complete')
+def list_datasets_with_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, limit: Optional[int] = None):
+    '''
+    Returns a list of all datasets the requesting user is authorized to view.
+    If no datasets are authorized for the user, an empty list will be returned.
+
+    Args:
+        auth_res: Authorization result containing access group info
+        request: Request object containing query parameters
+        limit: Optional maximum number of datasets to return
+    '''
+    access_group_name, ag_ids = auth_res
+    params_dict = dict(request.query_params)
+    keyword_filter = params_dict.pop('keyword', None)
+
+    with Session(engine) as session:
+        # Build authorization filter (user's access groups or public datasets)
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        if keyword_filter:
+            # Find matching keywords
+            keywords = session.exec(
+                select(Keyword).where(Keyword.keyword.ilike(f"%{keyword_filter}%"))
+            ).all()
+
+            if not keywords:
+                return []
+
+            keyword_ids = [keyword.id for keyword in keywords]
+            query = (
+                select(Dataset, ScientificMetadata)
+                .select_from(
+                    join(ScientificMetadata,
+                        join(
+                         DatasetKeywordLink,
+                            join(
+                                Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True),
+                        DatasetKeywordLink.dataset_id == Dataset.id
+                        ),
+                        ScientificMetadata.dataset_unique_id == Dataset.unique_id)
+                )
+                .filter(auth_filter)
+                .filter(DatasetKeywordLink.keyword_id.in_(keyword_ids))
+            )
+        else:
+            query = (
+                select(Dataset, ScientificMetadata)
+                .select_from(ScientificMetadata, 
+                             join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True),
+                             ScientificMetadata.dataset_unique_id == Dataset.unique_id)
+                .filter(auth_filter)
+            )
+
+        # Apply additional filters for Dataset attributes
+        for key, value in params_dict.items():
+            if hasattr(Dataset, key):
+                query = query.where(getattr(Dataset, key) == value)
+
+        # Apply limit if specified
+        if limit is not None:
+            query = query.limit(limit)
+
+        results = session.exec(query.distinct()).all()
+        print(results)
+        return results
+    
+ 
+
+
 @app.get("/datasets")
-def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: Optional[bool] = False, limit: Optional[int] = None):
+def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, limit: Optional[int] = None):
     '''
     Returns a list of all dataset IDs the requesting user is authorized to view.
     If no dataset IDs are authorized for the user, an empty list will be returned.
@@ -390,8 +465,6 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         # Build authorization filter (user's access groups or public datasets)
         auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
 
-        # Determine what to select based on include_metadata flag
-        select_entities = (Dataset, ScientificMetadata) if include_metadata else Dataset
 
         if keyword_filter:
             # Find matching keywords
@@ -404,7 +477,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
 
             keyword_ids = [keyword.id for keyword in keywords]
             query = (
-                select(select_entities)
+                select(Dataset)
                 .select_from(
                     join(
                         DatasetKeywordLink,
@@ -417,7 +490,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             )
         else:
             query = (
-                select(select_entities)
+                select(Dataset)
                 .select_from(
                     join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
                 )
@@ -429,15 +502,13 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             if hasattr(Dataset, key):
                 query = query.where(getattr(Dataset, key) == value)
 
-        # Join scientific metadata if requested
-        if include_metadata:
-            query = query.join(ScientificMetadata, ScientificMetadata.dataset_unique_id == Dataset.unique_id)
-
         # Apply limit if specified
         if limit is not None:
             query = query.limit(limit)
 
-        return session.exec(query.distinct()).all()
+        results = session.exec(query.distinct()).all()
+        print(results)
+        return results
     
     
 @app.get("/datasets/{dsid}", response_model = Union[Dataset, None])

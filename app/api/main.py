@@ -2104,13 +2104,9 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
             query = (
                 select(Dataset).options(selectinload(Dataset.scientific_metadata)) 
                 .select_from(
-                    join(ScientificMetadata, Dataset,
-                        ScientificMetadata.dataset_unique_id == Dataset.unique_id)
-                    .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
-                )
-                .filter(auth_filter)
+                    join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                    ).filter(auth_filter)
             )
-
 
         else:
             query = (select(Dataset)

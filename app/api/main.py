@@ -444,7 +444,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         if limit is not None:
             query = query.limit(limit)
 
-        results = session.exec(query.distinct()).all()
+        results = session.exec(query.distinct(Dataset.id)).all()
         print(results)
         return results
     
@@ -2129,7 +2129,7 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
                                 DatasetSampleLink.dataset_id == Dataset.id
                                 ).where(
                                     DatasetSampleLink.sample_id == select(Sample.id).where(Sample.unique_id == sample_id)
-                                ).distinct()
+                                ).distinct(Dataset.id)
         datasets = session.exec(full_query).all()
         return datasets
     

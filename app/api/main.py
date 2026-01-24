@@ -415,9 +415,11 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         if include_metadata:
             query = (
                 select(Dataset, ScientificMetadata)
-                .select_from(ScientificMetadata, 
-                             join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True),
-                             ScientificMetadata.dataset_unique_id == Dataset.unique_id)
+                .select_from(
+                    join(ScientificMetadata, Dataset,
+                        ScientificMetadata.dataset_unique_id == Dataset.unique_id)
+                    .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                )
                 .filter(auth_filter)
             )
 
@@ -2105,11 +2107,14 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
         if include_metadata:
             query = (
                 select(Dataset, ScientificMetadata)
-                .select_from(ScientificMetadata, 
-                                join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True),
-                                ScientificMetadata.dataset_unique_id == Dataset.unique_id)
+                .select_from(
+                    join(ScientificMetadata, Dataset,
+                        ScientificMetadata.dataset_unique_id == Dataset.unique_id)
+                    .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                )
                 .filter(auth_filter)
             )
+
 
         else:
             query = (select(Dataset)

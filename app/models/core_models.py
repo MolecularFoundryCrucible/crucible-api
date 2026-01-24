@@ -234,7 +234,6 @@ class ScientificMetadata(SQLModel, table = True):
     id: Optional[int] = Field(default=None, primary_key=True)
     dataset_unique_id: str = Field(foreign_key="dataset.unique_id", index=True)
     scientific_metadata: dict = Field(sa_column=Column(JSON), default={})
-
     dataset: Optional["Dataset"] = Relationship(back_populates="scientific_metadata")
 
 

@@ -441,8 +441,13 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             query = query.limit(limit)
 
         results = session.exec(query.distinct(Dataset.id)).all()
-        print(results)
-        return results
+        if include_metadata:
+            return [{**dataset.model_dump(),
+                    "scientific_metadata": dataset.scientific_metadata.model_dump() if dataset.scientific_metadata else None
+                    }
+                    for dataset in results]
+        else:
+            return results
     
     
 @app.get("/datasets/{dsid}", response_model = Union[Dataset, None])
@@ -2124,7 +2129,13 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
                                     DatasetSampleLink.sample_id == select(Sample.id).where(Sample.unique_id == sample_id)
                                 ).distinct(Dataset.id)
         datasets = session.exec(full_query).all()
-        return datasets
+        if include_metadata:
+            return [{**dataset.model_dump(),
+                    "scientific_metadata": dataset.scientific_metadata.model_dump() if dataset.scientific_metadata else None
+                    }
+                    for dataset in datasets]
+        else:
+            return datasets
     
 
 

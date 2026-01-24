@@ -414,7 +414,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         # if include_metadata - join on scientific metadata
         if include_metadata:
             query = (
-                select(Dataset, ScientificMetadata)
+                select(Dataset).options(selectinload(Dataset.scientific_metadata)) 
                 .select_from(
                     join(ScientificMetadata, Dataset,
                         ScientificMetadata.dataset_unique_id == Dataset.unique_id)
@@ -2106,7 +2106,7 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
         print(f'{include_metadata=}')
         if include_metadata:
             query = (
-                select(Dataset, ScientificMetadata)
+                select(Dataset).options(selectinload(Dataset.scientific_metadata)) 
                 .select_from(
                     join(ScientificMetadata, Dataset,
                         ScientificMetadata.dataset_unique_id == Dataset.unique_id)

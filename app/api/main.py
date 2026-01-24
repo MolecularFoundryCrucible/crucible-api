@@ -2122,8 +2122,7 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
                         .filter(auth_filter)
                     )
         
-        full_query = query.join(Dataset, 
-                                DatasetSampleLink, 
+        full_query = query.join(DatasetSampleLink,
                                 DatasetSampleLink.dataset_id == Dataset.id
                                 ).where(
                                     DatasetSampleLink.sample_id == select(Sample.id).where(Sample.unique_id == sample_id)

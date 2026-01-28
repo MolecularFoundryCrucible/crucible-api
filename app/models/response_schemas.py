@@ -12,7 +12,8 @@ class DatasetResponse(BaseModel):
 class SampleWithDatasetsResponse(BaseModel):
     id: int
     unique_id: str
-    sample_name: str 
+    sample_name: str
+    sample_type: Optional[str]
     owner_orcid: Optional[str]
     date_created: Optional[str] = None
     description: Optional[str]
@@ -26,7 +27,8 @@ class DatasetSampleLinkResponse(BaseModel):
     dataset_name: str
     sample_id: str
     sample_name: str
-    
+    sample_type: Optional[str]
+
     class Config:
         from_attributes = True
 

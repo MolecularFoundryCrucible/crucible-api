@@ -2011,7 +2011,7 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
         
         session.commit()
 
-        info = DatasetSampleLinkResponse(dataset_id = ds.unique_id, dataset_name = ds.dataset_name, sample_id = samp.unique_id, sample_name = samp.sample_name)
+        info = DatasetSampleLinkResponse(dataset_id = ds.unique_id, dataset_name = ds.dataset_name, sample_id = samp.unique_id, sample_type = samp.sample_type, sample_name = samp.sample_name)
     return info
 
 

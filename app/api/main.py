@@ -220,7 +220,22 @@ def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
     )
 
 
+@app.post("/datasets/{dsid}/carrier_segmentation"):
+def request_carrier_segmentation(dsid):
+    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
+    msg = {
+        "dsid": dsid,
+    }
 
+    send_pika_message(
+        message=json.dumps(msg),
+        exchange="",
+        routing_key="carrier-segmentation",
+        user="admin",
+        rmq_pw=rmq_pw
+    )
+    return
+    
 
 @app.post("/datasets", response_model=Dataset)
 async def create_dataset(

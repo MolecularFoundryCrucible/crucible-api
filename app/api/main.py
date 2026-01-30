@@ -2076,6 +2076,47 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         samp_list = session.exec(samp_cmd).all()
         return samp_list
 
+@app.get("/projects/{proj_id}/sample_graph", response_model = Union[None, Project])
+def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        
+        samp_cmd = select(Sample.unique_id, SampleLink.sample_id).select_from(join(Sample,SampleLink, Sample.id == SampleLink.parent_sample_id))
+        
+        # Admin API keys can see all samples
+        if access_group_name.startswith('admin'):
+            # No owner filter for admin - they can see all samples
+            print('using admin account')
+            pass
+        # Filter by owner_orcid matching requester's ORCID (access_group_name when using ORCID-based API key)
+        elif is_orcid(access_group_name):
+            print(f'filtering on owner_orcid={access_group_name}')
+            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+            associated_group_names = [ag.group_name for ag in associated_groups]
+            samp_cmd = samp_cmd.where(or_(Sample.owner_orcid == access_group_name,
+                                          Sample.project_id.in_(associated_group_names)))
+        else:
+            # If not an ORCID-based request and not admin, return empty list for security
+            print(f'apikey does not have access to samples')
+            return []
+    
+        # Filter samples on proj_id
+        samp_cmd = samp_cmd.where(Sample.project_id==project_id)
+
+        # for k, v in params_dict.items():
+        #     if hasattr(Sample, k) and v is not None:
+        #         print(f'filtering results on {k}={v}')
+        #         samp_cmd = samp_cmd.where(getattr(Sample, k) == v)
+        #     else:
+        #        pass
+        
+        #samp_cmd = samp_cmd.options(selectinload(Sample.datasets))
+
+        samp_list = session.exec(samp_cmd).all()
+        return samp_list
+
 
 @app.get("/samples/{sample_id}", response_model = Union[None, SampleWithDatasetsResponse])
 def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):

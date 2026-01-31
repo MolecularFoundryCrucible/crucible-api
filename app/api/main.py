@@ -2076,7 +2076,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         samp_list = session.exec(samp_cmd).all()
         return samp_list
 
-@app.get("/projects/{proj_id}/sample_graph", response_model = Union[None, Project])
+@app.get("/projects/{project_id}/sample_graph", response_model = Union[None, Project])
 def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
 
     access_group_name, ag_ids = auth_res

@@ -1,4 +1,5 @@
 from typing import Optional, List
+from pydantic import ConfigDict
 from sqlalchemy import JSON, Column,BigInteger
 from sqlmodel import Field, SQLModel,Relationship
 from mfid import mfid
@@ -115,10 +116,7 @@ class Sample(SQLModel, table = True):
         }
     )
 
-    class Config:
-        arbitrary_types_allowed = True
-        from_attributes = True
-
+    model_config = ConfigDict(arbitrary_types_allowed=True, from_attributes=True) #type: ignore
 
 class Dataset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -163,9 +161,7 @@ class Dataset(SQLModel, table=True):
         }
     )
 
-    class Config:
-        arbitrary_types_allowed = True
-        from_attributes = True
+    model_config = ConfigDict(arbitrary_types_allowed=True, from_attributes=True) #type: ignore
 
 
 class DatasetACL(SQLModel, table=True):

@@ -37,6 +37,11 @@ cd crucible-api
 pip install -r requirements.txt
 ```
 
+OR
+```bash
+uv sync
+```
+
 3. Configure environment variables:
 ```bash
 export HOME=/path/to/home

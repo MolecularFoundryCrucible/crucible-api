@@ -1,36 +1,29 @@
-FROM python:3.11-slim
+FROM python:3.11-trixie
+#UV
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 USER root
 WORKDIR /root/
 
-# git
-RUN apt-get update && apt-get install -y git \
-    && rm -rf /var/lib/apt/lists/*
-
-# python packages
-RUN pip install pyyaml \
-                Flask==3.0.0 \
-                gunicorn==20.1.0 \
-                cloudevents==1.10.1 \
-                requests \
-                google-cloud-secret-manager 
+# Disable development dependencies
+ENV UV_NO_DEV=1
 
 ARG githash
 ENV GITHASH=$githash
 
-# packages
-COPY requirements.txt ./requirements.txt
-RUN pip install -r requirements.txt
-RUN pip install python2-secrets
-
 # rclone
 RUN curl https://rclone.org/install.sh | bash
 
-
 # files
 COPY app/ /root/app/
+COPY pyproject.toml /root/
+COPY uv.lock /root/
+COPY .python-version /root/
 RUN mkdir uploads
 RUN mkdir download-zips
 
+RUN /bin/uv sync --locked 
+
 # Run app
 #CMD python -m app.api.test
-CMD exec uvicorn app.api.main:app --host 0.0.0.0 --reload --port 7777
+CMD exec /bin/uv run uvicorn app.api.main:app --host 0.0.0.0 --reload --port 7777

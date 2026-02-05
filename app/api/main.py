@@ -18,6 +18,9 @@ from sqlalchemy import func, join, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.sql import and_, or_
 from sqlmodel import Session, select
+import networkx as nx
+from networkx.readwrite import json_graph
+
 
 from app.general_utils import get_secret, get_tz_isoformat, is_orcid, checkhash, remove_file, run_rclone_command
 from app.models.core_models import (
@@ -2087,15 +2090,15 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         samp_list = session.exec(samp_cmd).all()
         return samp_list
 
-@app.get("/projects/{project_id}/sample_graph", response_model = Union[None, Project])
+@app.get("/projects/{project_id}/sample_graph")
 def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
 
     access_group_name, ag_ids = auth_res
 
     with Session(engine) as session:
         
-        samp_cmd = select(Sample.unique_id, SampleLink.sample_id).select_from(join(Sample,SampleLink, Sample.id == SampleLink.parent_sample_id))
-        
+        samp_cmd = select(Sample).options(joinedload(Sample.parents))
+
         # Admin API keys can see all samples
         if access_group_name.startswith('admin'):
             # No owner filter for admin - they can see all samples
@@ -2116,17 +2119,20 @@ def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(aut
         # Filter samples on proj_id
         samp_cmd = samp_cmd.where(Sample.project_id==project_id)
 
-        # for k, v in params_dict.items():
-        #     if hasattr(Sample, k) and v is not None:
-        #         print(f'filtering results on {k}={v}')
-        #         samp_cmd = samp_cmd.where(getattr(Sample, k) == v)
-        #     else:
-        #        pass
-        
-        #samp_cmd = samp_cmd.options(selectinload(Sample.datasets))
+        samp_list = session.exec(samp_cmd).unique().all()
 
-        samp_list = session.exec(samp_cmd).all()
-        return samp_list
+        edges = []
+        for sample in samp_list:
+            for parent in sample.parents:
+                edges.append((parent.unique_id, sample.unique_id))
+
+        G = nx.DiGraph(edges)
+        for sample in samp_list:
+            G.add_node(sample.unique_id, 
+                       sample_name=sample.sample_name)
+
+        return json_graph.node_link_data(G)
+
 
 
 @app.get("/samples/{sample_id}", response_model = Union[None, SampleWithDatasetsResponse])

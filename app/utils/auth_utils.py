@@ -24,7 +24,8 @@ ALGORITHM = "HS256"
 security = HTTPBearer()
 
 db_config_file = f'{os.getenv("HOME")}/{os.getenv("DB_CONF_FILE")}'
-engine = setup_engine(env_config_file = db_config_file)
+#engine = setup_engine(env_config_file = db_config_file)
+engine = setup_engine(env_config_file = os.getenv("DB_CONF_FILE"))
 
 # ====== Functions
 def find_or_add_api_access(orcid: str, engine, instrument_name = None, regenerate = False):

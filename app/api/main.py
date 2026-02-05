@@ -4,6 +4,8 @@ import os
 import urllib.parse
 from pathlib import Path
 from typing import Annotated, Dict, List, Optional, Union
+import dotenv
+dotenv.load_dotenv()
 
 import pytz
 import requests
@@ -48,13 +50,19 @@ from app.utils.sql_utils import add_or_update, only_update, setup_engine, table_
 # ====== Database config
 connect_args = {"check_same_thread": False}
 
+
 home_dir = os.getenv("HOME")
-db_config_file = f"{home_dir}/{os.getenv('DB_CONF_FILE')}"
+if os.getenv('DB_CONF_FILE'):
+    #db_config_file = f"{home_dir}/{os.getenv('DB_CONF_FILE')}" 
+    db_config_file = os.getenv('DB_CONF_FILE')
+else:
+    db_config_file = None
 
 engine = setup_engine(db_config_file)
 
 api_config_file = os.getenv("API_CONF_FILE")
-with open(f"{home_dir}/{api_config_file}") as f:
+#with open(f"{home_dir}/{api_config_file}") as f:
+with open(f"{api_config_file}") as f:
     apiconf = yaml.safe_load(f)
 
 hostname = apiconf["hostname"]

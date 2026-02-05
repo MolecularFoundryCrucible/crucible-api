@@ -1,0 +1,4 @@
+hostname: "127.0.0.1:7777"
+api_path: "testapi"
+orcid_client_id: "APP-E5VUS6XSJS5VFNEN"
+gcs_config_name: "mf-cloud-storage"

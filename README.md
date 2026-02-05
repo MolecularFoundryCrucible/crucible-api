@@ -261,3 +261,12 @@ API key generation is rate limited to 5 requests per 15-minute window per user t
 ## Support
 
 For issues and questions, please use the GitHub issue tracker or contact the development team.
+
+
+# Local Deployment for Testing
+
+To access database, we will use google cloud proxy
+
+```
+cloud-sql-proxy --port=5432 --structured-logs -c mf-crucible-1e9b3247273f.json mf-crucible:us-central1:crucible-db
+```

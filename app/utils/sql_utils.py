@@ -7,8 +7,11 @@ from sqlmodel import create_engine, select
 
 
 def setup_engine(env_config_file = None):
+    print(f"{env_config_file=}")
     import os
     home = os.getenv("HOME")
+    password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1')
+
     if env_config_file is not None:
         with open(env_config_file) as f:
             env_config = yaml.safe_load(f)

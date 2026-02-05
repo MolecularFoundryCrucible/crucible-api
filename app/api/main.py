@@ -572,11 +572,14 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depen
                                                     (DatasetACL.accessgroup_id.in_(ag_ids)) |
                                                     (Dataset.public == True)
                                             )
-        parent = session.exec(ds_cmd.where(Dataset.unique_id == parent_dataset_id)).one_or_none()
+        parent = session.exec(ds_cmd.where(Dataset.unique_id == parent_dataset_id)).all()#one_or_none()
         
-        if parent is None:
+        if not parent:
             raise HTTPException(status_code=404, detail="Parent sample not found")
         
+        # FIXME: should only return 1 or none, but sometimes returns multiple copies
+        parent = parent[0]
+
         # TODO: JOIN ON ACL BUT PERMISSIONS SHOULD PROBABLY INHERIT..
         # Get child samples
         children = session.exec(

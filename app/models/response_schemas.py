@@ -15,6 +15,7 @@ class SampleWithDatasetsResponse(BaseModel):
     sample_name: str
     sample_type: Optional[str]
     owner_orcid: Optional[str]
+    project_id: Optional[str]
     date_created: Optional[str] = None
     description: Optional[str]
     datasets: List[DatasetResponse] = []
@@ -28,7 +29,6 @@ class DatasetSampleLinkResponse(BaseModel):
     sample_id: str
     sample_name: str
     sample_type: Optional[str]
-
     class Config:
         from_attributes = True
 

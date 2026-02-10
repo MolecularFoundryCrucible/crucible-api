@@ -26,4 +26,4 @@ RUN /bin/uv sync --locked
 
 # Run app
 #CMD python -m app.api.test
-CMD exec /bin/uv run uvicorn app.api.main:app --host 0.0.0.0 --reload --port 7777
+CMD exec /bin/uv run uvicorn app.api.main:app --host 0.0.0.0 --reload --port 8889

@@ -36,11 +36,6 @@ spec:
       - env:
         - name: "PYTHONUNBUFFERED"
           value: "True"
-        - name: "DB_CONF_FILE"
-          valueFrom:
-            configMapKeyRef:
-              key: DB_CONF_FILE
-              name: crucible-api-config-staging
         - name: "API_CONF_FILE"
           valueFrom:
             configMapKeyRef:
@@ -66,11 +61,9 @@ spec:
             configMapKeyRef:
               key: db_database
               name: crucible-api-config-staging
-        - name: "DB_PASSWORD"
-          valueFrom:
-            secretKeyRef:
-              key: db_password
-              name: crucible-db-staging-secret
+        # DB_PASSWORD is fetched from Google Secret Manager by the application
+        # Create the secret with: gcloud secrets create crucible-db-staging-password --data-file=-
+        # Secret path: projects/776258882599/secrets/crucible-db-staging-password/versions/latest
         - name: "DB_AUTH"
           valueFrom:
             configMapKeyRef:

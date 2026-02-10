@@ -2,19 +2,33 @@ substitutions:
   _IMAGE_PATH: "us-central1-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${REPO_NAME}-${BRANCH_NAME}"
 
 steps:
+  # Pull latest for caching
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
     args: [-c, 'docker pull ${_IMAGE_PATH}:latest || exit 0']
+
+  # Build with both SHA tag and latest tag
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
-    args: [-c, 'docker build -t ${_IMAGE_PATH}:latest --cache-from ${_IMAGE_PATH}:latest .' ]
+    args: [-c, 'docker build -t ${_IMAGE_PATH}:${SHORT_SHA} -t ${_IMAGE_PATH}:latest --cache-from ${_IMAGE_PATH}:latest .']
+
+  # Push SHA-tagged image
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '${_IMAGE_PATH}:latest' ]
-  - name: "gcr.io/cloud-builders/gke-deploy"
+    args: ['push', '${_IMAGE_PATH}:${SHORT_SHA}']
+
+  # Push latest tag
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_IMAGE_PATH}:latest']
+
+  # Update the deployment with the new SHA-tagged image
+  - name: 'gcr.io/cloud-builders/kubectl'
     args:
-    - run
-    - --filename=./k8s-conf/deployment-k8s-staging-conf.yaml 
-    - --location=us-central1
-    - --cluster=crucible-cluster
+    - set
+    - image
+    - deployment/crucible-api-staging
+    - crucible-api-container=${_IMAGE_PATH}:${SHORT_SHA}
+    env:
+    - CLOUDSDK_COMPUTE_REGION=us-central1
+    - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
 
 timeout: 600s

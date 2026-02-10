@@ -43,9 +43,9 @@ from app.models.core_models import (
     UserProjectLink,
 )
 from app.models.instrument import Instrument
-from app.models.misc import DataDriveLocation, GoogleDrives, IdType
+from app.models.misc import IdType
 from app.models.response_schemas import AccountInfo, DatasetSampleLinkResponse, SampleWithDatasetsResponse
-from app.models.tasks import GoogleDriveTransferRequest, IngestionRequest, SciCatUpdateRequest
+from app.models.tasks import IngestionRequest
 from app.utils.constants import SAMPLE_TYPE_MAPPING
 from app.utils.rmq_utils import send_pika_message
 from app.utils.sql_utils import add_or_update, only_update, setup_engine, table_obj_to_dict

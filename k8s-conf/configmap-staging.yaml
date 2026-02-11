@@ -14,9 +14,8 @@ data:
   db_type: "postgresql"
 
   # Database server/host
-  # For Cloud SQL Proxy, use localhost:5432
-  # Otherwise use your database host
-  db_server: "172.31.16.10:5432"
+  # Using Cloud SQL Proxy, which listens on localhost:5432
+  db_server: "localhost:5432"
 
   # Database username
   # Replace with your staging database username

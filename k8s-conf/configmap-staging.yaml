@@ -15,7 +15,7 @@ data:
 
   # Database server/host
   # Using Cloud SQL Proxy, which listens on localhost:5432
-  db_server: "localhost:5432"
+  db_server: "172.31.16.10:5432"
 
   # Database username
   # Replace with your staging database username

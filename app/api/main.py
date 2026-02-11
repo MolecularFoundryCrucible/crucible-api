@@ -53,15 +53,7 @@ from app.utils.sql_utils import add_or_update, only_update, setup_engine, table_
 # ====== Database config
 connect_args = {"check_same_thread": False}
 
-
-home_dir = os.getenv("HOME")
-if os.getenv('DB_CONF_FILE'):
-    #db_config_file = f"{home_dir}/{os.getenv('DB_CONF_FILE')}" 
-    db_config_file = os.getenv('DB_CONF_FILE')
-else:
-    db_config_file = None
-
-engine = setup_engine(db_config_file)
+engine = setup_engine()
 
 api_config_file = os.getenv("API_CONF_FILE")
 #with open(f"{home_dir}/{api_config_file}") as f:

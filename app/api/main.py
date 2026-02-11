@@ -871,7 +871,7 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
                                dataset_unique_id = dsid, scientific_metadata = md_dict)
         print(f'{md_obj=}')
         session.commit()
-        session.refresh(md_obj)
+       #session.refresh(md_obj)
         return(md_obj)
 
 

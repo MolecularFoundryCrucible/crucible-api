@@ -55,7 +55,7 @@ def add_or_update(session, cls, where, **kwargs):
     print(obj)
     if obj: 
         for key, value in kwargs.items():
-            print(key)
+            print(key,value)
             setattr(obj, key, value)
     else:
         obj = cls(**kwargs)

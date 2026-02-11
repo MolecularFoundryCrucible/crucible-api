@@ -866,8 +866,10 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
         for k,v in scientific_md_updates.items():
             md_dict[k] = v
         print(f'after update: {md_dict=}')
-        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), dataset_unique_id = dsid, scientific_metadata = md_dict)
-
+        md_obj = add_or_update(session, ScientificMetadata,
+                               where=(ScientificMetadata.dataset_unique_id == dsid), 
+                               dataset_unique_id = dsid, scientific_metadata = md_dict)
+        print(f'{md_obj=}')
         session.commit()
         session.refresh(md_obj)
         return(md_obj)

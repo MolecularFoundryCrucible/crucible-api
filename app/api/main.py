@@ -852,18 +852,20 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
             raise HTTPException(status_code=404, detail="Dataset not found")
         
         stored_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == dsid)).one_or_none()
-        
+        print(f'{stored_md=}')
         if stored_md:
             md_dict = stored_md.scientific_metadata
-
+            
         else:
             md_dict = {}
+
+        print(f'{md_dict=}')
 
         # this doesn't allow for updating nested fields without providing the whole tree from the first level down. 
         # could make recursive?
         for k,v in scientific_md_updates.items():
             md_dict[k] = v
-
+        print(f'after update: {md_dict=}')
         md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), dataset_unique_id = dsid, scientific_metadata = md_dict)
 
         session.commit()

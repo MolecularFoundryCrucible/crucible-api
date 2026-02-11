@@ -8,7 +8,7 @@ data:
   #DB_CONF_FILE: "/app/conf/crucible-db-staging.env"
 
   # Path to the API configuration file (inside the container)
-  API_CONF_FILE: "/app/conf/api_conf.yaml"
+  API_CONF_FILE: "app/conf/api_conf.yaml"
 
   # Database type
   db_type: "postgresql"

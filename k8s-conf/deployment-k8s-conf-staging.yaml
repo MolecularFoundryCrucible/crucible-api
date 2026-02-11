@@ -135,18 +135,3 @@ spec:
         persistentVolumeClaim:
           claimName: mf-storage-prod-pvc
           readOnly: true
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: crucible-api-staging-service
-  namespace: default
-spec:
-  type: ClusterIP
-  ports:
-  - port: 8889
-    targetPort: 8889
-    protocol: TCP
-    name: http
-  selector:
-    app: crucible-api-staging

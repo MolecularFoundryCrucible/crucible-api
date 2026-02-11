@@ -592,6 +592,29 @@ def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid:str
     # TODO: DEFINE THIS
     pass
 
+@app.delete('/datasets/{dsid}/samples/{sample_id}')
+def delete_dataset_sample_link(auth_res: Annotated[tuple, Depends(is_admin)], dsid: str, sample_id: str):
+    """
+    Delete the link between a dataset and a sample.
+    Admin access required.
+    """
+    with Session(engine) as session:
+        # Get dataset and sample IDs
+        # Delete the link
+        link = session.exec(
+            select(DatasetSampleLink).where(
+                and_(DatasetSampleLink.dataset_id == dsid, DatasetSampleLink.sample_id == sample_id)
+            )
+        ).one_or_none()
+
+        if link is None:
+            return {"warning": f"No link found between dataset {dsid} and sample {sample_id}"}
+
+        session.delete(link)
+        session.commit()
+
+        return {"message": f"Successfully deleted link between dataset {dsid} and sample {sample_id}"}
+
 
 @app.get('/datasets/{dsid}/download_links')
 def generate_signed_url_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, bucket: str='mf-storage-prod'):

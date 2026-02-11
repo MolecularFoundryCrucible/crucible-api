@@ -3,7 +3,7 @@ import yaml
 import os
 from dotenv import load_dotenv
 from sqlmodel import create_engine, select
-
+from app.general_utils import  get_secret
 # Need a .env file with the following variables
 #DB_PASSWORD
 #DB_USERNAME
@@ -12,7 +12,7 @@ from sqlmodel import create_engine, select
 
 def setup_engine(env_file = '.env'):
     print(load_dotenv(env_file))
-    password = os.environ.get('DB_PASSWORD')
+    password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1')
     if password is None:
         return
     db_url = f'postgresql://{os.environ.get("DB_USERNAME")}:{password}@{os.environ.get("DB_SERVER")}/{os.environ.get("DB_DATABASE")}'

@@ -53,7 +53,7 @@ from app.utils.sql_utils import add_or_update, only_update, setup_engine, table_
 # ====== Database config
 connect_args = {"check_same_thread": False}
 
-engine = setup_engine()
+engine = setup_engine(env_file = '.env')
 
 api_config_file = os.getenv("API_CONF_FILE")
 #with open(f"{home_dir}/{api_config_file}") as f:
@@ -245,7 +245,7 @@ async def create_dataset(
     auth_res: Annotated[tuple, Depends(authorize_user)],
     dataset: Dataset
 ):
-    print(f"received {Dataset}")
+    print(f"received {dataset}")
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         ds = add_or_update(
@@ -587,7 +587,7 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depen
 
 
 @app.delete("/datasets/{dsid}", response_model = Dataset)
-def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid = str):
+def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid:str):
     access_group_name, ag_ids = auth_res
     # TODO: DEFINE THIS
     pass
@@ -1025,26 +1025,6 @@ def add_keyword(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, 
         return(kw_obj)
 
 
-@app.get("/datasets/{dsid}/drive_location", response_model = List[DataDriveLocation])
-def read_dataset_drive_location(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
-    '''
-    Returns a list of DataDriveLocation objects with one object for each location in google drive where the dataset is currently located.
-    '''
-    access_group_name, ag_ids = auth_res
-    with Session(engine) as session:
-        # Verify dataset exists and user has access
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
-        ds = session.exec(ds_cmd).one_or_none()
-
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
-
-        ds_locs = session.exec(select(DataDriveLocation).where(and_(DataDriveLocation.dataset_id == dsid, DataDriveLocation.status == 'current'))).all()
-    return(ds_locs)
-
-
-
-
 
 @app.get("/datasets/{dsid}/access_groups", response_model = List[AccessGroup])
 def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
@@ -1244,7 +1224,7 @@ def list_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], request
     params_dict = dict(query_params)
     print(params_dict)
     statement = select(Instrument)
-    for k,v, in params_dict.items():
+    for k,v in params_dict.items():
         if hasattr(Instrument, k):
             print(f'has attr {k=}')
             statement = statement.where(getattr(Instrument, k) == v.lower().strip())
@@ -1592,7 +1572,6 @@ def read_users_on_project(proj_id: str, admin_acct:  Annotated[str, Depends(is_a
         users = session.exec(select(User).select_from(join(User, UserProjectLink, UserProjectLink.user_id == User.id)).where(UserProjectLink.project_id == proj_id)).all()
         return users
 
-
 @app.post("/projects/{proj_id}/users/{orcid}", response_model = List[User])
 def add_users_to_project(proj_id: str, orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
 
@@ -1615,7 +1594,7 @@ def add_users_to_project(proj_id: str, orcid: str, admin_acct: Annotated[str, De
 
 
 @app.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model = SampleLink)
-def link_parent_child(parent_sample_id, child_sample_id):
+def link_parent_child_samples(parent_sample_id, child_sample_id):
 
     with Session(engine) as session:
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()
@@ -1639,6 +1618,9 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
     update_fields = updated_sample.model_dump(exclude_unset=True)
     with Session(engine) as session:
         sample = session.exec(cmd).one_or_none()
+        if not sample:
+            raise HTTPException(status_code = 404, detail = 'Sample not found')
+        
         for key, value in update_fields.items():
             setattr(sample, key, value)
             print(key,value)
@@ -1647,11 +1629,6 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
         session.refresh(sample)
         return sample
     
-    if not sample:
-        raise HTTPException(status_code = 404, detail = 'Sample not found')
-
-
-
 
 @app.post("/samples", response_model = Sample)
 def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample):
@@ -1966,126 +1943,3 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends
         ).all()
         return child_samples
 
-
-@app.get("/samples/{sample_id}/metadata/{sample_type}")
-def get_sample_metadata(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
-    sample_id: str,
-    sample_type: str
-):
-    """
-    Get metadata for a sample based on sample_type.
-    
-    Args:
-        auth_res: Authorization result containing access group info
-        sample_id: Unique identifier for the sample
-        sample_type: Type of sample metadata (e.g., 'spinbot_batch')
-        
-    Returns:
-        Sample metadata object if found
-        
-    Raises:
-        HTTPException: If sample not found, invalid sample_type, or metadata not found
-    """
-    access_group_name, ag_ids = auth_res
-    
-    # Validate sample_type
-    if sample_type not in SAMPLE_TYPE_MAPPING:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Invalid sample_type '{sample_type}'. Supported types: {list(SAMPLE_TYPE_MAPPING.keys())}"
-        )
-    
-    with Session(engine) as session:
-        # Verify sample exists
-        sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
-        if sample is None:
-            raise HTTPException(status_code=404, detail="Sample not found")
-        
-        # Get the appropriate model class based on sample_type
-        model_class_name = SAMPLE_TYPE_MAPPING[sample_type]
-        
-        if model_class_name == "SpinbotBatchMetadata":
-            model_class = SpinbotBatchMetadata
-        else:
-            raise HTTPException(status_code=500, detail=f"Model class {model_class_name} not implemented")
-        
-        # Get metadata
-        metadata_obj = session.exec(
-            select(model_class).where(model_class.sample_id == sample_id)
-        ).one_or_none()
-        
-        if metadata_obj is None:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"No {sample_type} metadata found for sample {sample_id}"
-            )
-        
-        return metadata_obj
-
-
-@app.post("/samples/{sample_id}/metadata/{sample_type}")
-def create_sample_metadata(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
-    sample_id: str,
-    sample_type: str,
-    metadata: dict
-):
-    """
-    Create or update metadata for a sample based on sample_type.
-    
-    Args:
-        auth_res: Authorization result containing access group info
-        sample_id: Unique identifier for the sample
-        sample_type: Type of sample metadata (e.g., 'spinbot_batch')
-        metadata: Dictionary containing metadata fields
-        
-    Returns:
-        Created/updated metadata object
-        
-    Raises:
-        HTTPException: If sample not found, invalid sample_type, or validation errors
-    """
-    access_group_name, ag_ids = auth_res
-    
-    # Validate sample_type
-    if sample_type not in SAMPLE_TYPE_MAPPING:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Invalid sample_type '{sample_type}'. Supported types: {list(SAMPLE_TYPE_MAPPING.keys())}"
-        )
-    
-    with Session(engine) as session:
-        # Verify sample exists
-        sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
-        if sample is None:
-            raise HTTPException(status_code=404, detail="Sample not found")
-        
-        # Get the appropriate model class based on sample_type
-        model_class_name = SAMPLE_TYPE_MAPPING[sample_type]
-        
-        if model_class_name == "SpinbotBatchMetadata":
-            model_class = SpinbotBatchMetadata
-        else:
-            raise HTTPException(status_code=500, detail=f"Model class {model_class_name} not implemented")
-        
-        # Create metadata object with sample_id and sample_type
-        metadata_dict = {
-            "sample_id": sample_id,
-            "sample_type": sample_type,
-            **metadata
-        }
-        
-        # Add or update metadata
-        metadata_obj = add_or_update(
-            session,
-            model_class,
-            model_class.sample_id == sample_id,
-            **metadata_dict
-        )
-        
-        session.commit()
-        session.refresh(metadata_obj)
-        
-        return metadata_obj
-    

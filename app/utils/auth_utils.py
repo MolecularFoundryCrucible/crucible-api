@@ -23,7 +23,7 @@ SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "crucible_secret_key/versions/1")
 ALGORITHM = "HS256"
 security = HTTPBearer()
 
-engine = setup_engine()
+engine = setup_engine(env_file = '.env')
 
 # ====== Functions
 def find_or_add_api_access(orcid: str, engine, instrument_name = None, regenerate = False):

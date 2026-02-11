@@ -598,12 +598,22 @@ def delete_dataset_sample_link(auth_res: Annotated[tuple, Depends(is_admin)], ds
     Delete the link between a dataset and a sample.
     Admin access required.
     """
+    ds_cmd = select(Dataset).where(Dataset.unique_id == dsid)
+    samp_cmd = select(Sample).where(Sample.unique_id == sample_id)
+
     with Session(engine) as session:
-        # Get dataset and sample IDs
+        ds = session.exec(ds_cmd).one_or_none()
+        samp = session.exec(samp_cmd).one_or_none()
+
+        if samp is None:
+            raise HTTPException(status_code=404, detail="Sample not found")
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+
         # Delete the link
         link = session.exec(
             select(DatasetSampleLink).where(
-                and_(DatasetSampleLink.dataset_id == dsid, DatasetSampleLink.sample_id == sample_id)
+                and_(DatasetSampleLink.dataset_id == ds.id, DatasetSampleLink.sample_id == samp.id)
             )
         ).one_or_none()
 

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPBearer
 from jose import jwt
 from sqlalchemy import func, join, text
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import joinedload, selectinload, attributes
 from sqlalchemy.sql import and_, or_
 from sqlmodel import Session, select
 import networkx as nx
@@ -870,8 +870,9 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
                                where=(ScientificMetadata.dataset_unique_id == dsid), 
                                dataset_unique_id = dsid, scientific_metadata = md_dict)
         print(f'{md_obj=}')
+        attributes.flag_modified(md_obj, 'scientific_metadata')
         session.commit()
-       #session.refresh(md_obj)
+        session.refresh(md_obj)
         return(md_obj)
 
 

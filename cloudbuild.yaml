@@ -20,6 +20,16 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', '${_IMAGE_PATH}:latest']
 
+  # Apply deployment (creates if doesn't exist, updates if exists)
+  - name: 'gcr.io/cloud-builders/kubectl'
+    args:
+    - apply
+    - -f
+    - ./k8s-conf/deployment-k8s-conf-staging.yaml
+    env:
+    - CLOUDSDK_COMPUTE_REGION=us-central1
+    - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
+
   # Update the deployment with the new SHA-tagged image
   - name: 'gcr.io/cloud-builders/kubectl'
     args:

@@ -3,7 +3,7 @@ import json
 import os
 import urllib.parse
 from pathlib import Path
-from typing import Annotated, Dict, List, Optional, Union
+from typing import Annotated, Dict, List, Optional, Text, Union
 
 import pytz
 import requests
@@ -12,10 +12,10 @@ from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Upload
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPBearer
 from jose import jwt
-from sqlalchemy import func, join, text
+from sqlalchemy import desc, func, join, text, Text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.sql import and_, or_
-from sqlmodel import Session, select
+from sqlmodel import and_, or_, Session, select
 
 from app.general_utils import get_secret, get_tz_isoformat, is_orcid, checkhash, remove_file, run_rclone_command
 from app.models.core_models import (
@@ -32,6 +32,7 @@ from app.models.core_models import (
     Sample,
     SampleLink,
     ScientificMetadata,
+    NewScientificMetadata,
     Thumbnail,
     User,
     UserAccessGroupLink,
@@ -970,6 +971,34 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
         session.refresh(md_obj)
         return(md_obj)
 
+@app.get("/scientific_metadata/search", response_model = List[NewScientificMetadata])
+def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str, session: Session = Depends(setup_engine)):
+    """
+    Perform a ranked Full-Text Search (FTS) on scientific metadata 
+    using PostgreSQL's tsvector, tsquery, and ts_rank.
+    """
+    access_group_name, ag_ids = auth_res
+
+    search_query = func.plainto_tsquery('english', q)
+    metadata_vector = func.to_tsvector(
+        'english',
+        func.jsonb_path_query_array(text('scientific_metadata'), text('$[*]')).cast(Text)
+    )
+
+    stmt = (
+        select(NewScientificMetadata)
+        .join(Dataset, ScientificMetadata.dataset_unique_id == Dataset.unique_id)
+        .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+        .where(
+            and_(
+                or_(DatasetACL.accessgroup_id.in_(ag_ids), Dataset.public == True),
+                metadata_vector.op('@@')(search_query)
+            )
+        )
+        .order_by(desc(func.ts_rank(metadata_vector, search_query)))
+        .distinct()
+    )
+    return session.exec(stmt).all()
 
 @app.get("/datasets/{dsid}/thumbnails", response_model = List[Thumbnail])
 def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):

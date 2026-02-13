@@ -1402,7 +1402,7 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
         user = add_or_update(session, User, User.orcid == user_info.orcid, **user_dict)
         session.commit()
 
-        apikey = get_secret("ADMIN_APIKEY", "crucible_admin_apikey/versions/3")
+        apikey = get_secret("ADMIN_APIKEY", "crucible_admin_apikey/versions/4")
         requests.post(
             f"{api_url}/users/{user.orcid}/access_groups/{user.orcid}",
             headers={"Authorization": f"Bearer {apikey}"}

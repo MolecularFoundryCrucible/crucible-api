@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPBearer
 from jose import jwt
 from sqlalchemy import func, join, text
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import joinedload, selectinload, attributes
 from sqlalchemy.sql import and_, or_
 from sqlmodel import Session, select
 import networkx as nx
@@ -837,6 +837,7 @@ def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], reqid: 
     return(updated_req)
 
 
+
 @app.post("/datasets/{dsid}/google_drive_transfer", response_model=GoogleDriveTransferRequest)
 def request_dataset_transfer_to_drive(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     """
@@ -1000,23 +1001,29 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
             raise HTTPException(status_code=404, detail="Dataset not found")
         
         stored_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == dsid)).one_or_none()
-        
+        print(f'{stored_md=}')
         if stored_md:
             md_dict = stored_md.scientific_metadata
-
+            
         else:
             md_dict = {}
+
+        print(f'{md_dict=}')
 
         # this doesn't allow for updating nested fields without providing the whole tree from the first level down. 
         # could make recursive?
         for k,v in scientific_md_updates.items():
             md_dict[k] = v
-
-        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), dataset_unique_id = dsid, scientific_metadata = md_dict)
-
+        print(f'after update: {md_dict=}')
+        md_obj = add_or_update(session, ScientificMetadata,
+                               where=(ScientificMetadata.dataset_unique_id == dsid), 
+                               dataset_unique_id = dsid, scientific_metadata = md_dict)
+        print(f'{md_obj=}')
+        attributes.flag_modified(md_obj, 'scientific_metadata')
         session.commit()
         session.refresh(md_obj)
         return(md_obj)
+
 
 
 @app.get("/datasets/{dsid}/thumbnails", response_model = List[Thumbnail])

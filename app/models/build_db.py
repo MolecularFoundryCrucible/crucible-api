@@ -31,7 +31,7 @@ import sys
 from app.models.core_models import NewScientificMetadata 
 
 def build_db():
-    database_url = "postgresql://crucible-api-user:cdsetrpl@127.0.0.1:5433/crucible-staging"
+    database_url = "postgresql://crucible-api-user:cdsetrpl@127.0.0.1:5432/crucible-staging"
     
     print(f"Connecting to: {database_url}")
     engine = create_engine(database_url)

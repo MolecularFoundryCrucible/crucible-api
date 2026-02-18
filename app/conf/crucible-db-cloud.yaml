@@ -2,6 +2,6 @@ db_type: postgres
 db_server: 172.31.16.10:5432
 db_username: crucible-api-user
 db_password: LOOK_IN_SECRETS!
-db_database: crucible
+db_database: crucible-staging
 auth: BasicAuth
 

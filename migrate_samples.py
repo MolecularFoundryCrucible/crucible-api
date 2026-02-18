@@ -2,7 +2,7 @@ from sqlmodel import Session, select, create_engine
 from app.models.core_models import ScientificMetadata, NewScientificMetadata, Dataset
 
 # Connect via the Cloud SQL Proxy tunnel
-DATABASE_URL = "postgresql://crucible-api-user:cdsetrpl@127.0.0.1:5433/crucible-staging"
+DATABASE_URL = "postgresql://crucible-api-user:cdsetrpl@127.0.0.1:5432/crucible-staging"
 engine = create_engine(DATABASE_URL)
 
 def migrate_data():

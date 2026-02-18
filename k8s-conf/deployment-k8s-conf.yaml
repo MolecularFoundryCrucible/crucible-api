@@ -147,7 +147,7 @@ metadata:
     operation: Update
     subresource: status
     time: 
-  name: "crucible-api"
+  name: "crucible-api-fts"
   namespace: "default"
   resourceVersion: 
   uid: 
@@ -156,7 +156,7 @@ spec:
   revisionHistoryLimit: 2
   selector:
     matchLabels:
-      app: "crucible-api"
+      app: "crucible-api-fts"
   strategy:
     rollingUpdate:
       maxSurge: 25%
@@ -174,8 +174,8 @@ spec:
         autoscaling.knative.dev/maxScale: "10"
         autoscaling.knative.dev/target: "8"
       labels:
-        app: "crucible-api"
-      name: crucible-api
+        app: "crucible-api-fts"
+      name: crucible-api-fts
       namespace: default
     spec:
       containers:
@@ -185,10 +185,7 @@ spec:
         - name: "DB_NAME"
           value: "testdb2"
         - name: "DB_CONF_FILE"
-          valueFrom:
-            configMapKeyRef:
-              key: DB_CONF_FILE
-              name: crucible-api-config-jeoi
+          value: "/root/app/conf/crucible-db-cloud.yaml"
         - name: "API_CONF_FILE"
           valueFrom:
             configMapKeyRef:
@@ -219,8 +216,11 @@ spec:
             configMapKeyRef:
               key: db_auth
               name: crucible-api-config-jeoi
-        image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-main:latest"
+        image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-full-text-search:latest"
         imagePullPolicy: Always
+        ports:
+        - containerPort: 7788
+          protocol: TCP
         name: "crucible-api-container"
         resources:
           limits:

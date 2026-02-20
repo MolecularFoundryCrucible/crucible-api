@@ -2418,3 +2418,13 @@ def create_sample_metadata(
         
         return metadata_obj
     
+
+@app.get("/idtype/{unique_id}")
+def get_object_type(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str):
+    with Session(engine) as session:
+        # Verify sample exists
+        object_type = session.exec(select(IdType).where(IdType.unique_id == unique_id)).one_or_none()
+        if object_type is None:
+            raise HTTPException(status_code=404, detail="MFID not found")
+        else:
+            return object_type

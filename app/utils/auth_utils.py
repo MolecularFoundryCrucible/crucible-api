@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import select, join
 from datetime import date, timedelta
-
+import yaml
 
 # ====== Constants
 SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "crucible_secret_key/versions/1")
@@ -26,6 +26,15 @@ security = HTTPBearer()
 db_config_file = f'{os.getenv("HOME")}/{os.getenv("DB_CONF_FILE")}'
 #engine = setup_engine(env_config_file = db_config_file)
 engine = setup_engine(env_config_file = os.getenv("DB_CONF_FILE"))
+
+# API FILE
+api_config_file = os.getenv("API_CONF_FILE")
+with open(f"{api_config_file}") as f:
+    apiconf = yaml.safe_load(f)
+
+hostname = apiconf["hostname"]
+api_path = apiconf["api_path"]
+api_url = f"https://{hostname}/{api_path}"
 
 # ====== Functions
 def find_or_add_api_access(orcid: str, engine, instrument_name = None, regenerate = False):

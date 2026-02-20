@@ -112,7 +112,8 @@ def decode_token(token: str, secret_key = SECRET_KEY, alg = ALGORITHM):
         payload = jwt.decode(token, secret_key, algorithms=[alg])
         return payload
     except JWTError:
-        return RedirectResponse("/testapi/login")
+        login_path = ''.join(api_path, '/login')
+        return RedirectResponse(login_path)
 
 
 def find_key(credentials, engine):
@@ -168,7 +169,7 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
     api_acct = find_key(credentials, engine)
     
     if api_acct is None:
-        raise HTTPException(status_code=400, detail="Incorrect apikey.  Please try again or visit https://crucible.lbl.gov/api/regenerate_apikey to create a new key.")
+        raise HTTPException(status_code=400, detail="Incorrect apikey.  Please try again or visit https://crucible.lbl.gov/api/v1/regenerate_apikey to create a new key.")
     else:
         access_group_name = api_acct[0].access_group_id
 

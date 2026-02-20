@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import select, join
 from datetime import date, timedelta
-
+import yaml
 
 # ====== Constants
 SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "crucible_secret_key/versions/1")
@@ -26,6 +26,15 @@ security = HTTPBearer()
 db_config_file = f'{os.getenv("HOME")}/{os.getenv("DB_CONF_FILE")}'
 #engine = setup_engine(env_config_file = db_config_file)
 engine = setup_engine(env_config_file = os.getenv("DB_CONF_FILE"))
+
+# API FILE
+api_config_file = os.getenv("API_CONF_FILE")
+with open(f"{api_config_file}") as f:
+    apiconf = yaml.safe_load(f)
+
+hostname = apiconf["hostname"]
+api_path = apiconf["api_path"]
+api_url = f"https://{hostname}/{api_path}"
 
 # ====== Functions
 def find_or_add_api_access(orcid: str, engine, instrument_name = None, regenerate = False):
@@ -112,7 +121,8 @@ def decode_token(token: str, secret_key = SECRET_KEY, alg = ALGORITHM):
         payload = jwt.decode(token, secret_key, algorithms=[alg])
         return payload
     except JWTError:
-        return RedirectResponse("/testapi/login")
+        login_path = ''.join(api_path, '/login')
+        return RedirectResponse(login_path)
 
 
 def find_key(credentials, engine):
@@ -168,7 +178,7 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
     api_acct = find_key(credentials, engine)
     
     if api_acct is None:
-        raise HTTPException(status_code=400, detail="Incorrect apikey.  Please try again or visit https://crucible.lbl.gov/api/regenerate_apikey to create a new key.")
+        raise HTTPException(status_code=400, detail="Incorrect apikey.  Please try again or visit https://crucible.lbl.gov/api/v1/regenerate_apikey to create a new key.")
     else:
         access_group_name = api_acct[0].access_group_id
 

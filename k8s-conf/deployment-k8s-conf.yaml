@@ -185,7 +185,7 @@ spec:
         - name: "DB_NAME"
           value: "testdb2"
         - name: "DB_CONF_FILE"
-          value: "/root/app/conf/crucible-db-cloud.yaml"
+          value: "app/conf/crucible-db-cloud.yaml"
         - name: "API_CONF_FILE"
           valueFrom:
             configMapKeyRef:

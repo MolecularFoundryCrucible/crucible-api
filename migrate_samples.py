@@ -1,7 +1,6 @@
 from sqlmodel import Session, select, create_engine
 from app.models.core_models import ScientificMetadata, NewScientificMetadata, Dataset
 
-# Connect via the Cloud SQL Proxy tunnel
 DATABASE_URL = "postgresql://crucible-api-user:cdsetrpl@127.0.0.1:5432/crucible-staging"
 engine = create_engine(DATABASE_URL)
 
@@ -19,7 +18,7 @@ def migrate_data():
         results = session.exec(stmt).all()
 
         if not results:
-            print("No matching records found. Double-check your join condition.")
+            print("No matching records found. Double-check join condition.")
             return
 
         print(f"Found {len(results)} records. Migrating...")

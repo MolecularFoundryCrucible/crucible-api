@@ -1,4 +1,4 @@
 hostname: "crucible.lbl.gov"
-api_path: "testapi"
+api_path: "testapi2"
 orcid_client_id: "APP-AXDIPEVR6IMA0RL7"
 gcs_config_name: "mf-cloud-storage"

@@ -3,6 +3,8 @@ import json
 import os
 import urllib.parse
 from pathlib import Path
+import dotenv
+dotenv.load_dotenv()
 from typing import Annotated, Dict, List, Optional, Text, Union
 
 import pytz
@@ -14,9 +16,11 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPBearer
 from jose import jwt
 from sqlalchemy import desc, func, join, text, Text
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import joinedload, selectinload, attributes
 from sqlalchemy.sql import and_, or_
 from sqlmodel import and_, or_, Session, select
+import networkx as nx
+from networkx.readwrite import json_graph
 
 from app.general_utils import get_secret, get_tz_isoformat, is_orcid, checkhash, remove_file, run_rclone_command
 from app.models.core_models import (
@@ -49,14 +53,10 @@ from app.utils.sql_utils import add_or_update, only_update, setup_engine, table_
 
 # ====== Database config
 connect_args = {"check_same_thread": False}
-
-home_dir = os.getenv("HOME")
-db_config_file = f"{home_dir}/{os.getenv('DB_CONF_FILE')}"
-
-engine = setup_engine(db_config_file)
+engine = setup_engine(env_file = '.env')
 
 api_config_file = os.getenv("API_CONF_FILE")
-with open(f"{home_dir}/{api_config_file}") as f:
+with open(f"{api_config_file}") as f:
     apiconf = yaml.safe_load(f)
 
 hostname = apiconf["hostname"]
@@ -244,7 +244,7 @@ async def create_dataset(
     auth_res: Annotated[tuple, Depends(authorize_user)],
     dataset: Dataset
 ):
-    print(f"received {Dataset}")
+    print(f"received {dataset}")
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         ds = add_or_update(
@@ -566,11 +566,12 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depen
                                                     (DatasetACL.accessgroup_id.in_(ag_ids)) |
                                                     (Dataset.public == True)
                                             )
-        parent = session.exec(ds_cmd.where(Dataset.unique_id == parent_dataset_id)).one_or_none()
+        parent = session.exec(ds_cmd.where(Dataset.unique_id == parent_dataset_id)).all()
         
-        if parent is None:
+        if not parent:
             raise HTTPException(status_code=404, detail="Parent sample not found")
         
+        parent = parent[0]
         # TODO: JOIN ON ACL BUT PERMISSIONS SHOULD PROBABLY INHERIT..
         # Get child samples
         children = session.exec(
@@ -583,11 +584,47 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depen
 
 
 @app.delete("/datasets/{dsid}", response_model = Dataset)
-def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid = str):
+def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     access_group_name, ag_ids = auth_res
     # TODO: DEFINE THIS
     pass
 
+
+
+
+@app.delete('/datasets/{dsid}/samples/{sample_id}')
+def delete_dataset_sample_link(auth_res: Annotated[tuple, Depends(is_admin)], dsid: str, sample_id: str):
+    """
+    Delete the link between a dataset and a sample.
+    Admin access required.
+    """
+    ds_cmd = select(Dataset).where(Dataset.unique_id == dsid)
+    samp_cmd = select(Sample).where(Sample.unique_id == sample_id)
+
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
+        samp = session.exec(samp_cmd).one_or_none()
+
+        if samp is None:
+            raise HTTPException(status_code=404, detail="Sample not found")
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+
+        # Delete the link
+        link = session.exec(
+            select(DatasetSampleLink).where(
+                and_(DatasetSampleLink.dataset_id == ds.id, DatasetSampleLink.sample_id == samp.id)
+            )
+        ).one_or_none()
+
+        if link is None:
+            return {"warning": f"No link found between dataset {dsid} and sample {sample_id}"}
+
+        session.delete(link)
+        session.commit()
+
+        return {"message": f"Successfully deleted link between dataset {dsid} and sample {sample_id}"}
+    
 
 @app.get('/datasets/{dsid}/download_links')
 def generate_signed_url_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, bucket: str='mf-storage-prod'):
@@ -700,31 +737,6 @@ def request_dataset_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)
     
     return ingestion_request
 
-
-@app.get("/datasets/{dsid}/scicat_update/{reqid}", response_model = SciCatUpdateRequest)
-def get_scicat_update_request(auth_res: Annotated[tuple, Depends(authorize_user)], reqid: int, dsid: str):
-
-    access_group_name, ag_ids = auth_res
-    
-    # Check dataset access first
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(
-        Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
-    
-    with Session(engine) as session:
-        ds = session.exec(ds_cmd).one_or_none()
-        
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
-        
-        # Get the scicat update request
-        sc_req = session.exec(select(SciCatUpdateRequest).where(
-            (SciCatUpdateRequest.id == reqid) & (SciCatUpdateRequest.dataset_id == dsid)
-        )).one_or_none()
-        
-        if sc_req is None:
-            raise HTTPException(status_code=404, detail="Scicat Update request not found")
-        
-        return sc_req
         
 
 @app.get("/datasets/{dsid}/ingest/{reqid}", response_model = IngestionRequest)
@@ -791,118 +803,6 @@ def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], reqid: 
     return(updated_req)
 
 
-@app.post("/datasets/{dsid}/google_drive_transfer", response_model=GoogleDriveTransferRequest)
-def request_dataset_transfer_to_drive(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
-    """
-    For now keep simple - Input is a dataset.
-    Drive info is derived from Project and Owner.
-    Location within drive is hardcoded.
-    """
-    access_group_name, ag_ids = auth_res
-    with Session(engine) as session:
-        creation_time = get_tz_isoformat()
-
-        ds_cmd = select(Dataset).select_from(
-            join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)
-        ).where(Dataset.unique_id == dsid).filter(
-            DatasetACL.accessgroup_id.in_(ag_ids)
-        ).distinct()
-
-        ds_list = session.exec(ds_cmd).all()
-
-        if not ds_list:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
-        transfer_request = GoogleDriveTransferRequest(dataset_id = dsid, time_created=creation_time, status = "requested")
-        session.add(transfer_request)
-        session.commit()
-        session.refresh(transfer_request)
-
-        message = json.dumps({
-            "dsid": dsid,
-            "source_bucket": "mf-storage-prod",
-            "reqid": transfer_request.id
-        })
-        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-
-        send_pika_message(
-            message,
-            exchange="",
-            routing_key="transfer-newapi",
-            user="admin",
-            rmq_pw=rmq_pw
-        )
-        return transfer_request
-
-
-@app.patch("/datasets/{dsid}/google_drive_transfer/{reqid}", response_model = GoogleDriveTransferRequest)
-def patch_transfer_request(is_admin: Annotated[str, Depends(is_admin)], reqid: int, dsid: str, xfer_req: GoogleDriveTransferRequest):
-    if xfer_req.id:
-        print(f"{reqid=}")
-        print(f"{xfer_req.id=}")
-        assert reqid == xfer_req.id
-    with Session(engine) as session:
-        updated_req = only_update(session, GoogleDriveTransferRequest, (GoogleDriveTransferRequest.id == reqid) & (GoogleDriveTransferRequest.dataset_id == dsid), **xfer_req.model_dump(exclude_unset=True))
-        session.commit()
-        session.refresh(updated_req)
-    return(updated_req)
-
-
-@app.post("/datasets/{dsid}/scicat_update", response_model=SciCatUpdateRequest)
-def request_update_scicat_dataset(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
-    dsid: str,
-    overwrite_data: bool = False
-):
-    creation_time = get_tz_isoformat()
-    access_group_name, ag_ids = auth_res
-    ds_cmd = select(Dataset).select_from(
-        join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)
-    ).where(Dataset.unique_id == dsid).filter(
-        DatasetACL.accessgroup_id.in_(ag_ids)
-    ).distinct()
-
-    with Session(engine) as session:
-        ds_list = session.exec(ds_cmd).all()
-
-    if not ds_list:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-
-    # Should add this to database table but it is okay for now
-    scicat_request = SciCatUpdateRequest(dataset_id = dsid, time_created = creation_time, status = "requested")
-    session.add(scicat_request)
-    session.commit()
-    session.refresh(scicat_request)
-
-    message = json.dumps({
-        "dsid": dsid,
-        "source_bucket": "mf-storage-prod",
-        "reqid": scicat_request.id,
-        "overwrite_data": overwrite_data
-    })
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-
-    send_pika_message(
-        message,
-        exchange="",
-        routing_key="scicat-newapi",
-        user="admin",
-        rmq_pw=rmq_pw
-    )
-    return scicat_request
-
-
-@app.patch("/datasets/{dsid}/scicat_update/{reqid}", response_model = SciCatUpdateRequest)
-def patch_scicat_request(is_admin: Annotated[str, Depends(is_admin)], reqid: int, dsid: str, sc_req: SciCatUpdateRequest):
-    if sc_req.id:
-        assert reqid == sc_req.id
-    with Session(engine) as session:
-        updated_req = only_update(session, SciCatUpdateRequest, (SciCatUpdateRequest.id == reqid) & (SciCatUpdateRequest.dataset_id == dsid), **sc_req.model_dump(exclude_unset=True))
-        session.commit()
-        session.refresh(updated_req)
-    return(updated_req)
-
-
 @app.get("/datasets/{dsid}/scientific_metadata")
 def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     access_group_name, ag_ids = auth_res
@@ -966,7 +866,12 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
         for k,v in scientific_md_updates.items():
             md_dict[k] = v
 
-        md_obj = add_or_update(session, ScientificMetadata, where=(ScientificMetadata.dataset_unique_id == dsid), dataset_unique_id = dsid, scientific_metadata = md_dict)
+        print(f'after update: {md_dict=}')
+        md_obj = add_or_update(session, ScientificMetadata,
+                               where=(ScientificMetadata.dataset_unique_id == dsid), 
+                               dataset_unique_id = dsid, scientific_metadata = md_dict)
+        print(f'{md_obj=}')
+        attributes.flag_modified(md_obj, 'scientific_metadata')
 
         session.commit()
         session.refresh(md_obj)
@@ -1222,86 +1127,6 @@ def add_keyword(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, 
         return(kw_obj)
 
 
-@app.get("/datasets/{dsid}/drive_location", response_model = List[DataDriveLocation])
-def read_dataset_drive_location(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
-    '''
-    Returns a list of DataDriveLocation objects with one object for each location in google drive where the dataset is currently located.
-    '''
-    access_group_name, ag_ids = auth_res
-    with Session(engine) as session:
-        # Verify dataset exists and user has access
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
-        ds = session.exec(ds_cmd).one_or_none()
-
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
-
-        ds_locs = session.exec(select(DataDriveLocation).where(and_(DataDriveLocation.dataset_id == dsid, DataDriveLocation.status == 'current'))).all()
-    return(ds_locs)
-
-
-@app.post("/datasets/{dsid}/drive_location", response_model = DataDriveLocation)
-def create_dataset_drive_location(auth_res:  Annotated[tuple, Depends(authorize_user)], dsid: str, drive_info: DataDriveLocation):
-    """
-    Add a Google Drive location record to the database.
-
-    Args:
-        ag_ids: List of access group IDs the user belongs to
-        dsid: Dataset ID
-        D: Google Drive information to be added as DataDriveLocation object
-
-    Returns:
-        Added DataDriveLocation object
-
-    Raises:
-        HTTPException: If required drive location fields are missing or dataset not found
-    """
-    access_group_name, ag_ids = auth_res
-
-    # Validate required fields
-    missing_fields = []
-    if not drive_info.drive_id or not drive_info.drive_id.strip():
-        missing_fields.append("drive_id")
-    if not drive_info.drive_name or not drive_info.drive_name.strip():
-        missing_fields.append("drive_name")
-    if not drive_info.folder_path_in_drive or not drive_info.folder_path_in_drive.strip():
-        missing_fields.append("folder_path_in_drive")
-    if not drive_info.folder_id or not drive_info.folder_id.strip():
-        missing_fields.append("folder_id")
-    if not drive_info.url or not drive_info.url.strip():
-        missing_fields.append("url")
-    if not drive_info.status or not drive_info.status.strip():
-        missing_fields.append("status")
-
-    if missing_fields:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Missing required drive location information: {', '.join(missing_fields)}. Please provide all required fields: drive_id, drive_name, folder_path_in_drive, folder_id, url, and status."
-        )
-
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
-
-    with Session(engine) as session:
-        ds_list = session.exec(ds_cmd).all()
-
-    if ds_list is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    elif len(ds_list) == 0:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    else:
-        pass
-    with Session(engine) as session:
-        d_info = table_obj_to_dict(drive_info)
-        add_or_update(session, GoogleDrives, GoogleDrives.drive_id == drive_info.drive_id, drive_id = drive_info.drive_id, drive_name = drive_info.drive_name)
-        drive_loc = add_or_update(session, 
-                      DataDriveLocation,
-                      DataDriveLocation.folder_id == drive_info.folder_id, 
-                      **d_info)
-        session.commit()
-        session.refresh(drive_loc)
-    return(drive_loc)
-
-
 @app.get("/datasets/{dsid}/access_groups", response_model = List[AccessGroup])
 def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     with Session(engine) as session:
@@ -1500,7 +1325,7 @@ def list_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], request
     params_dict = dict(query_params)
     print(params_dict)
     statement = select(Instrument)
-    for k,v, in params_dict.items():
+    for k,v in params_dict.items():
         if hasattr(Instrument, k):
             print(f'has attr {k=}')
             statement = statement.where(getattr(Instrument, k) == v.lower().strip())
@@ -1562,88 +1387,6 @@ def create_instrument(auth_res:  Annotated[tuple, Depends(authorize_user)], inst
         session.refresh(instrument)
     return(instrument)
 
-
-@app.get("/google_drives", response_model = List[GoogleDrives])
-def list_google_drive_info(auth_res:  Annotated[tuple, Depends(authorize_user)], request: Request):
-    """
-    Returns a list of google drive information
-    """
-    query_params = request.query_params
-    params_dict = dict(query_params)
-
-    search_cmd = select(GoogleDrives)
-
-    for k, v in params_dict.items():
-        if hasattr(GoogleDrives, k):
-            search_cmd = search_cmd.where(getattr(GoogleDrives, k) == v)
-
-    with Session(engine) as session:
-        drives = session.exec(search_cmd).all()
-
-    return(drives)
-
-
-@app.get("/google_drives/{drive_name}", response_model = Union[None, GoogleDrives])
-def read_google_drive_info(auth_res:  Annotated[tuple, Depends(authorize_user)], drive_name: str):
-    """
-    Args:
-        ag_ids: List of access group IDs the user belongs to ** should update to is_admin
-        drive_id: Google Drive Name to query
-        
-    Returns:
-        Google Drive object if found, otherwise None
-    """
-    access_group_name, ag_ids = auth_res
-    with Session(engine) as session:
-        drive = session.exec(select(GoogleDrives).where(GoogleDrives.drive_name == drive_name)).one_or_none()
-
-    return(drive)
-
-
-@app.post("/google_drives", response_model = GoogleDrives)
-def create_google_drive_info(auth_res:  Annotated[tuple, Depends(authorize_user)], D: Dict):
-    """
-    Add or update a Google Drive record in the database.
-
-    Args:
-        ag_ids: List of access group IDs the user belongs to ** should update to is_admin
-        D: Google Drive information to be added or updated
-
-    Returns:
-        Added or updated Google Drive object
-
-    Raises:
-        HTTPException: If required Google Drive fields are missing
-    """
-    access_group_name, ag_ids = auth_res
-
-    # Validate required fields
-    missing_fields = []
-    if "drive_id" not in D or not D["drive_id"] or not str(D["drive_id"]).strip():
-        missing_fields.append("drive_id")
-    if "drive_name" not in D or not D["drive_name"] or not str(D["drive_name"]).strip():
-        missing_fields.append("drive_name")
-
-    if missing_fields:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Missing required Google Drive information: {', '.join(missing_fields)}. Please provide all required fields: drive_id and drive_name."
-        )
-
-    with Session(engine) as session:
-        try:
-            dr = add_or_update(
-                session,
-                GoogleDrives,
-                GoogleDrives.drive_id == D["drive_id"],
-                **D
-            )
-            session.commit()
-            session.refresh(dr)
-        except Exception as err:
-            print(err)
-
-    return D
 
 # =======================================
 @app.get("/users", response_model = List[User])
@@ -1722,7 +1465,7 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
         user = add_or_update(session, User, User.orcid == user_info.orcid, **user_dict)
         session.commit()
 
-        apikey = get_secret("ADMIN_APIKEY", "crucible_admin_apikey/versions/3")
+        apikey = get_secret("ADMIN_APIKEY", "crucible_admin_apikey/versions/4")
         requests.post(
             f"{api_url}/users/{user.orcid}/access_groups/{user.orcid}",
             headers={"Authorization": f"Bearer {apikey}"}
@@ -1953,7 +1696,7 @@ def add_users_to_project(proj_id: str, orcid: str, admin_acct: Annotated[str, De
 
 
 @app.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model = SampleLink)
-def link_parent_child(parent_sample_id, child_sample_id):
+def link_parent_child_samples(parent_sample_id, child_sample_id):
 
     with Session(engine) as session:
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()
@@ -1977,6 +1720,9 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
     update_fields = updated_sample.model_dump(exclude_unset=True)
     with Session(engine) as session:
         sample = session.exec(cmd).one_or_none()
+        if not sample:
+            raise HTTPException(status_code = 404, detail = 'Sample not found')
+            
         for key, value in update_fields.items():
             setattr(sample, key, value)
             print(key,value)
@@ -1984,11 +1730,6 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
         session.commit()
         session.refresh(sample)
         return sample
-    
-    if not sample:
-        raise HTTPException(status_code = 404, detail = 'Sample not found')
-
-
 
 
 @app.post("/samples", response_model = Sample)
@@ -2140,15 +1881,14 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         samp_list = session.exec(samp_cmd).all()
         return samp_list
 
-@app.get("/projects/{project_id}/sample_graph", response_model = Union[None, Project])
+@app.get("/projects/{project_id}/sample_graph")
 def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
 
     access_group_name, ag_ids = auth_res
 
     with Session(engine) as session:
-        
-        samp_cmd = select(Sample.unique_id, SampleLink.sample_id).select_from(join(Sample,SampleLink, Sample.id == SampleLink.parent_sample_id))
-        
+        samp_cmd = select(Sample).options(joinedload(Sample.parents))
+
         # Admin API keys can see all samples
         if access_group_name.startswith('admin'):
             # No owner filter for admin - they can see all samples
@@ -2168,18 +1908,19 @@ def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(aut
     
         # Filter samples on proj_id
         samp_cmd = samp_cmd.where(Sample.project_id==project_id)
+        samp_list = session.exec(samp_cmd).unique().all()
 
-        # for k, v in params_dict.items():
-        #     if hasattr(Sample, k) and v is not None:
-        #         print(f'filtering results on {k}={v}')
-        #         samp_cmd = samp_cmd.where(getattr(Sample, k) == v)
-        #     else:
-        #        pass
-        
-        #samp_cmd = samp_cmd.options(selectinload(Sample.datasets))
+        edges = []
+        for sample in samp_list:
+            for parent in sample.parents:
+                edges.append((parent.unique_id, sample.unique_id))
 
-        samp_list = session.exec(samp_cmd).all()
-        return samp_list
+        G = nx.DiGraph(edges)
+        for sample in samp_list:
+            G.add_node(sample.unique_id, 
+                       sample_name=sample.sample_name)
+
+        return json_graph.node_link_data(G)
 
 
 @app.get("/samples/{sample_id}", response_model = Union[None, SampleWithDatasetsResponse])
@@ -2300,127 +2041,3 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends
             .where(SampleLink.parent_sample_id == parent_sample.id)
         ).all()
         return child_samples
-
-
-@app.get("/samples/{sample_id}/metadata/{sample_type}")
-def get_sample_metadata(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
-    sample_id: str,
-    sample_type: str
-):
-    """
-    Get metadata for a sample based on sample_type.
-    
-    Args:
-        auth_res: Authorization result containing access group info
-        sample_id: Unique identifier for the sample
-        sample_type: Type of sample metadata (e.g., 'spinbot_batch')
-        
-    Returns:
-        Sample metadata object if found
-        
-    Raises:
-        HTTPException: If sample not found, invalid sample_type, or metadata not found
-    """
-    access_group_name, ag_ids = auth_res
-    
-    # Validate sample_type
-    if sample_type not in SAMPLE_TYPE_MAPPING:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Invalid sample_type '{sample_type}'. Supported types: {list(SAMPLE_TYPE_MAPPING.keys())}"
-        )
-    
-    with Session(engine) as session:
-        # Verify sample exists
-        sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
-        if sample is None:
-            raise HTTPException(status_code=404, detail="Sample not found")
-        
-        # Get the appropriate model class based on sample_type
-        model_class_name = SAMPLE_TYPE_MAPPING[sample_type]
-        
-        if model_class_name == "SpinbotBatchMetadata":
-            model_class = SpinbotBatchMetadata
-        else:
-            raise HTTPException(status_code=500, detail=f"Model class {model_class_name} not implemented")
-        
-        # Get metadata
-        metadata_obj = session.exec(
-            select(model_class).where(model_class.sample_id == sample_id)
-        ).one_or_none()
-        
-        if metadata_obj is None:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"No {sample_type} metadata found for sample {sample_id}"
-            )
-        
-        return metadata_obj
-
-
-@app.post("/samples/{sample_id}/metadata/{sample_type}")
-def create_sample_metadata(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
-    sample_id: str,
-    sample_type: str,
-    metadata: dict
-):
-    """
-    Create or update metadata for a sample based on sample_type.
-    
-    Args:
-        auth_res: Authorization result containing access group info
-        sample_id: Unique identifier for the sample
-        sample_type: Type of sample metadata (e.g., 'spinbot_batch')
-        metadata: Dictionary containing metadata fields
-        
-    Returns:
-        Created/updated metadata object
-        
-    Raises:
-        HTTPException: If sample not found, invalid sample_type, or validation errors
-    """
-    access_group_name, ag_ids = auth_res
-    
-    # Validate sample_type
-    if sample_type not in SAMPLE_TYPE_MAPPING:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Invalid sample_type '{sample_type}'. Supported types: {list(SAMPLE_TYPE_MAPPING.keys())}"
-        )
-    
-    with Session(engine) as session:
-        # Verify sample exists
-        sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
-        if sample is None:
-            raise HTTPException(status_code=404, detail="Sample not found")
-        
-        # Get the appropriate model class based on sample_type
-        model_class_name = SAMPLE_TYPE_MAPPING[sample_type]
-        
-        if model_class_name == "SpinbotBatchMetadata":
-            model_class = SpinbotBatchMetadata
-        else:
-            raise HTTPException(status_code=500, detail=f"Model class {model_class_name} not implemented")
-        
-        # Create metadata object with sample_id and sample_type
-        metadata_dict = {
-            "sample_id": sample_id,
-            "sample_type": sample_type,
-            **metadata
-        }
-        
-        # Add or update metadata
-        metadata_obj = add_or_update(
-            session,
-            model_class,
-            model_class.sample_id == sample_id,
-            **metadata_dict
-        )
-        
-        session.commit()
-        session.refresh(metadata_obj)
-        
-        return metadata_obj
-    

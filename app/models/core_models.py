@@ -1,6 +1,8 @@
 from typing import Optional, List
-from sqlalchemy import JSON, Column,BigInteger
-from sqlmodel import Field, SQLModel,Relationship
+from pydantic import ConfigDict
+from sqlalchemy import JSON, Column, BigInteger, func, Index, text, Text, Integer
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlmodel import Field, SQLModel,Relationship, Column
 from mfid import mfid
 
 
@@ -115,10 +117,7 @@ class Sample(SQLModel, table = True):
         }
     )
 
-    class Config:
-        arbitrary_types_allowed = True
-        from_attributes = True
-
+    model_config = ConfigDict(arbitrary_types_allowed=True, from_attributes=True) #type: ignore
 
 class Dataset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -140,6 +139,7 @@ class Dataset(SQLModel, table=True):
     json_link: Optional[str]
     sha256_hash_file_to_upload: Optional[str]
     scientific_metadata: Optional["ScientificMetadata"] = Relationship(back_populates = 'dataset')
+    scientific_metadata_new: Optional["NewScientificMetadata"] = Relationship(back_populates="dataset", sa_relationship_kwargs={"foreign_keys": "[NewScientificMetadata.dataset_id]"})
     samples: List[Sample] = Relationship(back_populates="datasets", link_model = DatasetSampleLink)
     collections: List[DatasetCollection] = Relationship(back_populates = "datasets", link_model = DatasetCollectionLink)
     keywords: List[Keyword] = Relationship(back_populates="datasets", link_model=DatasetKeywordLink)
@@ -163,9 +163,7 @@ class Dataset(SQLModel, table=True):
         }
     )
 
-    class Config:
-        arbitrary_types_allowed = True
-        from_attributes = True
+    model_config = ConfigDict(arbitrary_types_allowed=True, from_attributes=True) #type: ignore
 
 
 class DatasetACL(SQLModel, table=True):
@@ -237,6 +235,29 @@ class ScientificMetadata(SQLModel, table = True):
     scientific_metadata: dict = Field(sa_column=Column(JSON), default={})
     dataset: Optional["Dataset"] = Relationship(back_populates="scientific_metadata")
 
+
+#New Scientific Metadata table for FTS (Full-Text Search)
+class NewScientificMetadata(SQLModel, table = True):
+    __tablename__ = "scientific_metadata"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    dataset_mfid: str = Field(foreign_key="dataset.unique_id", index=True)
+    dataset_id: Optional[int] = Field(foreign_key="dataset.id", index=True)
+    scientific_metadata: dict = Field(sa_column=Column(JSONB), default={})
+    dataset: Optional["Dataset"] = Relationship(
+        back_populates="scientific_metadata_new",
+        sa_relationship_kwargs={"foreign_keys": "[NewScientificMetadata.dataset_id]"}
+    )
+    
+    __table_args__ = (
+        Index(
+            "ix_scientific_metadata_fts",
+            func.to_tsvector(
+                text("'english'"), 
+                func.jsonb_path_query_array(text('scientific_metadata'), text("'$[*]'")).cast(Text)
+            ),
+            postgresql_using="gin"
+        ),
+    )
 
 
 

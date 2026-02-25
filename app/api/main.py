@@ -973,7 +973,7 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
         return(md_obj)
 
 @app.get("/scientific_metadata/search", response_model = List[NewScientificMetadata])
-def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str, session: Session = Depends(setup_engine)):
+def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str, engine = Depends(setup_engine)):
     """
     Perform a ranked Full-Text Search (FTS) on scientific metadata 
     using PostgreSQL's tsvector, tsquery, and ts_rank.
@@ -1000,7 +1000,9 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
             .order_by(desc(func.ts_rank(metadata_vector, search_query)))
             .distinct()
         )
-        return session.exec(stmt).all()
+        
+        with Session(engine) as session:
+            return session.exec(stmt).all()
     
     except Exception as e:
         # This will print the EXACT error to your GCP logs in one easy-to-read block

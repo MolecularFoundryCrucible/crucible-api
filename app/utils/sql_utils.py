@@ -23,6 +23,15 @@ def setup_engine(env_config_file = None):
         if db_type == 'sqlite':
             db_url = f'sqlite:///{os.getenv("DB_FILE")}'
         elif db_type == 'postgres':
+            
+            password = os.getenv("DB_PASSWORD")
+            
+            if not password:
+                if home and 'root' in home:
+                    password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1')
+                else:
+                    password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1', sa_creds = f'{home}/.conf/mf-crucible-6cd684804246.json', cred_file = True)
+            
             db_url = f'postgresql://{os.getenv("DB_USERNAME")}:{password}@{os.getenv("DB_SERVER")}/{os.getenv("DB_DATABASE")}'
         else:
             raise ValueError(f"Unknown DB Type {db_type}")

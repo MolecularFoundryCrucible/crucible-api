@@ -982,18 +982,42 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
     search_query = func.plainto_tsquery('english', q)
     metadata_vector = func.to_tsvector(
         'english',
-        func.jsonb_path_query_array(text('scientific_metadata'), text('$[*]')).cast(Text)
+        func.jsonb_path_query_array(NewScientificMetadata.scientific_metadata, text("'$[*]'")).cast(Text)
     )
 
     stmt = (
         select(NewScientificMetadata)
-        .join(Dataset, ScientificMetadata.dataset_unique_id == Dataset.unique_id)
+        .join(Dataset, NewScientificMetadata.dataset_id == Dataset.id)
         .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
         .where(
             and_(
                 or_(DatasetACL.accessgroup_id.in_(ag_ids), Dataset.public == True),
                 metadata_vector.op('@@')(search_query)
             )
+        )
+        .order_by(desc(func.ts_rank(metadata_vector, search_query)))
+        .distinct()
+    )
+    return session.exec(stmt).all()
+
+@app.get("/scientific_metadata/search_test", response_model = List[NewScientificMetadata])
+def search_scientific_metadata_no_auth(q: str, session: Session = Depends(setup_engine)):
+    """
+    TEST VERSION: Perform a ranked Full-Text Search (FTS) on scientific metadata.
+    Authentication and ACL checks are completely disabled.
+    """
+    search_query = func.plainto_tsquery('english', q)
+    metadata_vector = func.to_tsvector(
+        'english',
+        func.jsonb_path_query_array(NewScientificMetadata.scientific_metadata, text("'$[*]'")).cast(Text)
+    )
+
+    stmt = (
+        select(NewScientificMetadata)
+        .join(Dataset, NewScientificMetadata.dataset_id == Dataset.id)
+        # Removed the DatasetACL join and the ACL/Public filter
+        .where(
+            metadata_vector.op('@@')(search_query)
         )
         .order_by(desc(func.ts_rank(metadata_vector, search_query)))
         .distinct()

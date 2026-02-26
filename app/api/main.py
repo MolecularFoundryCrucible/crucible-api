@@ -910,17 +910,16 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
             return session.exec(stmt).all()
     
     except Exception as e:
-        # This will print the EXACT error to your GCP logs in one easy-to-read block
         print("--- FTS SEARCH CRASH START ---")
         print(traceback.format_exc())
         print("--- FTS SEARCH CRASH END ---")
         raise HTTPException(status_code=500, detail=f"Internal Error: {str(e)}")
 
 @app.get("/scientific_metadata/search_test", response_model = List[NewScientificMetadata])
-def search_scientific_metadata_no_auth(q: str, session: Session = Depends(setup_engine)):
+def search_scientific_metadata_no_auth(q: str, engine = Depends(setup_engine)):
     """
     TEST VERSION: Perform a ranked Full-Text Search (FTS) on scientific metadata.
-    Authentication and ACL checks are completely disabled.
+    Authentication and ACL checks are disabled.
     """
     search_query = func.plainto_tsquery('english', q)
     metadata_vector = func.to_tsvector(
@@ -938,7 +937,8 @@ def search_scientific_metadata_no_auth(q: str, session: Session = Depends(setup_
         .order_by(desc(func.ts_rank(metadata_vector, search_query)))
         .distinct()
     )
-    return session.exec(stmt).all()
+    with Session(engine) as session:
+            return session.exec(stmt).all()
 
 @app.get("/datasets/{dsid}/thumbnails", response_model = List[Thumbnail])
 def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):

@@ -926,19 +926,22 @@ def search_scientific_metadata_no_auth(q: str, engine = Depends(setup_engine)):
         'english',
         func.jsonb_path_query_array(NewScientificMetadata.scientific_metadata, text("'$[*]'")).cast(Text)
     )
+    
+    rank_expr = func.ts_rank(metadata_vector, search_query)
 
     stmt = (
-        select(NewScientificMetadata)
+        select(NewScientificMetadata, rank_expr.label("rank"))
         .join(Dataset, NewScientificMetadata.dataset_id == Dataset.id)
         # Removed the DatasetACL join and the ACL/Public filter
         .where(
             metadata_vector.op('@@')(search_query)
         )
-        .order_by(desc(func.ts_rank(metadata_vector, search_query)))
+        .order_by(desc("rank"))
         .distinct()
     )
     with Session(engine) as session:
-            return session.exec(stmt).all()
+        results = session.exec(stmt).all()
+        return [row[0] for row in results]
 
 @app.get("/datasets/{dsid}/thumbnails", response_model = List[Thumbnail])
 def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):

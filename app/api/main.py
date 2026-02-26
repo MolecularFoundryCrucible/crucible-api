@@ -881,7 +881,7 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
 def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str, engine = Depends(setup_engine)):
     """
     Perform a ranked Full-Text Search (FTS) on scientific metadata 
-    using PostgreSQL's tsvector, tsquery, and ts_rank.
+    using PostgreSQL's tsvector, tsquery, and ts_rank_cd.
     """
     
     access_group_name, ag_ids = auth_res
@@ -892,7 +892,7 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
         func.jsonb_path_query_array(NewScientificMetadata.scientific_metadata, text("'$[*]'")).cast(Text)
     )
 
-    rank_expr = func.ts_rank(metadata_vector, search_query)
+    rank_expr = func.ts_rank_cd(metadata_vector, search_query)
 
     stmt = (
         select(NewScientificMetadata, rank_expr.label("rank"))
@@ -923,7 +923,7 @@ def search_scientific_metadata_no_auth(q: str, engine = Depends(setup_engine)):
         func.jsonb_path_query_array(NewScientificMetadata.scientific_metadata, text("'$[*]'")).cast(Text)
     )
     
-    rank_expr = func.ts_rank(metadata_vector, search_query)
+    rank_expr = func.ts_rank_cd(metadata_vector, search_query)
 
     stmt = (
         select(NewScientificMetadata, rank_expr.label("rank"))

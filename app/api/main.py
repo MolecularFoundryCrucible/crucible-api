@@ -883,37 +883,33 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
     Perform a ranked Full-Text Search (FTS) on scientific metadata 
     using PostgreSQL's tsvector, tsquery, and ts_rank.
     """
-    try:
-        access_group_name, ag_ids = auth_res
-
-        search_query = func.plainto_tsquery('english', q)
-        metadata_vector = func.to_tsvector(
-            'english',
-            func.jsonb_path_query_array(NewScientificMetadata.scientific_metadata, text("'$[*]'")).cast(Text)
-        )
-
-        stmt = (
-            select(NewScientificMetadata)
-            .join(Dataset, NewScientificMetadata.dataset_id == Dataset.id)
-            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
-            .where(
-                and_(
-                    or_(DatasetACL.accessgroup_id.in_(ag_ids), Dataset.public == True),
-                    metadata_vector.op('@@')(search_query)
-                )
-            )
-            .order_by(desc(func.ts_rank(metadata_vector, search_query)))
-            .distinct()
-        )
-        
-        with Session(engine) as session:
-            return session.exec(stmt).all()
     
-    except Exception as e:
-        print("--- FTS SEARCH CRASH START ---")
-        print(traceback.format_exc())
-        print("--- FTS SEARCH CRASH END ---")
-        raise HTTPException(status_code=500, detail=f"Internal Error: {str(e)}")
+    access_group_name, ag_ids = auth_res
+
+    search_query = func.plainto_tsquery('english', q)
+    metadata_vector = func.to_tsvector(
+        'english',
+        func.jsonb_path_query_array(NewScientificMetadata.scientific_metadata, text("'$[*]'")).cast(Text)
+    )
+
+    rank_expr = func.ts_rank(metadata_vector, search_query)
+
+    stmt = (
+        select(NewScientificMetadata, rank_expr.label("rank"))
+        .join(Dataset, NewScientificMetadata.dataset_id == Dataset.id)
+        .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+        .where(
+            and_(
+                or_(DatasetACL.accessgroup_id.in_(ag_ids), Dataset.public == True),
+                metadata_vector.op('@@')(search_query)
+            )
+        )
+        .order_by(desc("rank"))
+        .distinct()
+    )
+    with Session(engine) as session:
+        results = session.exec(stmt).all()
+        return [row[0] for row in results]
 
 @app.get("/scientific_metadata/search_test", response_model = List[NewScientificMetadata])
 def search_scientific_metadata_no_auth(q: str, engine = Depends(setup_engine)):

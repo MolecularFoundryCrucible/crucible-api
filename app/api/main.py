@@ -543,7 +543,7 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depen
                                             ).filter(
                                                     (DatasetACL.accessgroup_id.in_(ag_ids)) |
                                                     (Dataset.public == True)
-                                            )
+                                            ).distinct()
         child = session.exec(ds_cmd.where(Dataset.unique_id == child_dataset_id)).one_or_none()
         
         if child is None:

@@ -1,4 +1,4 @@
-# Crucible API
+# Crucible API  
 
 A FastAPI-based REST API for managing scientific datasets, samples, and metadata. The Crucible API provides comprehensive endpoints for data management, authentication, and integration with external services.
 
@@ -56,15 +56,24 @@ uvicorn app.api.main:app --reload --port 7777
 
 ## Configuration
 
-### Database Configuration
-Create a `db_config.yaml` file:
-```yaml
-host: localhost
-port: 5432
-database: crucible
-username: your_username
-password: your_password
-```
+### Connecting to the Database Locally
+
+download the cloud-sql-proxy
+
+# linux: 
+curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.11.0/cloud-sql-proxy.linux.amd64
+
+# mac apple silicon
+curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.18.2/cloud-sql-proxy.darwin.arm64
+  
+chmod +x cloud-sql-proxy
+
+# run it
+nohup ./cloud-sql-proxy --address 127.0.0.1 --port 5432 mf-crucible:us-central1:crucible-db --credentials-file <cred-file-path>
+
+# Create a .env file for your python script to read with 
+# Create a conda environment with sqlalchemy, sqlmodel, and pydantic
+
 
 ### API Configuration
 Create an `api_config.yaml` file:
@@ -268,5 +277,5 @@ For issues and questions, please use the GitHub issue tracker or contact the dev
 To access database, we will use google cloud proxy
 
 ```
-cloud-sql-proxy --port=5432 --structured-logs -c mf-crucible-1e9b3247273f.json mf-crucible:us-central1:crucible-db
+cloud-sql-proxy --port=5432 --structured-logs -c your-credentials-file.json mf-crucible:us-central1:crucible-db
 ```

@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crucible-api-config-staging
+  namespace: default
+data:
+  # Path to the database configuration file (inside the container)
+  #DB_CONF_FILE: "/app/conf/crucible-db-staging.env"
+
+  # Path to the API configuration file (inside the container)
+  API_CONF_FILE: "app/conf/api_conf.yaml"
+
+  # Database type
+  db_type: "postgresql"
+
+  # Database server/host
+  # Using Cloud SQL Proxy, which listens on localhost:5432
+  db_server: "172.31.16.10:5432"
+
+  # Database username
+  # Replace with your staging database username
+  db_username: "crucible-api-user"
+
+  # Database name
+  # Replace with your staging database name
+  db_database: "crucible-staging"
+
+  # Database authentication enabled
+  db_auth: "true"

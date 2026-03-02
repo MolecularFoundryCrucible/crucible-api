@@ -2205,11 +2205,15 @@ def read_samples_in_dataset(dsid: str, auth_res:  Annotated[tuple, Depends(autho
 
 
 @app.get("/samples/{sample_id}/datasets")
-def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(authorize_user)], include_metadata: bool = False):
+def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: bool = False, limit: Optional[int] = None):
     '''
     Returns a list of all datasets linked to a given sample
     '''
     access_group_name, ag_ids = auth_res
+
+    params_dict = dict(request.query_params)
+    keyword_filter = params_dict.pop("keyword", None)
+
     with Session(engine) as session:
         # Verify sample exists
         sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
@@ -2235,12 +2239,23 @@ def list_sample_datasets(sample_id: str, auth_res:  Annotated[tuple, Depends(aut
                         )
                         .filter(auth_filter)
                     )
+            
+        if keyword_filter:
+            query = generate_kw_query(session, query, keyword_filter)
+        
+        for key, value in params_dict.items():
+            if hasattr(Dataset, key):
+                query = query.where(getattr(Dataset, key) == value)
         
         full_query = query.join(DatasetSampleLink,
                                 DatasetSampleLink.dataset_id == Dataset.id
                                 ).where(
                                     DatasetSampleLink.sample_id == select(Sample.id).where(Sample.unique_id == sample_id)
                                 ).distinct(Dataset.id)
+        
+        if limit is not None:
+            full_query = full_query.limit(limit)
+        
         datasets = session.exec(full_query).all()
         if include_metadata:
             return [{**dataset.model_dump(),

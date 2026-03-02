@@ -881,7 +881,7 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
 def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str, engine = Depends(setup_engine)):
     """
     Perform a ranked Full-Text Search (FTS) on scientific metadata 
-    using PostgreSQL's tsvector, tsquery, and ts_rank_cd.
+    using PostgreSQL's GIN indexing, tsvector, tsquery, and ts_rank_cd.
     """
     
     access_group_name, ag_ids = auth_res

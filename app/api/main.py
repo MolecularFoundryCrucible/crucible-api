@@ -534,7 +534,7 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depen
                                             ).filter(
                                                     (DatasetACL.accessgroup_id.in_(ag_ids)) |
                                                     (Dataset.public == True)
-                                            )
+                                            ).distinct()
         child = session.exec(ds_cmd.where(Dataset.unique_id == child_dataset_id)).one_or_none()
         
         if child is None:
@@ -590,8 +590,6 @@ def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
     pass
 
 
-
-
 @app.delete('/datasets/{dsid}/samples/{sample_id}')
 def delete_dataset_sample_link(auth_res: Annotated[tuple, Depends(is_admin)], dsid: str, sample_id: str):
     """
@@ -624,7 +622,6 @@ def delete_dataset_sample_link(auth_res: Annotated[tuple, Depends(is_admin)], ds
         session.commit()
 
         return {"message": f"Successfully deleted link between dataset {dsid} and sample {sample_id}"}
-    
 
 @app.get('/datasets/{dsid}/download_links')
 def generate_signed_url_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, bucket: str='mf-storage-prod'):
@@ -854,25 +851,25 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
             raise HTTPException(status_code=404, detail="Dataset not found")
         
         stored_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == dsid)).one_or_none()
-        
+        print(f'{stored_md=}')
         if stored_md:
             md_dict = stored_md.scientific_metadata
-
+            
         else:
             md_dict = {}
+
+        print(f'{md_dict=}')
 
         # this doesn't allow for updating nested fields without providing the whole tree from the first level down. 
         # could make recursive?
         for k,v in scientific_md_updates.items():
             md_dict[k] = v
-
         print(f'after update: {md_dict=}')
         md_obj = add_or_update(session, ScientificMetadata,
                                where=(ScientificMetadata.dataset_unique_id == dsid), 
                                dataset_unique_id = dsid, scientific_metadata = md_dict)
         print(f'{md_obj=}')
         attributes.flag_modified(md_obj, 'scientific_metadata')
-
         session.commit()
         session.refresh(md_obj)
         return(md_obj)
@@ -938,6 +935,7 @@ def search_scientific_metadata_no_auth(q: str, engine = Depends(setup_engine)):
     with Session(engine) as session:
         results = session.exec(stmt).all()
         return [row[0] for row in results]
+
 
 @app.get("/datasets/{dsid}/thumbnails", response_model = List[Thumbnail])
 def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
@@ -2040,3 +2038,14 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends
             .where(SampleLink.parent_sample_id == parent_sample.id)
         ).all()
         return child_samples
+    
+
+@app.get("/idtype/{unique_id}")
+def get_object_type(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str):
+    with Session(engine) as session:
+        # Verify sample exists
+        object_type = session.exec(select(IdType).where(IdType.unique_id == unique_id)).one_or_none()
+        if object_type is None:
+            raise HTTPException(status_code=404, detail="MFID not found")
+        else:
+            return object_type

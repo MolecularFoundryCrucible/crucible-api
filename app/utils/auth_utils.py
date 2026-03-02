@@ -23,7 +23,9 @@ SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "crucible_secret_key/versions/1")
 ALGORITHM = "HS256"
 security = HTTPBearer()
 
-engine = setup_engine(env_file = '.env')
+db_config_file = f'{os.getenv("HOME")}/{os.getenv("DB_CONF_FILE")}'
+#engine = setup_engine(env_config_file = db_config_file)
+engine = setup_engine(env_config_file = os.getenv("DB_CONF_FILE"))
 
 # API FILE
 api_config_file = os.getenv("API_CONF_FILE")

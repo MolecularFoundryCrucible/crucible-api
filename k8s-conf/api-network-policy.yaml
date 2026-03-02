@@ -14,4 +14,4 @@ spec:
             cidr: 10.128.0.0/9
       ports:
         - protocol: TCP
-          port: 8889
+          port: 7777

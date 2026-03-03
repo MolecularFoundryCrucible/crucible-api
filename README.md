@@ -42,7 +42,7 @@ OR
 uv sync
 ```
 
-3. Configure environment variables:
+3. Configure environment variables (or use `.env` file):
 ```bash
 export HOME=/path/to/home
 export DB_CONF_FILE=path/to/db_config.yaml
@@ -51,7 +51,7 @@ export API_CONF_FILE=path/to/api_config.yaml
 
 4. Run the development server:
 ```bash
-uvicorn app.api.main:app --reload --port 7777
+uv run uvicorn app.api.main:app --reload --port 7777
 ```
 
 ## Configuration

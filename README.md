@@ -274,8 +274,32 @@ For issues and questions, please use the GitHub issue tracker or contact the dev
 
 # Local Deployment for Testing
 
-To access database, we will use google cloud proxy
+Configuration will live in `.env` like this:
 
+```sh
+DB_TYPE=postgres
+DB_USERNAME=crucible-api-user
+DB_SERVER=127.0.0.1:5432
+DB_DATABASE=crucible
+PGDB_PW=<SECRET>
+DB_AUTH=basic
+API_CONF_FILE=app/conf/api_conf_local.yaml
+ORCID_CLIENT_ID=APP-E5VUS6XSJS5VFNEN
+CLIENT_SECRET=<SECRET>
+CRUCIBLE_SECRET_KEY=<SECRET>
+CRUCIBLE_API_KEY=<SECRET>
 ```
-cloud-sql-proxy --port=5432 --structured-logs -c your-credentials-file.json mf-crucible:us-central1:crucible-db
+
+To access database in Cloud SQL, we will use google cloud proxy:
+
+```sh
+cloud-sql-proxy --port=5432 -c secret/mf-crucible-1e9b3247273f.json mf-crucible:us-central1:crucible-db
 ```
+Note you will need a credential json file from gcp
+
+
+Start the app:
+```sh
+uvicorn app.api.main:app --reload --port 7777
+```
+

@@ -2,6 +2,7 @@
 import yaml
 import os
 from app.general_utils import get_secret
+from sqlalchemy import join
 from sqlmodel import create_engine, select
 
 
@@ -95,3 +96,22 @@ def delete_link(table, dataset_id, session):
     found_records = session.exec(statement).all()
     for rec in found_records:
         session.delete(rec)
+
+
+def generate_kw_query(session, base_query, keyword_filter):
+    from app.models.core_models import Dataset, DatasetKeywordLink, Keyword
+
+    keywords = session.exec(
+        select(Keyword).where(Keyword.keyword.ilike(f"%{keyword_filter}%"))
+    ).all()
+
+    if not keywords:
+        return []
+
+    keyword_ids = [keyword.id for keyword in keywords]
+    query = (
+        base_query.select_from(
+            join(DatasetKeywordLink, DatasetKeywordLink.dataset_id == Dataset.id)
+        ).filter(DatasetKeywordLink.keyword_id.in_(keyword_ids))
+    )
+    return query

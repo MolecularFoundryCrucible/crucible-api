@@ -49,7 +49,8 @@ from app.models.response_schemas import AccountInfo, DatasetSampleLinkResponse, 
 from app.models.tasks import IngestionRequest
 from app.utils.constants import SAMPLE_TYPE_MAPPING
 from app.utils.rmq_utils import send_pika_message
-from app.utils.sql_utils import add_or_update, only_update, setup_engine, table_obj_to_dict
+from app.utils.sql_utils import add_or_update, only_update, setup_engine, table_obj_to_dict, generate_kw_query
+from app.utils.user_utils import sql_add_user_to_access_group
 
 # ====== Database config
 connect_args = {"check_same_thread": False}
@@ -223,7 +224,7 @@ def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
 
 
 @app.post("/datasets/{dsid}/carrier_segmentation")
-def request_carrier_segmentation(dsid):
+def request_carrier_segmentation(dsid, auth_res: Annotated[tuple, Depends(authorize_user)]):
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
     msg = {
         "dsid": dsid,
@@ -388,26 +389,6 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         return upds
    
  
-def generate_kw_query(session, base_query, keyword_filter):
-
-    keywords = session.exec(
-                select(Keyword).where(Keyword.keyword.ilike(f"%{keyword_filter}%"))
-            ).all()
-    
-    if not keywords:
-        return []
-    
-    keyword_ids = [keyword.id for keyword in keywords]
-    query = (base_query.select_from(
-                    join(
-                        DatasetKeywordLink,
-                        DatasetKeywordLink.dataset_id == Dataset.id
-                    )
-                ).filter(DatasetKeywordLink.keyword_id.in_(keyword_ids))
-            )
-    return(query)
-
-
 
 @app.get("/datasets")
 def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: bool = False, limit: Optional[int] = None):
@@ -1462,11 +1443,7 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
         user = add_or_update(session, User, User.orcid == user_info.orcid, **user_dict)
         session.commit()
 
-        apikey = get_secret("ADMIN_APIKEY", "crucible_admin_apikey/versions/4")
-        requests.post(
-            f"{api_url}/users/{user.orcid}/access_groups/{user.orcid}",
-            headers={"Authorization": f"Bearer {apikey}"}
-        )
+        sql_add_user_to_access_group(user.orcid, user.orcid, session)
 
         # for each project that the user is a USER on:
         # 1. get the project object from the database
@@ -1485,10 +1462,7 @@ def create_user(admin_acct:  Annotated[str, Depends(is_admin)], user_info: User,
                 user.projects.append(prop)
 
             # add user to access group
-            requests.post(
-                f"{api_url}/users/{user.orcid}/access_groups/{pname}",
-                headers={"Authorization": f"Bearer {apikey}"}
-            )
+            sql_add_user_to_access_group(user.orcid, pname, session)
 
         session.add(user)
         session.commit()
@@ -1686,14 +1660,14 @@ def add_users_to_project(proj_id: str, orcid: str, admin_acct: Annotated[str, De
             session.commit()
         
         # add user to access group
-        add_user_to_access_group(admin_acct = admin_acct, orcid = orcid, group_name = proj_id)
+        sql_add_user_to_access_group(orcid, proj_id, session)
 
         project_users = read_users_on_project(proj_id, admin_acct)
         return project_users
 
 
 @app.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model = SampleLink)
-def link_parent_child_samples(parent_sample_id, child_sample_id):
+def link_parent_child_samples(parent_sample_id, child_sample_id, auth_res: Annotated[tuple, Depends(authorize_user)]):
 
     with Session(engine) as session:
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()

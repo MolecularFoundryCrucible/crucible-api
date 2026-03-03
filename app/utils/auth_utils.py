@@ -1,6 +1,5 @@
 from typing import Annotated
 import re
-import os
 import requests
 import secrets
 import datetime
@@ -11,30 +10,20 @@ from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.general_utils import  get_secret, is_orcid
-from app.utils.sql_utils import setup_engine
+from app.api.dependencies import get_engine, get_api_config, get_api_path, get_api_url
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import select, join
 from datetime import date, timedelta
-import yaml
 
 # ====== Constants
 SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "crucible_secret_key/versions/1")
 ALGORITHM = "HS256"
 security = HTTPBearer()
 
-db_config_file = f'{os.getenv("HOME")}/{os.getenv("DB_CONF_FILE")}'
-#engine = setup_engine(env_config_file = db_config_file)
-engine = setup_engine(env_config_file = os.getenv("DB_CONF_FILE"))
-
-# API FILE
-api_config_file = os.getenv("API_CONF_FILE")
-with open(f"{api_config_file}") as f:
-    apiconf = yaml.safe_load(f)
-
-hostname = apiconf["hostname"]
-api_path = apiconf["api_path"]
-api_url = f"https://{hostname}/{api_path}"
+engine = get_engine()
+api_path = get_api_path()
+api_url = get_api_url()
 
 # ====== Functions
 def find_or_add_api_access(orcid: str, engine, instrument_name = None, regenerate = False):

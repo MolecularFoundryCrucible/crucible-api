@@ -1,13 +1,15 @@
-# EVENTUALLY ALL THESE CAN GET HANDLED THROUGH CONFIG MAP 
-gcs_config_name = "mf-cloud-storage"
-crucible_api_url = "https://crucible.lbl.gov/testapi2"
-scicat_url = "https://mf-scicat.lbl.gov/api/v3"
+import os
+
+# Infrastructure config — override via environment variables
+gcs_config_name = os.getenv("GCS_CONFIG_NAME", "mf-cloud-storage")
+crucible_api_url = os.getenv("CRUCIBLE_API_URL", "https://crucible.lbl.gov/testapi2")
 scicat_pw_var = "SCICAT_PROD_PW"
-secret_store = "projects/776258882599/secrets"
-gcs_client_id = "776258882599-v17f82atu67g16na3oiq6ga3bnudoqrh.apps.googleusercontent.com"
-rmq_host =  '10.128.0.31'
-rmq_port = 5672
-propdb_api_url = "https://foundry-admin.lbl.gov/api/JSON/"
+secret_store = os.getenv("GCS_SECRET_STORE", "projects/776258882599/secrets")
+gcs_client_id = os.getenv("GCS_CLIENT_ID", "")
+rmq_host = os.getenv("RMQ_HOST", "localhost")
+rmq_port = int(os.getenv("RMQ_PORT", "5672"))
+rmq_user = os.getenv("RMQ_USER", "admin")
+
 
 base_export = ['dataset_name',
                'unique_id', 

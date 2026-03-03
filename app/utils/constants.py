@@ -1,6 +1,6 @@
 # EVENTUALLY ALL THESE CAN GET HANDLED THROUGH CONFIG MAP 
 gcs_config_name = "mf-cloud-storage"
-crucible_api_url = "https://crucible.lbl.gov/testapi2"
+crucible_api_url = "https://crucible.lbl.gov/api/v1"
 scicat_url = "https://mf-scicat.lbl.gov/api/v3"
 scicat_pw_var = "SCICAT_PROD_PW"
 secret_store = "projects/776258882599/secrets"

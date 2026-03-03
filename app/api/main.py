@@ -1962,6 +1962,128 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
         return(samp)
 
 
+@app.get("/samples/{sample_id}/sample_graph")
+def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a NetworkX node-link graph of all samples connected (via parent/child
+    relationships) to the given sample, i.e. its full lineage subgraph.
+    '''
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        target = session.exec(
+            select(Sample).where(Sample.unique_id == sample_id)
+        ).one_or_none()
+
+        if target is None:
+            raise HTTPException(status_code=404, detail="Sample not found")
+
+        # Auth check: mirrors project_sample_graph logic
+        if access_group_name.startswith('admin'):
+            pass
+        elif is_orcid(access_group_name):
+            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+            associated_group_names = [ag.group_name for ag in associated_groups]
+            if target.owner_orcid != access_group_name and target.project_id not in associated_group_names:
+                raise HTTPException(status_code=403, detail="Access denied")
+        else:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        # Recursive CTE: traverse parents and children in a single round trip
+        cte_sql = text("""
+            WITH RECURSIVE lineage(id, unique_id, sample_name) AS (
+                SELECT id, unique_id, sample_name
+                FROM sample WHERE unique_id = :sample_uid
+              UNION
+                SELECT s.id, s.unique_id, s.sample_name
+                FROM sample s
+                JOIN samplelink sl ON sl.parent_sample_id = s.id
+                JOIN lineage l ON sl.sample_id = l.id
+              UNION
+                SELECT s.id, s.unique_id, s.sample_name
+                FROM sample s
+                JOIN samplelink sl ON sl.sample_id = s.id
+                JOIN lineage l ON sl.parent_sample_id = l.id
+            )
+            SELECT id, unique_id, sample_name FROM lineage
+        """)
+        rows = session.execute(cte_sql, {"sample_uid": sample_id}).all()
+
+        id_to_uid = {r.id: r.unique_id for r in rows}
+        node_ids = list(id_to_uid.keys())
+
+        # Fetch all edges whose both endpoints are within the component
+        edge_rows = session.exec(
+            select(SampleLink.parent_sample_id, SampleLink.sample_id)
+            .where(SampleLink.parent_sample_id.in_(node_ids))
+            .where(SampleLink.sample_id.in_(node_ids))
+        ).all()
+
+        G = nx.DiGraph((id_to_uid[r[0]], id_to_uid[r[1]]) for r in edge_rows)
+        for r in rows:
+            G.add_node(r.unique_id, sample_name=r.sample_name)
+
+        return json_graph.node_link_data(G)
+
+
+@app.get("/datasets/{dataset_id}/dataset_graph")
+def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a NetworkX node-link graph of all datasets connected (via parent/child
+    relationships) to the given dataset, i.e. its full lineage subgraph.
+    '''
+    _, ag_ids = auth_res
+
+    with Session(engine) as session:
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        target = session.exec(
+            select(Dataset)
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.unique_id == dataset_id)
+        ).first()
+
+        if target is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        # Recursive CTE: traverse parents and children in a single round trip
+        cte_sql = text("""
+            WITH RECURSIVE lineage(id, unique_id, dataset_name) AS (
+                SELECT id, unique_id, dataset_name
+                FROM dataset WHERE unique_id = :dataset_uid
+              UNION
+                SELECT d.id, d.unique_id, d.dataset_name
+                FROM dataset d
+                JOIN datasetlink dl ON dl.parent_dataset_id = d.id
+                JOIN lineage l ON dl.child_dataset_id = l.id
+              UNION
+                SELECT d.id, d.unique_id, d.dataset_name
+                FROM dataset d
+                JOIN datasetlink dl ON dl.child_dataset_id = d.id
+                JOIN lineage l ON dl.parent_dataset_id = l.id
+            )
+            SELECT id, unique_id, dataset_name FROM lineage
+        """)
+        rows = session.execute(cte_sql, {"dataset_uid": dataset_id}).all()
+
+        id_to_uid = {r.id: r.unique_id for r in rows}
+        node_ids = list(id_to_uid.keys())
+
+        # Fetch all edges whose both endpoints are within the component
+        edge_rows = session.exec(
+            select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id)
+            .where(DatasetLink.parent_dataset_id.in_(node_ids))
+            .where(DatasetLink.child_dataset_id.in_(node_ids))
+        ).all()
+
+        G = nx.DiGraph((id_to_uid[r[0]], id_to_uid[r[1]]) for r in edge_rows)
+        for r in rows:
+            G.add_node(r.unique_id, dataset_name=r.dataset_name)
+
+        return json_graph.node_link_data(G)
+
+
 @app.get("/datasets/{dsid}/samples", response_model = List[Sample])
 def read_samples_in_dataset(dsid: str, auth_res:  Annotated[tuple, Depends(authorize_user)]):
     '''

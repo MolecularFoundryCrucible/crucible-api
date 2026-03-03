@@ -1920,6 +1920,37 @@ def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(aut
         return json_graph.node_link_data(G)
 
 
+@app.get("/projects/{project_id}/dataset_graph")
+def project_dataset_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        ds_cmd = (
+            select(Dataset)
+            .options(joinedload(Dataset.parents))
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.project_id == project_id)
+        )
+
+        ds_list = session.exec(ds_cmd).unique().all()
+
+        edges = []
+        for dataset in ds_list:
+            for parent in dataset.parents:
+                edges.append((parent.unique_id, dataset.unique_id))
+
+        G = nx.DiGraph(edges)
+        for dataset in ds_list:
+            G.add_node(dataset.unique_id,
+                       dataset_name=dataset.dataset_name)
+
+        return json_graph.node_link_data(G)
+
+
 @app.get("/samples/{sample_id}", response_model = Union[None, SampleWithDatasetsResponse])
 def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''

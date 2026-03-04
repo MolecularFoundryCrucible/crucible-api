@@ -1989,23 +1989,32 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
         else:
             raise HTTPException(status_code=403, detail="Access denied")
 
-        # Recursive CTE: traverse parents and children in a single round trip
+        # Two recursive CTEs — one walking up (ancestors), one walking down
+        # (descendants). PostgreSQL only allows a single UNION between the
+        # non-recursive and recursive terms, so bidirectional traversal in a
+        # single CTE is not permitted.
         cte_sql = text("""
-            WITH RECURSIVE lineage(id, unique_id, sample_name) AS (
+            WITH RECURSIVE
+            ancestors(id, unique_id, sample_name) AS (
                 SELECT id, unique_id, sample_name
                 FROM sample WHERE unique_id = :sample_uid
               UNION
                 SELECT s.id, s.unique_id, s.sample_name
                 FROM sample s
                 JOIN samplelink sl ON sl.parent_sample_id = s.id
-                JOIN lineage l ON sl.sample_id = l.id
+                JOIN ancestors a ON sl.sample_id = a.id
+            ),
+            descendants(id, unique_id, sample_name) AS (
+                SELECT id, unique_id, sample_name
+                FROM sample WHERE unique_id = :sample_uid
               UNION
                 SELECT s.id, s.unique_id, s.sample_name
                 FROM sample s
                 JOIN samplelink sl ON sl.sample_id = s.id
-                JOIN lineage l ON sl.parent_sample_id = l.id
+                JOIN descendants d ON sl.parent_sample_id = d.id
             )
-            SELECT id, unique_id, sample_name FROM lineage
+            SELECT DISTINCT id, unique_id, sample_name
+            FROM (SELECT * FROM ancestors UNION ALL SELECT * FROM descendants) combined
         """)
         rows = session.execute(cte_sql, {"sample_uid": sample_id}).all()
 
@@ -2047,23 +2056,29 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_
         if target is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        # Recursive CTE: traverse parents and children in a single round trip
+        # Two recursive CTEs — ancestors (walk up) and descendants (walk down)
         cte_sql = text("""
-            WITH RECURSIVE lineage(id, unique_id, dataset_name) AS (
+            WITH RECURSIVE
+            ancestors(id, unique_id, dataset_name) AS (
                 SELECT id, unique_id, dataset_name
                 FROM dataset WHERE unique_id = :dataset_uid
               UNION
                 SELECT d.id, d.unique_id, d.dataset_name
                 FROM dataset d
                 JOIN datasetlink dl ON dl.parent_dataset_id = d.id
-                JOIN lineage l ON dl.child_dataset_id = l.id
+                JOIN ancestors a ON dl.child_dataset_id = a.id
+            ),
+            descendants(id, unique_id, dataset_name) AS (
+                SELECT id, unique_id, dataset_name
+                FROM dataset WHERE unique_id = :dataset_uid
               UNION
                 SELECT d.id, d.unique_id, d.dataset_name
                 FROM dataset d
                 JOIN datasetlink dl ON dl.child_dataset_id = d.id
-                JOIN lineage l ON dl.parent_dataset_id = l.id
+                JOIN descendants desc_ ON dl.parent_dataset_id = desc_.id
             )
-            SELECT id, unique_id, dataset_name FROM lineage
+            SELECT DISTINCT id, unique_id, dataset_name
+            FROM (SELECT * FROM ancestors UNION ALL SELECT * FROM descendants) combined
         """)
         rows = session.execute(cte_sql, {"dataset_uid": dataset_id}).all()
 
@@ -2080,6 +2095,161 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_
         G = nx.DiGraph((id_to_uid[r[0]], id_to_uid[r[1]]) for r in edge_rows)
         for r in rows:
             G.add_node(r.unique_id, dataset_name=r.dataset_name)
+
+        return json_graph.node_link_data(G)
+
+
+@app.get("/entity_graph/{entity_id}")
+def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a NetworkX node-link graph of all samples and datasets connected to
+    the given entity via sample lineage, dataset lineage, and sample-dataset
+    associations. entity_id may be a sample or dataset unique_id.
+    Nodes carry entity_type ('sample' or 'dataset') and name attributes.
+    '''
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        # Identify root entity type and enforce auth before traversal
+        sample_target = session.exec(
+            select(Sample).where(Sample.unique_id == entity_id)
+        ).one_or_none()
+
+        if sample_target is not None:
+            if access_group_name.startswith('admin'):
+                pass
+            elif is_orcid(access_group_name):
+                associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+                associated_group_names = [ag.group_name for ag in associated_groups]
+                if sample_target.owner_orcid != access_group_name and sample_target.project_id not in associated_group_names:
+                    raise HTTPException(status_code=403, detail="Access denied")
+            else:
+                raise HTTPException(status_code=403, detail="Access denied")
+        else:
+            auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+            dataset_target = session.exec(
+                select(Dataset)
+                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                .filter(auth_filter)
+                .where(Dataset.unique_id == entity_id)
+            ).first()
+            if dataset_target is None:
+                raise HTTPException(status_code=404, detail="Entity not found")
+
+        # PostgreSQL recursive CTEs only allow a single recursive branch (the
+        # rightmost UNION ALL term). Multi-type graph traversal with 6 edge
+        # directions cannot be expressed in one CTE, so we use a batched BFS
+        # instead: one round of queries per frontier level → O(depth) trips.
+
+        # visited: (entity_type, db_id) -> (unique_id, name)
+        if sample_target is not None:
+            root = ('sample', sample_target.id, sample_target.unique_id, sample_target.sample_name)
+        else:
+            root = ('dataset', dataset_target.id, dataset_target.unique_id, dataset_target.dataset_name)
+
+        visited = {(root[0], root[1]): (root[2], root[3])}
+        frontier = {(root[0], root[1])}
+
+        while frontier:
+            new_frontier = set()
+            s_ids = [fid for ftype, fid in frontier if ftype == 'sample']
+            d_ids = [fid for ftype, fid in frontier if ftype == 'dataset']
+
+            if s_ids:
+                # Sample parents, children, and linked datasets in three queries
+                for rows_q in [
+                    session.exec(
+                        select(Sample.id, Sample.unique_id, Sample.sample_name)
+                        .join(SampleLink, SampleLink.parent_sample_id == Sample.id)
+                        .where(SampleLink.sample_id.in_(s_ids))
+                    ).all(),
+                    session.exec(
+                        select(Sample.id, Sample.unique_id, Sample.sample_name)
+                        .join(SampleLink, SampleLink.sample_id == Sample.id)
+                        .where(SampleLink.parent_sample_id.in_(s_ids))
+                    ).all(),
+                ]:
+                    for r in rows_q:
+                        key = ('sample', r[0])
+                        if key not in visited:
+                            visited[key] = (r[1], r[2])
+                            new_frontier.add(key)
+
+                for r in session.exec(
+                    select(Dataset.id, Dataset.unique_id, Dataset.dataset_name)
+                    .join(DatasetSampleLink, DatasetSampleLink.dataset_id == Dataset.id)
+                    .where(DatasetSampleLink.sample_id.in_(s_ids))
+                ).all():
+                    key = ('dataset', r[0])
+                    if key not in visited:
+                        visited[key] = (r[1], r[2])
+                        new_frontier.add(key)
+
+            if d_ids:
+                # Dataset parents, children, and linked samples in three queries
+                for rows_q in [
+                    session.exec(
+                        select(Dataset.id, Dataset.unique_id, Dataset.dataset_name)
+                        .join(DatasetLink, DatasetLink.parent_dataset_id == Dataset.id)
+                        .where(DatasetLink.child_dataset_id.in_(d_ids))
+                    ).all(),
+                    session.exec(
+                        select(Dataset.id, Dataset.unique_id, Dataset.dataset_name)
+                        .join(DatasetLink, DatasetLink.child_dataset_id == Dataset.id)
+                        .where(DatasetLink.parent_dataset_id.in_(d_ids))
+                    ).all(),
+                ]:
+                    for r in rows_q:
+                        key = ('dataset', r[0])
+                        if key not in visited:
+                            visited[key] = (r[1], r[2])
+                            new_frontier.add(key)
+
+                for r in session.exec(
+                    select(Sample.id, Sample.unique_id, Sample.sample_name)
+                    .join(DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)
+                    .where(DatasetSampleLink.dataset_id.in_(d_ids))
+                ).all():
+                    key = ('sample', r[0])
+                    if key not in visited:
+                        visited[key] = (r[1], r[2])
+                        new_frontier.add(key)
+
+            frontier = new_frontier
+
+        sample_ids = [fid for ftype, fid in visited if ftype == 'sample']
+        dataset_ids = [fid for ftype, fid in visited if ftype == 'dataset']
+        id_to_uid = {(ftype, fid): uid for (ftype, fid), (uid, _) in visited.items()}
+
+        edges = []
+
+        if sample_ids:
+            sample_edges = session.exec(
+                select(SampleLink.parent_sample_id, SampleLink.sample_id)
+                .where(SampleLink.parent_sample_id.in_(sample_ids))
+                .where(SampleLink.sample_id.in_(sample_ids))
+            ).all()
+            edges += [(id_to_uid[('sample', r[0])], id_to_uid[('sample', r[1])]) for r in sample_edges]
+
+        if dataset_ids:
+            dataset_edges = session.exec(
+                select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id)
+                .where(DatasetLink.parent_dataset_id.in_(dataset_ids))
+                .where(DatasetLink.child_dataset_id.in_(dataset_ids))
+            ).all()
+            edges += [(id_to_uid[('dataset', r[0])], id_to_uid[('dataset', r[1])]) for r in dataset_edges]
+
+        if sample_ids and dataset_ids:
+            sd_edges = session.exec(
+                select(DatasetSampleLink.sample_id, DatasetSampleLink.dataset_id)
+                .where(DatasetSampleLink.sample_id.in_(sample_ids))
+                .where(DatasetSampleLink.dataset_id.in_(dataset_ids))
+            ).all()
+            edges += [(id_to_uid[('sample', r[0])], id_to_uid[('dataset', r[1])]) for r in sd_edges]
+
+        G = nx.DiGraph(edges)
+        for (entity_type, _), (unique_id, name) in visited.items():
+            G.add_node(unique_id, entity_type=entity_type, name=name)
 
         return json_graph.node_link_data(G)
 

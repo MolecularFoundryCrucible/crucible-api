@@ -954,6 +954,63 @@ def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: s
         return ds_thumbnails
 
 
+@app.post("/datasets/first_thumbnails")
+def get_first_thumbnails(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    dataset_ids: List[str] = Body(...),
+):
+    '''
+    Given a list of dataset unique_ids, returns a dict mapping each unique_id
+    to its first (lowest-id) thumbnail. Datasets with no thumbnail or that the
+    caller cannot access are omitted from the response.
+
+    Intended for bulk thumbnail fetching after an entity_graph call.
+    '''
+    _, ag_ids = auth_res
+
+    with Session(engine) as session:
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        authorized_ds = session.exec(
+            select(Dataset)
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.unique_id.in_(dataset_ids))
+            .distinct()
+        ).all()
+
+        ds_id_to_uid = {ds.id: ds.unique_id for ds in authorized_ds}
+
+        if not ds_id_to_uid:
+            return {}
+
+        # Subquery: minimum (first) thumbnail id per dataset
+        min_thumb_subq = (
+            select(Thumbnail.dataset_id, func.min(Thumbnail.id).label('min_id'))
+            .where(Thumbnail.dataset_id.in_(list(ds_id_to_uid.keys())))
+            .group_by(Thumbnail.dataset_id)
+            .subquery()
+        )
+
+        first_thumbnails = session.exec(
+            select(Thumbnail).join(
+                min_thumb_subq,
+                and_(
+                    Thumbnail.dataset_id == min_thumb_subq.c.dataset_id,
+                    Thumbnail.id == min_thumb_subq.c.min_id,
+                )
+            )
+        ).all()
+
+        return {
+            ds_id_to_uid[t.dataset_id]: {
+                "thumbnail_name": t.thumbnail_name,
+                "thumbnail_b64str": t.thumbnail_b64str,
+            }
+            for t in first_thumbnails
+        }
+
+
 @app.post("/datasets/{dsid}/thumbnails", response_model = Thumbnail)
 def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
                   dsid: str,

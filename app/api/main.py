@@ -2023,6 +2023,60 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
 def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a NetworkX node-link graph of all samples connected (via parent/child
+    relationships) to the given sample. Loads all samples in the project and
+    returns the weakly connected component containing the target sample.
+    '''
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        target = session.exec(
+            select(Sample).where(Sample.unique_id == sample_id)
+        ).one_or_none()
+
+        if target is None:
+            raise HTTPException(status_code=404, detail="Sample not found")
+
+        if access_group_name.startswith('admin'):
+            pass
+        elif is_orcid(access_group_name):
+            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+            associated_group_names = [ag.group_name for ag in associated_groups]
+            if target.owner_orcid != access_group_name and target.project_id not in associated_group_names:
+                raise HTTPException(status_code=403, detail="Access denied")
+        else:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        samp_list = session.exec(
+            select(Sample)
+            .options(joinedload(Sample.parents))
+            .where(Sample.project_id == target.project_id)
+        ).unique().all()
+
+        edges = []
+        for sample in samp_list:
+            for parent in sample.parents:
+                edges.append((parent.unique_id, sample.unique_id))
+
+        G = nx.DiGraph(edges)
+        for sample in samp_list:
+            G.add_node(sample.unique_id, sample_name=sample.sample_name)
+
+        if target.unique_id not in G:
+            G.add_node(target.unique_id, sample_name=target.sample_name)
+
+        # node_connected_component requires an undirected graph. Converting here
+        # is equivalent to finding the weakly connected component in the DiGraph —
+        # i.e. all ancestors and descendants of the target, reachable in either
+        # direction along lineage edges, regardless of depth.
+        component_nodes = nx.node_connected_component(G.to_undirected(), target.unique_id)
+        return json_graph.node_link_data(G.subgraph(component_nodes))
+
+
+@app.get("/samples/{sample_id}/sample_graph_cte")
+def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    CTE-based implementation (kept for reference). Prefer /sample_graph.
+    Returns a NetworkX node-link graph of all samples connected (via parent/child
     relationships) to the given sample, i.e. its full lineage subgraph.
     '''
     access_group_name, ag_ids = auth_res
@@ -2096,6 +2150,57 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
 def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a NetworkX node-link graph of all datasets connected (via parent/child
+    relationships) to the given dataset. Loads all authorized datasets in the
+    project and returns the weakly connected component containing the target dataset.
+    '''
+    _, ag_ids = auth_res
+
+    with Session(engine) as session:
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        target = session.exec(
+            select(Dataset)
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.unique_id == dataset_id)
+        ).first()
+
+        if target is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        ds_list = session.exec(
+            select(Dataset)
+            .options(joinedload(Dataset.parents))
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.project_id == target.project_id)
+        ).unique().all()
+
+        edges = []
+        for dataset in ds_list:
+            for parent in dataset.parents:
+                edges.append((parent.unique_id, dataset.unique_id))
+
+        G = nx.DiGraph(edges)
+        for dataset in ds_list:
+            G.add_node(dataset.unique_id, dataset_name=dataset.dataset_name)
+
+        if target.unique_id not in G:
+            G.add_node(target.unique_id, dataset_name=target.dataset_name)
+
+        # node_connected_component requires an undirected graph. Converting here
+        # is equivalent to finding the weakly connected component in the DiGraph —
+        # i.e. all ancestors and descendants of the target, reachable in either
+        # direction along lineage edges, regardless of depth.
+        component_nodes = nx.node_connected_component(G.to_undirected(), target.unique_id)
+        return json_graph.node_link_data(G.subgraph(component_nodes))
+
+
+@app.get("/datasets/{dataset_id}/dataset_graph_cte")
+def dataset_graph_cte(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    CTE-based implementation (kept for reference). Prefer /dataset_graph.
+    Returns a NetworkX node-link graph of all datasets connected (via parent/child
     relationships) to the given dataset, i.e. its full lineage subgraph.
     '''
     _, ag_ids = auth_res
@@ -2159,6 +2264,145 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_
 @app.get("/entity_graph/{entity_id}")
 def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
+    Returns a NetworkX node-link graph of all samples and datasets connected to
+    the given entity via sample lineage, dataset lineage, and sample-dataset
+    associations. entity_id may be a sample or dataset unique_id.
+    Nodes carry entity_type ('sample' or 'dataset') and name attributes.
+
+    Loads all samples and datasets in the root entity's project in a small number
+    of broad queries, builds the combined graph in Python, then returns the weakly
+    connected component containing the root entity.
+    '''
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        # Identify root entity type, enforce auth, and determine project scope
+        sample_target = session.exec(
+            select(Sample).where(Sample.unique_id == entity_id)
+        ).one_or_none()
+
+        if sample_target is not None:
+            if access_group_name.startswith('admin'):
+                pass
+            elif is_orcid(access_group_name):
+                associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+                associated_group_names = [ag.group_name for ag in associated_groups]
+                if sample_target.owner_orcid != access_group_name and sample_target.project_id not in associated_group_names:
+                    raise HTTPException(status_code=403, detail="Access denied")
+            else:
+                raise HTTPException(status_code=403, detail="Access denied")
+            project_id = sample_target.project_id
+        else:
+            auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+            dataset_target = session.exec(
+                select(Dataset)
+                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                .filter(auth_filter)
+                .where(Dataset.unique_id == entity_id)
+            ).first()
+            if dataset_target is None:
+                raise HTTPException(status_code=404, detail="Entity not found")
+            project_id = dataset_target.project_id
+
+        # Load all samples in the project with parent relationships
+        samp_list = session.exec(
+            select(Sample)
+            .options(joinedload(Sample.parents))
+            .where(Sample.project_id == project_id)
+        ).unique().all()
+
+        # Load all authorized datasets in the project with parent relationships
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        ds_list = session.exec(
+            select(Dataset)
+            .options(joinedload(Dataset.parents))
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.project_id == project_id)
+        ).unique().all()
+
+        # Map integer FK → unique_id for resolving DatasetSampleLink rows
+        s_int_to_uid = {s.id: s.unique_id for s in samp_list}
+        d_int_to_uid = {d.id: d.unique_id for d in ds_list}
+
+        # Load sample-dataset associations scoped to this project's entities
+        sd_links = session.exec(
+            select(DatasetSampleLink)
+            .where(DatasetSampleLink.sample_id.in_(s_int_to_uid.keys()))
+            .where(DatasetSampleLink.dataset_id.in_(d_int_to_uid.keys()))
+        ).all() if s_int_to_uid and d_int_to_uid else []
+
+        # Build unique_id digraphs for each type separately so directed lineage
+        # traversal stays within one entity type at a time.
+        G_samp = nx.DiGraph()
+        for s in samp_list:
+            G_samp.add_node(s.unique_id)
+            for parent in s.parents:
+                G_samp.add_edge(parent.unique_id, s.unique_id)
+
+        G_ds = nx.DiGraph()
+        for d in ds_list:
+            G_ds.add_node(d.unique_id)
+            for parent in d.parents:
+                G_ds.add_edge(parent.unique_id, d.unique_id)
+
+        # Build sample↔dataset adjacency keyed by unique_id
+        s_to_ds: dict[str, set[str]] = {}
+        ds_to_s: dict[str, set[str]] = {}
+        for link in sd_links:
+            s_uid = s_int_to_uid[link.sample_id]
+            d_uid = d_int_to_uid[link.dataset_id]
+            s_to_ds.setdefault(s_uid, set()).add(d_uid)
+            ds_to_s.setdefault(d_uid, set()).add(s_uid)
+
+        def lineage(G: nx.DiGraph, seeds: set) -> set:
+            """Bidirectional directed lineage from a set of seed unique_ids."""
+            result = set()
+            for n in seeds:
+                if n in G:
+                    result |= nx.ancestors(G, n) | nx.descendants(G, n)
+                result.add(n)
+            return result
+
+        # Two-step expansion mirroring the BFS version:
+        #   sample root → full sample lineage → linked datasets → dataset lineage
+        #   dataset root → full dataset lineage → linked samples → sample lineage
+        if sample_target is not None:
+            sample_uids = lineage(G_samp, {sample_target.unique_id})
+            seed_ds = set().union(*(s_to_ds.get(s, set()) for s in sample_uids))
+            ds_uids = lineage(G_ds, seed_ds)
+        else:
+            ds_uids = lineage(G_ds, {dataset_target.unique_id})
+            seed_s = set().union(*(ds_to_s.get(d, set()) for d in ds_uids))
+            sample_uids = lineage(G_samp, seed_s)
+
+        # Build output graph
+        G = nx.DiGraph()
+        for s in samp_list:
+            if s.unique_id in sample_uids:
+                G.add_node(s.unique_id, entity_type='sample', name=s.sample_name)
+                for parent in s.parents:
+                    if parent.unique_id in sample_uids:
+                        G.add_edge(parent.unique_id, s.unique_id)
+        for d in ds_list:
+            if d.unique_id in ds_uids:
+                G.add_node(d.unique_id, entity_type='dataset', name=d.dataset_name)
+                for parent in d.parents:
+                    if parent.unique_id in ds_uids:
+                        G.add_edge(parent.unique_id, d.unique_id)
+        for link in sd_links:
+            s_uid = s_int_to_uid[link.sample_id]
+            d_uid = d_int_to_uid[link.dataset_id]
+            if s_uid in sample_uids and d_uid in ds_uids:
+                G.add_edge(s_uid, d_uid)
+
+        return json_graph.node_link_data(G)
+
+
+@app.get("/entity_graph_bfs/{entity_id}")
+def entity_graph_bfs(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    BFS-based implementation (kept for reference). Prefer /entity_graph/{entity_id}.
     Returns a NetworkX node-link graph of all samples and datasets connected to
     the given entity via sample lineage, dataset lineage, and sample-dataset
     associations. entity_id may be a sample or dataset unique_id.

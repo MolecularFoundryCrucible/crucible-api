@@ -48,28 +48,6 @@ def find_or_add_api_access(orcid: str, engine, instrument_name = None, regenerat
         new_token = generate_apikey(orcid, session)
         return(new_token)
 
-# def find_or_add_api_access_for_service(service: str, engine, regenerate = False):
-#     from app.models.misc import ApiToken
-
-#     # query the database for orcid
-#     one_year_ago = (date.today()-timedelta(365)).isoformat()
-#     with Session(engine) as session:
-#         api_acct = session.exec(select(ApiToken).where(and_(ApiToken.access_group_id == service,
-#                                                             ApiToken.token_created > one_year_ago))).one_or_none()
-
-#     if api_acct is not None and regenerate == False:
-#         print(f"found an account")
-#         return(api_acct[0].token)
-        
-#     elif api_acct is not None and regenerate == True:
-#         delete_apikey(service, session)
-#         new_token = generate_apikey(orcid, session)
-#         return(new_token)
-        
-#     else: 
-#         new_token = generate_apikey(orcid, session)
-#         return(new_token)
-
 
 def generate_apikey(orcid: str, session):
     from app.models.misc import ApiToken

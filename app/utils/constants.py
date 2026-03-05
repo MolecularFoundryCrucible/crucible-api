@@ -2,7 +2,7 @@ import os
 
 # Infrastructure config — override via environment variables
 gcs_config_name = os.getenv("GCS_CONFIG_NAME", "mf-cloud-storage")
-crucible_api_url = os.getenv("CRUCIBLE_API_URL", "https://crucible.lbl.gov/testapi2")
+crucible_api_url = os.getenv("CRUCIBLE_API_URL", "https://crucible.lbl.gov/testapi-staging")
 scicat_pw_var = "SCICAT_PROD_PW"
 secret_store = os.getenv("GCS_SECRET_STORE", "projects/776258882599/secrets")
 gcs_client_id = os.getenv("GCS_CLIENT_ID", "")

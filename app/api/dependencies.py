@@ -10,7 +10,7 @@ from app.utils.sql_utils import setup_engine as _setup_engine
 
 @lru_cache
 def get_engine():
-    return _setup_engine(env_config_file=os.getenv("DB_CONF_FILE"))
+    return _setup_engine(env_file=os.getenv("DB_CONF_FILE"))
 
 
 @lru_cache

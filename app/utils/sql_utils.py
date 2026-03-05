@@ -5,6 +5,7 @@ from app.general_utils import get_secret
 from sqlalchemy import join
 from sqlmodel import create_engine, select
 from app.general_utils import  get_secret
+from dotenv import load_dotenv
 # Need a .env file with the following variables
 #DB_PASSWORD
 #DB_USERNAME

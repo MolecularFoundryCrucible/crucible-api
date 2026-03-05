@@ -2008,6 +2008,65 @@ def project_dataset_graph(project_id: str, auth_res: Annotated[tuple, Depends(au
         return json_graph.node_link_data(G)
 
 
+@app.get("/projects/{project_id}/entity_graph")
+def project_entity_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a NetworkX node-link graph of all samples and datasets in the
+    project, connected via sample lineage, dataset lineage, and sample-dataset
+    associations. Nodes carry entity_type ('sample' or 'dataset') and name.
+    '''
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        # Load all samples in the project with parent relationships
+        samp_cmd = select(Sample).options(joinedload(Sample.parents))
+        if not access_group_name.startswith('admin'):
+            if is_orcid(access_group_name):
+                associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+                associated_group_names = [ag.group_name for ag in associated_groups]
+                samp_cmd = samp_cmd.where(or_(Sample.owner_orcid == access_group_name,
+                                              Sample.project_id.in_(associated_group_names)))
+            else:
+                return json_graph.node_link_data(nx.DiGraph())
+        samp_cmd = samp_cmd.where(Sample.project_id == project_id)
+        samp_list = session.exec(samp_cmd).unique().all()
+
+        # Load all authorized datasets in the project with parent relationships
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        ds_list = session.exec(
+            select(Dataset)
+            .options(joinedload(Dataset.parents))
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.project_id == project_id)
+        ).unique().all()
+
+        s_int_to_uid = {s.id: s.unique_id for s in samp_list}
+        d_int_to_uid = {d.id: d.unique_id for d in ds_list}
+
+        # Load sample-dataset associations scoped to this project's entities
+        sd_links = session.exec(
+            select(DatasetSampleLink)
+            .where(DatasetSampleLink.sample_id.in_(s_int_to_uid.keys()))
+            .where(DatasetSampleLink.dataset_id.in_(d_int_to_uid.keys()))
+        ).all() if s_int_to_uid and d_int_to_uid else []
+
+        # Build combined graph — no subgraph extraction needed, include everything
+        G = nx.DiGraph()
+        for s in samp_list:
+            G.add_node(s.unique_id, entity_type='sample', name=s.sample_name)
+            for parent in s.parents:
+                G.add_edge(parent.unique_id, s.unique_id)
+        for d in ds_list:
+            G.add_node(d.unique_id, entity_type='dataset', name=d.dataset_name)
+            for parent in d.parents:
+                G.add_edge(parent.unique_id, d.unique_id)
+        for link in sd_links:
+            G.add_edge(s_int_to_uid[link.sample_id], d_int_to_uid[link.dataset_id])
+
+        return json_graph.node_link_data(G)
+
+
 @app.get("/samples/{sample_id}", response_model = Union[None, SampleWithDatasetsResponse])
 def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''

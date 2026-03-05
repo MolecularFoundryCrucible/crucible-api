@@ -2193,90 +2193,105 @@ def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_us
             if dataset_target is None:
                 raise HTTPException(status_code=404, detail="Entity not found")
 
-        # PostgreSQL recursive CTEs only allow a single recursive branch (the
-        # rightmost UNION ALL term). Multi-type graph traversal with 6 edge
-        # directions cannot be expressed in one CTE, so we use a batched BFS
-        # instead: one round of queries per frontier level → O(depth) trips.
+        # Directional traversal — walks strictly up (ancestors) and strictly
+        # down (descendants) for each entity type separately, preventing
+        # siblings from being included via a shared parent node.
+        #
+        # Cross-type links flow one way: samples → datasets.
+        # Datasets are never used to discover additional samples.
 
-        # visited: (entity_type, db_id) -> (unique_id, name)
+        def walk_up_samples(start: set) -> set:
+            ids = set(start)
+            frontier = set(start)
+            while frontier:
+                rows = session.exec(
+                    select(Sample.id)
+                    .join(SampleLink, SampleLink.parent_sample_id == Sample.id)
+                    .where(SampleLink.sample_id.in_(frontier))
+                ).all()
+                frontier = set(rows) - ids
+                ids |= frontier
+            return ids
+
+        def walk_down_samples(start: set) -> set:
+            ids = set(start)
+            frontier = set(start)
+            while frontier:
+                rows = session.exec(
+                    select(Sample.id)
+                    .join(SampleLink, SampleLink.sample_id == Sample.id)
+                    .where(SampleLink.parent_sample_id.in_(frontier))
+                ).all()
+                frontier = set(rows) - ids
+                ids |= frontier
+            return ids
+
+        def walk_up_datasets(start: set) -> set:
+            ids = set(start)
+            frontier = set(start)
+            while frontier:
+                rows = session.exec(
+                    select(Dataset.id)
+                    .join(DatasetLink, DatasetLink.parent_dataset_id == Dataset.id)
+                    .where(DatasetLink.child_dataset_id.in_(frontier))
+                ).all()
+                frontier = set(rows) - ids
+                ids |= frontier
+            return ids
+
+        def walk_down_datasets(start: set) -> set:
+            ids = set(start)
+            frontier = set(start)
+            while frontier:
+                rows = session.exec(
+                    select(Dataset.id)
+                    .join(DatasetLink, DatasetLink.child_dataset_id == Dataset.id)
+                    .where(DatasetLink.parent_dataset_id.in_(frontier))
+                ).all()
+                frontier = set(rows) - ids
+                ids |= frontier
+            return ids
+
         if sample_target is not None:
-            root = ('sample', sample_target.id, sample_target.unique_id, sample_target.sample_name)
+            root_s = {sample_target.id}
+            sample_ids = walk_up_samples(root_s) | walk_down_samples(root_s)
+
+            linked_ds = session.exec(
+                select(Dataset.id)
+                .join(DatasetSampleLink, DatasetSampleLink.dataset_id == Dataset.id)
+                .where(DatasetSampleLink.sample_id.in_(sample_ids))
+            ).all()
+            seed_ds = set(linked_ds)
         else:
-            root = ('dataset', dataset_target.id, dataset_target.unique_id, dataset_target.dataset_name)
+            root_d = {dataset_target.id}
+            seed_ds = walk_up_datasets(root_d) | walk_down_datasets(root_d)
 
-        visited = {(root[0], root[1]): (root[2], root[3])}
-        frontier = {(root[0], root[1])}
+            linked_s = session.exec(
+                select(Sample.id)
+                .join(DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)
+                .where(DatasetSampleLink.dataset_id.in_(seed_ds))
+            ).all()
+            seed_s = set(linked_s)
+            sample_ids = walk_up_samples(seed_s) | walk_down_samples(seed_s)
 
-        while frontier:
-            new_frontier = set()
-            s_ids = [fid for ftype, fid in frontier if ftype == 'sample']
-            d_ids = [fid for ftype, fid in frontier if ftype == 'dataset']
+        dataset_ids = walk_up_datasets(seed_ds) | walk_down_datasets(seed_ds) if seed_ds else set()
 
-            if s_ids:
-                # Sample parents, children, and linked datasets in three queries
-                for rows_q in [
-                    session.exec(
-                        select(Sample.id, Sample.unique_id, Sample.sample_name)
-                        .join(SampleLink, SampleLink.parent_sample_id == Sample.id)
-                        .where(SampleLink.sample_id.in_(s_ids))
-                    ).all(),
-                    session.exec(
-                        select(Sample.id, Sample.unique_id, Sample.sample_name)
-                        .join(SampleLink, SampleLink.sample_id == Sample.id)
-                        .where(SampleLink.parent_sample_id.in_(s_ids))
-                    ).all(),
-                ]:
-                    for r in rows_q:
-                        key = ('sample', r[0])
-                        if key not in visited:
-                            visited[key] = (r[1], r[2])
-                            new_frontier.add(key)
+        # Fetch node data
+        sample_rows = session.exec(
+            select(Sample.id, Sample.unique_id, Sample.sample_name)
+            .where(Sample.id.in_(sample_ids))
+        ).all() if sample_ids else []
 
-                for r in session.exec(
-                    select(Dataset.id, Dataset.unique_id, Dataset.dataset_name)
-                    .join(DatasetSampleLink, DatasetSampleLink.dataset_id == Dataset.id)
-                    .where(DatasetSampleLink.sample_id.in_(s_ids))
-                ).all():
-                    key = ('dataset', r[0])
-                    if key not in visited:
-                        visited[key] = (r[1], r[2])
-                        new_frontier.add(key)
+        dataset_rows = session.exec(
+            select(Dataset.id, Dataset.unique_id, Dataset.dataset_name)
+            .where(Dataset.id.in_(dataset_ids))
+        ).all() if dataset_ids else []
 
-            if d_ids:
-                # Dataset parents, children, and linked samples in three queries
-                for rows_q in [
-                    session.exec(
-                        select(Dataset.id, Dataset.unique_id, Dataset.dataset_name)
-                        .join(DatasetLink, DatasetLink.parent_dataset_id == Dataset.id)
-                        .where(DatasetLink.child_dataset_id.in_(d_ids))
-                    ).all(),
-                    session.exec(
-                        select(Dataset.id, Dataset.unique_id, Dataset.dataset_name)
-                        .join(DatasetLink, DatasetLink.child_dataset_id == Dataset.id)
-                        .where(DatasetLink.parent_dataset_id.in_(d_ids))
-                    ).all(),
-                ]:
-                    for r in rows_q:
-                        key = ('dataset', r[0])
-                        if key not in visited:
-                            visited[key] = (r[1], r[2])
-                            new_frontier.add(key)
-
-                for r in session.exec(
-                    select(Sample.id, Sample.unique_id, Sample.sample_name)
-                    .join(DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)
-                    .where(DatasetSampleLink.dataset_id.in_(d_ids))
-                ).all():
-                    key = ('sample', r[0])
-                    if key not in visited:
-                        visited[key] = (r[1], r[2])
-                        new_frontier.add(key)
-
-            frontier = new_frontier
-
-        sample_ids = [fid for ftype, fid in visited if ftype == 'sample']
-        dataset_ids = [fid for ftype, fid in visited if ftype == 'dataset']
-        id_to_uid = {(ftype, fid): uid for (ftype, fid), (uid, _) in visited.items()}
+        id_to_uid: dict = {}
+        for r in sample_rows:
+            id_to_uid[('sample', r[0])] = (r[1], r[2])
+        for r in dataset_rows:
+            id_to_uid[('dataset', r[0])] = (r[1], r[2])
 
         edges = []
 
@@ -2286,7 +2301,7 @@ def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_us
                 .where(SampleLink.parent_sample_id.in_(sample_ids))
                 .where(SampleLink.sample_id.in_(sample_ids))
             ).all()
-            edges += [(id_to_uid[('sample', r[0])], id_to_uid[('sample', r[1])]) for r in sample_edges]
+            edges += [(id_to_uid[('sample', r[0])][0], id_to_uid[('sample', r[1])][0]) for r in sample_edges]
 
         if dataset_ids:
             dataset_edges = session.exec(
@@ -2294,7 +2309,7 @@ def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_us
                 .where(DatasetLink.parent_dataset_id.in_(dataset_ids))
                 .where(DatasetLink.child_dataset_id.in_(dataset_ids))
             ).all()
-            edges += [(id_to_uid[('dataset', r[0])], id_to_uid[('dataset', r[1])]) for r in dataset_edges]
+            edges += [(id_to_uid[('dataset', r[0])][0], id_to_uid[('dataset', r[1])][0]) for r in dataset_edges]
 
         if sample_ids and dataset_ids:
             sd_edges = session.exec(
@@ -2302,10 +2317,10 @@ def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_us
                 .where(DatasetSampleLink.sample_id.in_(sample_ids))
                 .where(DatasetSampleLink.dataset_id.in_(dataset_ids))
             ).all()
-            edges += [(id_to_uid[('sample', r[0])], id_to_uid[('dataset', r[1])]) for r in sd_edges]
+            edges += [(id_to_uid[('sample', r[0])][0], id_to_uid[('dataset', r[1])][0]) for r in sd_edges]
 
         G = nx.DiGraph(edges)
-        for (entity_type, _), (unique_id, name) in visited.items():
+        for (entity_type, _), (unique_id, name) in id_to_uid.items():
             G.add_node(unique_id, entity_type=entity_type, name=name)
 
         return json_graph.node_link_data(G)

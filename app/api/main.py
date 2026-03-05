@@ -954,6 +954,63 @@ def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: s
         return ds_thumbnails
 
 
+@app.post("/datasets/first_thumbnails")
+def get_first_thumbnails(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    dataset_ids: List[str] = Body(...),
+):
+    '''
+    Given a list of dataset unique_ids, returns a dict mapping each unique_id
+    to its first (lowest-id) thumbnail. Datasets with no thumbnail or that the
+    caller cannot access are omitted from the response.
+
+    Intended for bulk thumbnail fetching after an entity_graph call.
+    '''
+    _, ag_ids = auth_res
+
+    with Session(engine) as session:
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        authorized_ds = session.exec(
+            select(Dataset)
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.unique_id.in_(dataset_ids))
+            .distinct()
+        ).all()
+
+        ds_id_to_uid = {ds.id: ds.unique_id for ds in authorized_ds}
+
+        if not ds_id_to_uid:
+            return {}
+
+        # Subquery: minimum (first) thumbnail id per dataset
+        min_thumb_subq = (
+            select(Thumbnail.dataset_id, func.min(Thumbnail.id).label('min_id'))
+            .where(Thumbnail.dataset_id.in_(list(ds_id_to_uid.keys())))
+            .group_by(Thumbnail.dataset_id)
+            .subquery()
+        )
+
+        first_thumbnails = session.exec(
+            select(Thumbnail).join(
+                min_thumb_subq,
+                and_(
+                    Thumbnail.dataset_id == min_thumb_subq.c.dataset_id,
+                    Thumbnail.id == min_thumb_subq.c.min_id,
+                )
+            )
+        ).all()
+
+        return {
+            ds_id_to_uid[t.dataset_id]: {
+                "thumbnail_name": t.thumbnail_name,
+                "thumbnail_b64str": t.thumbnail_b64str,
+            }
+            for t in first_thumbnails
+        }
+
+
 @app.post("/datasets/{dsid}/thumbnails", response_model = Thumbnail)
 def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
                   dsid: str,
@@ -1920,6 +1977,96 @@ def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(aut
         return json_graph.node_link_data(G)
 
 
+@app.get("/projects/{project_id}/dataset_graph")
+def project_dataset_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        ds_cmd = (
+            select(Dataset)
+            .options(joinedload(Dataset.parents))
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.project_id == project_id)
+        )
+
+        ds_list = session.exec(ds_cmd).unique().all()
+
+        edges = []
+        for dataset in ds_list:
+            for parent in dataset.parents:
+                edges.append((parent.unique_id, dataset.unique_id))
+
+        G = nx.DiGraph(edges)
+        for dataset in ds_list:
+            G.add_node(dataset.unique_id,
+                       dataset_name=dataset.dataset_name)
+
+        return json_graph.node_link_data(G)
+
+
+@app.get("/projects/{project_id}/entity_graph")
+def project_entity_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a NetworkX node-link graph of all samples and datasets in the
+    project, connected via sample lineage, dataset lineage, and sample-dataset
+    associations. Nodes carry entity_type ('sample' or 'dataset') and name.
+    '''
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        # Load all samples in the project with parent relationships
+        samp_cmd = select(Sample).options(joinedload(Sample.parents))
+        if not access_group_name.startswith('admin'):
+            if is_orcid(access_group_name):
+                associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+                associated_group_names = [ag.group_name for ag in associated_groups]
+                samp_cmd = samp_cmd.where(or_(Sample.owner_orcid == access_group_name,
+                                              Sample.project_id.in_(associated_group_names)))
+            else:
+                return json_graph.node_link_data(nx.DiGraph())
+        samp_cmd = samp_cmd.where(Sample.project_id == project_id)
+        samp_list = session.exec(samp_cmd).unique().all()
+
+        # Load all authorized datasets in the project with parent relationships
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        ds_list = session.exec(
+            select(Dataset)
+            .options(joinedload(Dataset.parents))
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.project_id == project_id)
+        ).unique().all()
+
+        s_int_to_uid = {s.id: s.unique_id for s in samp_list}
+        d_int_to_uid = {d.id: d.unique_id for d in ds_list}
+
+        # Load sample-dataset associations scoped to this project's entities
+        sd_links = session.exec(
+            select(DatasetSampleLink)
+            .where(DatasetSampleLink.sample_id.in_(s_int_to_uid.keys()))
+            .where(DatasetSampleLink.dataset_id.in_(d_int_to_uid.keys()))
+        ).all() if s_int_to_uid and d_int_to_uid else []
+
+        # Build combined graph — no subgraph extraction needed, include everything
+        G = nx.DiGraph()
+        for s in samp_list:
+            G.add_node(s.unique_id, entity_type='sample', name=s.sample_name)
+            for parent in s.parents:
+                G.add_edge(parent.unique_id, s.unique_id)
+        for d in ds_list:
+            G.add_node(d.unique_id, entity_type='dataset', name=d.dataset_name)
+            for parent in d.parents:
+                G.add_edge(parent.unique_id, d.unique_id)
+        for link in sd_links:
+            G.add_edge(s_int_to_uid[link.sample_id], d_int_to_uid[link.dataset_id])
+
+        return json_graph.node_link_data(G)
+
+
 @app.get("/samples/{sample_id}", response_model = Union[None, SampleWithDatasetsResponse])
 def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
@@ -1929,6 +2076,559 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
         query = select(Sample).options(selectinload(Sample.datasets)).where(Sample.unique_id == sample_id)
         samp = session.exec(query).first()
         return(samp)
+
+
+@app.get("/samples/{sample_id}/sample_graph")
+def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a NetworkX node-link graph of all samples connected (via parent/child
+    relationships) to the given sample. Loads all samples in the project and
+    returns the directed lineage subgraph (ancestors + descendants) of the target.
+    '''
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        target = session.exec(
+            select(Sample).where(Sample.unique_id == sample_id)
+        ).one_or_none()
+
+        if target is None:
+            raise HTTPException(status_code=404, detail="Sample not found")
+
+        if access_group_name.startswith('admin'):
+            pass
+        elif is_orcid(access_group_name):
+            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+            associated_group_names = [ag.group_name for ag in associated_groups]
+            if target.owner_orcid != access_group_name and target.project_id not in associated_group_names:
+                raise HTTPException(status_code=403, detail="Access denied")
+        else:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        samp_list = session.exec(
+            select(Sample)
+            .options(joinedload(Sample.parents))
+            .where(Sample.project_id == target.project_id)
+        ).unique().all()
+
+        edges = []
+        for sample in samp_list:
+            for parent in sample.parents:
+                edges.append((parent.unique_id, sample.unique_id))
+
+        G = nx.DiGraph(edges)
+        for sample in samp_list:
+            G.add_node(sample.unique_id, sample_name=sample.sample_name)
+
+        if target.unique_id not in G:
+            G.add_node(target.unique_id, sample_name=target.sample_name)
+
+        # Use directed ancestors + descendants rather than the weakly connected
+        # component. WCC would include siblings (nodes that share a parent with
+        # the target but are not in its direct lineage). nx.ancestors/descendants
+        # traverses strictly along the target's own lineage chain in both
+        # directions, excluding siblings.
+        component_nodes = nx.ancestors(G, target.unique_id) | nx.descendants(G, target.unique_id) | {target.unique_id}
+        return json_graph.node_link_data(G.subgraph(component_nodes))
+
+
+@app.get("/samples/{sample_id}/sample_graph_cte")
+def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    CTE-based implementation (kept for reference). Prefer /sample_graph.
+    Returns a NetworkX node-link graph of all samples connected (via parent/child
+    relationships) to the given sample, i.e. its full lineage subgraph.
+    '''
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        target = session.exec(
+            select(Sample).where(Sample.unique_id == sample_id)
+        ).one_or_none()
+
+        if target is None:
+            raise HTTPException(status_code=404, detail="Sample not found")
+
+        # Auth check: mirrors project_sample_graph logic
+        if access_group_name.startswith('admin'):
+            pass
+        elif is_orcid(access_group_name):
+            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+            associated_group_names = [ag.group_name for ag in associated_groups]
+            if target.owner_orcid != access_group_name and target.project_id not in associated_group_names:
+                raise HTTPException(status_code=403, detail="Access denied")
+        else:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        # Two recursive CTEs — one walking up (ancestors), one walking down
+        # (descendants). PostgreSQL only allows a single UNION between the
+        # non-recursive and recursive terms, so bidirectional traversal in a
+        # single CTE is not permitted.
+        cte_sql = text("""
+            WITH RECURSIVE
+            ancestors(id, unique_id, sample_name) AS (
+                SELECT id, unique_id, sample_name
+                FROM sample WHERE unique_id = :sample_uid
+              UNION
+                SELECT s.id, s.unique_id, s.sample_name
+                FROM sample s
+                JOIN samplelink sl ON sl.parent_sample_id = s.id
+                JOIN ancestors a ON sl.sample_id = a.id
+            ),
+            descendants(id, unique_id, sample_name) AS (
+                SELECT id, unique_id, sample_name
+                FROM sample WHERE unique_id = :sample_uid
+              UNION
+                SELECT s.id, s.unique_id, s.sample_name
+                FROM sample s
+                JOIN samplelink sl ON sl.sample_id = s.id
+                JOIN descendants d ON sl.parent_sample_id = d.id
+            )
+            SELECT DISTINCT id, unique_id, sample_name
+            FROM (SELECT * FROM ancestors UNION ALL SELECT * FROM descendants) combined
+        """)
+        rows = session.execute(cte_sql, {"sample_uid": sample_id}).all()
+
+        id_to_uid = {r.id: r.unique_id for r in rows}
+        node_ids = list(id_to_uid.keys())
+
+        # Fetch all edges whose both endpoints are within the component
+        edge_rows = session.exec(
+            select(SampleLink.parent_sample_id, SampleLink.sample_id)
+            .where(SampleLink.parent_sample_id.in_(node_ids))
+            .where(SampleLink.sample_id.in_(node_ids))
+        ).all()
+
+        G = nx.DiGraph((id_to_uid[r[0]], id_to_uid[r[1]]) for r in edge_rows)
+        for r in rows:
+            G.add_node(r.unique_id, sample_name=r.sample_name)
+
+        return json_graph.node_link_data(G)
+
+
+@app.get("/datasets/{dataset_id}/dataset_graph")
+def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a NetworkX node-link graph of all datasets connected (via parent/child
+    relationships) to the given dataset. Loads all authorized datasets in the
+    project and returns the directed lineage subgraph (ancestors + descendants) of the target.
+    '''
+    _, ag_ids = auth_res
+
+    with Session(engine) as session:
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        target = session.exec(
+            select(Dataset)
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.unique_id == dataset_id)
+        ).first()
+
+        if target is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        ds_list = session.exec(
+            select(Dataset)
+            .options(joinedload(Dataset.parents))
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.project_id == target.project_id)
+        ).unique().all()
+
+        edges = []
+        for dataset in ds_list:
+            for parent in dataset.parents:
+                edges.append((parent.unique_id, dataset.unique_id))
+
+        G = nx.DiGraph(edges)
+        for dataset in ds_list:
+            G.add_node(dataset.unique_id, dataset_name=dataset.dataset_name)
+
+        if target.unique_id not in G:
+            G.add_node(target.unique_id, dataset_name=target.dataset_name)
+
+        # Use directed ancestors + descendants rather than the weakly connected
+        # component. WCC would include siblings (nodes that share a parent with
+        # the target but are not in its direct lineage). nx.ancestors/descendants
+        # traverses strictly along the target's own lineage chain in both
+        # directions, excluding siblings.
+        component_nodes = nx.ancestors(G, target.unique_id) | nx.descendants(G, target.unique_id) | {target.unique_id}
+        return json_graph.node_link_data(G.subgraph(component_nodes))
+
+
+@app.get("/datasets/{dataset_id}/dataset_graph_cte")
+def dataset_graph_cte(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    CTE-based implementation (kept for reference). Prefer /dataset_graph.
+    Returns a NetworkX node-link graph of all datasets connected (via parent/child
+    relationships) to the given dataset, i.e. its full lineage subgraph.
+    '''
+    _, ag_ids = auth_res
+
+    with Session(engine) as session:
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        target = session.exec(
+            select(Dataset)
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.unique_id == dataset_id)
+        ).first()
+
+        if target is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        # Two recursive CTEs — ancestors (walk up) and descendants (walk down)
+        cte_sql = text("""
+            WITH RECURSIVE
+            ancestors(id, unique_id, dataset_name) AS (
+                SELECT id, unique_id, dataset_name
+                FROM dataset WHERE unique_id = :dataset_uid
+              UNION
+                SELECT d.id, d.unique_id, d.dataset_name
+                FROM dataset d
+                JOIN datasetlink dl ON dl.parent_dataset_id = d.id
+                JOIN ancestors a ON dl.child_dataset_id = a.id
+            ),
+            descendants(id, unique_id, dataset_name) AS (
+                SELECT id, unique_id, dataset_name
+                FROM dataset WHERE unique_id = :dataset_uid
+              UNION
+                SELECT d.id, d.unique_id, d.dataset_name
+                FROM dataset d
+                JOIN datasetlink dl ON dl.child_dataset_id = d.id
+                JOIN descendants desc_ ON dl.parent_dataset_id = desc_.id
+            )
+            SELECT DISTINCT id, unique_id, dataset_name
+            FROM (SELECT * FROM ancestors UNION ALL SELECT * FROM descendants) combined
+        """)
+        rows = session.execute(cte_sql, {"dataset_uid": dataset_id}).all()
+
+        id_to_uid = {r.id: r.unique_id for r in rows}
+        node_ids = list(id_to_uid.keys())
+
+        # Fetch all edges whose both endpoints are within the component
+        edge_rows = session.exec(
+            select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id)
+            .where(DatasetLink.parent_dataset_id.in_(node_ids))
+            .where(DatasetLink.child_dataset_id.in_(node_ids))
+        ).all()
+
+        G = nx.DiGraph((id_to_uid[r[0]], id_to_uid[r[1]]) for r in edge_rows)
+        for r in rows:
+            G.add_node(r.unique_id, dataset_name=r.dataset_name)
+
+        return json_graph.node_link_data(G)
+
+
+@app.get("/entity_graph/{entity_id}")
+def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a NetworkX node-link graph of all samples and datasets connected to
+    the given entity via sample lineage, dataset lineage, and sample-dataset
+    associations. entity_id may be a sample or dataset unique_id.
+    Nodes carry entity_type ('sample' or 'dataset') and name attributes.
+
+    Loads all samples and datasets in the root entity's project in a small number
+    of broad queries, builds the combined graph in Python, then returns the weakly
+    connected component containing the root entity.
+    '''
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        # Identify root entity type, enforce auth, and determine project scope
+        sample_target = session.exec(
+            select(Sample).where(Sample.unique_id == entity_id)
+        ).one_or_none()
+
+        if sample_target is not None:
+            if access_group_name.startswith('admin'):
+                pass
+            elif is_orcid(access_group_name):
+                associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+                associated_group_names = [ag.group_name for ag in associated_groups]
+                if sample_target.owner_orcid != access_group_name and sample_target.project_id not in associated_group_names:
+                    raise HTTPException(status_code=403, detail="Access denied")
+            else:
+                raise HTTPException(status_code=403, detail="Access denied")
+            project_id = sample_target.project_id
+        else:
+            auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+            dataset_target = session.exec(
+                select(Dataset)
+                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                .filter(auth_filter)
+                .where(Dataset.unique_id == entity_id)
+            ).first()
+            if dataset_target is None:
+                raise HTTPException(status_code=404, detail="Entity not found")
+            project_id = dataset_target.project_id
+
+        # Load all samples in the project with parent relationships
+        samp_list = session.exec(
+            select(Sample)
+            .options(joinedload(Sample.parents))
+            .where(Sample.project_id == project_id)
+        ).unique().all()
+
+        # Load all authorized datasets in the project with parent relationships
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        ds_list = session.exec(
+            select(Dataset)
+            .options(joinedload(Dataset.parents))
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.project_id == project_id)
+        ).unique().all()
+
+        # Map integer FK → unique_id for resolving DatasetSampleLink rows
+        s_int_to_uid = {s.id: s.unique_id for s in samp_list}
+        d_int_to_uid = {d.id: d.unique_id for d in ds_list}
+
+        # Load sample-dataset associations scoped to this project's entities
+        sd_links = session.exec(
+            select(DatasetSampleLink)
+            .where(DatasetSampleLink.sample_id.in_(s_int_to_uid.keys()))
+            .where(DatasetSampleLink.dataset_id.in_(d_int_to_uid.keys()))
+        ).all() if s_int_to_uid and d_int_to_uid else []
+
+        # Build unique_id digraphs for each type separately so directed lineage
+        # traversal stays within one entity type at a time.
+        G_samp = nx.DiGraph()
+        for s in samp_list:
+            G_samp.add_node(s.unique_id)
+            for parent in s.parents:
+                G_samp.add_edge(parent.unique_id, s.unique_id)
+
+        G_ds = nx.DiGraph()
+        for d in ds_list:
+            G_ds.add_node(d.unique_id)
+            for parent in d.parents:
+                G_ds.add_edge(parent.unique_id, d.unique_id)
+
+        # Build sample↔dataset adjacency keyed by unique_id
+        s_to_ds: dict[str, set[str]] = {}
+        ds_to_s: dict[str, set[str]] = {}
+        for link in sd_links:
+            s_uid = s_int_to_uid[link.sample_id]
+            d_uid = d_int_to_uid[link.dataset_id]
+            s_to_ds.setdefault(s_uid, set()).add(d_uid)
+            ds_to_s.setdefault(d_uid, set()).add(s_uid)
+
+        def lineage(G: nx.DiGraph, seeds: set) -> set:
+            """Bidirectional directed lineage from a set of seed unique_ids."""
+            result = set()
+            for n in seeds:
+                if n in G:
+                    result |= nx.ancestors(G, n) | nx.descendants(G, n)
+                result.add(n)
+            return result
+
+        # Two-step expansion mirroring the BFS version:
+        #   sample root → full sample lineage → linked datasets → dataset lineage
+        #   dataset root → full dataset lineage → linked samples → sample lineage
+        if sample_target is not None:
+            sample_uids = lineage(G_samp, {sample_target.unique_id})
+            seed_ds = set().union(*(s_to_ds.get(s, set()) for s in sample_uids))
+            ds_uids = lineage(G_ds, seed_ds)
+        else:
+            ds_uids = lineage(G_ds, {dataset_target.unique_id})
+            seed_s = set().union(*(ds_to_s.get(d, set()) for d in ds_uids))
+            sample_uids = lineage(G_samp, seed_s)
+
+        # Build output graph
+        G = nx.DiGraph()
+        for s in samp_list:
+            if s.unique_id in sample_uids:
+                G.add_node(s.unique_id, entity_type='sample', name=s.sample_name)
+                for parent in s.parents:
+                    if parent.unique_id in sample_uids:
+                        G.add_edge(parent.unique_id, s.unique_id)
+        for d in ds_list:
+            if d.unique_id in ds_uids:
+                G.add_node(d.unique_id, entity_type='dataset', name=d.dataset_name)
+                for parent in d.parents:
+                    if parent.unique_id in ds_uids:
+                        G.add_edge(parent.unique_id, d.unique_id)
+        for link in sd_links:
+            s_uid = s_int_to_uid[link.sample_id]
+            d_uid = d_int_to_uid[link.dataset_id]
+            if s_uid in sample_uids and d_uid in ds_uids:
+                G.add_edge(s_uid, d_uid)
+
+        return json_graph.node_link_data(G)
+
+
+@app.get("/entity_graph_bfs/{entity_id}")
+def entity_graph_bfs(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    BFS-based implementation (kept for reference). Prefer /entity_graph/{entity_id}.
+    Returns a NetworkX node-link graph of all samples and datasets connected to
+    the given entity via sample lineage, dataset lineage, and sample-dataset
+    associations. entity_id may be a sample or dataset unique_id.
+    Nodes carry entity_type ('sample' or 'dataset') and name attributes.
+    '''
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        # Identify root entity type and enforce auth before traversal
+        sample_target = session.exec(
+            select(Sample).where(Sample.unique_id == entity_id)
+        ).one_or_none()
+
+        if sample_target is not None:
+            if access_group_name.startswith('admin'):
+                pass
+            elif is_orcid(access_group_name):
+                associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+                associated_group_names = [ag.group_name for ag in associated_groups]
+                if sample_target.owner_orcid != access_group_name and sample_target.project_id not in associated_group_names:
+                    raise HTTPException(status_code=403, detail="Access denied")
+            else:
+                raise HTTPException(status_code=403, detail="Access denied")
+        else:
+            auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+            dataset_target = session.exec(
+                select(Dataset)
+                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                .filter(auth_filter)
+                .where(Dataset.unique_id == entity_id)
+            ).first()
+            if dataset_target is None:
+                raise HTTPException(status_code=404, detail="Entity not found")
+
+        # Directional traversal — walks strictly up (ancestors) and strictly
+        # down (descendants) for each entity type separately, preventing
+        # siblings from being included via a shared parent node.
+        #
+        # Cross-type links flow one way: samples → datasets.
+        # Datasets are never used to discover additional samples.
+
+        def walk_up_samples(start: set) -> set:
+            ids = set(start)
+            frontier = set(start)
+            while frontier:
+                rows = session.exec(
+                    select(Sample.id)
+                    .join(SampleLink, SampleLink.parent_sample_id == Sample.id)
+                    .where(SampleLink.sample_id.in_(frontier))
+                ).all()
+                frontier = set(rows) - ids
+                ids |= frontier
+            return ids
+
+        def walk_down_samples(start: set) -> set:
+            ids = set(start)
+            frontier = set(start)
+            while frontier:
+                rows = session.exec(
+                    select(Sample.id)
+                    .join(SampleLink, SampleLink.sample_id == Sample.id)
+                    .where(SampleLink.parent_sample_id.in_(frontier))
+                ).all()
+                frontier = set(rows) - ids
+                ids |= frontier
+            return ids
+
+        def walk_up_datasets(start: set) -> set:
+            ids = set(start)
+            frontier = set(start)
+            while frontier:
+                rows = session.exec(
+                    select(Dataset.id)
+                    .join(DatasetLink, DatasetLink.parent_dataset_id == Dataset.id)
+                    .where(DatasetLink.child_dataset_id.in_(frontier))
+                ).all()
+                frontier = set(rows) - ids
+                ids |= frontier
+            return ids
+
+        def walk_down_datasets(start: set) -> set:
+            ids = set(start)
+            frontier = set(start)
+            while frontier:
+                rows = session.exec(
+                    select(Dataset.id)
+                    .join(DatasetLink, DatasetLink.child_dataset_id == Dataset.id)
+                    .where(DatasetLink.parent_dataset_id.in_(frontier))
+                ).all()
+                frontier = set(rows) - ids
+                ids |= frontier
+            return ids
+
+        if sample_target is not None:
+            root_s = {sample_target.id}
+            sample_ids = walk_up_samples(root_s) | walk_down_samples(root_s)
+
+            linked_ds = session.exec(
+                select(Dataset.id)
+                .join(DatasetSampleLink, DatasetSampleLink.dataset_id == Dataset.id)
+                .where(DatasetSampleLink.sample_id.in_(sample_ids))
+            ).all()
+            seed_ds = set(linked_ds)
+        else:
+            root_d = {dataset_target.id}
+            seed_ds = walk_up_datasets(root_d) | walk_down_datasets(root_d)
+
+            linked_s = session.exec(
+                select(Sample.id)
+                .join(DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)
+                .where(DatasetSampleLink.dataset_id.in_(seed_ds))
+            ).all()
+            seed_s = set(linked_s)
+            sample_ids = walk_up_samples(seed_s) | walk_down_samples(seed_s)
+
+        dataset_ids = walk_up_datasets(seed_ds) | walk_down_datasets(seed_ds) if seed_ds else set()
+
+        # Fetch node data
+        sample_rows = session.exec(
+            select(Sample.id, Sample.unique_id, Sample.sample_name)
+            .where(Sample.id.in_(sample_ids))
+        ).all() if sample_ids else []
+
+        dataset_rows = session.exec(
+            select(Dataset.id, Dataset.unique_id, Dataset.dataset_name)
+            .where(Dataset.id.in_(dataset_ids))
+        ).all() if dataset_ids else []
+
+        id_to_uid: dict = {}
+        for r in sample_rows:
+            id_to_uid[('sample', r[0])] = (r[1], r[2])
+        for r in dataset_rows:
+            id_to_uid[('dataset', r[0])] = (r[1], r[2])
+
+        edges = []
+
+        if sample_ids:
+            sample_edges = session.exec(
+                select(SampleLink.parent_sample_id, SampleLink.sample_id)
+                .where(SampleLink.parent_sample_id.in_(sample_ids))
+                .where(SampleLink.sample_id.in_(sample_ids))
+            ).all()
+            edges += [(id_to_uid[('sample', r[0])][0], id_to_uid[('sample', r[1])][0]) for r in sample_edges]
+
+        if dataset_ids:
+            dataset_edges = session.exec(
+                select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id)
+                .where(DatasetLink.parent_dataset_id.in_(dataset_ids))
+                .where(DatasetLink.child_dataset_id.in_(dataset_ids))
+            ).all()
+            edges += [(id_to_uid[('dataset', r[0])][0], id_to_uid[('dataset', r[1])][0]) for r in dataset_edges]
+
+        if sample_ids and dataset_ids:
+            sd_edges = session.exec(
+                select(DatasetSampleLink.sample_id, DatasetSampleLink.dataset_id)
+                .where(DatasetSampleLink.sample_id.in_(sample_ids))
+                .where(DatasetSampleLink.dataset_id.in_(dataset_ids))
+            ).all()
+            edges += [(id_to_uid[('sample', r[0])][0], id_to_uid[('dataset', r[1])][0]) for r in sd_edges]
+
+        G = nx.DiGraph(edges)
+        for (entity_type, _), (unique_id, name) in id_to_uid.items():
+            G.add_node(unique_id, entity_type=entity_type, name=name)
+
+        return json_graph.node_link_data(G)
 
 
 @app.get("/datasets/{dsid}/samples", response_model = List[Sample])

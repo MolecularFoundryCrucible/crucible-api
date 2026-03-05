@@ -2083,7 +2083,7 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
     '''
     Returns a NetworkX node-link graph of all samples connected (via parent/child
     relationships) to the given sample. Loads all samples in the project and
-    returns the weakly connected component containing the target sample.
+    returns the directed lineage subgraph (ancestors + descendants) of the target.
     '''
     access_group_name, ag_ids = auth_res
 
@@ -2123,11 +2123,12 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
         if target.unique_id not in G:
             G.add_node(target.unique_id, sample_name=target.sample_name)
 
-        # node_connected_component requires an undirected graph. Converting here
-        # is equivalent to finding the weakly connected component in the DiGraph —
-        # i.e. all ancestors and descendants of the target, reachable in either
-        # direction along lineage edges, regardless of depth.
-        component_nodes = nx.node_connected_component(G.to_undirected(), target.unique_id)
+        # Use directed ancestors + descendants rather than the weakly connected
+        # component. WCC would include siblings (nodes that share a parent with
+        # the target but are not in its direct lineage). nx.ancestors/descendants
+        # traverses strictly along the target's own lineage chain in both
+        # directions, excluding siblings.
+        component_nodes = nx.ancestors(G, target.unique_id) | nx.descendants(G, target.unique_id) | {target.unique_id}
         return json_graph.node_link_data(G.subgraph(component_nodes))
 
 
@@ -2210,7 +2211,7 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_
     '''
     Returns a NetworkX node-link graph of all datasets connected (via parent/child
     relationships) to the given dataset. Loads all authorized datasets in the
-    project and returns the weakly connected component containing the target dataset.
+    project and returns the directed lineage subgraph (ancestors + descendants) of the target.
     '''
     _, ag_ids = auth_res
 
@@ -2247,11 +2248,12 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_
         if target.unique_id not in G:
             G.add_node(target.unique_id, dataset_name=target.dataset_name)
 
-        # node_connected_component requires an undirected graph. Converting here
-        # is equivalent to finding the weakly connected component in the DiGraph —
-        # i.e. all ancestors and descendants of the target, reachable in either
-        # direction along lineage edges, regardless of depth.
-        component_nodes = nx.node_connected_component(G.to_undirected(), target.unique_id)
+        # Use directed ancestors + descendants rather than the weakly connected
+        # component. WCC would include siblings (nodes that share a parent with
+        # the target but are not in its direct lineage). nx.ancestors/descendants
+        # traverses strictly along the target's own lineage chain in both
+        # directions, excluding siblings.
+        component_nodes = nx.ancestors(G, target.unique_id) | nx.descendants(G, target.unique_id) | {target.unique_id}
         return json_graph.node_link_data(G.subgraph(component_nodes))
 
 

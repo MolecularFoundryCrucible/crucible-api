@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: crucible-api-lb
+  name: crucible-api-staging-lb
 spec:
   type: LoadBalancer
   ports:
-  - port: 7777
-    targetPort: 7777
+  - port: 8889
+    targetPort: 88889
   selector:
-    app: crucible-api
+    app: crucible-api-staging

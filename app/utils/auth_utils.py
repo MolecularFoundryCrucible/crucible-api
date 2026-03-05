@@ -1,6 +1,5 @@
 from typing import Annotated
 import re
-import os
 import requests
 import secrets
 import datetime
@@ -11,19 +10,20 @@ from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.general_utils import  get_secret, is_orcid
-from app.utils.sql_utils import setup_engine
+from app.api.dependencies import get_engine, get_api_config, get_api_path, get_api_url
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import select, join
 from datetime import date, timedelta
-
 
 # ====== Constants
 SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "crucible_secret_key/versions/1")
 ALGORITHM = "HS256"
 security = HTTPBearer()
 
-engine = setup_engine(env_file = '.env')
+engine = get_engine()
+api_path = get_api_path()
+api_url = get_api_url()
 
 # ====== Functions
 def find_or_add_api_access(orcid: str, engine, instrument_name = None, regenerate = False):
@@ -47,28 +47,6 @@ def find_or_add_api_access(orcid: str, engine, instrument_name = None, regenerat
     else: 
         new_token = generate_apikey(orcid, session)
         return(new_token)
-
-# def find_or_add_api_access_for_service(service: str, engine, regenerate = False):
-#     from app.models.misc import ApiToken
-
-#     # query the database for orcid
-#     one_year_ago = (date.today()-timedelta(365)).isoformat()
-#     with Session(engine) as session:
-#         api_acct = session.exec(select(ApiToken).where(and_(ApiToken.access_group_id == service,
-#                                                             ApiToken.token_created > one_year_ago))).one_or_none()
-
-#     if api_acct is not None and regenerate == False:
-#         print(f"found an account")
-#         return(api_acct[0].token)
-        
-#     elif api_acct is not None and regenerate == True:
-#         delete_apikey(service, session)
-#         new_token = generate_apikey(orcid, session)
-#         return(new_token)
-        
-#     else: 
-#         new_token = generate_apikey(orcid, session)
-#         return(new_token)
 
 
 def generate_apikey(orcid: str, session):
@@ -110,7 +88,8 @@ def decode_token(token: str, secret_key = SECRET_KEY, alg = ALGORITHM):
         payload = jwt.decode(token, secret_key, algorithms=[alg])
         return payload
     except JWTError:
-        return RedirectResponse("/testapi/login")
+        login_path = ''.join(api_path, '/login')
+        return RedirectResponse(login_path)
 
 
 def find_key(credentials, engine):
@@ -166,7 +145,7 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
     api_acct = find_key(credentials, engine)
     
     if api_acct is None:
-        raise HTTPException(status_code=400, detail="Incorrect apikey.  Please try again or visit https://crucible.lbl.gov/api/regenerate_apikey to create a new key.")
+        raise HTTPException(status_code=400, detail="Incorrect apikey.  Please try again or visit https://crucible.lbl.gov/api/v1/regenerate_apikey to create a new key.")
     else:
         access_group_name = api_acct[0].access_group_id
 

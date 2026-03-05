@@ -4,7 +4,7 @@ import json
 import re
 import pytz
 from datetime import datetime
-from app.utils.constants import secret_store
+from app.utils.constants import secret_store, gcs_client_id
 import hashlib
 
 def remove_file(filepath):
@@ -94,7 +94,7 @@ def run_rclone_command(source_path= "", destination_path= "", cmd="copy", client
 
     # PASS THEM INTO THE RCLONE COMMAND LINE ARGUMENTS
     cmd_args = [
-                f"--gcs-client-id=776258882599-v17f82atu67g16na3oiq6ga3bnudoqrh.apps.googleusercontent.com" ,
+                f"--gcs-client-id={gcs_client_id}" ,
                 f"--gcs-client-secret={client_secret}",
                 f"--gcs-project-number=mf-crucible",
                 f"--gcs-service-account-credentials='{sa_creds}'",

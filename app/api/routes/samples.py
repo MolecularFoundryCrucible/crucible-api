@@ -1,8 +1,10 @@
 from typing import Annotated, List, Optional, Union
 
+import networkx as nx
+from networkx.readwrite import json_graph
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import join
-from sqlalchemy.orm import selectinload
+from sqlalchemy import join, text
+from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine
@@ -285,3 +287,130 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends
             .where(SampleLink.parent_sample_id == parent_sample.id)
         ).all()
         return child_samples
+
+@router.get("/samples/{sample_id}/sample_graph")
+def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a NetworkX node-link graph of all samples connected (via parent/child
+    relationships) to the given sample. Loads all samples in the project and
+    returns the directed lineage subgraph (ancestors + descendants) of the target.
+    '''
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        target = session.exec(
+            select(Sample).where(Sample.unique_id == sample_id)
+        ).one_or_none()
+
+        if target is None:
+            raise HTTPException(status_code=404, detail="Sample not found")
+
+        if access_group_name.startswith('admin'):
+            pass
+        elif is_orcid(access_group_name):
+            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+            associated_group_names = [ag.group_name for ag in associated_groups]
+            if target.owner_orcid != access_group_name and target.project_id not in associated_group_names:
+                raise HTTPException(status_code=403, detail="Access denied")
+        else:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        samp_list = session.exec(
+            select(Sample)
+            .options(joinedload(Sample.parents))
+            .where(Sample.project_id == target.project_id)
+        ).unique().all()
+
+        edges = []
+        for sample in samp_list:
+            for parent in sample.parents:
+                edges.append((parent.unique_id, sample.unique_id))
+
+        G = nx.DiGraph(edges)
+        for sample in samp_list:
+            G.add_node(sample.unique_id, sample_name=sample.sample_name)
+
+        if target.unique_id not in G:
+            G.add_node(target.unique_id, sample_name=target.sample_name)
+
+        # Use directed ancestors + descendants rather than the weakly connected
+        # component. WCC would include siblings (nodes that share a parent with
+        # the target but are not in its direct lineage). nx.ancestors/descendants
+        # traverses strictly along the target's own lineage chain in both
+        # directions, excluding siblings.
+        component_nodes = nx.ancestors(G, target.unique_id) | nx.descendants(G, target.unique_id) | {target.unique_id}
+        return json_graph.node_link_data(G.subgraph(component_nodes))
+
+
+@router.get("/samples/{sample_id}/sample_graph_cte")
+def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    CTE-based implementation (kept for reference). Prefer /sample_graph.
+    Returns a NetworkX node-link graph of all samples connected (via parent/child
+    relationships) to the given sample, i.e. its full lineage subgraph.
+    '''
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        target = session.exec(
+            select(Sample).where(Sample.unique_id == sample_id)
+        ).one_or_none()
+
+        if target is None:
+            raise HTTPException(status_code=404, detail="Sample not found")
+
+        # Auth check: mirrors project_sample_graph logic
+        if access_group_name.startswith('admin'):
+            pass
+        elif is_orcid(access_group_name):
+            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
+            associated_group_names = [ag.group_name for ag in associated_groups]
+            if target.owner_orcid != access_group_name and target.project_id not in associated_group_names:
+                raise HTTPException(status_code=403, detail="Access denied")
+        else:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        # Two recursive CTEs — one walking up (ancestors), one walking down
+        # (descendants). PostgreSQL only allows a single UNION between the
+        # non-recursive and recursive terms, so bidirectional traversal in a
+        # single CTE is not permitted.
+        cte_sql = text("""
+            WITH RECURSIVE
+            ancestors(id, unique_id, sample_name) AS (
+                SELECT id, unique_id, sample_name
+                FROM sample WHERE unique_id = :sample_uid
+              UNION
+                SELECT s.id, s.unique_id, s.sample_name
+                FROM sample s
+                JOIN samplelink sl ON sl.parent_sample_id = s.id
+                JOIN ancestors a ON sl.sample_id = a.id
+            ),
+            descendants(id, unique_id, sample_name) AS (
+                SELECT id, unique_id, sample_name
+                FROM sample WHERE unique_id = :sample_uid
+              UNION
+                SELECT s.id, s.unique_id, s.sample_name
+                FROM sample s
+                JOIN samplelink sl ON sl.sample_id = s.id
+                JOIN descendants d ON sl.parent_sample_id = d.id
+            )
+            SELECT DISTINCT id, unique_id, sample_name
+            FROM (SELECT * FROM ancestors UNION ALL SELECT * FROM descendants) combined
+        """)
+        rows = session.execute(cte_sql, {"sample_uid": sample_id}).all()
+
+        id_to_uid = {r.id: r.unique_id for r in rows}
+        node_ids = list(id_to_uid.keys())
+
+        # Fetch all edges whose both endpoints are within the component
+        edge_rows = session.exec(
+            select(SampleLink.parent_sample_id, SampleLink.sample_id)
+            .where(SampleLink.parent_sample_id.in_(node_ids))
+            .where(SampleLink.sample_id.in_(node_ids))
+        ).all()
+
+        G = nx.DiGraph((id_to_uid[r[0]], id_to_uid[r[1]]) for r in edge_rows)
+        for r in rows:
+            G.add_node(r.unique_id, sample_name=r.sample_name)
+
+        return json_graph.node_link_data(G)

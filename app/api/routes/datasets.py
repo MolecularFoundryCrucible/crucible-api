@@ -4,9 +4,11 @@ from pathlib import Path
 from typing import Annotated, List, Optional, Union
 
 import pytz
+import networkx as nx
+from networkx.readwrite import json_graph
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
-from sqlalchemy import func, join
-from sqlalchemy.orm import selectinload, attributes
+from sqlalchemy import func, join, text
+from sqlalchemy.orm import joinedload, selectinload, attributes
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine
@@ -39,6 +41,8 @@ engine = get_engine()
 
 
 def sql_create_ds_acl(ag, ds, read, write, session):
+    if ag is None:
+        return None
     acl = session.exec(select(DatasetACL).where(DatasetACL.accessgroup == ag).where(DatasetACL.dataset == ds)).one_or_none()
     print(f"{acl=} for {ds.unique_id}")
     if not acl:
@@ -146,16 +150,22 @@ async def create_dataset(
                                              session=session)
             print(f'added instrument group access to {ds.unique_id}')
 
-        add_or_update(session,
-                      IdType,
-                      where=(IdType.unique_id == dataset.unique_id),
-                      unique_id = dataset.unique_id,
-                      object_type = "dataset")
+        try:
+            print(f'IdType unique_id being written: {dataset.unique_id}')
+            add_or_update(session,
+                        IdType,
+                        where=(IdType.unique_id == dataset.unique_id),
+                        unique_id = dataset.unique_id,
+                        object_type = "dataset")
 
-        print('added the ID type')
-        session.commit()
-        print('committed')
-        session.refresh(ds)
+            print('added the ID type')
+            session.commit()
+            print('committed')
+            session.refresh(ds)
+            print(f"#=========== ID TYPE ADDED for dataset {dataset.unique_id=}, {ds.unique_id=}")
+
+        except:
+            print(f"#=========== ID TYPE FAILED for dataset {dataset.unique_id=}, {ds.unique_id=}")
 
     return ds
 
@@ -688,7 +698,62 @@ def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: s
         ds_thumbnails = session.exec(select(Thumbnail).where(Thumbnail.dataset_id == ds.id)).all()
         return ds_thumbnails
 
+@router.post("/datasets/first_thumbnails")
+def get_first_thumbnails(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    dataset_ids: List[str] = Body(...),
+):
+    '''
+    Given a list of dataset unique_ids, returns a dict mapping each unique_id
+    to its first (lowest-id) thumbnail. Datasets with no thumbnail or that the
+    caller cannot access are omitted from the response.
 
+    Intended for bulk thumbnail fetching after an entity_graph call.
+    '''
+    _, ag_ids = auth_res
+
+    with Session(engine) as session:
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        authorized_ds = session.exec(
+            select(Dataset)
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.unique_id.in_(dataset_ids))
+            .distinct()
+        ).all()
+
+        ds_id_to_uid = {ds.id: ds.unique_id for ds in authorized_ds}
+
+        if not ds_id_to_uid:
+            return {}
+
+        # Subquery: minimum (first) thumbnail id per dataset
+        min_thumb_subq = (
+            select(Thumbnail.dataset_id, func.min(Thumbnail.id).label('min_id'))
+            .where(Thumbnail.dataset_id.in_(list(ds_id_to_uid.keys())))
+            .group_by(Thumbnail.dataset_id)
+            .subquery()
+        )
+
+        first_thumbnails = session.exec(
+            select(Thumbnail).join(
+                min_thumb_subq,
+                and_(
+                    Thumbnail.dataset_id == min_thumb_subq.c.dataset_id,
+                    Thumbnail.id == min_thumb_subq.c.min_id,
+                )
+            )
+        ).all()
+
+        return {
+            ds_id_to_uid[t.dataset_id]: {
+                "thumbnail_name": t.thumbnail_name,
+                "thumbnail_b64str": t.thumbnail_b64str,
+            }
+            for t in first_thumbnails
+        }
+    
 @router.post("/datasets/{dsid}/thumbnails", response_model=Thumbnail)
 def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
                   dsid: str,
@@ -933,3 +998,119 @@ def read_samples_in_dataset(dsid: str, auth_res: Annotated[tuple, Depends(author
 
         samples = session.exec(select(Sample).select_from(join(Sample, DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)).where(DatasetSampleLink.dataset_id == ds.id)).all()
         return samples
+
+@router.get("/datasets/{dataset_id}/dataset_graph")
+def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a NetworkX node-link graph of all datasets connected (via parent/child
+    relationships) to the given dataset. Loads all authorized datasets in the
+    project and returns the directed lineage subgraph (ancestors + descendants) of the target.
+    '''
+    _, ag_ids = auth_res
+
+    with Session(engine) as session:
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        target = session.exec(
+            select(Dataset)
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.unique_id == dataset_id)
+        ).first()
+
+        if target is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        ds_list = session.exec(
+            select(Dataset)
+            .options(joinedload(Dataset.parents))
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.project_id == target.project_id)
+        ).unique().all()
+
+        edges = []
+        for dataset in ds_list:
+            for parent in dataset.parents:
+                edges.append((parent.unique_id, dataset.unique_id))
+
+        G = nx.DiGraph(edges)
+        for dataset in ds_list:
+            G.add_node(dataset.unique_id, dataset_name=dataset.dataset_name)
+
+        if target.unique_id not in G:
+            G.add_node(target.unique_id, dataset_name=target.dataset_name)
+
+        # Use directed ancestors + descendants rather than the weakly connected
+        # component. WCC would include siblings (nodes that share a parent with
+        # the target but are not in its direct lineage). nx.ancestors/descendants
+        # traverses strictly along the target's own lineage chain in both
+        # directions, excluding siblings.
+        component_nodes = nx.ancestors(G, target.unique_id) | nx.descendants(G, target.unique_id) | {target.unique_id}
+        return json_graph.node_link_data(G.subgraph(component_nodes))
+
+
+@router.get("/datasets/{dataset_id}/dataset_graph_cte")
+def dataset_graph_cte(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    CTE-based implementation (kept for reference). Prefer /dataset_graph.
+    Returns a NetworkX node-link graph of all datasets connected (via parent/child
+    relationships) to the given dataset, i.e. its full lineage subgraph.
+    '''
+    _, ag_ids = auth_res
+
+    with Session(engine) as session:
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+
+        target = session.exec(
+            select(Dataset)
+            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .filter(auth_filter)
+            .where(Dataset.unique_id == dataset_id)
+        ).first()
+
+        if target is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        # Two recursive CTEs — ancestors (walk up) and descendants (walk down)
+        cte_sql = text("""
+            WITH RECURSIVE
+            ancestors(id, unique_id, dataset_name) AS (
+                SELECT id, unique_id, dataset_name
+                FROM dataset WHERE unique_id = :dataset_uid
+              UNION
+                SELECT d.id, d.unique_id, d.dataset_name
+                FROM dataset d
+                JOIN datasetlink dl ON dl.parent_dataset_id = d.id
+                JOIN ancestors a ON dl.child_dataset_id = a.id
+            ),
+            descendants(id, unique_id, dataset_name) AS (
+                SELECT id, unique_id, dataset_name
+                FROM dataset WHERE unique_id = :dataset_uid
+              UNION
+                SELECT d.id, d.unique_id, d.dataset_name
+                FROM dataset d
+                JOIN datasetlink dl ON dl.child_dataset_id = d.id
+                JOIN descendants desc_ ON dl.parent_dataset_id = desc_.id
+            )
+            SELECT DISTINCT id, unique_id, dataset_name
+            FROM (SELECT * FROM ancestors UNION ALL SELECT * FROM descendants) combined
+        """)
+        rows = session.execute(cte_sql, {"dataset_uid": dataset_id}).all()
+
+        id_to_uid = {r.id: r.unique_id for r in rows}
+        node_ids = list(id_to_uid.keys())
+
+        # Fetch all edges whose both endpoints are within the component
+        edge_rows = session.exec(
+            select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id)
+            .where(DatasetLink.parent_dataset_id.in_(node_ids))
+            .where(DatasetLink.child_dataset_id.in_(node_ids))
+        ).all()
+
+        G = nx.DiGraph((id_to_uid[r[0]], id_to_uid[r[1]]) for r in edge_rows)
+        for r in rows:
+            G.add_node(r.unique_id, dataset_name=r.dataset_name)
+
+        return json_graph.node_link_data(G)
+

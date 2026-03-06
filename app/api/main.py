@@ -316,17 +316,23 @@ async def create_dataset(
                                              write = True,
                                              session=session)
             print(f'added instrument group access to {ds.unique_id}')
-
-        add_or_update(session,
+        
+        try:
+            print(f'IdType unique_id being written: {dataset.unique_id}')
+            add_or_update(session,
                       IdType,
                       where=(IdType.unique_id == dataset.unique_id),
                       unique_id = dataset.unique_id,
                       object_type = "dataset")
         
-        print('added the ID type')
-        session.commit()
-        print('committed')
-        session.refresh(ds)
+            print('added the ID type')
+            session.commit()
+            print('committed')
+            session.refresh(ds)
+            print(f"#=========== ID TYPE ADDED for dataset {dataset.unique_id=}, {ds.unique_id=}")
+
+        except:
+            print(f"#=========== ID TYPE FAILED for dataset {dataset.unique_id=}, {ds.unique_id=}")
 
     return ds
 
@@ -1201,6 +1207,8 @@ def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
 
 
 def sql_create_ds_acl(ag, ds, read, write, session):
+    if ag is None:
+        return None
     acl = session.exec(select(DatasetACL).where(DatasetACL.accessgroup == ag).where(DatasetACL.dataset == ds)).one_or_none()
     print(f"{acl=} for {ds.unique_id}")
     if not acl:

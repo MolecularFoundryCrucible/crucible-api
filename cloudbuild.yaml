@@ -25,7 +25,7 @@ steps:
     args:
     - apply
     - -f
-    - ./k8s-conf/configmap-{BRANCH_NAME}.yaml
+    - ./k8s-conf/configmap-${BRANCH_NAME}.yaml
     env:
     - CLOUDSDK_COMPUTE_REGION=us-central1
     - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
@@ -35,7 +35,7 @@ steps:
     args:
     - apply
     - -f
-    - ./k8s-conf/deployment-k8s-conf-{BRANCH_NAME}.yaml
+    - ./k8s-conf/deployment-k8s-conf-${BRANCH_NAME}.yaml
     env:
     - CLOUDSDK_COMPUTE_REGION=us-central1
     - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
@@ -45,7 +45,7 @@ steps:
     args:
     - set
     - image
-    - deployment/crucible-api-{BRANCH_NAME}
+    - deployment/crucible-api-${BRANCH_NAME}
     - crucible-api-container=${_IMAGE_PATH}:${SHORT_SHA}
     env:
     - CLOUDSDK_COMPUTE_REGION=us-central1

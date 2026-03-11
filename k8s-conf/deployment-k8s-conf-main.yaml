@@ -1,156 +1,10 @@
 apiVersion: "apps/v1"
 kind: "Deployment"
 metadata:
-  annotations:
-    autopilot.gke.io/resource-adjustment: '{"input":{"containers":[{"limits":{"ephemeral-storage":"10Gi"},"requests":{"cpu":"500m","ephemeral-storage":"20Gi","memory":"20Gi"},"name":"crucible-api-container"}]},"output":{"containers":[{"limits":{"ephemeral-storage":"20Gi"},"requests":{"cpu":"3077m","ephemeral-storage":"10Gi","memory":"20Gi"},"name":"crucible-api-container"}]},"modified":true}'
-    autopilot.gke.io/warden-version: 3.0.42
-    deployment.kubernetes.io/revision: "50"
-  creationTimestamp: 
-  generation: 
-  labels:
-    app: crucible-api-main
-  managedFields:
-  - apiVersion: apps/v1
-    fieldsType: FieldsV1
-    fieldsV1:
-      f:spec:
-        f:replicas: {}
-    manager: vpa-recommender
-    operation: Update
-    subresource: scale
-  - apiVersion: apps/v1
-    fieldsType: FieldsV1
-    fieldsV1:
-      f:metadata:
-        f:annotations:
-          .: {}
-          f:kubectl.kubernetes.io/last-applied-configuration: {}
-        f:labels:
-          .: {}
-          f:app: {}
-      f:spec:
-        f:progressDeadlineSeconds: {}
-        f:revisionHistoryLimit: {}
-        f:selector: {}
-        f:strategy:
-          f:rollingUpdate:
-            .: {}
-            f:maxSurge: {}
-            f:maxUnavailable: {}
-          f:type: {}
-        f:template:
-          f:metadata:
-            f:annotations:
-              .: {}
-              f:gke-gcsfuse/cpu-limit: {}
-              f:gke-gcsfuse/cpu-request: {}
-              f:gke-gcsfuse/memory-request: {}
-              f:gke-gcsfuse/volumes: {}
-            f:labels:
-              .: {}
-              f:app: {}
-            f:name: {}
-            f:namespace: {}
-          f:spec:
-            f:containers:
-              k:{"name":"crucible-api-container"}:
-                .: {}
-                f:env:
-                  .: {}
-                  k:{"name":"PYTHONUNBUFFERED"}:
-                    .: {}
-                    f:name: {}
-                    f:value: {}
-                f:imagePullPolicy: {}
-                f:name: {}
-                f:resources: {}
-                f:terminationMessagePath: {}
-                f:terminationMessagePolicy: {}
-                f:volumeMounts:
-                  .: {}
-                  k:{"mountPath":"/mnt/gcs"}:
-                    .: {}
-                    f:mountPath: {}
-                    f:name: {}
-                    f:readOnly: {}
-            f:dnsPolicy: {}
-            f:restartPolicy: {}
-            f:schedulerName: {}
-            f:securityContext: {}
-            f:serviceAccount: {}
-            f:serviceAccountName: {}
-            f:terminationGracePeriodSeconds: {}
-            f:volumes:
-              .: {}
-              k:{"name":"cruc-upload-vol2"}:
-                .: {}
-                f:name: {}
-                f:persistentVolumeClaim:
-                  .: {}
-                  f:claimName: {}
-                  f:readOnly: {}
-    manager: kubectl-client-side-apply
-    operation: Update
-    time: 
-  - apiVersion: apps/v1
-    fieldsType: FieldsV1
-    fieldsV1:
-      f:spec:
-        f:template:
-          f:metadata:
-            f:annotations:
-              f:gke-gcsfuse/memory-limit: {}
-          f:spec:
-            f:containers:
-              k:{"name":"crucible-api-container"}:
-                f:image: {}
-                f:resources:
-                  f:limits:
-                    f:ephemeral-storage: {}
-                  f:requests:
-                    f:ephemeral-storage: {}
-                    f:memory: {}
-    manager: unknown
-    operation: Update
-    time: 
-  - apiVersion: apps/v1
-    fieldsType: FieldsV1
-    fieldsV1:
-      f:metadata:
-        f:annotations:
-          f:deployment.kubernetes.io/revision: {}
-      f:status:
-        f:availableReplicas: {}
-        f:conditions:
-          .: {}
-          k:{"type":"Available"}:
-            .: {}
-            f:lastTransitionTime: {}
-            f:lastUpdateTime: {}
-            f:message: {}
-            f:reason: {}
-            f:status: {}
-            f:type: {}
-          k:{"type":"Progressing"}:
-            .: {}
-            f:lastTransitionTime: {}
-            f:lastUpdateTime: {}
-            f:message: {}
-            f:reason: {}
-            f:status: {}
-            f:type: {}
-        f:observedGeneration: {}
-        f:readyReplicas: {}
-        f:replicas: {}
-        f:updatedReplicas: {}
-    manager: kube-controller-manager
-    operation: Update
-    subresource: status
-    time: 
   name: "crucible-api-main"
   namespace: "default"
-  resourceVersion: 
-  uid: 
+  labels:
+    app: crucible-api-main
 spec:
   progressDeadlineSeconds: 120
   revisionHistoryLimit: 2
@@ -182,13 +36,6 @@ spec:
       - env:
         - name: "PYTHONUNBUFFERED"
           value: "True"
-        - name: "DB_NAME"
-          value: "testdb2"
-        - name: "DB_CONF_FILE"
-          valueFrom:
-            configMapKeyRef:
-              key: DB_CONF_FILE
-              name: crucible-api-config-main
         - name: "API_CONF_FILE"
           valueFrom:
             configMapKeyRef:
@@ -222,6 +69,9 @@ spec:
         image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-main:latest"
         imagePullPolicy: Always
         name: "crucible-api-container"
+        ports:
+        - containerPort: 7777
+          protocol: TCP
         resources:
           limits:
             cpu: 8000m
@@ -251,18 +101,9 @@ spec:
           # Make sure to update on a regular schedule!
           image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
           args:
-            # If connecting from a VPC-native GKE cluster, you can use the
-            # following flag to have the proxy connect over private IP
             - "--private-ip"
-
-            # If you are not connecting with Automatic IAM, you can delete
-            # the following flag.
             - "--auto-iam-authn"
-
-            # Enable structured logging with LogEntry format:
             - "--structured-logs"
-
-            # Replace DB_PORT with the port the proxy should listen on
             - "--port=5432"
             - "mf-crucible:us-central1:crucible-db"
 

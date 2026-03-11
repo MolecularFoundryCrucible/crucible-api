@@ -10,7 +10,7 @@ steps:
   # Build with both SHA tag and latest tag
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
-    args: [-c, 'docker build -t ${_IMAGE_PATH}:${SHORT_SHA} -t ${_IMAGE_PATH}:latest --cache-from ${_IMAGE_PATH}:latest .']
+    args: [-c, 'docker build --build-arg BRANCH_NAME=${BRANCH_NAME} -t ${_IMAGE_PATH}:${SHORT_SHA} -t ${_IMAGE_PATH}:latest --cache-from ${_IMAGE_PATH}:latest .']
 
   # Push SHA-tagged image
   - name: 'gcr.io/cloud-builders/docker'
@@ -25,7 +25,7 @@ steps:
     args:
     - apply
     - -f
-    - ./k8s-conf/configmap-staging.yaml
+    - ./k8s-conf/configmap-{BRANCH_NAME}.yaml
     env:
     - CLOUDSDK_COMPUTE_REGION=us-central1
     - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
@@ -35,7 +35,7 @@ steps:
     args:
     - apply
     - -f
-    - ./k8s-conf/deployment-k8s-conf-staging.yaml
+    - ./k8s-conf/deployment-k8s-conf-{BRANCH_NAME}.yaml
     env:
     - CLOUDSDK_COMPUTE_REGION=us-central1
     - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
@@ -45,7 +45,7 @@ steps:
     args:
     - set
     - image
-    - deployment/crucible-api-staging
+    - deployment/crucible-api-{BRANCH_NAME}
     - crucible-api-container=${_IMAGE_PATH}:${SHORT_SHA}
     env:
     - CLOUDSDK_COMPUTE_REGION=us-central1

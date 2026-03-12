@@ -127,6 +127,8 @@ def add_users_to_project(proj_id: str, orcid: str, admin_acct: Annotated[str, De
 
     with Session(engine) as session:
         user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail = 'User not found')
         if user:
             # add link between user and project
             link = add_or_update(session,

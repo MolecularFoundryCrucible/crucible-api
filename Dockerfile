@@ -10,6 +10,9 @@ ENV UV_NO_DEV=1
 
 ARG githash
 ENV GITHASH=$githash
+ARG BRANCH_NAME
+ENV BRANCH_NAME=$BRANCH_NAME
+RUN if [ "$BRANCH_NAME" = "main" ]; then echo 7777 > /root/.port; else echo 8889 > /root/.port; fi
 
 # rclone
 RUN curl https://rclone.org/install.sh | bash
@@ -26,4 +29,4 @@ RUN /bin/uv sync --locked
 
 # Run app
 #CMD python -m app.api.test
-CMD exec /bin/uv run uvicorn app.api.main:app --host 0.0.0.0 --reload --port 7777
+CMD exec /bin/uv run uvicorn app.api.main:app --host 0.0.0.0 --reload --port $(cat /root/.port)

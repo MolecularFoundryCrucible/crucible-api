@@ -1,10 +1,13 @@
 
 import pika
+from app.utils.constants import rmq_host, rmq_port, rmq_user
 
 
-def send_pika_message(message, exchange, routing_key, user = 'admin', rmq_pw = ''):
-    credentials = pika.PlainCredentials('admin', rmq_pw)
-    parameters = pika.ConnectionParameters('10.128.0.31', 5672, '/', credentials)
+def send_pika_message(message, exchange, routing_key, user = None, rmq_pw = ''):
+    if user is None:
+        user = rmq_user
+    credentials = pika.PlainCredentials(user, rmq_pw)
+    parameters = pika.ConnectionParameters(rmq_host, rmq_port, '/', credentials)
 
     connection = pika.BlockingConnection(parameters)
     channel = connection.channel()

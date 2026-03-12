@@ -2,48 +2,24 @@
 import yaml
 import os
 from app.general_utils import get_secret
+from sqlalchemy import join
 from sqlmodel import create_engine, select
+from app.general_utils import  get_secret
+from dotenv import load_dotenv
+# Need a .env file with the following variables
+#DB_PASSWORD
+#DB_USERNAME
+#DB_SERVER
+#DB_DATABASE
 
-
-
-def setup_engine(env_config_file = None):
-    print(f"{env_config_file=}")
-    import os
-    home = os.getenv("HOME")
+def setup_engine(env_file = '.env'):
+    print(load_dotenv(env_file))
     password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1')
-
-    if env_config_file is not None:
-        with open(env_config_file) as f:
-            env_config = yaml.safe_load(f)
-        if 'root' in home:
-            password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1')
-        else:
-            password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1', sa_creds = f'{home}/.conf/mf-crucible-6cd684804246.json', cred_file = True)
-        db_url = parse_db_url_from_config(env_config, password)
-            
-    else:
-        db_type = os.getenv("DB_TYPE")
-        if db_type == 'sqlite':
-            db_url = f'sqlite:///{os.getenv("DB_FILE")}'
-        elif db_type == 'postgres':
-            db_url = f'postgresql://{os.getenv("DB_USERNAME")}:{password}@{os.getenv("DB_SERVER")}/{os.getenv("DB_DATABASE")}'
-        else:
-            raise ValueError(f"Unknown DB Type {db_type}")
-        
+    if password is None:
+        return
+    db_url = f'postgresql://{os.environ.get("DB_USERNAME")}:{password}@{os.environ.get("DB_SERVER")}/{os.environ.get("DB_DATABASE")}'
     engine = create_engine(db_url, echo=False)
     return(engine)
-
-
-def parse_db_url_from_config(env_config, password):
-    C = env_config.copy()
-
-    if C['db_type'] == 'sqlite':
-        db_url = f"sqlite:///{C['db_file']}"
-    elif C['db_type'] == 'postgres':
-        db_url = f"postgresql://{C['db_username']}:{password}@{C['db_server']}/{C['db_database']}"
-    else:
-        raise ValueError(f"Unknown DB Type {C['db_type']}")
-    return(db_url)
 
 
 def get_any(d, keys, default=None):
@@ -81,7 +57,7 @@ def add_or_update(session, cls, where, **kwargs):
     print(obj)
     if obj: 
         for key, value in kwargs.items():
-            print(key)
+            print(key,value)
             setattr(obj, key, value)
     else:
         obj = cls(**kwargs)
@@ -95,3 +71,22 @@ def delete_link(table, dataset_id, session):
     found_records = session.exec(statement).all()
     for rec in found_records:
         session.delete(rec)
+
+
+def generate_kw_query(session, base_query, keyword_filter):
+    from app.models.core_models import Dataset, DatasetKeywordLink, Keyword
+
+    keywords = session.exec(
+        select(Keyword).where(Keyword.keyword.ilike(f"%{keyword_filter}%"))
+    ).all()
+
+    if not keywords:
+        return []
+
+    keyword_ids = [keyword.id for keyword in keywords]
+    query = (
+        base_query.select_from(
+            join(DatasetKeywordLink, DatasetKeywordLink.dataset_id == Dataset.id)
+        ).filter(DatasetKeywordLink.keyword_id.in_(keyword_ids))
+    )
+    return query

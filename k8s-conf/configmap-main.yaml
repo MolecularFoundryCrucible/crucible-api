@@ -1,0 +1,21 @@
+apiVersion: "v1"
+kind: "ConfigMap"
+metadata:
+  name: "crucible-api-config-main"
+  namespace: "default"
+  labels:
+    app: "crucible-api-main"
+data:
+  # api - currently only API_CONF_FILE is used
+  API_CONF_FILE: "app/conf/api_conf.yaml"
+  hostname: "crucible.lbl.gov"
+  api_path: "api/v1"
+  orcid_client_id: "APP-AXDIPEVR6IMA0RL7"
+  gcs_config_name: "mf-cloud-storage"
+  
+  # database
+  db_type: "postgresql"
+  db_server: "172.31.16.10:5432"
+  db_username: "crucible-api-user"
+  db_database: "crucible"
+  db_auth: "true"

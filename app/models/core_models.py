@@ -238,7 +238,7 @@ class ScientificMetadata(SQLModel, table = True):
 
 #New Scientific Metadata table for FTS (Full-Text Search)
 class NewScientificMetadata(SQLModel, table = True):
-    __tablename__ = "scientific_metadata"
+    __tablename__ = "scientific_metadata_new"
     id: Optional[int] = Field(default=None, primary_key=True)
     dataset_mfid: str = Field(foreign_key="dataset.unique_id", index=True)
     dataset_id: Optional[int] = Field(foreign_key="dataset.id", index=True)
@@ -250,7 +250,7 @@ class NewScientificMetadata(SQLModel, table = True):
     
     __table_args__ = (
         Index(
-            "ix_scientific_metadata_fts",
+            "ix_scientific_metadata_new_fts",
             func.to_tsvector(
                 text("'english'"), 
                 func.jsonb_path_query_array(text('scientific_metadata'), text("'$[*]'")).cast(Text)

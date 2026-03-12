@@ -115,7 +115,7 @@ def get_apikey(request: Request):
             group_name=orcid
         )
 
-    return f"Your Crucible APIkey is: {crucible_token}"
+    return {'crucible_apikey': crucible_token}
 
 
 @router.get("/regenerate_apikey")

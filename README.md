@@ -275,7 +275,7 @@ For issues and questions, please use the GitHub issue tracker or contact the dev
 # Local Deployment for Testing
 
 Configuration will live in `.env` like this:
-
+** If you would like to test post or patch requests, please connect to the staging database by setting `DB_DATABASE=crucible-staging`
 ```sh
 DB_TYPE=postgres
 DB_USERNAME=crucible-api-user

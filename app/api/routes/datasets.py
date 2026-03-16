@@ -151,21 +151,21 @@ async def create_dataset(
             print(f'added instrument group access to {ds.unique_id}')
 
         try:
-            print(f'IdType unique_id being written: {dataset.unique_id}')
+            print(f'IdType unique_id being written: {ds.unique_id}')
             add_or_update(session,
                         IdType,
-                        where=(IdType.unique_id == dataset.unique_id),
-                        unique_id = dataset.unique_id,
+                        where=(IdType.unique_id == ds.unique_id),
+                        unique_id = ds.unique_id,
                         object_type = "dataset")
 
             print('added the ID type')
             session.commit()
             print('committed')
             session.refresh(ds)
-            print(f"#=========== ID TYPE ADDED for dataset {dataset.unique_id=}, {ds.unique_id=}")
+            print(f"#=========== ID TYPE ADDED for dataset {ds.unique_id=}")
 
         except:
-            print(f"#=========== ID TYPE FAILED for dataset {dataset.unique_id=}, {ds.unique_id=}")
+            print(f"#=========== ID TYPE FAILED for dataset {ds.unique_id=}")
 
     return ds
 

@@ -124,7 +124,7 @@ def get_apikey(request: Request):
             User,
             User.orcid == orcid,
             first_name = user_info['given_name'],
-            last_name = user_info['last_name']
+            last_name = user_info['family_name']
             )
   
         # add the user to their orcid access group  

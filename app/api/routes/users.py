@@ -56,8 +56,6 @@ def create_user(admin_acct: Annotated[str, Depends(is_admin)], user_info: User, 
     Add or update a user record in the database.
     Add the user to an Access Group with their ORCID
     Add the user to Access Groups for any project they are a USER on
-         // DOES NOT ADD Users to access groups for the projects
-            on which they are the project lead
     Create a link to the projects that the User is a USER on
 
     Args:

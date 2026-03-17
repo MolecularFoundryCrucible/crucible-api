@@ -123,6 +123,7 @@ def get_apikey(request: Request):
             session,
             User,
             User.orcid == orcid,
+            orcid = user_info['orcid'],
             first_name = user_info['given_name'],
             last_name = user_info['family_name']
             )

@@ -15,6 +15,7 @@ from app.models.core_models import AccessGroup, User
 from app.models.response_schemas import AccountInfo
 from app.utils.auth_utils import authorize_user
 from app.utils.sql_utils import add_or_update
+from app.utils.user_utils import sql_add_user_to_access_group
 
 router = APIRouter(tags=["auth"])
 engine = get_engine()
@@ -61,6 +62,7 @@ def redirect_exchange(request: Request, code: str, state: str = None):
     )
     try:
         user = user_from_orcid.json()
+        print(f'{user=}')
         exp_time = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=1)
         user_info_payload = {"orcid": user["sub"], "exp": exp_time}
         user_info_jwt = jwt.encode(user_info_payload, SECRET_KEY, algorithm=ALGORITHM)
@@ -122,8 +124,10 @@ def get_apikey(request: Request):
         #     User.orcid ==orcid,
         #     first_name = user_info[''],
         #     last_name = user_info[''],
-
-        # )
+        #     email = user_info['email'],
+        #   
+        # add the user to their orcid access group  
+        sql_add_user_to_access_group(orcid, orcid, session)
 
     return {'crucible_apikey': crucible_token}
 

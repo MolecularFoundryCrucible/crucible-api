@@ -123,25 +123,48 @@ def read_users_on_project(proj_id: str, admin_acct: Annotated[str, Depends(is_ad
 
 
 @router.post("/projects/{proj_id}/users/{orcid}", response_model=List[User])
-def add_users_to_project(proj_id: str, orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
-
+def add_users_to_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    access_group_name, ag_ids = auth_res
+    
     with Session(engine) as session:
+        # get user details
         user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
         if user is None:
-            raise HTTPException(status_code=404, detail = 'User not found')
-        if user:
-            # add link between user and project
-            link = add_or_update(session,
-                                 UserProjectLink,
-                                 where=(and_(UserProjectLink.user_id == user.id, UserProjectLink.project_id == proj_id)),
-                                 user_id=user.id,
-                                 project_id=proj_id)
-            session.commit()
+            raise HTTPException(status_code=404, detail = f'User {orcid} not found')
+        
+        # get project details
+        proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
+        if proj is None:
+            raise HTTPException(status_code=404, detail = f'Project {proj_id} not found')
+        
+        proj_lead_email = proj.project_lead_email
+
+
+        # if the APIkey is not associated with an admin account
+        # get requester details
+        requester_notauth_detail = f'User must be the project lead or an admin to add other users to a project'
+        if is_orcid(access_group_name):
+            requester = session.exec(select(User).where(User.orcid == access_group_name)).one_or_none()
+        
+            if not requester:
+                raise HTTPException(status_code = 403, detail = requester_notauth_detail)
+
+            requester_emails = [requester.email, requester.lbl_email]
+            if not any([email == proj_lead_email for email in requester_emails]):
+                raise HTTPException(status_code = 403, detail = requester_notauth_detail)
+
+        # add link between user and project
+        link = add_or_update(session,
+                                UserProjectLink,
+                                where=(and_(UserProjectLink.user_id == user.id, UserProjectLink.project_id == proj_id)),
+                                user_id=user.id,
+                                project_id=proj_id)
+        session.commit()
 
         # add user to access group
         sql_add_user_to_access_group(orcid, proj_id, session)
 
-    project_users = read_users_on_project(proj_id, admin_acct)
+    project_users = read_users_on_project(proj_id, access_group_name)
     return project_users
 
 

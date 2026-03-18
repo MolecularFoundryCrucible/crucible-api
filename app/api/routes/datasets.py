@@ -71,6 +71,21 @@ def request_carrier_segmentation(dsid, auth_res: Annotated[tuple, Depends(author
     )
     return
 
+@router.post("/datasets/{dsid}/insitu_spec_aggregation")
+def request_insitu_aggregation(dsid, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
+    msg = {
+        "dsid": dsid,
+    }
+
+    send_pika_message(
+        message=json.dumps(msg),
+        exchange="",
+        routing_key="insitu-aggregation",
+        user="admin",
+        rmq_pw=rmq_pw
+    )
+    return
 
 @router.post("/datasets", response_model=Dataset)
 async def create_dataset(

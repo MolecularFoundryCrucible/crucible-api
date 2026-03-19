@@ -1,6 +1,6 @@
 from typing import Annotated, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, func, text, Text
 from sqlalchemy.sql import and_, or_
 from sqlmodel import Session, select
@@ -43,10 +43,10 @@ def read_keyword(keyword: str, permissive: bool = True):
 
 
 @router.get("/scientific_metadata/search", response_model=List[NewScientificMetadata])
-def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str):
+def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str, limit: int = Query(default=50, ge=1, le=200)):
     """
-    Perform a ranked Full-Text Search (FTS) on scientific metadata
-    using PostgreSQL's tsvector, tsquery, and ts_rank_cd.
+    Perform a ranked Full-Text Search (FTS) on scientific metadata using PostgreSQL's tsvector, 
+    tsquery, and ts_rank_cd. Default limit is 50 results, max is 200.
     """
     access_group_name, ag_ids = auth_res
 
@@ -70,34 +70,7 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
         )
         .order_by(desc("rank"))
         .distinct()
-    )
-    with Session(engine) as session:
-        results = session.exec(stmt).all()
-        return [row[0] for row in results]
-
-
-@router.get("/scientific_metadata/search_test", response_model=List[NewScientificMetadata])
-def search_scientific_metadata_no_auth(q: str):
-    """
-    TEST VERSION: Perform a ranked Full-Text Search (FTS) on scientific metadata.
-    Authentication and ACL checks are disabled.
-    """
-    search_query = func.plainto_tsquery('english', q)
-    metadata_vector = func.to_tsvector(
-        'english',
-        func.jsonb_path_query_array(NewScientificMetadata.scientific_metadata, text("'$[*]'")).cast(Text)
-    )
-
-    rank_expr = func.ts_rank_cd(metadata_vector, search_query)
-
-    stmt = (
-        select(NewScientificMetadata, rank_expr.label("rank"))
-        .join(Dataset, NewScientificMetadata.dataset_id == Dataset.id)
-        .where(
-            metadata_vector.op('@@')(search_query)
-        )
-        .order_by(desc("rank"))
-        .distinct()
+        .limit(limit)
     )
     with Session(engine) as session:
         results = session.exec(stmt).all()

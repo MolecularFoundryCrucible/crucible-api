@@ -29,4 +29,9 @@ RUN /bin/uv sync --locked
 
 # Run app
 #CMD python -m app.api.test
-CMD exec /bin/uv run uvicorn app.api.main:app --host 0.0.0.0 --reload --port $(cat /root/.port)
+#CMD exec /bin/uv run uvicorn app.api.main:app --host 0.0.0.0 --reload --port $(cat /root/.port)
+CMD exec /bin/uv run gunicorn app.api.main:app \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --workers 4 \
+  --bind 0.0.0.0:$(cat /root/.port)
+

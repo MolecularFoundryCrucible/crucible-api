@@ -75,7 +75,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         HTTPException: If required sample fields are missing
     """
     access_group_name, ag_ids = auth_res
-
+    
     # Validate required fields
     missing_fields = []
     if not S.sample_name or not S.sample_name.strip():

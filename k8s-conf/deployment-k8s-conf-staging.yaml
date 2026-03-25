@@ -20,7 +20,7 @@ spec:
     metadata:
       annotations:
         gke-gcsfuse/cpu-limit: "4"
-        gke-gcsfuse/cpu-request: 500m
+        gke-gcsfuse/cpu-request: 1000m
         gke-gcsfuse/memory-limit: 1000Gi
         gke-gcsfuse/memory-request: 1Gi
         gke-gcsfuse/volumes: "true"
@@ -81,8 +81,8 @@ spec:
             memory: 4Gi
             ephemeral-storage: 2Gi
           requests:
-            cpu: 250m
-            memory: 512Mi
+            cpu: 1000m
+            memory: 1Gi
             ephemeral-storage: 1Gi
         securityContext:
           capabilities:
@@ -112,7 +112,7 @@ spec:
           resources:
             requests:
               memory: "1Gi"
-              cpu: "500m"
+              cpu: "1000m"
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       schedulerName: default-scheduler

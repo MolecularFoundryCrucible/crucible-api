@@ -20,8 +20,8 @@ spec:
     metadata:
       annotations:
         gke-gcsfuse/cpu-limit: "4"
-        gke-gcsfuse/cpu-request: 500m
-        gke-gcsfuse/memory-limit: 1000Gi
+        gke-gcsfuse/cpu-request: 1000m
+        gke-gcsfuse/memory-limit: 1Gi
         gke-gcsfuse/memory-request: 1Gi
         gke-gcsfuse/volumes: "true"
         autoscaling.knative.dev/minScale: "1"
@@ -74,11 +74,11 @@ spec:
           protocol: TCP
         resources:
           limits:
-            cpu: 8000m
+            cpu: 4000m
             memory: 4Gi
             ephemeral-storage: 2Gi
           requests:
-            cpu: 500m
+            cpu: 1000m
             memory: 1Gi
             ephemeral-storage: 1Gi
         securityContext:

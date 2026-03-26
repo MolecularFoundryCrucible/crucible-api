@@ -7,11 +7,9 @@ class DatasetResponse(BaseModel):
     dataset_name: Optional[str]
     measurement: Optional[str]
     timestamp: Optional[str] = None
-    creation_time: Optional[str] = None
-    modification_time: Optional[str] = None
 
     class Config:
-        from_attributes = True  
+        from_attributes = True
     
 class SampleWithDatasetsResponse(BaseModel):
     id: int
@@ -22,8 +20,6 @@ class SampleWithDatasetsResponse(BaseModel):
     project_id: Optional[str]
     date_created: Optional[str] = Field(default=None, validation_alias="timestamp")
     timestamp: Optional[str] = None
-    creation_time: Optional[str] = None
-    modification_time: Optional[str] = None
     description: Optional[str]
     datasets: List[DatasetResponse] = []
     

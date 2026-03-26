@@ -101,10 +101,17 @@ async def create_dataset(
             Dataset.unique_id == dataset.unique_id,
             **dataset.model_dump(exclude_unset=True)
         )
-        upload_time = get_tz_isoformat()
-        ds.modification_time = upload_time
+
+        # add_or_update is kind of a sneaky patch here
+        now = get_tz_isoformat()
         if ds.creation_time is None:
-            ds.creation_time = upload_time
+            # New record — set both to the same instant
+            ds.creation_time = now
+            ds.modification_time = now
+        else:
+            # Existing record was updated — only bump modification_time
+            ds.modification_time = now
+
 
         session.commit()
         session.refresh(ds)
@@ -661,6 +668,13 @@ def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)],
                                dataset_unique_id = dsid,
                                scientific_metadata = scientific_md)
 
+        now = get_tz_isoformat()
+        if md_obj.creation_time is None:
+            md_obj.creation_time = now
+            md_obj.modification_time = now
+        else:
+            md_obj.modification_time = now
+
         session.commit()
         session.refresh(md_obj)
         return(md_obj)
@@ -697,6 +711,7 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
                                dataset_unique_id = dsid, scientific_metadata = md_dict)
         print(f'{md_obj=}')
         attributes.flag_modified(md_obj, 'scientific_metadata')
+        md_obj.modification_time = get_tz_isoformat()
         session.commit()
         session.refresh(md_obj)
         return(md_obj)
@@ -812,6 +827,14 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
                                 thumbnail_name = thumbnail.thumbnail_name,
                                 thumbnail_b64str = thumbnail.thumbnail_b64str,
                                 dataset_id = ds.id)
+
+        now = get_tz_isoformat()
+        if tn_obj.creation_time is None:
+            tn_obj.creation_time = now
+            tn_obj.modification_time = now
+        else:
+            tn_obj.modification_time = now
+
         print('added tnobj')
         if not (tn_obj in ds.thumbnails):
             print("adding tnobj to ds")
@@ -885,6 +908,14 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
                                        size = associated_file.size,
                                        sha256_hash = associated_file.sha256_hash,
                                        dataset_id = ds.id)
+
+        now = get_tz_isoformat()
+        if af_obj.creation_time is None:
+            af_obj.creation_time = now
+            af_obj.modification_time = now
+        else:
+            af_obj.modification_time = now
+
         print("added af_obj")
         if not (af_obj in ds.associated_files):
             print("adding afobj to ds")

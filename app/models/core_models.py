@@ -33,8 +33,12 @@ class Thumbnail(SQLModel, table=True):
     thumbnail_name: str
     thumbnail_b64str: str
     dataset_id: int = Field(foreign_key = "dataset.id")
+    creation_time: Optional[str] = Field(default_factory=get_tz_isoformat,
+                                         sa_column=Column("creation_time", String, nullable=True))
+    modification_time: Optional[str] = Field(default_factory=get_tz_isoformat,
+                                             sa_column=Column("modification_time", String, nullable=True))
     dataset: "Dataset" = Relationship(back_populates="thumbnails")
-    
+
 
 class AssociatedFile(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -42,6 +46,10 @@ class AssociatedFile(SQLModel, table=True):
     size: int = Field(sa_column=Column(BigInteger())) 
     sha256_hash: str
     dataset_id: int = Field(foreign_key = "dataset.id")
+    creation_time: Optional[str] = Field(default_factory=get_tz_isoformat,
+                                         sa_column=Column("creation_time", String, nullable=True))
+    modification_time: Optional[str] = Field(default_factory=get_tz_isoformat,
+                                             sa_column=Column("modification_time", String, nullable=True))
     dataset: "Dataset" = Relationship(back_populates = 'associated_files')
 
 
@@ -250,6 +258,10 @@ class ScientificMetadata(SQLModel, table = True):
     id: Optional[int] = Field(default=None, primary_key=True)
     dataset_unique_id: str = Field(foreign_key="dataset.unique_id", index=True)
     scientific_metadata: dict = Field(sa_column=Column(JSON), default={})
+    creation_time: Optional[str] = Field(default_factory=get_tz_isoformat,
+                                         sa_column=Column("creation_time", String, nullable=True))
+    modification_time: Optional[str] = Field(default_factory=get_tz_isoformat,
+                                             sa_column=Column("modification_time", String, nullable=True))
     dataset: Optional["Dataset"] = Relationship(back_populates="scientific_metadata")
 
 

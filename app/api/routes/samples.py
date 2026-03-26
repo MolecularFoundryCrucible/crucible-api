@@ -86,7 +86,8 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
     if missing_fields:
         raise HTTPException(
             status_code=400,
-            detail=f"Missing required sample information: {', '.join(missing_fields)}. Please provide all required fields: sample_name."
+            detail=f"Missing required sample information: {', '.join(missing_fields)}. \
+                     Please provide all required fields: sample_name."
         )
 
     with Session(engine) as session:
@@ -102,6 +103,12 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             return sample
 
         sample = Sample(**S.model_dump(exclude_unset=True, exclude={"parents", "children"}))
+
+        # synchronize timestamps
+        now = get_tz_isoformat()
+        sample.creation_time = now
+        sample.modification_time = now
+
         print(f'{sample=}')
         session.add(sample)
         session.commit()

@@ -101,6 +101,11 @@ async def create_dataset(
             Dataset.unique_id == dataset.unique_id,
             **dataset.model_dump(exclude_unset=True)
         )
+        upload_time = get_tz_isoformat()
+        ds.modification_time = upload_time
+        if ds.creation_time is None:
+            ds.creation_time = upload_time
+
         session.commit()
         session.refresh(ds)
 
@@ -216,7 +221,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
 
         upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **filtered_updates)
-
+        upds.modification_time = get_tz_isoformat()
 
         if upds.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == upds.owner_user_id)).one_or_none()

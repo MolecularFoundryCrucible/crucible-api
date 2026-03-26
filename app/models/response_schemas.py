@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional
 
 class DatasetResponse(BaseModel):
@@ -6,6 +6,10 @@ class DatasetResponse(BaseModel):
     unique_id: str
     dataset_name: Optional[str]
     measurement: Optional[str]
+    timestamp: Optional[str] = None
+    creation_time: Optional[str] = None
+    modification_time: Optional[str] = None
+
     class Config:
         from_attributes = True  
     
@@ -16,12 +20,15 @@ class SampleWithDatasetsResponse(BaseModel):
     sample_type: Optional[str]
     owner_orcid: Optional[str]
     project_id: Optional[str]
-    date_created: Optional[str] = None
+    date_created: Optional[str] = Field(default=None, validation_alias="timestamp")
+    timestamp: Optional[str] = None
+    creation_time: Optional[str] = None
+    modification_time: Optional[str] = None
     description: Optional[str]
     datasets: List[DatasetResponse] = []
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    
 
 class DatasetSampleLinkResponse(BaseModel):
     dataset_id: str

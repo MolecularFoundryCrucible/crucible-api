@@ -8,7 +8,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import is_orcid
+from app.general_utils import get_tz_isoformat, is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, DatasetACL, DatasetSampleLink,
     Sample, SampleLink, User,
@@ -53,6 +53,8 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
         for key, value in update_fields.items():
             setattr(sample, key, value)
             print(key, value)
+
+        sample.modification_time = get_tz_isoformat()
         session.add(sample)
         session.commit()
         session.refresh(sample)

@@ -1,7 +1,7 @@
 from typing import Optional, List
 from pydantic import ConfigDict
-from sqlalchemy import JSON, Column, BigInteger, func, Index, text, Text, Integer
-from sqlalchemy.dialects.postgresql import JSONB, String
+from sqlalchemy import JSON, Column, BigInteger, func, Index, text, Text, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel,Relationship, Column
 from mfid import mfid
 

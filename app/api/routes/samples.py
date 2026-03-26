@@ -8,7 +8,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import is_orcid
+from app.general_utils import get_tz_isoformat, is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, DatasetACL, DatasetSampleLink,
     Sample, SampleLink, User,
@@ -53,6 +53,8 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
         for key, value in update_fields.items():
             setattr(sample, key, value)
             print(key, value)
+
+        sample.modification_time = get_tz_isoformat()
         session.add(sample)
         session.commit()
         session.refresh(sample)
@@ -84,7 +86,8 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
     if missing_fields:
         raise HTTPException(
             status_code=400,
-            detail=f"Missing required sample information: {', '.join(missing_fields)}. Please provide all required fields: sample_name."
+            detail=f"Missing required sample information: {', '.join(missing_fields)}. \
+                     Please provide all required fields: sample_name."
         )
 
     with Session(engine) as session:
@@ -100,6 +103,12 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             return sample
 
         sample = Sample(**S.model_dump(exclude_unset=True, exclude={"parents", "children"}))
+
+        # synchronize timestamps
+        now = get_tz_isoformat()
+        sample.creation_time = now
+        sample.modification_time = now
+
         print(f'{sample=}')
         session.add(sample)
         session.commit()

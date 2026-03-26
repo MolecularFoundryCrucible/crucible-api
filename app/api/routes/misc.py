@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.models.core_models import Dataset, DatasetACL, Keyword, NewScientificMetadata
-from app.models.misc import IdType
+from app.models.misc import Resource
 from app.utils.auth_utils import authorize_user
 
 router = APIRouter(tags=["misc"])
@@ -80,7 +80,7 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
 @router.get("/idtype/{unique_id}")
 def get_object_type(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str):
     with Session(engine) as session:
-        object_type = session.exec(select(IdType).where(IdType.unique_id == unique_id)).one_or_none()
+        object_type = session.exec(select(Resource).where(Resource.mfid == unique_id)).one_or_none()
         if object_type is None:
             raise HTTPException(status_code=404, detail="MFID not found")
         else:

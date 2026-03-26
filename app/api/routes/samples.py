@@ -13,7 +13,7 @@ from app.models.core_models import (
     AccessGroup, Dataset, DatasetACL, DatasetSampleLink,
     Sample, SampleLink, User,
 )
-from app.models.misc import IdType
+from app.models.misc import Resource
 from app.models.response_schemas import SampleWithDatasetsResponse
 from app.utils.auth_utils import authorize_user
 from app.utils.sql_utils import add_or_update, generate_kw_query
@@ -54,7 +54,10 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
             setattr(sample, key, value)
             print(key, value)
 
-        sample.modification_time = get_tz_isoformat()
+        ri = session.exec(select(Resource).where(Resource.mfid == sample_id)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
+
         session.add(sample)
         session.commit()
         session.refresh(sample)
@@ -103,12 +106,6 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             return sample
 
         sample = Sample(**S.model_dump(exclude_unset=True, exclude={"parents", "children"}))
-
-        # synchronize timestamps
-        now = get_tz_isoformat()
-        sample.creation_time = now
-        sample.modification_time = now
-
         print(f'{sample=}')
         session.add(sample)
         session.commit()
@@ -129,12 +126,14 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             pass
 
         session.add(sample)
-        print('readded sample')
-        add_or_update(session,
-                      IdType,
-                      where=(IdType.unique_id == sample.unique_id),
-                      unique_id=sample.unique_id,
-                      object_type="sample")
+        now = get_tz_isoformat()
+        ri = add_or_update(session,
+                            Resource,
+                            where=(Resource.mfid == sample.unique_id),
+                            mfid=sample.unique_id,
+                            resource_type="sample")
+        ri.creation_time = now
+        ri.modification_time = now
 
         session.commit()
         print('final commit')

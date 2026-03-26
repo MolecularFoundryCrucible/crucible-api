@@ -29,7 +29,7 @@ from app.models.core_models import (
     User
 )
 from app.models.instrument import Instrument
-from app.models.misc import IdType
+from app.models.misc import Resource
 from app.models.response_schemas import DatasetSampleLinkResponse
 from app.models.tasks import IngestionRequest
 from app.utils.auth_utils import authorize_user, is_admin
@@ -102,17 +102,6 @@ async def create_dataset(
             **dataset.model_dump(exclude_unset=True)
         )
 
-        # add_or_update is kind of a sneaky patch here
-        now = get_tz_isoformat()
-        if ds.creation_time is None:
-            # New record — set both to the same instant
-            ds.creation_time = now
-            ds.modification_time = now
-        else:
-            # Existing record was updated — only bump modification_time
-            ds.modification_time = now
-
-
         session.commit()
         session.refresh(ds)
 
@@ -178,14 +167,17 @@ async def create_dataset(
             print(f'added instrument group access to {ds.unique_id}')
 
         try:
-            print(f'IdType unique_id being written: {ds.unique_id}')
-            add_or_update(session,
-                        IdType,
-                        where=(IdType.unique_id == ds.unique_id),
-                        unique_id = ds.unique_id,
-                        object_type = "dataset")
+            print(f'Resource mfid being written: {ds.unique_id}')
+            now = get_tz_isoformat()
+            ri = add_or_update(session,
+                        Resource,
+                        where=(Resource.mfid == ds.unique_id),
+                        mfid = ds.unique_id,
+                        resource_type = "dataset")
+            ri.creation_time = now
+            ri.modification_time = now
 
-            print('added the ID type')
+            print('added the Resource entry')
             session.commit()
             print('committed')
             session.refresh(ds)
@@ -228,7 +220,10 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
 
         upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **filtered_updates)
-        upds.modification_time = get_tz_isoformat()
+
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
 
         if upds.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == upds.owner_user_id)).one_or_none()
@@ -668,12 +663,9 @@ def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)],
                                dataset_unique_id = dsid,
                                scientific_metadata = scientific_md)
 
-        now = get_tz_isoformat()
-        if md_obj.creation_time is None:
-            md_obj.creation_time = now
-            md_obj.modification_time = now
-        else:
-            md_obj.modification_time = now
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
 
         session.commit()
         session.refresh(md_obj)
@@ -711,7 +703,11 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
                                dataset_unique_id = dsid, scientific_metadata = md_dict)
         print(f'{md_obj=}')
         attributes.flag_modified(md_obj, 'scientific_metadata')
-        md_obj.modification_time = get_tz_isoformat()
+
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
+
         session.commit()
         session.refresh(md_obj)
         return(md_obj)
@@ -827,20 +823,17 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
                                 thumbnail_name = thumbnail.thumbnail_name,
                                 thumbnail_b64str = thumbnail.thumbnail_b64str,
                                 dataset_id = ds.id)
-
-        now = get_tz_isoformat()
-        if tn_obj.creation_time is None:
-            tn_obj.creation_time = now
-            tn_obj.modification_time = now
-        else:
-            tn_obj.modification_time = now
-
         print('added tnobj')
         if not (tn_obj in ds.thumbnails):
             print("adding tnobj to ds")
             ds.thumbnails.append(tn_obj)
             session.add(ds)
             print("added tnobj to ds")
+
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
+
         session.commit()
         print("committed session")
         session.refresh(tn_obj)
@@ -908,20 +901,17 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
                                        size = associated_file.size,
                                        sha256_hash = associated_file.sha256_hash,
                                        dataset_id = ds.id)
-
-        now = get_tz_isoformat()
-        if af_obj.creation_time is None:
-            af_obj.creation_time = now
-            af_obj.modification_time = now
-        else:
-            af_obj.modification_time = now
-
         print("added af_obj")
         if not (af_obj in ds.associated_files):
             print("adding afobj to ds")
             ds.associated_files.append(af_obj)
             session.add(ds)
             print("added afobj to ds")
+
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
+
         session.commit()
         print("committed session")
         session.refresh(af_obj)

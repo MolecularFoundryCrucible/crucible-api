@@ -7,6 +7,6 @@ spec:
     matchLabels:
       app: crucible-api-main   # match your pod labels
   endpoints:
-  - port: 8889
+  - port: 7777
     interval: 30s
     path: /metrics

@@ -54,7 +54,6 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
             setattr(sample, key, value)
             print(key, value)
 
-        sample.modification_time = get_tz_isoformat()
         session.add(sample)
         session.commit()
         session.refresh(sample)
@@ -103,12 +102,6 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             return sample
 
         sample = Sample(**S.model_dump(exclude_unset=True, exclude={"parents", "children"}))
-
-        # synchronize timestamps
-        now = get_tz_isoformat()
-        sample.creation_time = now
-        sample.modification_time = now
-
         print(f'{sample=}')
         session.add(sample)
         session.commit()

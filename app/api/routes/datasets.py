@@ -249,7 +249,9 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
 
 @router.get("/datasets")
-def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: bool = False, limit: Optional[int] = None):
+def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: bool = False, limit: Optional[int] = None,
+                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
+                  modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
     '''
     Returns a list of all dataset IDs the requesting user is authorized to view.
     If no dataset IDs are authorized for the user, an empty list will be returned.
@@ -258,10 +260,18 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         auth_res: Authorization result containing access group info
         request: Request object containing query parameters
         limit: Optional maximum number of datasets to return
+        creation_time_gte: Filter datasets created on or after this ISO timestamp
+        creation_time_lte: Filter datasets created on or before this ISO timestamp
+        modification_time_gte: Filter datasets modified on or after this ISO timestamp
+        modification_time_lte: Filter datasets modified on or before this ISO timestamp
     '''
     access_group_name, ag_ids = auth_res
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
+    # Remove explicit query params so they don't get applied as Dataset attribute filters
+    for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte', 'modification_time_lte',
+              'include_metadata', 'limit'):
+        params_dict.pop(k, None)
     print(f'{include_metadata=}')
     with Session(engine) as session:
         # Build authorization filter (user's access groups or public datasets)
@@ -271,17 +281,29 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         if include_metadata:
             query = (
                     select(Dataset)
-                    .options(selectinload(Dataset.scientific_metadata))
+                    .options(selectinload(Dataset.scientific_metadata), selectinload(Dataset.resource))
                     .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                    .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
                     .filter(auth_filter)
                 )
 
         else:
             query = (select(Dataset)
-                        .select_from(
-                            join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
-                        ).filter(auth_filter)
+                        .options(selectinload(Dataset.resource))
+                        .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                        .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+                        .filter(auth_filter)
                     )
+
+        # Filter on Resource timestamps
+        if creation_time_gte:
+            query = query.where(Resource.creation_time >= creation_time_gte)
+        if creation_time_lte:
+            query = query.where(Resource.creation_time <= creation_time_lte)
+        if modification_time_gte:
+            query = query.where(Resource.modification_time >= modification_time_gte)
+        if modification_time_lte:
+            query = query.where(Resource.modification_time <= modification_time_lte)
 
         # join and filter on keywords
         if keyword_filter:
@@ -297,16 +319,15 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             query = query.limit(limit)
 
         results = session.exec(query.distinct(Dataset.id)).all()
-        if include_metadata:
-            return [{**dataset.model_dump(),
-                    "scientific_metadata": dataset.scientific_metadata.model_dump() if dataset.scientific_metadata else None
-                    }
-                    for dataset in results]
-        else:
-            return results
+        return [{**dataset.model_dump(),
+                "creation_time": dataset.resource.creation_time if dataset.resource else None,
+                "modification_time": dataset.resource.modification_time if dataset.resource else None,
+                **({"scientific_metadata": dataset.scientific_metadata.model_dump() if dataset.scientific_metadata else None} if include_metadata else {})
+                }
+                for dataset in results]
 
 
-@router.get("/datasets/{dsid}", response_model=Union[Dataset, None])
+@router.get("/datasets/{dsid}")
 def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
     Returns a dataset found with the provided unique ID
@@ -316,9 +337,13 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str)
     access_group_name, ag_ids = auth_res
     print(f"{ag_ids=}")
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
+        ds_cmd = select(Dataset).options(selectinload(Dataset.resource)).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
-        return ds
+        if ds is None:
+            return None
+        return {**ds.model_dump(),
+                "creation_time": ds.resource.creation_time if ds.resource else None,
+                "modification_time": ds.resource.modification_time if ds.resource else None}
 
 
 @router.post("/datasets/{parent_dataset_id}/children/{child_dataset_id}", response_model=DatasetLink)

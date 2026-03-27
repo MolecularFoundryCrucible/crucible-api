@@ -141,8 +141,10 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         return(sample)
 
 
-@router.get("/samples", response_model=List[SampleWithDatasetsResponse])
-def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
+@router.get("/samples")
+def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
+                 creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
+                 modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
     '''
     Returns a list of samples where the owner_orcid matches the orcid of the person who made the request.
     If an admin API key is used, returns all samples.
@@ -153,11 +155,14 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
     print(query_params)
 
     params_dict = dict(query_params)
+    # Remove explicit query params so they don't get applied as Sample attribute filters
+    for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte', 'modification_time_lte'):
+        params_dict.pop(k, None)
     print(params_dict)
 
     with Session(engine) as session:
 
-        samp_cmd = select(Sample)
+        samp_cmd = select(Sample).join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
 
         # Admin API keys can see all samples
         if access_group_name.startswith('admin'):
@@ -173,6 +178,16 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
             print(f'apikey does not have access to samples')
             return []
 
+        # Filter on Resource timestamps
+        if creation_time_gte:
+            samp_cmd = samp_cmd.where(Resource.creation_time >= creation_time_gte)
+        if creation_time_lte:
+            samp_cmd = samp_cmd.where(Resource.creation_time <= creation_time_lte)
+        if modification_time_gte:
+            samp_cmd = samp_cmd.where(Resource.modification_time >= modification_time_gte)
+        if modification_time_lte:
+            samp_cmd = samp_cmd.where(Resource.modification_time <= modification_time_lte)
+
         for k, v in params_dict.items():
             if hasattr(Sample, k) and v is not None:
                 print(f'filtering results on {k}={v}')
@@ -180,20 +195,29 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
             else:
                pass
 
-        samp_cmd = samp_cmd.options(selectinload(Sample.datasets))
+        samp_cmd = samp_cmd.options(selectinload(Sample.datasets), selectinload(Sample.resource))
         samp_list = session.exec(samp_cmd).all()
-        return samp_list
+        return [{**samp.model_dump(),
+                "datasets": samp.datasets,
+                "creation_time": samp.resource.creation_time if samp.resource else None,
+                "modification_time": samp.resource.modification_time if samp.resource else None}
+                for samp in samp_list]
 
 
-@router.get("/samples/{sample_id}", response_model=Union[None, SampleWithDatasetsResponse])
+@router.get("/samples/{sample_id}")
 def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns the sample for the provided ID
     '''
     with Session(engine) as session:
-        query = select(Sample).options(selectinload(Sample.datasets)).where(Sample.unique_id == sample_id)
+        query = select(Sample).options(selectinload(Sample.datasets), selectinload(Sample.resource)).where(Sample.unique_id == sample_id)
         samp = session.exec(query).first()
-        return(samp)
+        if samp is None:
+            return None
+        return {**samp.model_dump(),
+                "datasets": samp.datasets,
+                "creation_time": samp.resource.creation_time if samp.resource else None,
+                "modification_time": samp.resource.modification_time if samp.resource else None}
 
 
 @router.get("/samples/{sample_id}/datasets")

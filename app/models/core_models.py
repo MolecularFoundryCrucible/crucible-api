@@ -4,6 +4,7 @@ from sqlalchemy import JSON, Column, BigInteger, func, Index, text, Text, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel,Relationship, Column
 from mfid import mfid
+from app.general_utils import get_tz_isoformat
 
 
 def get_mfid_value():
@@ -96,12 +97,18 @@ class Sample(SQLModel, table = True):
     sample_type: Optional[str] = Field(index = True, default = None)
     owner_orcid: Optional[str]
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
-    timestamp: Optional[str] = Field(default=None,
+    timestamp: Optional[str] = Field(default_factory=get_tz_isoformat,
                                      sa_column=Column("timestamp", String, nullable=True),
                                      alias="date_created")
     project_id: Optional[str] = None
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
+    resource: Optional["Resource"] = Relationship(
+        sa_relationship_kwargs={
+            "primaryjoin": "foreign(Resource.mfid)==Sample.unique_id",
+            "lazy": "noload",
+        }
+    )
     parents: List["Sample"] = Relationship(
         back_populates="children",
         link_model=SampleLink,
@@ -134,7 +141,7 @@ class Dataset(SQLModel, table=True):
     instrument_id: Optional[int]  = Field(default = None, index = True, foreign_key = "instrument.id")
     source_folder: Optional[str] 
     instrument_name: Optional[str]
-    timestamp: Optional[str] = Field(default=None, sa_column=Column("timestamp", String, nullable=True))
+    timestamp: Optional[str] = Field(default_factory=get_tz_isoformat, sa_column=Column("timestamp", String, nullable=True))
 
     size: Optional[int] = Field(sa_column=Column(BigInteger())) 
     data_format: Optional[str]
@@ -149,6 +156,12 @@ class Dataset(SQLModel, table=True):
     keywords: List[Keyword] = Relationship(back_populates="datasets", link_model=DatasetKeywordLink)
     thumbnails: List[Thumbnail] = Relationship(back_populates = "dataset")
     associated_files: List[AssociatedFile] = Relationship(back_populates = "dataset")
+    resource: Optional["Resource"] = Relationship(
+        sa_relationship_kwargs={
+            "primaryjoin": "foreign(Resource.mfid)==Dataset.unique_id",
+            "lazy": "noload",
+        }
+    )
     acl: List["DatasetACL"] = Relationship(back_populates="dataset")
     parents: List["Dataset"] = Relationship(
         back_populates="children",

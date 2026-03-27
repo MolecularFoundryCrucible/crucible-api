@@ -1,6 +1,6 @@
 from typing import Optional, List
 from pydantic import ConfigDict
-from sqlalchemy import JSON, Column, BigInteger, func, Index, text, Text, Integer
+from sqlalchemy import JSON, Column, BigInteger, func, Index, text, Text, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel,Relationship, Column
 from mfid import mfid
@@ -33,7 +33,7 @@ class Thumbnail(SQLModel, table=True):
     thumbnail_b64str: str
     dataset_id: int = Field(foreign_key = "dataset.id")
     dataset: "Dataset" = Relationship(back_populates="thumbnails")
-    
+
 
 class AssociatedFile(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -88,7 +88,7 @@ class SampleLink(SQLModel, table=True):
         default=None, foreign_key="sample.id", primary_key=True
     )
 
-
+# date_created >> timestamp : this is the user defined date when the sample was created (can be null)
 class Sample(SQLModel, table = True):
     id: Optional[int] = Field(default = None, primary_key = True)
     unique_id: str = Field(default_factory= get_mfid_value, index = True, unique = True)
@@ -96,7 +96,9 @@ class Sample(SQLModel, table = True):
     sample_type: Optional[str] = Field(index = True, default = None)
     owner_orcid: Optional[str]
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
-    date_created: Optional[str] = None
+    timestamp: Optional[str] = Field(default=None,
+                                     sa_column=Column("timestamp", String, nullable=True),
+                                     alias="date_created")
     project_id: Optional[str] = None
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
@@ -117,8 +119,9 @@ class Sample(SQLModel, table = True):
         }
     )
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, from_attributes=True) #type: ignore
+    model_config = ConfigDict(arbitrary_types_allowed=True, from_attributes=True,populate_by_name=True) #type: ignore
 
+# previous creation_time >> timestamp : this is the user defined date when the dataset was created (can be null)
 class Dataset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     unique_id: str = Field(default_factory = get_mfid_value, index=True, unique=True)
@@ -129,9 +132,10 @@ class Dataset(SQLModel, table=True):
     owner_orcid: Optional[str] = Field(default = None)
     project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")
     instrument_id: Optional[int]  = Field(default = None, index = True, foreign_key = "instrument.id")
-    source_folder: Optional[str] # folder where the data was synced from (on instrument PC)
+    source_folder: Optional[str] 
     instrument_name: Optional[str]
-    creation_time: Optional[str]
+    timestamp: Optional[str] = Field(default=None, sa_column=Column("timestamp", String, nullable=True))
+
     size: Optional[int] = Field(sa_column=Column(BigInteger())) 
     data_format: Optional[str]
     measurement: Optional[str]
@@ -163,7 +167,7 @@ class Dataset(SQLModel, table=True):
         }
     )
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, from_attributes=True) #type: ignore
+    model_config = ConfigDict(arbitrary_types_allowed=True, from_attributes=True, populate_by_name=True) #type: ignore
 
 
 class DatasetACL(SQLModel, table=True):

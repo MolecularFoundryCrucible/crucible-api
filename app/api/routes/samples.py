@@ -8,12 +8,12 @@ from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import is_orcid
+from app.general_utils import get_tz_isoformat, is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, DatasetACL, DatasetSampleLink,
     Sample, SampleLink, User,
 )
-from app.models.misc import IdType
+from app.models.misc import Resource
 from app.models.response_schemas import SampleWithDatasetsResponse
 from app.utils.auth_utils import authorize_user
 from app.utils.sql_utils import add_or_update, generate_kw_query
@@ -53,6 +53,11 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
         for key, value in update_fields.items():
             setattr(sample, key, value)
             print(key, value)
+
+        ri = session.exec(select(Resource).where(Resource.mfid == sample_id)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
+
         session.add(sample)
         session.commit()
         session.refresh(sample)
@@ -84,7 +89,8 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
     if missing_fields:
         raise HTTPException(
             status_code=400,
-            detail=f"Missing required sample information: {', '.join(missing_fields)}. Please provide all required fields: sample_name."
+            detail=f"Missing required sample information: {', '.join(missing_fields)}. \
+                     Please provide all required fields: sample_name."
         )
 
     with Session(engine) as session:
@@ -120,12 +126,14 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             pass
 
         session.add(sample)
-        print('readded sample')
-        add_or_update(session,
-                      IdType,
-                      where=(IdType.unique_id == sample.unique_id),
-                      unique_id=sample.unique_id,
-                      object_type="sample")
+        now = get_tz_isoformat()
+        ri = add_or_update(session,
+                            Resource,
+                            where=(Resource.mfid == sample.unique_id),
+                            mfid=sample.unique_id,
+                            resource_type="sample")
+        ri.creation_time = now
+        ri.modification_time = now
 
         session.commit()
         print('final commit')

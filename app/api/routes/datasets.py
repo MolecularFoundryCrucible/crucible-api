@@ -29,7 +29,7 @@ from app.models.core_models import (
     User
 )
 from app.models.instrument import Instrument
-from app.models.misc import IdType
+from app.models.misc import Resource
 from app.models.response_schemas import DatasetSampleLinkResponse
 from app.models.tasks import IngestionRequest
 from app.utils.auth_utils import authorize_user, is_admin
@@ -101,6 +101,7 @@ async def create_dataset(
             Dataset.unique_id == dataset.unique_id,
             **dataset.model_dump(exclude_unset=True)
         )
+
         session.commit()
         session.refresh(ds)
 
@@ -166,14 +167,17 @@ async def create_dataset(
             print(f'added instrument group access to {ds.unique_id}')
 
         try:
-            print(f'IdType unique_id being written: {ds.unique_id}')
-            add_or_update(session,
-                        IdType,
-                        where=(IdType.unique_id == ds.unique_id),
-                        unique_id = ds.unique_id,
-                        object_type = "dataset")
+            print(f'Resource mfid being written: {ds.unique_id}')
+            now = get_tz_isoformat()
+            ri = add_or_update(session,
+                        Resource,
+                        where=(Resource.mfid == ds.unique_id),
+                        mfid = ds.unique_id,
+                        resource_type = "dataset")
+            ri.creation_time = now
+            ri.modification_time = now
 
-            print('added the ID type')
+            print('added the Resource entry')
             session.commit()
             print('committed')
             session.refresh(ds)
@@ -217,6 +221,9 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
         upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **filtered_updates)
 
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
 
         if upds.owner_user_id is not None:
             user_orcid = session.exec(select(User.orcid).where(User.id == upds.owner_user_id)).one_or_none()
@@ -656,6 +663,10 @@ def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)],
                                dataset_unique_id = dsid,
                                scientific_metadata = scientific_md)
 
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
+
         session.commit()
         session.refresh(md_obj)
         return(md_obj)
@@ -692,6 +703,11 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
                                dataset_unique_id = dsid, scientific_metadata = md_dict)
         print(f'{md_obj=}')
         attributes.flag_modified(md_obj, 'scientific_metadata')
+
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
+
         session.commit()
         session.refresh(md_obj)
         return(md_obj)
@@ -813,6 +829,11 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
             ds.thumbnails.append(tn_obj)
             session.add(ds)
             print("added tnobj to ds")
+
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
+
         session.commit()
         print("committed session")
         session.refresh(tn_obj)
@@ -886,6 +907,11 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
             ds.associated_files.append(af_obj)
             session.add(ds)
             print("added afobj to ds")
+
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
+
         session.commit()
         print("committed session")
         session.refresh(af_obj)

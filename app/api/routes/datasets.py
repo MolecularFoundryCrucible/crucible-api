@@ -295,6 +295,9 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                         .filter(auth_filter)
                     )
 
+        # Exclude soft-deleted resources (pending or approved deletion)
+        query = query.where(Resource.deletion_status == None)
+
         # Filter on Resource timestamps
         if creation_time_gte:
             query = query.where(Resource.creation_time >= creation_time_gte)

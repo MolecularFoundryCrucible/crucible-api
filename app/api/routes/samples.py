@@ -164,6 +164,9 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
 
         samp_cmd = select(Sample).join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
 
+        # Exclude soft-deleted resources (pending or approved deletion)
+        samp_cmd = samp_cmd.where(Resource.deletion_status == None)
+
         # Admin API keys can see all samples
         if access_group_name.startswith('admin'):
             print('using admin account')

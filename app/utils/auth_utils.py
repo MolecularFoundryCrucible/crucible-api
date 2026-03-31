@@ -110,12 +110,16 @@ def find_key(credentials, engine):
     one_year_ago = (date.today()-timedelta(365)).isoformat()
     print(f"{one_year_ago=}")
     with Session(engine) as session:
-        api_acct = session.exec(select(ApiToken).where(and_(ApiToken.token == apikey, ApiToken.token_created > one_year_ago))).one_or_none()
+        cmd = select(ApiToken).where(and_(ApiToken.token == apikey, 
+                                          ApiToken.token_created > one_year_ago))
+        api_acct = session.exec(cmd).one_or_none()
     if api_acct is None:
-        expired_api_acct = session.exec(select(ApiToken).where(and_(ApiToken.token == apikey))).one_or_none()
+        cmd = select(ApiToken).where(ApiToken.token == apikey)
+        expired_api_acct = session.exec(cmd).one_or_none()
         if expired_api_acct is None:
             raise HTTPException(status_code=400, detail="No account found for this API key.")
         else:
+            print(f"Expired API account found: {expired_api_acct}")
             created_date = datetime.datetime.strptime(expired_api_acct.token_created, '%Y-%m-%d')
             expiration_date = created_date + timedelta(365).isoformat()
             raise HTTPException(status_code=400, detail=f"This API key expired on {expiration_date}")

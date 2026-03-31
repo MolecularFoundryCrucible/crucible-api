@@ -13,7 +13,7 @@ from app.general_utils import  get_secret, is_orcid
 from app.api.dependencies import get_engine, get_api_config, get_api_path, get_api_url
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
-from sqlalchemy import select, join
+from sqlalchemy import join
 from datetime import date, timedelta
 
 # ====== Constants
@@ -37,7 +37,7 @@ def find_or_add_api_access(orcid: str, engine, instrument_name = None, regenerat
 
     if api_acct is not None and regenerate == False:
         print(f"found an account")
-        return(api_acct[0].token)
+        return(api_acct.token)
         
     elif api_acct is not None and regenerate == True:
         delete_apikey(orcid, session)
@@ -110,14 +110,19 @@ def find_key(credentials, engine):
     one_year_ago = (date.today()-timedelta(365)).isoformat()
     print(f"{one_year_ago=}")
     with Session(engine) as session:
-        api_acct = session.exec(select(ApiToken).where(and_(ApiToken.token == apikey, ApiToken.token_created > one_year_ago))).one_or_none()
+        cmd = select(ApiToken).where(and_(ApiToken.token == apikey, 
+                                          ApiToken.token_created > one_year_ago))
+        api_acct = session.exec(cmd).one_or_none()
+    
     if api_acct is None:
-        expired_api_acct = session.exec(select(ApiToken).where(and_(ApiToken.token == apikey))).one_or_none()
+        cmd = select(ApiToken).where(ApiToken.token == apikey)
+        expired_api_acct = session.exec(cmd).one_or_none()
         if expired_api_acct is None:
             raise HTTPException(status_code=400, detail="No account found for this API key.")
         else:
+            print(f"Expired API account found: {expired_api_acct}")
             created_date = datetime.datetime.strptime(expired_api_acct.token_created, '%Y-%m-%d')
-            expiration_date = created_date + timedelta(365).isoformat()
+            expiration_date = (created_date + timedelta(365)).isoformat()
             raise HTTPException(status_code=400, detail=f"This API key expired on {expiration_date}")
     return(api_acct)
 
@@ -147,19 +152,19 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
     if api_acct is None:
         raise HTTPException(status_code=400, detail="Incorrect apikey.  Please try again or visit https://crucible.lbl.gov/api/v1/regenerate_apikey to create a new key.")
     else:
-        access_group_name = api_acct[0].access_group_id
+        access_group_name = api_acct.access_group_id
 
     # If the APIKEY is associated with an ORCID; make sure that ORCID is a user in our database
     if is_orcid(access_group_name):
         with Session(engine) as session:
             ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.orcid == access_group_name)).all()
-        ag_ids = [x[0].accessgroup_id for x in ag]
+        ag_ids = [x.accessgroup_id for x in ag]
         return(access_group_name, ag_ids)
         
     else:
         with Session(engine) as session:
             ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).all()
-        ag_ids = [x[0].id for x in ag]
+        ag_ids = [x.id for x in ag]
         return(access_group_name, ag_ids)  
 
 
@@ -176,8 +181,8 @@ def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(securi
     This function validates the provided API credentials and checks if the user belongs to the 'admin' access group.
     """
     api_acct = find_key(credentials, engine)
-    if api_acct[0].access_group_id.startswith('admin'):
-        return(api_acct[0].access_group_id)
+    if api_acct.access_group_id.startswith('admin'):
+        return(api_acct.access_group_id)
     else:
         raise HTTPException(status_code=403, detail="Not authorized for this endpoint")
 

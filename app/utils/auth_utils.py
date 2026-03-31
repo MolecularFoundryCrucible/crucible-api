@@ -122,7 +122,7 @@ def find_key(credentials, engine):
         else:
             print(f"Expired API account found: {expired_api_acct}")
             created_date = datetime.datetime.strptime(expired_api_acct.token_created, '%Y-%m-%d')
-            expiration_date = created_date + timedelta(365).isoformat()
+            expiration_date = (created_date + timedelta(365)).isoformat()
             raise HTTPException(status_code=400, detail=f"This API key expired on {expiration_date}")
     return(api_acct)
 

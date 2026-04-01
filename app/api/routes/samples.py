@@ -267,8 +267,11 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
 
         full_query = query.join(DatasetSampleLink,
                                 DatasetSampleLink.dataset_id == Dataset.id
+                                ).join(Resource, Resource.mfid == Dataset.unique_id, isouter=True
                                 ).where(
                                     DatasetSampleLink.sample_id == select(Sample.id).where(Sample.unique_id == sample_id)
+                                ).where(
+                                    Resource.deletion_status == None
                                 ).distinct(Dataset.id)
 
         if limit is not None:
@@ -299,7 +302,9 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends
         parent_samples = session.exec(
             select(Sample)
             .select_from(join(Sample, SampleLink, SampleLink.parent_sample_id == Sample.id))
+            .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
             .where(SampleLink.sample_id == child_sample.id)
+            .where(Resource.deletion_status == None)
         ).all()
         return parent_samples
 
@@ -319,7 +324,9 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends
         child_samples = session.exec(
             select(Sample)
             .select_from(join(Sample, SampleLink, SampleLink.sample_id == Sample.id))
+            .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
             .where(SampleLink.parent_sample_id == parent_sample.id)
+            .where(Resource.deletion_status == None)
         ).all()
         return child_samples
 

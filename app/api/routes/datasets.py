@@ -407,7 +407,9 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depen
         parents = session.exec(
             select(Dataset)
             .select_from(join(Dataset, DatasetLink, DatasetLink.parent_dataset_id == Dataset.id))
+            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
             .where(DatasetLink.child_dataset_id == child.id)
+            .where(Resource.deletion_status == None)
         ).all()
         return parents
 
@@ -437,7 +439,9 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depen
         children = session.exec(
             select(Dataset)
             .select_from(join(Dataset, DatasetLink, DatasetLink.child_dataset_id == Dataset.id))
+            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
             .where(DatasetLink.parent_dataset_id == parent.id)
+            .where(Resource.deletion_status == None)
         ).all()
         return children
 

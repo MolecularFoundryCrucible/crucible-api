@@ -7,7 +7,7 @@ import pytz
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
-from sqlalchemy import func, join, text
+from sqlalchemy import exists, func, join, text
 from sqlalchemy.orm import joinedload, selectinload, attributes
 from sqlmodel import and_, or_, Session, select
 
@@ -274,26 +274,28 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         params_dict.pop(k, None)
     print(f'{include_metadata=}')
     with Session(engine) as session:
-        # Build authorization filter (user's access groups or public datasets)
-        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        # EXISTS subquery for ACL check — avoids JOIN fanout (one row per ACL entry)
+        # and eliminates the need for DISTINCT on the outer query.
+        acl_subquery = exists().where(
+            DatasetACL.dataset_id == Dataset.id,
+            DatasetACL.accessgroup_id.in_(ag_ids)
+        )
+        auth_filter = (Dataset.public == True) | acl_subquery
 
-        # if include_metadata - join on scientific metadata
         if include_metadata:
             query = (
-                    select(Dataset)
-                    .options(selectinload(Dataset.scientific_metadata), selectinload(Dataset.resource))
-                    .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
-                    .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
-                    .filter(auth_filter)
-                )
-
+                select(Dataset)
+                .options(selectinload(Dataset.scientific_metadata), selectinload(Dataset.resource))
+                .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+                .where(auth_filter)
+            )
         else:
-            query = (select(Dataset)
-                        .options(selectinload(Dataset.resource))
-                        .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
-                        .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
-                        .filter(auth_filter)
-                    )
+            query = (
+                select(Dataset)
+                .options(selectinload(Dataset.resource))
+                .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+                .where(auth_filter)
+            )
 
         # Exclude soft-deleted resources (pending or approved deletion)
         query = query.where(Resource.deletion_status == None)
@@ -321,7 +323,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         if limit is not None:
             query = query.limit(limit)
 
-        results = session.exec(query.distinct(Dataset.id)).all()
+        results = session.exec(query).all()
         return [{**dataset.model_dump(),
                 "creation_time": dataset.resource.creation_time if dataset.resource else None,
                 "modification_time": dataset.resource.modification_time if dataset.resource else None,

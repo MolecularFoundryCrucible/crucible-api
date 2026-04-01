@@ -5,6 +5,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.general_utils import get_tz_isoformat
+from app.models.core_models import Dataset, Sample
 from app.models.deletion import DeletionRequest
 from app.models.misc import Resource
 from app.utils.auth_utils import authorize_user, is_admin
@@ -51,11 +52,21 @@ def create_deletion_request(
                 detail=f"A deletion request for {resource_id} already exists (status: {existing.status}).",
             )
 
-        # 3. Create the DeletionRequest row.
+        # 3. Look up the human-readable name so admins don't have to fetch the resource separately.
+        resource_name = None
+        if resource.resource_type == "dataset":
+            ds = session.exec(select(Dataset).where(Dataset.unique_id == resource_id)).one_or_none()
+            resource_name = ds.dataset_name if ds else None
+        elif resource.resource_type == "sample":
+            samp = session.exec(select(Sample).where(Sample.unique_id == resource_id)).one_or_none()
+            resource_name = samp.sample_name if samp else None
+
+        # 4. Create the DeletionRequest row.
         #    resource_type is copied from idtype so admins know what they are reviewing.
         deletion_req = DeletionRequest(
             resource_type=resource.resource_type,
             resource_id=resource_id,
+            resource_name=resource_name,
             requester_id=requester_id,
             reason=reason,
             status="pending",
@@ -121,10 +132,15 @@ def review_deletion_request(
         req = session.get(DeletionRequest, request_id)
         if req is None:
             raise HTTPException(status_code=404, detail="Deletion request not found.")
-        if req.status != "pending":
+        if req.status == "rejected":
             raise HTTPException(
                 status_code=409,
-                detail=f"Request is already '{req.status}' and cannot be reviewed again.",
+                detail="Request has already been rejected and cannot be reviewed again.",
+            )
+        if req.status == "approved" and status == "approved":
+            raise HTTPException(
+                status_code=409,
+                detail="Request is already approved.",
             )
 
         # Update the request record.

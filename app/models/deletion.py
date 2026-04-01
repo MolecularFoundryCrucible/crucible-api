@@ -16,6 +16,9 @@ class DeletionRequest(SQLModel, table=True):
     resource_type: str = Field(index=True)
     resource_id:   str = Field(index=True)
 
+    # Human-readable name of the resource at the time of the request
+    resource_name: Optional[str] = Field(default=None)
+
     # Who requested it and why
     requester_id: str = Field(index=True)
     reason: Optional[str] = Field(default=None)

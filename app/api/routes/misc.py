@@ -1,6 +1,7 @@
 from typing import Annotated, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy import desc, func, text, Text
 from sqlalchemy.sql import and_, or_
 from sqlmodel import Session, select
@@ -12,6 +13,32 @@ from app.utils.auth_utils import authorize_user
 
 router = APIRouter(tags=["misc"])
 engine = get_engine()
+
+
+@router.get("/health")
+def health():
+    """
+    Health check — no authentication required.
+    Returns 200 when the API and database are reachable, 503 if the DB is down.
+    """
+    try:
+        with Session(engine) as session:
+            session.execute(text("SELECT 1"))
+        db_status = "ok"
+    except Exception:
+        db_status = "error"
+
+    try:
+        from importlib.metadata import version
+        api_version = version("crucible-api")
+    except Exception:
+        api_version = None
+
+    ok = db_status == "ok"
+    return JSONResponse(
+        status_code=200 if ok else 503,
+        content={"status": "ok" if ok else "degraded", "db": db_status, "version": api_version},
+    )
 
 
 @router.get("/keywords", response_model=List[Keyword])

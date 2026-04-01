@@ -11,7 +11,7 @@ import pytz
 import requests
 import yaml
 import traceback
-from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPBearer
 from jose import jwt
@@ -878,7 +878,7 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
         return(md_obj)
 
 @app.get("/scientific_metadata/search", response_model = List[NewScientificMetadata])
-def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str, engine = Depends(setup_engine)):
+def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str, limit: int = Query(default=50, ge=1, le=200)):
     """
     Perform a ranked Full-Text Search (FTS) on scientific metadata 
     using PostgreSQL's GIN indexing, tsvector, tsquery, and ts_rank_cd.
@@ -906,6 +906,7 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
         )
         .order_by(desc("rank"))
         .distinct()
+        .limit(limit)
     )
     with Session(engine) as session:
         results = session.exec(stmt).all()

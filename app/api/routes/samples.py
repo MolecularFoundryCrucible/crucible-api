@@ -16,7 +16,7 @@ from app.models.core_models import (
 from app.models.deletion import DeletionRequest
 from app.models.misc import Resource
 from app.models.response_schemas import SampleWithDatasetsResponse
-from app.utils.auth_utils import authorize_user
+from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.sql_utils import add_or_update, generate_kw_query
 
 router = APIRouter(tags=["samples"])
@@ -39,6 +39,35 @@ def link_parent_child_samples(parent_sample_id, child_sample_id, auth_res: Annot
         session.refresh(link)
 
         return(link)
+
+
+@router.delete("/samples/{parent_sample_id}/children/{child_sample_id}")
+def unlink_parent_child_samples(parent_sample_id: str, child_sample_id: str, admin_acct: Annotated[str, Depends(is_admin)]):
+    """
+    Remove the parent-child link between two samples. Admin access required.
+    """
+    with Session(engine) as session:
+        parent = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent sample not found")
+
+        child = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).one_or_none()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child sample not found")
+
+        link = session.exec(
+            select(SampleLink).where(
+                and_(SampleLink.parent_sample_id == parent.id,
+                     SampleLink.sample_id == child.id)
+            )
+        ).one_or_none()
+
+        if link is None:
+            raise HTTPException(status_code=404, detail="No link found between these samples")
+
+        session.delete(link)
+        session.commit()
+        return {"message": f"Successfully unlinked {parent_sample_id} -> {child_sample_id}"}
 
 
 @router.patch('/samples/{sample_id}', response_model=Sample)

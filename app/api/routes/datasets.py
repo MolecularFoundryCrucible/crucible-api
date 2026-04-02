@@ -391,6 +391,35 @@ def link_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[t
         return(link)
 
 
+@router.delete("/datasets/{parent_dataset_id}/children/{child_dataset_id}")
+def unlink_parent_child(parent_dataset_id: str, child_dataset_id: str, admin_acct: Annotated[str, Depends(is_admin)]):
+    """
+    Remove the parent-child link between two datasets. Admin access required.
+    """
+    with Session(engine) as session:
+        parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent dataset not found")
+
+        child = session.exec(select(Dataset).where(Dataset.unique_id == child_dataset_id)).one_or_none()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child dataset not found")
+
+        link = session.exec(
+            select(DatasetLink).where(
+                and_(DatasetLink.parent_dataset_id == parent.id,
+                     DatasetLink.child_dataset_id == child.id)
+            )
+        ).one_or_none()
+
+        if link is None:
+            raise HTTPException(status_code=404, detail="No link found between these datasets")
+
+        session.delete(link)
+        session.commit()
+        return {"message": f"Successfully unlinked {parent_dataset_id} -> {child_dataset_id}"}
+
+
 @router.get("/datasets/{child_dataset_id}/parents", response_model=List[Dataset])
 def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''

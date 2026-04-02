@@ -73,10 +73,6 @@ def create_deletion_request(
         )
         session.add(deletion_req)
 
-        # 4. Mark the resource as pending deletion so it is hidden from list results.
-        resource.deletion_status = "pending"
-        session.add(resource)
-
         session.commit()
         session.refresh(deletion_req)
         return deletion_req
@@ -149,16 +145,6 @@ def review_deletion_request(
         req.reviewer_notes = reviewer_notes
         req.review_time = get_tz_isoformat()
         session.add(req)
-
-        # Mirror the outcome onto the idtype row.
-        resource = session.exec(
-            select(Resource).where(Resource.mfid == req.resource_id)
-        ).one_or_none()
-
-        if resource is not None:
-            # approved → stays hidden; rejected → restore to active
-            resource.deletion_status = "approved" if status == "approved" else None
-            session.add(resource)
 
         session.commit()
         session.refresh(req)

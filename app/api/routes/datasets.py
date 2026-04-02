@@ -29,6 +29,7 @@ from app.models.core_models import (
     User
 )
 from app.models.instrument import Instrument
+from app.models.deletion import DeletionRequest
 from app.models.misc import Resource
 from app.models.response_schemas import DatasetSampleLinkResponse
 from app.models.tasks import IngestionRequest
@@ -298,7 +299,12 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             )
 
         # Exclude soft-deleted resources (pending or approved deletion)
-        query = query.where(Resource.deletion_status == None)
+        query = query.where(
+            ~exists().where(
+                DeletionRequest.resource_id == Dataset.unique_id,
+                DeletionRequest.status.in_(["pending", "approved"])
+            )
+        )
 
         # Filter on Resource timestamps
         if creation_time_gte:
@@ -409,9 +415,13 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depen
         parents = session.exec(
             select(Dataset)
             .select_from(join(Dataset, DatasetLink, DatasetLink.parent_dataset_id == Dataset.id))
-            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
             .where(DatasetLink.child_dataset_id == child.id)
-            .where(Resource.deletion_status == None)
+            .where(
+                ~exists().where(
+                    DeletionRequest.resource_id == Dataset.unique_id,
+                    DeletionRequest.status.in_(["pending", "approved"])
+                )
+            )
         ).all()
         return parents
 
@@ -441,9 +451,13 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depen
         children = session.exec(
             select(Dataset)
             .select_from(join(Dataset, DatasetLink, DatasetLink.child_dataset_id == Dataset.id))
-            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
             .where(DatasetLink.parent_dataset_id == parent.id)
-            .where(Resource.deletion_status == None)
+            .where(
+                ~exists().where(
+                    DeletionRequest.resource_id == Dataset.unique_id,
+                    DeletionRequest.status.in_(["pending", "approved"])
+                )
+            )
         ).all()
         return children
 

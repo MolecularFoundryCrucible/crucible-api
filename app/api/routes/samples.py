@@ -3,7 +3,7 @@ from typing import Annotated, List, Optional, Union
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import join, text
+from sqlalchemy import exists, join, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 
@@ -13,6 +13,7 @@ from app.models.core_models import (
     AccessGroup, Dataset, DatasetACL, DatasetSampleLink,
     Sample, SampleLink, User,
 )
+from app.models.deletion import DeletionRequest
 from app.models.misc import Resource
 from app.models.response_schemas import SampleWithDatasetsResponse
 from app.utils.auth_utils import authorize_user
@@ -165,7 +166,12 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         samp_cmd = select(Sample).join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
 
         # Exclude soft-deleted resources (pending or approved deletion)
-        samp_cmd = samp_cmd.where(Resource.deletion_status == None)
+        samp_cmd = samp_cmd.where(
+            ~exists().where(
+                DeletionRequest.resource_id == Sample.unique_id,
+                DeletionRequest.status.in_(["pending", "approved"])
+            )
+        )
 
         # Admin API keys can see all samples
         if access_group_name.startswith('admin'):
@@ -267,11 +273,13 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
 
         full_query = query.join(DatasetSampleLink,
                                 DatasetSampleLink.dataset_id == Dataset.id
-                                ).join(Resource, Resource.mfid == Dataset.unique_id, isouter=True
                                 ).where(
                                     DatasetSampleLink.sample_id == select(Sample.id).where(Sample.unique_id == sample_id)
                                 ).where(
-                                    Resource.deletion_status == None
+                                    ~exists().where(
+                                        DeletionRequest.resource_id == Dataset.unique_id,
+                                        DeletionRequest.status.in_(["pending", "approved"])
+                                    )
                                 ).distinct(Dataset.id)
 
         if limit is not None:
@@ -302,9 +310,13 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends
         parent_samples = session.exec(
             select(Sample)
             .select_from(join(Sample, SampleLink, SampleLink.parent_sample_id == Sample.id))
-            .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
             .where(SampleLink.sample_id == child_sample.id)
-            .where(Resource.deletion_status == None)
+            .where(
+                ~exists().where(
+                    DeletionRequest.resource_id == Sample.unique_id,
+                    DeletionRequest.status.in_(["pending", "approved"])
+                )
+            )
         ).all()
         return parent_samples
 
@@ -324,9 +336,13 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends
         child_samples = session.exec(
             select(Sample)
             .select_from(join(Sample, SampleLink, SampleLink.sample_id == Sample.id))
-            .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
             .where(SampleLink.parent_sample_id == parent_sample.id)
-            .where(Resource.deletion_status == None)
+            .where(
+                ~exists().where(
+                    DeletionRequest.resource_id == Sample.unique_id,
+                    DeletionRequest.status.in_(["pending", "approved"])
+                )
+            )
         ).all()
         return child_samples
 

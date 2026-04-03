@@ -32,6 +32,8 @@ def get_secret(secret_env_var, gcs_secret_name = None, sa_creds: str = None, cre
     If cred_file is False, then sa_creds should be the name of an environment variable in which the credentials are stored. 
 
     '''
+    from dotenv import load_dotenv
+    load_dotenv()
     if gcs_secret_name is not None:
         gcs_secret_path = f"{secret_store}/{gcs_secret_name}"
     secret = os.getenv(secret_env_var)

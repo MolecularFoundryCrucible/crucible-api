@@ -29,8 +29,8 @@ from app.models.core_models import (
     User
 )
 from app.models.instrument import Instrument
+from app.models.resource import Resource
 from app.models.deletion import DeletionRequest
-from app.models.misc import Resource
 from app.models.response_schemas import DatasetSampleLinkResponse
 from app.models.tasks import IngestionRequest
 from app.utils.auth_utils import authorize_user, is_admin

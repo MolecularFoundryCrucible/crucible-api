@@ -13,8 +13,8 @@ from app.models.core_models import (
     AccessGroup, Dataset, DatasetACL, DatasetSampleLink,
     Sample, SampleLink, User,
 )
+from app.models.resource import Resource
 from app.models.deletion import DeletionRequest
-from app.models.misc import Resource
 from app.models.response_schemas import SampleWithDatasetsResponse
 from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.sql_utils import add_or_update, generate_kw_query

@@ -142,26 +142,23 @@ class Dataset(SQLModel, table=True):
     source_folder: Optional[str] 
     instrument_name: Optional[str]
     timestamp: Optional[str] = Field(default_factory=get_tz_isoformat, sa_column=Column("timestamp", String, nullable=True))
-
     size: Optional[int] = Field(sa_column=Column(BigInteger())) 
     data_format: Optional[str]
     measurement: Optional[str]
     session_name: Optional[str]
     json_link: Optional[str]
     sha256_hash_file_to_upload: Optional[str]
-    scientific_metadata: Optional["ScientificMetadata"] = Relationship(back_populates = 'dataset')
-    scientific_metadata_new: Optional["NewScientificMetadata"] = Relationship(back_populates="dataset", sa_relationship_kwargs={"foreign_keys": "[NewScientificMetadata.dataset_id]"})
+    scientific_metadata: Optional["ScientificMetadata"] = Relationship(
+        back_populates = 'dataset')
+    scientific_metadata_new: Optional["NewScientificMetadata"] = Relationship(
+        back_populates="dataset", 
+        sa_relationship_kwargs={"foreign_keys": "[NewScientificMetadata.dataset_id]"})
     samples: List[Sample] = Relationship(back_populates="datasets", link_model = DatasetSampleLink)
     collections: List[DatasetCollection] = Relationship(back_populates = "datasets", link_model = DatasetCollectionLink)
     keywords: List[Keyword] = Relationship(back_populates="datasets", link_model=DatasetKeywordLink)
     thumbnails: List[Thumbnail] = Relationship(back_populates = "dataset")
     associated_files: List[AssociatedFile] = Relationship(back_populates = "dataset")
-    resource: Optional["Resource"] = Relationship(
-        sa_relationship_kwargs={
-            "primaryjoin": "foreign(Resource.mfid)==Dataset.unique_id",
-            "lazy": "noload",
-        }
-    )
+    resource: Optional["Resource"] = Relationship(sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Dataset.unique_id", "lazy": "noload",})
     acl: List["DatasetACL"] = Relationship(back_populates="dataset")
     parents: List["Dataset"] = Relationship(
         back_populates="children",
@@ -233,6 +230,12 @@ class User(SQLModel, table=True):
     employee_number: Optional[str]
     projects: List["Project"] = Relationship(back_populates="users", link_model=UserProjectLink)
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
+
+
+class ApiToken(SQLModel, table = True):
+    access_group_id: str = Field(default = None, primary_key = True, index = True)
+    token: str = Field(default = None, primary_key = True, index = True)
+    token_created: str
 
 
 class Project(SQLModel, table=True):

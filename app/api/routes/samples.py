@@ -3,7 +3,7 @@ from typing import Annotated, List, Optional, Union
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import join, text
+from sqlalchemy import exists, join, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 
@@ -13,9 +13,10 @@ from app.models.core_models import (
     AccessGroup, Dataset, DatasetACL, DatasetSampleLink,
     Sample, SampleLink, User,
 )
-from app.models.misc import Resource
+from app.models.resource import Resource
+from app.models.deletion import DeletionRequest
 from app.models.response_schemas import SampleWithDatasetsResponse
-from app.utils.auth_utils import authorize_user
+from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.sql_utils import add_or_update, generate_kw_query
 
 router = APIRouter(tags=["samples"])
@@ -38,6 +39,35 @@ def link_parent_child_samples(parent_sample_id, child_sample_id, auth_res: Annot
         session.refresh(link)
 
         return(link)
+
+
+@router.delete("/samples/{parent_sample_id}/children/{child_sample_id}")
+def unlink_parent_child_samples(parent_sample_id: str, child_sample_id: str, admin_acct: Annotated[str, Depends(is_admin)]):
+    """
+    Remove the parent-child link between two samples. Admin access required.
+    """
+    with Session(engine) as session:
+        parent = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent sample not found")
+
+        child = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).one_or_none()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child sample not found")
+
+        link = session.exec(
+            select(SampleLink).where(
+                and_(SampleLink.parent_sample_id == parent.id,
+                     SampleLink.sample_id == child.id)
+            )
+        ).one_or_none()
+
+        if link is None:
+            raise HTTPException(status_code=404, detail="No link found between these samples")
+
+        session.delete(link)
+        session.commit()
+        return {"message": f"Successfully unlinked {parent_sample_id} -> {child_sample_id}"}
 
 
 @router.patch('/samples/{sample_id}', response_model=Sample)
@@ -164,6 +194,14 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
 
         samp_cmd = select(Sample).join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
 
+        # Exclude soft-deleted resources (pending or approved deletion)
+        samp_cmd = samp_cmd.where(
+            ~exists().where(
+                DeletionRequest.resource_id == Sample.unique_id,
+                DeletionRequest.status.in_(["pending", "approved"])
+            )
+        )
+
         # Admin API keys can see all samples
         if access_group_name.startswith('admin'):
             print('using admin account')
@@ -266,6 +304,11 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
                                 DatasetSampleLink.dataset_id == Dataset.id
                                 ).where(
                                     DatasetSampleLink.sample_id == select(Sample.id).where(Sample.unique_id == sample_id)
+                                ).where(
+                                    ~exists().where(
+                                        DeletionRequest.resource_id == Dataset.unique_id,
+                                        DeletionRequest.status.in_(["pending", "approved"])
+                                    )
                                 ).distinct(Dataset.id)
 
         if limit is not None:
@@ -297,6 +340,12 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends
             select(Sample)
             .select_from(join(Sample, SampleLink, SampleLink.parent_sample_id == Sample.id))
             .where(SampleLink.sample_id == child_sample.id)
+            .where(
+                ~exists().where(
+                    DeletionRequest.resource_id == Sample.unique_id,
+                    DeletionRequest.status.in_(["pending", "approved"])
+                )
+            )
         ).all()
         return parent_samples
 
@@ -317,6 +366,12 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends
             select(Sample)
             .select_from(join(Sample, SampleLink, SampleLink.sample_id == Sample.id))
             .where(SampleLink.parent_sample_id == parent_sample.id)
+            .where(
+                ~exists().where(
+                    DeletionRequest.resource_id == Sample.unique_id,
+                    DeletionRequest.status.in_(["pending", "approved"])
+                )
+            )
         ).all()
         return child_samples
 

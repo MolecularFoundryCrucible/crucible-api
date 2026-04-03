@@ -3,6 +3,7 @@ from typing import Annotated
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import text, bindparam, ARRAY, Integer
 from sqlalchemy.orm import joinedload
 from sqlmodel import or_, Session, select
 
@@ -325,3 +326,400 @@ def entity_graph_bfs(entity_id: str, auth_res: Annotated[tuple, Depends(authoriz
             G.add_node(unique_id, entity_type=entity_type, name=name)
 
         return json_graph.node_link_data(G)
+
+# ---------------------------------------------------------------------------
+# Shared helper: fetch node data + edges for a known set of IDs and build graph
+# ---------------------------------------------------------------------------
+
+def _build_graph(session: Session, sample_ids: set, dataset_ids: set) -> dict:
+    sample_rows = (
+        session.exec(
+            select(Sample.id, Sample.unique_id, Sample.sample_name).where(
+                Sample.id.in_(sample_ids)
+            )
+        ).all()
+        if sample_ids else []
+    )
+    dataset_rows = (
+        session.exec(
+            select(Dataset.id, Dataset.unique_id, Dataset.dataset_name).where(
+                Dataset.id.in_(dataset_ids)
+            )
+        ).all()
+        if dataset_ids else []
+    )
+
+    # integer DB id → unique_id string (for edge resolution)
+    s_id_to_uid: dict = {}
+    d_id_to_uid: dict = {}
+    nodes = []
+    for r in sample_rows:
+        s_id_to_uid[r[0]] = r[1]
+        nodes.append({"id": r[1], "entity_type": "sample", "name": r[2]})
+    for r in dataset_rows:
+        d_id_to_uid[r[0]] = r[1]
+        nodes.append({"id": r[1], "entity_type": "dataset", "name": r[2]})
+
+    links = []
+
+    if sample_ids:
+        sample_edges = session.exec(
+            select(SampleLink.parent_sample_id, SampleLink.sample_id)
+            .where(SampleLink.parent_sample_id.in_(sample_ids))
+            .where(SampleLink.sample_id.in_(sample_ids))
+        ).all()
+        links += [
+            {"source": s_id_to_uid[r[0]], "target": s_id_to_uid[r[1]]}
+            for r in sample_edges
+        ]
+
+    if dataset_ids:
+        dataset_edges = session.exec(
+            select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id)
+            .where(DatasetLink.parent_dataset_id.in_(dataset_ids))
+            .where(DatasetLink.child_dataset_id.in_(dataset_ids))
+        ).all()
+        links += [
+            {"source": d_id_to_uid[r[0]], "target": d_id_to_uid[r[1]]}
+            for r in dataset_edges
+        ]
+
+    if sample_ids and dataset_ids:
+        sd_edges = session.exec(
+            select(DatasetSampleLink.sample_id, DatasetSampleLink.dataset_id)
+            .where(DatasetSampleLink.sample_id.in_(sample_ids))
+            .where(DatasetSampleLink.dataset_id.in_(dataset_ids))
+        ).all()
+        links += [
+            {"source": s_id_to_uid[r[0]], "target": d_id_to_uid[r[1]]}
+            for r in sd_edges
+        ]
+
+    return {
+        "directed": True,
+        "multigraph": False,
+        "graph": {},
+        "nodes": nodes,
+        "edges": links,
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /entity_graph_cte/{entity_id}
+# CTE-based: finds the connected component in a fixed number of queries.
+# Default: first-degree neighbours only. Pass recursive=true for full traversal.
+# ---------------------------------------------------------------------------
+
+_SAMPLE_SEED_1HOP_SQL = text("""
+    WITH
+        s_neighbors(id) AS (
+            SELECT CAST(:seed_id AS int)
+            UNION
+            SELECT sl.sample_id        FROM samplelink sl WHERE sl.parent_sample_id = CAST(:seed_id AS int)
+            UNION
+            SELECT sl.parent_sample_id FROM samplelink sl WHERE sl.sample_id        = CAST(:seed_id AS int)
+        ),
+        d_neighbors(id) AS (
+            SELECT DISTINCT dsl.dataset_id FROM datasetsamplelink dsl
+             WHERE dsl.sample_id IN (SELECT id FROM s_neighbors)
+        )
+    SELECT 'sn' AS t, s.unique_id AS a, s.sample_name AS b
+      FROM sample s WHERE s.id IN (SELECT id FROM s_neighbors)
+    UNION ALL
+    SELECT 'dn', d.unique_id, d.dataset_name
+      FROM dataset d WHERE d.id IN (SELECT id FROM d_neighbors)
+    UNION ALL
+    SELECT 'se', s1.unique_id, s2.unique_id
+      FROM samplelink sl
+      JOIN sample s1 ON s1.id = sl.parent_sample_id
+      JOIN sample s2 ON s2.id = sl.sample_id
+     WHERE sl.parent_sample_id IN (SELECT id FROM s_neighbors)
+       AND sl.sample_id        IN (SELECT id FROM s_neighbors)
+    UNION ALL
+    SELECT 'de', d1.unique_id, d2.unique_id
+      FROM datasetlink dl
+      JOIN dataset d1 ON d1.id = dl.parent_dataset_id
+      JOIN dataset d2 ON d2.id = dl.child_dataset_id
+     WHERE dl.parent_dataset_id IN (SELECT id FROM d_neighbors)
+       AND dl.child_dataset_id  IN (SELECT id FROM d_neighbors)
+    UNION ALL
+    SELECT 'sd', s.unique_id, d.unique_id
+      FROM datasetsamplelink dsl
+      JOIN sample  s ON s.id = dsl.sample_id
+      JOIN dataset d ON d.id = dsl.dataset_id
+     WHERE dsl.sample_id  IN (SELECT id FROM s_neighbors)
+       AND dsl.dataset_id IN (SELECT id FROM d_neighbors)
+""")
+
+_DATASET_SEED_1HOP_SQL = text("""
+    WITH
+        d_neighbors(id) AS (
+            SELECT CAST(:seed_id AS int)
+            UNION
+            SELECT dl.child_dataset_id  FROM datasetlink dl WHERE dl.parent_dataset_id = CAST(:seed_id AS int)
+            UNION
+            SELECT dl.parent_dataset_id FROM datasetlink dl WHERE dl.child_dataset_id  = CAST(:seed_id AS int)
+        ),
+        s_neighbors(id) AS (
+            SELECT DISTINCT dsl.sample_id FROM datasetsamplelink dsl
+             WHERE dsl.dataset_id IN (SELECT id FROM d_neighbors)
+        )
+    SELECT 'sn' AS t, s.unique_id AS a, s.sample_name AS b
+      FROM sample s WHERE s.id IN (SELECT id FROM s_neighbors)
+    UNION ALL
+    SELECT 'dn', d.unique_id, d.dataset_name
+      FROM dataset d WHERE d.id IN (SELECT id FROM d_neighbors)
+    UNION ALL
+    SELECT 'se', s1.unique_id, s2.unique_id
+      FROM samplelink sl
+      JOIN sample s1 ON s1.id = sl.parent_sample_id
+      JOIN sample s2 ON s2.id = sl.sample_id
+     WHERE sl.parent_sample_id IN (SELECT id FROM s_neighbors)
+       AND sl.sample_id        IN (SELECT id FROM s_neighbors)
+    UNION ALL
+    SELECT 'de', d1.unique_id, d2.unique_id
+      FROM datasetlink dl
+      JOIN dataset d1 ON d1.id = dl.parent_dataset_id
+      JOIN dataset d2 ON d2.id = dl.child_dataset_id
+     WHERE dl.parent_dataset_id IN (SELECT id FROM d_neighbors)
+       AND dl.child_dataset_id  IN (SELECT id FROM d_neighbors)
+    UNION ALL
+    SELECT 'sd', s.unique_id, d.unique_id
+      FROM datasetsamplelink dsl
+      JOIN sample  s ON s.id = dsl.sample_id
+      JOIN dataset d ON d.id = dsl.dataset_id
+     WHERE dsl.sample_id  IN (SELECT id FROM s_neighbors)
+       AND dsl.dataset_id IN (SELECT id FROM d_neighbors)
+""")
+
+_SAMPLE_SEED_GRAPH_SQL = text("""
+    WITH RECURSIVE
+        s_down(id) AS (
+            SELECT CAST(:seed_id AS int)
+            UNION ALL
+            SELECT sl.sample_id FROM samplelink sl JOIN s_down d ON sl.parent_sample_id = d.id
+        ),
+        s_up(id) AS (
+            SELECT CAST(:seed_id AS int)
+            UNION ALL
+            SELECT sl.parent_sample_id FROM samplelink sl JOIN s_up u ON sl.sample_id = u.id
+        ),
+        s_ids(id) AS (SELECT id FROM s_down UNION SELECT id FROM s_up),
+        d_seed(id) AS (
+            SELECT DISTINCT dataset_id FROM datasetsamplelink
+            WHERE sample_id IN (SELECT id FROM s_ids)
+        ),
+        d_down(id) AS (
+            SELECT id FROM d_seed
+            UNION ALL
+            SELECT dl.child_dataset_id FROM datasetlink dl JOIN d_down d ON dl.parent_dataset_id = d.id
+        ),
+        d_up(id) AS (
+            SELECT id FROM d_seed
+            UNION ALL
+            SELECT dl.parent_dataset_id FROM datasetlink dl JOIN d_up u ON dl.child_dataset_id = u.id
+        ),
+        d_ids(id) AS (SELECT id FROM d_down UNION SELECT id FROM d_up)
+    SELECT 'sn' AS t, s.unique_id AS a, s.sample_name AS b
+      FROM sample s WHERE s.id IN (SELECT id FROM s_ids)
+    UNION ALL
+    SELECT 'dn', d.unique_id, d.dataset_name
+      FROM dataset d WHERE d.id IN (SELECT id FROM d_ids)
+    UNION ALL
+    SELECT 'se', s1.unique_id, s2.unique_id
+      FROM samplelink sl
+      JOIN sample s1 ON s1.id = sl.parent_sample_id
+      JOIN sample s2 ON s2.id = sl.sample_id
+     WHERE sl.parent_sample_id IN (SELECT id FROM s_ids)
+       AND sl.sample_id       IN (SELECT id FROM s_ids)
+    UNION ALL
+    SELECT 'de', d1.unique_id, d2.unique_id
+      FROM datasetlink dl
+      JOIN dataset d1 ON d1.id = dl.parent_dataset_id
+      JOIN dataset d2 ON d2.id = dl.child_dataset_id
+     WHERE dl.parent_dataset_id IN (SELECT id FROM d_ids)
+       AND dl.child_dataset_id  IN (SELECT id FROM d_ids)
+    UNION ALL
+    SELECT 'sd', s.unique_id, d.unique_id
+      FROM datasetsamplelink dsl
+      JOIN sample  s ON s.id = dsl.sample_id
+      JOIN dataset d ON d.id = dsl.dataset_id
+     WHERE dsl.sample_id  IN (SELECT id FROM s_ids)
+       AND dsl.dataset_id IN (SELECT id FROM d_ids)
+""")
+
+_DATASET_SEED_GRAPH_SQL = text("""
+    WITH RECURSIVE
+        d1_down(id) AS (
+            SELECT CAST(:seed_id AS int)
+            UNION ALL
+            SELECT dl.child_dataset_id FROM datasetlink dl JOIN d1_down d ON dl.parent_dataset_id = d.id
+        ),
+        d1_up(id) AS (
+            SELECT CAST(:seed_id AS int)
+            UNION ALL
+            SELECT dl.parent_dataset_id FROM datasetlink dl JOIN d1_up u ON dl.child_dataset_id = u.id
+        ),
+        d1_ids(id) AS (SELECT id FROM d1_down UNION SELECT id FROM d1_up),
+        s_seed(id) AS (
+            SELECT DISTINCT sample_id FROM datasetsamplelink
+            WHERE dataset_id IN (SELECT id FROM d1_ids)
+        ),
+        s_down(id) AS (
+            SELECT id FROM s_seed
+            UNION ALL
+            SELECT sl.sample_id FROM samplelink sl JOIN s_down d ON sl.parent_sample_id = d.id
+        ),
+        s_up(id) AS (
+            SELECT id FROM s_seed
+            UNION ALL
+            SELECT sl.parent_sample_id FROM samplelink sl JOIN s_up u ON sl.sample_id = u.id
+        ),
+        s_ids(id) AS (SELECT id FROM s_down UNION SELECT id FROM s_up),
+        d2_seed(id) AS (
+            SELECT DISTINCT dataset_id FROM datasetsamplelink
+             WHERE sample_id  IN (SELECT id FROM s_ids)
+               AND dataset_id NOT IN (SELECT id FROM d1_ids)
+        ),
+        d2_down(id) AS (
+            SELECT id FROM d2_seed
+            UNION ALL
+            SELECT dl.child_dataset_id FROM datasetlink dl JOIN d2_down d ON dl.parent_dataset_id = d.id
+        ),
+        d2_up(id) AS (
+            SELECT id FROM d2_seed
+            UNION ALL
+            SELECT dl.parent_dataset_id FROM datasetlink dl JOIN d2_up u ON dl.child_dataset_id = u.id
+        ),
+        d_ids(id) AS (
+            SELECT id FROM d1_ids
+            UNION SELECT id FROM d2_down
+            UNION SELECT id FROM d2_up
+        )
+    SELECT 'sn' AS t, s.unique_id AS a, s.sample_name AS b
+      FROM sample s WHERE s.id IN (SELECT id FROM s_ids)
+    UNION ALL
+    SELECT 'dn', d.unique_id, d.dataset_name
+      FROM dataset d WHERE d.id IN (SELECT id FROM d_ids)
+    UNION ALL
+    SELECT 'se', s1.unique_id, s2.unique_id
+      FROM samplelink sl
+      JOIN sample s1 ON s1.id = sl.parent_sample_id
+      JOIN sample s2 ON s2.id = sl.sample_id
+     WHERE sl.parent_sample_id IN (SELECT id FROM s_ids)
+       AND sl.sample_id       IN (SELECT id FROM s_ids)
+    UNION ALL
+    SELECT 'de', d1.unique_id, d2.unique_id
+      FROM datasetlink dl
+      JOIN dataset d1 ON d1.id = dl.parent_dataset_id
+      JOIN dataset d2 ON d2.id = dl.child_dataset_id
+     WHERE dl.parent_dataset_id IN (SELECT id FROM d_ids)
+       AND dl.child_dataset_id  IN (SELECT id FROM d_ids)
+    UNION ALL
+    SELECT 'sd', s.unique_id, d.unique_id
+      FROM datasetsamplelink dsl
+      JOIN sample  s ON s.id = dsl.sample_id
+      JOIN dataset d ON d.id = dsl.dataset_id
+     WHERE dsl.sample_id  IN (SELECT id FROM s_ids)
+       AND dsl.dataset_id IN (SELECT id FROM d_ids)
+""")
+
+
+def _parse_graph_rows(rows) -> dict:
+    """Convert tagged mixed result rows into a node-link dict."""
+    nodes, links = [], []
+    for t, a, b in rows:
+        if t == "sn":
+            nodes.append({"id": a, "entity_type": "sample",  "name": b})
+        elif t == "dn":
+            nodes.append({"id": a, "entity_type": "dataset", "name": b})
+        else:
+            links.append({"source": a, "target": b})
+    return {"directed": True, "multigraph": False, "graph": {}, "nodes": nodes, "edges": links}
+
+
+@router.get("/entity_graph_cte/{entity_id}")
+def entity_graph_cte(
+    entity_id: str,
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    recursive: bool = False,
+):
+    """
+    Returns the graph of entities connected to entity_id.
+    By default returns only first-degree neighbours (direct parents, children,
+    and cross-linked entities). Pass recursive=true for the full connected component.
+    Use /project_graph/{project_id} to get all entities in a project.
+    """
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        # --- Auth + identify root (1 query) ---
+        sample_target = session.exec(
+            select(Sample).where(Sample.unique_id == entity_id)
+        ).one_or_none()
+
+        if sample_target is not None:
+            if access_group_name.startswith("admin"):
+                pass
+            elif is_orcid(access_group_name):
+                associated_groups = session.exec(
+                    select(AccessGroup).where(AccessGroup.id.in_(ag_ids))
+                ).all()
+                associated_group_names = [ag.group_name for ag in associated_groups]
+                if (
+                    sample_target.owner_orcid != access_group_name
+                    and sample_target.project_id not in associated_group_names
+                ):
+                    raise HTTPException(status_code=403, detail="Access denied")
+            else:
+                raise HTTPException(status_code=403, detail="Access denied")
+            seed_id = sample_target.id
+            sql = _SAMPLE_SEED_GRAPH_SQL if recursive else _SAMPLE_SEED_1HOP_SQL
+        else:
+            auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+            dataset_target = session.exec(
+                select(Dataset)
+                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                .filter(auth_filter)
+                .where(Dataset.unique_id == entity_id)
+            ).first()
+            if dataset_target is None:
+                raise HTTPException(status_code=404, detail="Entity not found")
+            seed_id = dataset_target.id
+            sql = _DATASET_SEED_GRAPH_SQL if recursive else _DATASET_SEED_1HOP_SQL
+
+        # --- Single query: traversal + nodes + edges ---
+        rows = session.execute(sql, {"seed_id": seed_id})
+        return _parse_graph_rows(rows)
+
+
+# ---------------------------------------------------------------------------
+# GET /project_graph/{project_id}
+# Returns all entities in the project regardless of connectivity.
+# ---------------------------------------------------------------------------
+
+@router.get("/project_graph/{project_id}")
+def project_graph(
+    project_id: str,
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+):
+    """
+    Returns all samples and authorized datasets belonging to project_id
+    as a single node-link graph.
+    """
+    _, ag_ids = auth_res
+
+    with Session(engine) as session:
+        sample_ids = set(
+            session.exec(select(Sample.id).where(Sample.project_id == project_id)).all()
+        )
+        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        dataset_ids = set(
+            session.exec(
+                select(Dataset.id)
+                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                .filter(auth_filter)
+                .where(Dataset.project_id == project_id)
+            ).unique().all()
+        )
+        return _build_graph(session, sample_ids, dataset_ids)

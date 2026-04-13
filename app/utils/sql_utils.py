@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 def setup_engine(env_file = '.env'):
     print(load_dotenv(env_file))
-    password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1')
+    password = get_secret('PGDB_PW', 'pgcloud_pw/versions/2')
     if password is None:
         return
     db_url = f'postgresql://{os.environ.get("DB_USERNAME")}:{password}@{os.environ.get("DB_SERVER")}/{os.environ.get("DB_DATABASE")}'

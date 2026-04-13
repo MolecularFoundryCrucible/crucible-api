@@ -12,7 +12,7 @@ from app.general_utils import  get_secret
 
 def setup_engine(env_file = '.env'):
     print(load_dotenv(env_file))
-    password = get_secret('PGDB_PW', 'pgcloud_pw/versions/1')
+    password = get_secret('PGDB_PW', 'pgcloud_pw/versions/2')
     if password is None:
         print('no password')
         return

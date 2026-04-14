@@ -1,15 +1,34 @@
-from typing import Optional
+from typing import Any, Optional
+from pydantic import model_validator
 from sqlmodel import SQLModel
 
 
 class UserRead(SQLModel):
-    '''Response model for User.'''
+    '''Response model for User. email returns lbl_email if populated, else email.'''
     id: int
     first_name: str
     last_name: str
     email: Optional[str] = None
     orcid: str
     employee_number: Optional[str] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def prefer_lbl_email(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data['email'] = data.get('lbl_email') or data.get('email')
+        else:
+            lbl = getattr(data, 'lbl_email', None)
+            if lbl:
+                return {
+                    'id': data.id,
+                    'first_name': data.first_name,
+                    'last_name': data.last_name,
+                    'email': lbl,
+                    'orcid': data.orcid,
+                    'employee_number': getattr(data, 'employee_number', None),
+                }
+        return data
 
 
 class UserUpdate(SQLModel):

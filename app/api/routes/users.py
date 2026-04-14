@@ -15,6 +15,7 @@ from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.users import UserRead, UserUpdate
+from app.models.projects import ProjectWithLead
 
 router = APIRouter(tags=["users"])
 engine = get_engine()
@@ -225,10 +226,10 @@ def remove_user_from_access_group(admin_acct: Annotated[str, Depends(is_admin)],
         return {"detail": f"User {orcid} removed from access group {group_name}"}
 
 
-@router.get("/users/{orcid}/projects", response_model=List[Project])
+@router.get("/users/{orcid}/projects", response_model=List[ProjectWithLead])
 def read_projects_for_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
-    Returns a list of the projects that this User is associated with.
+    Returns a list of the projects that this User is associated with, including the resolved project lead.
     '''
     access_group_name, ag_ids = auth_res
 
@@ -241,4 +242,9 @@ def read_projects_for_user(orcid: str, auth_res: Annotated[tuple, Depends(author
         if projects is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        return projects
+        orcids = [p.project_lead_orcid for p in projects if p.project_lead_orcid]
+        leads = {u.orcid: u for u in session.exec(select(User).where(User.orcid.in_(orcids))).all()}
+        return [
+            ProjectWithLead(**proj.model_dump(), lead=leads.get(proj.project_lead_orcid))
+            for proj in projects
+        ]

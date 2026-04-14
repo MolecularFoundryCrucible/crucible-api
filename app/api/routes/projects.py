@@ -58,10 +58,9 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
 
 
 @router.get("/projects", response_model=List[ProjectWithLead])
-def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)], include_lead: bool = False):
+def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
-    Returns a list of projects the user is authorized to see.
-    Pass include_lead=true to embed the resolved project lead user object.
+    Returns a list of projects the user is authorized to see, including the resolved project lead.
     '''
     access_group_name, ag_ids = auth_res
 
@@ -73,9 +72,6 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)], include_l
         else:
             raise HTTPException(status_code=403, detail="Not authorized to view projects")
 
-        if not include_lead:
-            return props
-
         orcids = [p.project_lead_orcid for p in props if p.project_lead_orcid]
         leads = {u.orcid: u for u in session.exec(select(User).where(User.orcid.in_(orcids))).all()}
         return [
@@ -85,17 +81,14 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)], include_l
 
 
 @router.get("/projects/{proj_id}", response_model=Union[None, ProjectWithLead])
-def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], include_lead: bool = False):
+def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
-    Returns the project object for the provided ID.
-    Pass include_lead=true to embed the resolved project lead user object.
+    Returns the project object for the provided ID, including the resolved project lead.
     '''
     with Session(engine) as session:
         prop = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if prop is None:
             return None
-        if not include_lead:
-            return prop
         lead = session.exec(select(User).where(User.orcid == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
         return ProjectWithLead(**prop.model_dump(), lead=lead)
 

@@ -168,8 +168,7 @@ def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
     access_group_name, ag_ids = auth_res
     with Session(engine) as session:
         is_user = session.exec(select(User).where(User.orcid == access_group_name)).one_or_none()
-
-    user_info = is_user.model_dump() if is_user else {}
+        user_info = is_user.model_dump(exclude={"projects", "accessgroups"}) if is_user else {}
 
     return AccountInfo(
         access_group_name=access_group_name,

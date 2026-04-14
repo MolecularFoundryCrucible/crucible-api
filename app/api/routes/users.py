@@ -14,14 +14,15 @@ from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
-from app.models.users import UserRead, UserUpdate
+from app.models.users import UserCreate, UserRead, UserUpdate
 from app.models.projects import ProjectWithLead
+from app.models.access_groups import AccessGroupRead
 
 router = APIRouter(tags=["users"])
 engine = get_engine()
 
 
-@router.get("/users", response_model=List[User])
+@router.get("/users", response_model=List[UserRead])
 def list_users(admin_acct: Annotated[str, Depends(is_admin)], request: Request, permissive=True):
 
     query_params = request.query_params
@@ -42,7 +43,7 @@ def list_users(admin_acct: Annotated[str, Depends(is_admin)], request: Request, 
         return users
 
 
-@router.get("/users/{orcid}", response_model=Union[None, User])
+@router.get("/users/{orcid}", response_model=Union[None, UserRead])
 def read_user(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     '''
     Returns the User object associated with the provided ORCID if found. Otherwise returns None.
@@ -52,8 +53,8 @@ def read_user(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
         return users
 
 
-@router.post("/users", response_model=User)
-def create_user(admin_acct: Annotated[str, Depends(is_admin)], user_info: User, project_ids: List[str] = Body(...)):
+@router.post("/users", response_model=UserRead)
+def create_user(admin_acct: Annotated[str, Depends(is_admin)], user_info: UserCreate, project_ids: List[str] = Body(...)):
     """
     Add or update a user record in the database.
     Add the user to an Access Group with their ORCID
@@ -115,7 +116,8 @@ def create_user(admin_acct: Annotated[str, Depends(is_admin)], user_info: User, 
 
         session.add(user)
         session.commit()
-    return user_info
+        session.refresh(user)
+    return user
 
 
 @router.patch("/users/{orcid}", response_model=UserRead)
@@ -176,7 +178,7 @@ def read_user_access_to_dataset(dsid: str, orcid: str, admin_acct: Annotated[str
         return(perms)
 
 
-@router.post("/users/{orcid}/access_groups/{group_name}", response_model=AccessGroup)
+@router.post("/users/{orcid}/access_groups/{group_name}", response_model=AccessGroupRead)
 def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orcid: str, group_name: str):
     with Session(engine) as session:
         ag = sql_add_user_to_access_group(orcid, group_name, session)

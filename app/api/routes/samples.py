@@ -13,7 +13,8 @@ from app.models.core_models import (
     AccessGroup, Dataset, DatasetACL, DatasetSampleLink,
     DeletionRequest, Resource, Sample, SampleLink, User,
 )
-from app.models.samples import SampleCreate, SampleRead, SampleUpdate
+from app.models.datasets import DatasetRead
+from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.sql_utils import add_or_update, generate_kw_query
 
@@ -140,7 +141,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         return sample
 
 
-@router.get("/samples")
+@router.get("/samples", response_model=List[SampleResponse], response_model_exclude_none=True)
 def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                  modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
@@ -204,14 +205,18 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
 
         samp_cmd = samp_cmd.options(selectinload(Sample.datasets), selectinload(Sample.resource))
         samp_list = session.exec(samp_cmd).all()
-        return [{**samp.model_dump(),
-                "datasets": samp.datasets,
+        return [
+            SampleResponse.model_validate({
+                **samp.model_dump(),
+                "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
                 "creation_time": samp.resource.creation_time if samp.resource else None,
-                "modification_time": samp.resource.modification_time if samp.resource else None}
-                for samp in samp_list]
+                "modification_time": samp.resource.modification_time if samp.resource else None,
+            })
+            for samp in samp_list
+        ]
 
 
-@router.get("/samples/{sample_id}")
+@router.get("/samples/{sample_id}", response_model=SampleResponse, response_model_exclude_none=True)
 def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns the sample for the provided ID
@@ -221,10 +226,12 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
         samp = session.exec(query).first()
         if samp is None:
             return None
-        return {**samp.model_dump(),
-                "datasets": samp.datasets,
-                "creation_time": samp.resource.creation_time if samp.resource else None,
-                "modification_time": samp.resource.modification_time if samp.resource else None}
+        return SampleResponse.model_validate({
+            **samp.model_dump(),
+            "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
+            "creation_time": samp.resource.creation_time if samp.resource else None,
+            "modification_time": samp.resource.modification_time if samp.resource else None,
+        })
 
 
 @router.get("/samples/{sample_id}/datasets")

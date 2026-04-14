@@ -18,9 +18,9 @@ class DatasetCreate(SQLModel):
     data_format: Optional[str] = None
     measurement: Optional[str] = None
     session_name: Optional[str] = None
-    json_link: Optional[str] = None
+    # json_link: Optional[str] = None
     public: bool = False
-    owner_user_id: Optional[int] = None   # falls back to the authenticated user if not provided
+    # owner_user_id: Optional[int] = None   # falls back to the authenticated user if not provided
     owner_orcid: Optional[str] = None     # falls back to the authenticated user if not provided
 
 
@@ -35,23 +35,23 @@ class DatasetUpdate(SQLModel):
     data_format: Optional[str] = None
     measurement: Optional[str] = None
     session_name: Optional[str] = None
-    json_link: Optional[str] = None
+    # json_link: Optional[str] = None
     public: Optional[bool] = None
-    owner_user_id: Optional[int] = None
+    # owner_user_id: Optional[int] = None
     owner_orcid: Optional[str] = None
 
 
 class DatasetRead(SQLModel):
     '''Response model for Dataset. Includes all server-generated fields.'''
-    id: int
+    # id: int
     unique_id: str
     public: bool
     dataset_name: Optional[str] = None
     file_to_upload: Optional[str] = None
-    owner_user_id: Optional[int] = None
+    # owner_user_id: Optional[int] = None
     owner_orcid: Optional[str] = None
     project_id: Optional[str] = None
-    instrument_id: Optional[int] = None
+    # instrument_id: Optional[int] = None
     source_folder: Optional[str] = None
     instrument_name: Optional[str] = None
     timestamp: Optional[str] = None
@@ -59,7 +59,7 @@ class DatasetRead(SQLModel):
     data_format: Optional[str] = None
     measurement: Optional[str] = None
     session_name: Optional[str] = None
-    json_link: Optional[str] = None
+    # json_link: Optional[str] = None
     sha256_hash_file_to_upload: Optional[str] = None
 
 
@@ -71,7 +71,7 @@ class ThumbnailCreate(SQLModel):
 
 class ThumbnailRead(SQLModel):
     '''Response model for Thumbnail.'''
-    id: int
+    # id: int
     dataset_id: int
     thumbnail_name: str
     thumbnail_b64str: str
@@ -86,8 +86,15 @@ class AssociatedFileCreate(SQLModel):
 
 class AssociatedFileRead(SQLModel):
     '''Response model for AssociatedFile.'''
-    id: int
+    # id: int
     dataset_id: int
     filename: str
     size: int
     sha256_hash: str
+
+
+class DatasetResponse(DatasetRead):
+    '''DatasetRead extended with Resource timestamps and optional scientific metadata.'''
+    creation_time: Optional[str] = None
+    modification_time: Optional[str] = None
+    scientific_metadata: Optional[dict] = None

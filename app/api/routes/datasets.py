@@ -35,9 +35,10 @@ from app.models.core_models import (
 from app.models.response_schemas import DatasetSampleLinkResponse
 from app.models.datasets import (
     AssociatedFileCreate, AssociatedFileRead,
-    DatasetCreate, DatasetRead, DatasetUpdate,
+    DatasetCreate, DatasetRead, DatasetResponse, DatasetUpdate,
     ThumbnailCreate, ThumbnailRead,
 )
+from app.models.access_groups import AccessGroupRead
 from app.models.samples import SampleRead
 from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.rmq_utils import send_pika_message
@@ -255,7 +256,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         return upds
 
 
-@router.get("/datasets")
+@router.get("/datasets", response_model=List[DatasetResponse], response_model_exclude_none=True)
 def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: bool = False, limit: Optional[int] = None,
                   creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                   modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
@@ -336,15 +337,21 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             query = query.limit(limit)
 
         results = session.exec(query).all()
-        return [{**dataset.model_dump(),
+        return [
+            DatasetResponse.model_validate({
+                **dataset.model_dump(),
                 "creation_time": dataset.resource.creation_time if dataset.resource else None,
                 "modification_time": dataset.resource.modification_time if dataset.resource else None,
-                **({"scientific_metadata": dataset.scientific_metadata.model_dump() if dataset.scientific_metadata else None} if include_metadata else {})
-                }
-                for dataset in results]
+                "scientific_metadata": (
+                    dataset.scientific_metadata.scientific_metadata
+                    if include_metadata and dataset.scientific_metadata else None
+                ),
+            })
+            for dataset in results
+        ]
 
 
-@router.get("/datasets/{dsid}")
+@router.get("/datasets/{dsid}", response_model=DatasetResponse, response_model_exclude_none=True)
 def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
     Returns a dataset found with the provided unique ID
@@ -358,9 +365,11 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str)
         ds = session.exec(ds_cmd).one_or_none()
         if ds is None:
             return None
-        return {**ds.model_dump(),
-                "creation_time": ds.resource.creation_time if ds.resource else None,
-                "modification_time": ds.resource.modification_time if ds.resource else None}
+        return DatasetResponse.model_validate({
+            **ds.model_dump(),
+            "creation_time": ds.resource.creation_time if ds.resource else None,
+            "modification_time": ds.resource.modification_time if ds.resource else None,
+        })
 
 
 @router.post("/datasets/{parent_dataset_id}/children/{child_dataset_id}", response_model=DatasetLink)
@@ -497,11 +506,9 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depen
         return children
 
 
-@router.delete("/datasets/{dsid}", response_model=Dataset)
+@router.delete("/datasets/{dsid}")
 def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
-    access_group_name, ag_ids = auth_res
-    # TODO: DEFINE THIS
-    pass
+    raise HTTPException(status_code=501, detail="Hard deletion not implemented. Use the deletion request system.")
 
 
 @router.delete('/datasets/{dsid}/samples/{sample_id}')
@@ -1047,7 +1054,7 @@ def add_keyword(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, 
         return(kw_obj)
 
 
-@router.get("/datasets/{dsid}/access_groups", response_model=List[AccessGroup])
+@router.get("/datasets/{dsid}/access_groups", response_model=List[AccessGroupRead])
 def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     with Session(engine) as session:
         # Verify dataset exists

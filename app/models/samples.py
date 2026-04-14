@@ -1,5 +1,7 @@
-from typing import Optional
+from typing import List, Optional
 from sqlmodel import SQLModel
+
+from app.models.datasets import DatasetRead
 
 
 class SampleCreate(SQLModel):
@@ -21,10 +23,17 @@ class SampleUpdate(SQLModel):
 
 class SampleRead(SQLModel):
     '''Response model for Sample. Includes server-generated fields.'''
-    id: int
+    # id: int
     unique_id: str
     sample_name: str
     sample_type: Optional[str] = None
     owner_orcid: Optional[str] = None
     project_id: Optional[str] = None
     description: Optional[str] = None
+
+
+class SampleResponse(SampleRead):
+    '''SampleRead extended with Resource timestamps and associated datasets.'''
+    creation_time: Optional[str] = None
+    modification_time: Optional[str] = None
+    datasets: Optional[List[DatasetRead]] = None

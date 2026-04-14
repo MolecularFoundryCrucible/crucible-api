@@ -14,18 +14,6 @@ def sql_get_user_by_email(email: str, session):
     return user
 
 
-def sql_resolve_project_lead(session, orcid: str = None, email: str = None):
-    """
-    Resolve a project lead User from either an ORCID or an email address.
-    ORCID takes precedence if both are provided. Returns the User or None.
-    """
-    if orcid:
-        return session.exec(select(User).where(User.orcid == orcid)).one_or_none()
-    if email:
-        return sql_get_user_by_email(email, session)
-    return None
-
-
 def sql_add_user_to_access_group(orcid, group_name, session):
     """Add a user to an access group by ORCID. Creates the access group if it doesn't exist."""
     user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()

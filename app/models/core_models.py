@@ -222,11 +222,10 @@ class ApiToken(SQLModel, table = True):
 class Project(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     project_id: str = Field(index=True, unique=True)
-    organization: str 
+    organization: str
     status: Optional[str]
     title: Optional[str]
-    project_lead_name: Optional[str]
-    project_lead_email: str
+    project_lead_orcid: str = Field(index=True)
     users: List[User] = Relationship(back_populates="projects", link_model=UserProjectLink)
 
 

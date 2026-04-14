@@ -15,7 +15,7 @@ from app.models.core_models import (
 )
 from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.sql_utils import add_or_update
-from app.utils.user_utils import sql_add_user_to_access_group, sql_get_user_by_email, sql_resolve_project_lead
+from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
 
@@ -26,22 +26,13 @@ engine = get_engine()
 @router.post("/projects", response_model=ProjectRead)
 def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: ProjectCreate):
     """
-    Create or upsert a project record. The project lead can be identified by
-    project_lead_orcid or project_lead_email; orcid takes precedence if both
-    are provided.
+    Create or upsert a project record. project_lead_orcid must correspond to
+    an existing user.
     """
-    if not P.project_id or not P.project_id.strip():
-        raise HTTPException(status_code=400, detail="project_id is required")
-    if not P.organization or not P.organization.strip():
-        raise HTTPException(status_code=400, detail="organization is required")
-    if not P.project_lead_email and not P.project_lead_orcid:
-        raise HTTPException(status_code=400, detail="project_lead_email or project_lead_orcid is required")
-
     with Session(engine) as session:
-        project_lead = sql_resolve_project_lead(session, orcid=P.project_lead_orcid, email=P.project_lead_email)
+        project_lead = session.exec(select(User).where(User.orcid == P.project_lead_orcid)).one_or_none()
         if project_lead is None:
-            identifier = P.project_lead_orcid or P.project_lead_email
-            raise HTTPException(status_code=404, detail=f"Project lead user '{identifier}' not found")
+            raise HTTPException(status_code=404, detail=f"Project lead user '{P.project_lead_orcid}' not found")
 
         prop = add_or_update(session, Project,
                              Project.project_id == P.project_id,
@@ -49,7 +40,7 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
                              organization=P.organization,
                              status=P.status,
                              title=P.title,
-                             project_lead_email=project_lead.lbl_email or project_lead.email)
+                             project_lead_orcid=P.project_lead_orcid)
 
         ag = add_or_update(session,
                            AccessGroup,
@@ -85,9 +76,10 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)], include_l
         if not include_lead:
             return props
 
+        orcids = [p.project_lead_orcid for p in props if p.project_lead_orcid]
+        leads = {u.orcid: u for u in session.exec(select(User).where(User.orcid.in_(orcids))).all()}
         return [
-            ProjectWithLead(**proj.model_dump(),
-                            lead=sql_get_user_by_email(proj.project_lead_email, session) if proj.project_lead_email else None)
+            ProjectWithLead(**proj.model_dump(), lead=leads.get(proj.project_lead_orcid))
             for proj in props
         ]
 
@@ -104,7 +96,7 @@ def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user
             return None
         if not include_lead:
             return prop
-        lead = sql_get_user_by_email(prop.project_lead_email, session) if prop.project_lead_email else None
+        lead = session.exec(select(User).where(User.orcid == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
         return ProjectWithLead(**prop.model_dump(), lead=lead)
 
 
@@ -112,7 +104,7 @@ def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user
 def update_project(proj_id: str, admin_acct: Annotated[str, Depends(is_admin)], project_update: ProjectUpdate):
     '''
     Partially update a project record. Only fields provided in the request body are modified.
-    If project_lead_orcid is provided, it resolves the user and stores their email.
+    If project_lead_orcid is provided, the ORCID must correspond to an existing user.
     '''
     with Session(engine) as session:
         project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
@@ -122,15 +114,10 @@ def update_project(proj_id: str, admin_acct: Annotated[str, Depends(is_admin)], 
 
         update_data = project_update.model_dump(exclude_unset=True)
 
-        # Resolve project lead from orcid or email if either was provided
-        lead_orcid = update_data.pop("project_lead_orcid", None)
-        lead_email = update_data.get("project_lead_email")
-        if lead_orcid or lead_email:
-            lead = sql_resolve_project_lead(session, orcid=lead_orcid, email=lead_email)
+        if "project_lead_orcid" in update_data:
+            lead = session.exec(select(User).where(User.orcid == update_data["project_lead_orcid"])).one_or_none()
             if lead is None:
-                identifier = lead_orcid or lead_email
-                raise HTTPException(status_code=404, detail=f"Project lead user '{identifier}' not found")
-            update_data["project_lead_email"] = lead.lbl_email or lead.email
+                raise HTTPException(status_code=404, detail=f"Project lead user '{update_data['project_lead_orcid']}' not found")
 
         for key, value in update_data.items():
             setattr(project, key, value)
@@ -181,9 +168,8 @@ def add_users_to_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, De
             if not requester:
                 raise HTTPException(status_code = 403, detail = requester_notauth_detail)
 
-            project_lead = sql_get_user_by_email(proj.project_lead_email, session) if proj.project_lead_email else None
-            if project_lead is None or requester.orcid != project_lead.orcid:
-                raise HTTPException(status_code = 403, detail = requester_notauth_detail)
+            if requester.orcid != proj.project_lead_orcid:
+                raise HTTPException(status_code=403, detail=requester_notauth_detail)
 
         # add link between user and project
         link = add_or_update(session,
@@ -223,8 +209,7 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
             requester = session.exec(select(User).where(User.orcid == access_group_name)).one_or_none()
             if not requester:
                 raise HTTPException(status_code=403, detail=requester_notauth_detail)
-            project_lead = sql_get_user_by_email(proj.project_lead_email, session) if proj.project_lead_email else None
-            if project_lead is None or requester.orcid != project_lead.orcid:
+            if requester.orcid != proj.project_lead_orcid:
                 raise HTTPException(status_code=403, detail=requester_notauth_detail)
 
         # Remove the user-project link

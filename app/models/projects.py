@@ -4,17 +4,18 @@ from app.models.users import UserRead
 
 
 class ProjectCreate(SQLModel):
-    '''Input schema for creating a project. project_lead_orcid is required.'''
+    '''Input schema for creating a project. Either project_lead_orcid or project_lead_email must be provided.'''
     project_id: str
     organization: str
-    project_lead_orcid: str
+    project_lead_orcid: Optional[str] = None
+    project_lead_email: Optional[str] = None
     status: Optional[str] = None
     title: Optional[str] = None
 
 
 class ProjectRead(SQLModel):
     '''Response model for Project.'''
-    id: int
+    # id: int
     project_id: str
     organization: str
     project_lead_orcid: str

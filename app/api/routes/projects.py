@@ -1,7 +1,7 @@
 from typing import Annotated, List, Union
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import join
+from sqlalchemy import func, join
 from sqlalchemy.orm import joinedload
 from sqlmodel import and_, or_, Session, select
 import networkx as nx
@@ -27,13 +27,28 @@ engine = get_engine()
 @router.post("/projects", response_model=ProjectRead)
 def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: ProjectCreate):
     """
-    Create or upsert a project record. project_lead_orcid must correspond to
-    an existing user.
+    Create or upsert a project record. Either project_lead_orcid or project_lead_email
+    must be provided and must correspond to an existing user. If email is given, lbl_email
+    is checked first, then email. The resolved ORCID is stored on the project.
     """
+    if not P.project_lead_orcid and not P.project_lead_email:
+        raise HTTPException(status_code=400, detail="Either project_lead_orcid or project_lead_email must be provided.")
+
     with Session(engine) as session:
-        project_lead = session.exec(select(User).where(User.orcid == P.project_lead_orcid)).one_or_none()
+        if P.project_lead_orcid:
+            project_lead = session.exec(select(User).where(User.orcid == P.project_lead_orcid)).one_or_none()
+            identifier = P.project_lead_orcid
+        else:
+            email = P.project_lead_email.lower()
+            project_lead = session.exec(
+                select(User).where(
+                    (func.lower(User.lbl_email) == email) | (func.lower(User.email) == email)
+                )
+            ).first()
+            identifier = P.project_lead_email
+
         if project_lead is None:
-            raise HTTPException(status_code=404, detail=f"Project lead user '{P.project_lead_orcid}' not found")
+            raise HTTPException(status_code=404, detail=f"Project lead user '{identifier}' not found")
 
         prop = add_or_update(session, Project,
                              Project.project_id == P.project_id,
@@ -41,7 +56,7 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
                              organization=P.organization,
                              status=P.status,
                              title=P.title,
-                             project_lead_orcid=P.project_lead_orcid)
+                             project_lead_orcid=project_lead.orcid)
 
         ag = add_or_update(session,
                            AccessGroup,

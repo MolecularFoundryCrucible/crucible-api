@@ -29,8 +29,10 @@ class ProjectWithLead(ProjectRead):
 
 
 class ProjectUpdate(SQLModel):
-    '''Partial update schema for Project. Only provided fields are modified.'''
+    '''Partial update schema for Project. Only provided fields are modified.
+    Provide either project_lead_orcid or project_lead_email to update the lead.'''
     organization: Optional[str] = None
     status: Optional[str] = None
     title: Optional[str] = None
     project_lead_orcid: Optional[str] = None
+    project_lead_email: Optional[str] = None

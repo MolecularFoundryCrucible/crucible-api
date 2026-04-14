@@ -127,6 +127,18 @@ def update_project(proj_id: str, admin_acct: Annotated[str, Depends(is_admin)], 
             lead = session.exec(select(User).where(User.orcid == update_data["project_lead_orcid"])).one_or_none()
             if lead is None:
                 raise HTTPException(status_code=404, detail=f"Project lead user '{update_data['project_lead_orcid']}' not found")
+        elif "project_lead_email" in update_data:
+            email = update_data.pop("project_lead_email").lower()
+            lead = session.exec(
+                select(User).where(
+                    (func.lower(User.lbl_email) == email) | (func.lower(User.email) == email)
+                )
+            ).first()
+            if lead is None:
+                raise HTTPException(status_code=404, detail=f"Project lead user '{email}' not found")
+            update_data["project_lead_orcid"] = lead.orcid
+        else:
+            update_data.pop("project_lead_email", None)
 
         for key, value in update_data.items():
             setattr(project, key, value)

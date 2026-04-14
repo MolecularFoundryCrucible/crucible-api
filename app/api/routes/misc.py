@@ -8,9 +8,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import Dataset, DatasetACL, Keyword, NewScientificMetadata, Sample
-from app.models.resource import Resource
-from app.models.deletion import DeletionRequest
+from app.models.core_models import Dataset, DatasetACL, DeletionRequest, Keyword, NewScientificMetadata, Resource, Sample
 from app.utils.auth_utils import authorize_user
 
 router = APIRouter(tags=["misc"])

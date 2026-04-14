@@ -14,6 +14,7 @@ from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
+from app.models.users import UserRead, UserUpdate
 
 router = APIRouter(tags=["users"])
 engine = get_engine()
@@ -116,6 +117,27 @@ def create_user(admin_acct: Annotated[str, Depends(is_admin)], user_info: User, 
     return user_info
 
 
+@router.patch("/users/{orcid}", response_model=UserRead)
+def update_user(orcid: str, admin_acct: Annotated[str, Depends(is_admin)], user_update: UserUpdate):
+    '''
+    Partially update a user record. Only fields provided in the request body are modified.
+    '''
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        update_data = user_update.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(user, key, value)
+
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user
+
+
 @router.get("/users/{orcid}/datasets", response_model=List[str])
 def read_user_datasets(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     '''
@@ -172,6 +194,35 @@ def list_user_access_groups(auth_res: Annotated[tuple, Depends(authorize_user)],
 
         ags = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
         return([ag.group_name for ag in ags])
+
+
+@router.delete("/users/{orcid}/access_groups/{group_name}")
+def remove_user_from_access_group(admin_acct: Annotated[str, Depends(is_admin)], orcid: str, group_name: str):
+    '''
+    Remove a user from an access group.
+    '''
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
+        if ag is None:
+            raise HTTPException(status_code=404, detail="Access group not found")
+
+        link = session.exec(
+            select(UserAccessGroupLink).where(
+                UserAccessGroupLink.user_id == user.id,
+                UserAccessGroupLink.accessgroup_id == ag.id
+            )
+        ).one_or_none()
+
+        if link is None:
+            raise HTTPException(status_code=404, detail="User is not a member of this access group")
+
+        session.delete(link)
+        session.commit()
+        return {"detail": f"User {orcid} removed from access group {group_name}"}
 
 
 @router.get("/users/{orcid}/projects", response_model=List[Project])

@@ -1,0 +1,93 @@
+from typing import Optional
+from sqlmodel import SQLModel
+
+
+class DatasetCreate(SQLModel):
+    '''
+    Fields accepted when creating or upserting a dataset.
+    Provide unique_id to update an existing record; omit it to create a new one
+    with an auto-generated MFID.
+    '''
+    unique_id: Optional[str] = None
+    dataset_name: Optional[str] = None
+    file_to_upload: Optional[str] = None
+    project_id: Optional[str] = None
+    instrument_id: Optional[int] = None
+    source_folder: Optional[str] = None
+    instrument_name: Optional[str] = None
+    data_format: Optional[str] = None
+    measurement: Optional[str] = None
+    session_name: Optional[str] = None
+    json_link: Optional[str] = None
+    public: bool = False
+    owner_user_id: Optional[int] = None   # falls back to the authenticated user if not provided
+    owner_orcid: Optional[str] = None     # falls back to the authenticated user if not provided
+
+
+class DatasetUpdate(SQLModel):
+    '''Partial update schema for Dataset. Only provided fields are modified.'''
+    dataset_name: Optional[str] = None
+    file_to_upload: Optional[str] = None
+    project_id: Optional[str] = None
+    instrument_id: Optional[int] = None
+    source_folder: Optional[str] = None
+    instrument_name: Optional[str] = None
+    data_format: Optional[str] = None
+    measurement: Optional[str] = None
+    session_name: Optional[str] = None
+    json_link: Optional[str] = None
+    public: Optional[bool] = None
+    owner_user_id: Optional[int] = None
+    owner_orcid: Optional[str] = None
+
+
+class DatasetRead(SQLModel):
+    '''Response model for Dataset. Includes all server-generated fields.'''
+    id: int
+    unique_id: str
+    public: bool
+    dataset_name: Optional[str] = None
+    file_to_upload: Optional[str] = None
+    owner_user_id: Optional[int] = None
+    owner_orcid: Optional[str] = None
+    project_id: Optional[str] = None
+    instrument_id: Optional[int] = None
+    source_folder: Optional[str] = None
+    instrument_name: Optional[str] = None
+    timestamp: Optional[str] = None
+    size: Optional[int] = None
+    data_format: Optional[str] = None
+    measurement: Optional[str] = None
+    session_name: Optional[str] = None
+    json_link: Optional[str] = None
+    sha256_hash_file_to_upload: Optional[str] = None
+
+
+class ThumbnailCreate(SQLModel):
+    '''Fields required to attach a thumbnail to a dataset.'''
+    thumbnail_name: str
+    thumbnail_b64str: str
+
+
+class ThumbnailRead(SQLModel):
+    '''Response model for Thumbnail.'''
+    id: int
+    dataset_id: int
+    thumbnail_name: str
+    thumbnail_b64str: str
+
+
+class AssociatedFileCreate(SQLModel):
+    '''Fields required to attach an associated file to a dataset.'''
+    filename: str
+    size: int
+    sha256_hash: str
+
+
+class AssociatedFileRead(SQLModel):
+    '''Response model for AssociatedFile.'''
+    id: int
+    dataset_id: int
+    filename: str
+    size: int
+    sha256_hash: str

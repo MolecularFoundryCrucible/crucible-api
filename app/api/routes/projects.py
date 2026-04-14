@@ -115,17 +115,28 @@ def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user
         return ProjectWithLead(**prop.model_dump(), lead=lead)
 
 
-@router.patch("/projects/{proj_id}", response_model=ProjectRead)
-def update_project(proj_id: str, admin_acct: Annotated[str, Depends(is_admin)], project_update: ProjectUpdate):
+@router.patch("/projects/{proj_id}", response_model=ProjectWithLead)
+def update_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], project_update: ProjectUpdate):
     '''
     Partially update a project record. Only fields provided in the request body are modified.
-    If project_lead_orcid is provided, the ORCID must correspond to an existing user.
+    Accessible by admins and the project lead.
+    If project_lead_orcid or project_lead_email is provided, it must correspond to an existing user.
     '''
+    access_group_name, ag_ids = auth_res
+
     with Session(engine) as session:
         project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
 
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
+
+        if not access_group_name.startswith('admin'):
+            if is_orcid(access_group_name):
+                requester = session.exec(select(User).where(User.orcid == access_group_name)).one_or_none()
+                if not requester or requester.orcid != project.project_lead_orcid:
+                    raise HTTPException(status_code=403, detail="Only the project lead or an admin can update a project")
+            else:
+                raise HTTPException(status_code=403, detail="Only the project lead or an admin can update a project")
 
         update_data = project_update.model_dump(exclude_unset=True)
 
@@ -152,7 +163,8 @@ def update_project(proj_id: str, admin_acct: Annotated[str, Depends(is_admin)], 
         session.add(project)
         session.commit()
         session.refresh(project)
-        return project
+        lead = session.exec(select(User).where(User.orcid == project.project_lead_orcid)).one_or_none() if project.project_lead_orcid else None
+        return ProjectWithLead(**project.model_dump(), lead=lead)
 
 
 def _get_project_users(proj_id: str, session) -> List[User]:

@@ -18,6 +18,7 @@ from app.utils.sql_utils import add_or_update
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
+from app.models.users import UserRead
 
 router = APIRouter(tags=["projects"])
 engine = get_engine()
@@ -121,23 +122,45 @@ def update_project(proj_id: str, admin_acct: Annotated[str, Depends(is_admin)], 
         return project
 
 
-@router.get("/projects/{proj_id}/users", response_model=List[User])
-def read_users_on_project(proj_id: str, admin_acct: Annotated[str, Depends(is_admin)]):
-    '''
-    Returns a list of users associated with the project ID provided
-    '''
-    with Session(engine) as session:
-        # Verify project exists
-        project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
+def _get_project_users(proj_id: str, session) -> List[User]:
+    '''Query project members directly — no auth check, for internal use only.'''
+    return session.exec(
+        select(User)
+        .select_from(join(User, UserProjectLink, UserProjectLink.user_id == User.id))
+        .where(UserProjectLink.project_id == proj_id)
+    ).all()
 
+
+@router.get("/projects/{proj_id}/users", response_model=List[UserRead])
+def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''
+    Returns a list of users associated with the project ID.
+    Accessible by admins and members of the project.
+    '''
+    access_group_name, ag_ids = auth_res
+
+    with Session(engine) as session:
+        project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        users = session.exec(select(User).select_from(join(User, UserProjectLink, UserProjectLink.user_id == User.id)).where(UserProjectLink.project_id == proj_id)).all()
-        return users
+        if not access_group_name.startswith('admin'):
+            if is_orcid(access_group_name):
+                member = session.exec(
+                    select(UserProjectLink).where(
+                        UserProjectLink.project_id == proj_id,
+                        UserProjectLink.user_id == select(User.id).where(User.orcid == access_group_name).scalar_subquery()
+                    )
+                ).one_or_none()
+                if member is None:
+                    raise HTTPException(status_code=403, detail="Not a member of this project")
+            else:
+                raise HTTPException(status_code=403, detail="Not authorized")
+
+        return _get_project_users(proj_id, session)
 
 
-@router.post("/projects/{proj_id}/users/{orcid}", response_model=List[User])
+@router.post("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
 def add_users_to_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     access_group_name, ag_ids = auth_res
     
@@ -175,11 +198,10 @@ def add_users_to_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, De
         # add user to access group
         sql_add_user_to_access_group(orcid, proj_id, session)
 
-    project_users = read_users_on_project(proj_id, access_group_name)
-    return project_users
+        return _get_project_users(proj_id, session)
 
 
-@router.delete("/projects/{proj_id}/users/{orcid}", response_model=List[User])
+@router.delete("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
 def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Remove a user from a project and its associated access group.
@@ -229,8 +251,7 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
                 session.delete(ag_link)
 
         session.commit()
-
-    return read_users_on_project(proj_id, access_group_name)
+        return _get_project_users(proj_id, session)
 
 
 @router.get("/projects/{project_id}/sample_graph")

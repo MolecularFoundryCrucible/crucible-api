@@ -27,14 +27,19 @@ engine = get_engine()
 @router.post("/projects", response_model=ProjectRead)
 def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: ProjectCreate):
     """
-    Create or upsert a project record. Either project_lead_orcid or project_lead_email
-    must be provided and must correspond to an existing user. If email is given, lbl_email
+    Create a new project. Either project_lead_orcid or project_lead_email must be
+    provided and must correspond to an existing user. If email is given, lbl_email
     is checked first, then email. The resolved ORCID is stored on the project.
+    Returns 409 if a project with the given project_id already exists.
     """
     if not P.project_lead_orcid and not P.project_lead_email:
         raise HTTPException(status_code=400, detail="Either project_lead_orcid or project_lead_email must be provided.")
 
     with Session(engine) as session:
+        existing = session.exec(select(Project).where(Project.project_id == P.project_id)).one_or_none()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail=f"Project '{P.project_id}' already exists. Use PATCH to update it.")
+
         if P.project_lead_orcid:
             project_lead = session.exec(select(User).where(User.orcid == P.project_lead_orcid)).one_or_none()
             identifier = P.project_lead_orcid
@@ -50,13 +55,14 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
         if project_lead is None:
             raise HTTPException(status_code=404, detail=f"Project lead user '{identifier}' not found")
 
-        prop = add_or_update(session, Project,
-                             Project.project_id == P.project_id,
-                             project_id=P.project_id,
-                             organization=P.organization,
-                             status=P.status,
-                             title=P.title,
-                             project_lead_orcid=project_lead.orcid)
+        prop = Project(
+            project_id=P.project_id,
+            organization=P.organization,
+            status=P.status,
+            title=P.title,
+            project_lead_orcid=project_lead.orcid,
+        )
+        session.add(prop)
 
         ag = add_or_update(session,
                            AccessGroup,

@@ -25,7 +25,6 @@ class SampleWithDatasetsResponse(BaseModel):
     
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
     
-
 class DatasetSampleLinkResponse(BaseModel):
     dataset_id: str
     dataset_name: str
@@ -40,3 +39,13 @@ class AccountInfo(BaseModel):
     access_group_name: str
     access_group_ids: List[int]
     user_info: dict
+
+
+class ProjectResponse(BaseModel):
+    id: Optional[int]
+    project_id: str
+    organization: str 
+    status: Optional[str]
+    title: Optional[str]
+    project_lead_name: Optional[str]
+    project_lead_email: str

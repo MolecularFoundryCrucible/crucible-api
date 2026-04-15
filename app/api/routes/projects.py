@@ -12,9 +12,10 @@ from app.general_utils import is_orcid
 from app.models.core_models import (
     AccessGroup, Project, Sample, User, UserProjectLink, DatasetACL, Dataset, Sample, DatasetSampleLink
 )
+from app.models.response_schemas import ProjectResponse
 from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.sql_utils import add_or_update
-from app.utils.user_utils import sql_add_user_to_access_group
+from app.utils.user_utils import sql_add_user_to_access_group, sql_get_user_by_email
 from app.utils.project_utils import sql_get_projects_for_user
 
 router = APIRouter(tags=["projects"])
@@ -52,31 +53,29 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
         )
 
     with Session(engine) as session:
-        prop = add_or_update(session, Project, Project.id == P.id, **dict(P))
+        project_lead = sql_get_user_by_email(P.project_lead_email, session)
+        project_lead_orcid = project_lead.orcid if project_lead else None
+        project_details = dict(P)
+        project_details['project_lead_orcid'] = project_lead_orcid
+
+        prop = add_or_update(session, Project, Project.id == P.id, **project_details)
         ag = add_or_update(session,
                            AccessGroup,
                            AccessGroup.group_name == P.project_id,
                            group_name=P.project_id)
 
-        r1 = session.exec(select(User).where(User.lbl_email.ilike(f"%{P.project_lead_email}%"))).all()
-        r2 = session.exec(select(User).where(User.email.ilike(f"%{P.project_lead_email}%"))).all()
-        all_found_accounts = [x for x in r1 + r2 if x.orcid is not None]
+        if not (project_lead in ag.users):
+            ag.users.append(project_lead)
 
-        print(f"found accounts for user: {all_found_accounts}")
-
-        if len(all_found_accounts) > 0:
-            project_lead = all_found_accounts[-1]
-            if not (project_lead in ag.users):
-                ag.users.append(project_lead)
-
-            if not (prop in project_lead.projects):
-                project_lead.projects.append(prop)
+        if not (prop in project_lead.projects):
+            project_lead.projects.append(prop)
 
         session.commit()
+
     return(P)
 
 
-@router.get("/projects", response_model=List[Project])
+@router.get("/projects", response_model=List[ProjectResponse])
 def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of projects the user is authorized to see

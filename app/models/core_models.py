@@ -227,6 +227,7 @@ class Project(SQLModel, table=True):
     title: Optional[str]
     project_lead_name: Optional[str]
     project_lead_email: str
+    project_lead_orcid: str = Field(index=True, foreign_key="user.orcid")
     users: List[User] = Relationship(back_populates="projects", link_model=UserProjectLink)
 
 

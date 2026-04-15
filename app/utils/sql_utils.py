@@ -1,6 +1,7 @@
 
 import yaml
 import os
+import urllib.parse
 from app.general_utils import get_secret
 from sqlalchemy import join
 from sqlmodel import create_engine, select
@@ -17,7 +18,8 @@ def setup_engine(env_file = '.env'):
     password = get_secret('PGDB_PW', 'pgcloud_pw/versions/2')
     if password is None:
         return
-    db_url = f'postgresql://{os.environ.get("DB_USERNAME")}:{password}@{os.environ.get("DB_SERVER")}/{os.environ.get("DB_DATABASE")}'
+    encoded_pw = urllib.parse.quote_plus(password)
+    db_url = f'postgresql://{os.environ.get("DB_USERNAME")}:{encoded_pw}@{os.environ.get("DB_SERVER")}/{os.environ.get("DB_DATABASE")}'
     engine = create_engine(db_url, echo=False)
     return(engine)
 

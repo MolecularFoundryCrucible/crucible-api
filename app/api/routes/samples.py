@@ -11,11 +11,10 @@ from app.api.dependencies import get_engine
 from app.general_utils import get_tz_isoformat, is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, DatasetACL, DatasetSampleLink,
-    Sample, SampleLink, User,
+    DeletionRequest, Resource, Sample, SampleLink, User,
 )
-from app.models.resource import Resource
-from app.models.deletion import DeletionRequest
-from app.models.response_schemas import SampleWithDatasetsResponse
+from app.models.datasets import DatasetRead
+from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.sql_utils import add_or_update, generate_kw_query
 
@@ -70,19 +69,18 @@ def unlink_parent_child_samples(parent_sample_id: str, child_sample_id: str, adm
         return {"message": f"Successfully unlinked {parent_sample_id} -> {child_sample_id}"}
 
 
-@router.patch('/samples/{sample_id}', response_model=Sample)
-def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id: str, updated_sample: Sample):
-    access_group_name, ag_ids = auth_res
-    cmd = select(Sample).where(Sample.unique_id == sample_id)
-    update_fields = updated_sample.model_dump(exclude_unset=True)
+@router.patch('/samples/{sample_id}', response_model=SampleRead)
+def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id: str, updated_sample: SampleUpdate):
+    '''
+    Partially update a sample record. Only provided fields are modified.
+    '''
     with Session(engine) as session:
-        sample = session.exec(cmd).one_or_none()
+        sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
         if not sample:
             raise HTTPException(status_code=404, detail='Sample not found')
 
-        for key, value in update_fields.items():
+        for key, value in updated_sample.model_dump(exclude_unset=True).items():
             setattr(sample, key, value)
-            print(key, value)
 
         ri = session.exec(select(Resource).where(Resource.mfid == sample_id)).one_or_none()
         if ri:
@@ -94,84 +92,56 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
         return sample
 
 
-@router.post("/samples", response_model=Sample)
-def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample):
-    """
-    Create a new sample in the database.
-
-    Args:
-        auth_res: Authorization result containing access group info
-        S: Sample object to be added
-
-    Returns:
-        Added sample object
-
-    Raises:
-        HTTPException: If required sample fields are missing
-    """
+@router.post("/samples", response_model=SampleRead)
+def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: SampleCreate):
+    '''
+    Create a new sample. If a sample with the same project_id and sample_name already
+    exists, the existing record is returned without modification.
+    '''
     access_group_name, ag_ids = auth_res
-    
-    # Validate required fields
-    missing_fields = []
-    if not S.sample_name or not S.sample_name.strip():
-        missing_fields.append("sample_name")
 
-    if missing_fields:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Missing required sample information: {', '.join(missing_fields)}. \
-                     Please provide all required fields: sample_name."
-        )
+    if not S.sample_name.strip():
+        raise HTTPException(status_code=400, detail="sample_name must not be empty.")
 
     with Session(engine) as session:
-        print("starting sample addition")
-        where = or_(Sample.unique_id == S.unique_id,
-                and_(Sample.project_id == S.project_id,
-                     Sample.sample_name == S.sample_name))
-        statement = select(Sample).where(where)
-        sample = session.exec(statement).one_or_none()
+        # Dedup: return existing sample if (project_id, sample_name) already registered
+        existing = session.exec(
+            select(Sample).where(
+                and_(Sample.project_id == S.project_id, Sample.sample_name == S.sample_name)
+            )
+        ).one_or_none()
+        if existing:
+            return existing
 
-        print(f'{sample=}')
-        if sample:
-            return sample
-
-        sample = Sample(**S.model_dump(exclude_unset=True, exclude={"parents", "children"}))
-        print(f'{sample=}')
+        sample = Sample(**S.model_dump(exclude_unset=True))
         session.add(sample)
         session.commit()
         session.refresh(sample)
 
-        if sample.owner_user_id is None and sample.owner_orcid is None:
-            creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
-            if is_orcid(access_group_name):
-                sample.owner_orcid = access_group_name
-                creator_user_id = session.exec(select(User.id).where(User.orcid == sample.owner_orcid)).one_or_none()
-                sample.owner_user_id = creator_user_id
+        # Resolve owner from auth if not explicitly provided
+        if sample.owner_orcid is None and is_orcid(access_group_name):
+            sample.owner_orcid = access_group_name
+        if sample.owner_user_id is None and sample.owner_orcid:
+            sample.owner_user_id = session.exec(
+                select(User.id).where(User.orcid == sample.owner_orcid)
+            ).one_or_none()
 
-        elif sample.owner_user_id is None:
-            creator_user_id = session.exec(select(User.id).where(User.orcid == sample.owner_orcid)).one_or_none()
-            sample.owner_user_id = creator_user_id
-
-        else:
-            pass
-
-        session.add(sample)
         now = get_tz_isoformat()
         ri = add_or_update(session,
-                            Resource,
-                            where=(Resource.mfid == sample.unique_id),
-                            mfid=sample.unique_id,
-                            resource_type="sample")
+                           Resource,
+                           where=(Resource.mfid == sample.unique_id),
+                           mfid=sample.unique_id,
+                           resource_type="sample")
         ri.creation_time = now
         ri.modification_time = now
 
+        session.add(sample)
         session.commit()
-        print('final commit')
         session.refresh(sample)
-        return(sample)
+        return sample
 
 
-@router.get("/samples")
+@router.get("/samples", response_model=List[SampleResponse], response_model_exclude_none=True)
 def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                  modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
@@ -235,14 +205,18 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
 
         samp_cmd = samp_cmd.options(selectinload(Sample.datasets), selectinload(Sample.resource))
         samp_list = session.exec(samp_cmd).all()
-        return [{**samp.model_dump(),
-                "datasets": samp.datasets,
+        return [
+            SampleResponse.model_validate({
+                **samp.model_dump(),
+                "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
                 "creation_time": samp.resource.creation_time if samp.resource else None,
-                "modification_time": samp.resource.modification_time if samp.resource else None}
-                for samp in samp_list]
+                "modification_time": samp.resource.modification_time if samp.resource else None,
+            })
+            for samp in samp_list
+        ]
 
 
-@router.get("/samples/{sample_id}")
+@router.get("/samples/{sample_id}", response_model=SampleResponse, response_model_exclude_none=True)
 def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns the sample for the provided ID
@@ -252,10 +226,12 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
         samp = session.exec(query).first()
         if samp is None:
             return None
-        return {**samp.model_dump(),
-                "datasets": samp.datasets,
-                "creation_time": samp.resource.creation_time if samp.resource else None,
-                "modification_time": samp.resource.modification_time if samp.resource else None}
+        return SampleResponse.model_validate({
+            **samp.model_dump(),
+            "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
+            "creation_time": samp.resource.creation_time if samp.resource else None,
+            "modification_time": samp.resource.modification_time if samp.resource else None,
+        })
 
 
 @router.get("/samples/{sample_id}/datasets")
@@ -324,7 +300,7 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
             return datasets
 
 
-@router.get("/samples/{child_sample_id}/parents", response_model=List[Sample])
+@router.get("/samples/{child_sample_id}/parents", response_model=List[SampleRead])
 def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of parent samples for a given child sample
@@ -350,7 +326,7 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends
         return parent_samples
 
 
-@router.get("/samples/{parent_sample_id}/children", response_model=List[Sample])
+@router.get("/samples/{parent_sample_id}/children", response_model=List[SampleRead])
 def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of child samples for a given parent sample

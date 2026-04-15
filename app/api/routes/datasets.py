@@ -21,18 +21,25 @@ from app.models.core_models import (
     DatasetKeywordLink,
     DatasetLink,
     DatasetSampleLink,
+    DeletionRequest,
+    IngestionRequest,
+    Instrument,
     Keyword,
     Project,
+    Resource,
     Sample,
     ScientificMetadata,
     Thumbnail,
-    User
+    User,
 )
-from app.models.instrument import Instrument
-from app.models.resource import Resource
-from app.models.deletion import DeletionRequest
 from app.models.response_schemas import DatasetSampleLinkResponse
-from app.models.tasks import IngestionRequest
+from app.models.datasets import (
+    AssociatedFileCreate, AssociatedFileRead,
+    DatasetCreate, DatasetRead, DatasetResponse, DatasetUpdate,
+    ThumbnailCreate, ThumbnailRead,
+)
+from app.models.access_groups import AccessGroupRead
+from app.models.samples import SampleRead
 from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.rmq_utils import send_pika_message
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query
@@ -88,10 +95,10 @@ def request_insitu_aggregation(dsid, auth_res: Annotated[tuple, Depends(authoriz
     )
     return
 
-@router.post("/datasets", response_model=Dataset)
+@router.post("/datasets", response_model=DatasetRead)
 async def create_dataset(
     auth_res: Annotated[tuple, Depends(authorize_user)],
-    dataset: Dataset
+    dataset: DatasetCreate
 ):
     print(f"received {dataset}")
     access_group_name, ag_ids = auth_res
@@ -190,8 +197,8 @@ async def create_dataset(
     return ds
 
 
-@router.patch("/datasets/{dsid}", response_model=Dataset)
-def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, updated_dataset: Dataset):
+@router.patch("/datasets/{dsid}", response_model=DatasetRead)
+def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, updated_dataset: DatasetUpdate):
     '''
     Updates a dataset in SQL and returns the Updated Dataset object.
     Sends a message to RabbitMQ to alert RMQ that updates have been made.
@@ -249,7 +256,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         return upds
 
 
-@router.get("/datasets")
+@router.get("/datasets", response_model=List[DatasetResponse], response_model_exclude_none=True)
 def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: bool = False, limit: Optional[int] = None,
                   creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                   modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
@@ -330,15 +337,21 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             query = query.limit(limit)
 
         results = session.exec(query).all()
-        return [{**dataset.model_dump(),
+        return [
+            DatasetResponse.model_validate({
+                **dataset.model_dump(),
                 "creation_time": dataset.resource.creation_time if dataset.resource else None,
                 "modification_time": dataset.resource.modification_time if dataset.resource else None,
-                **({"scientific_metadata": dataset.scientific_metadata.model_dump() if dataset.scientific_metadata else None} if include_metadata else {})
-                }
-                for dataset in results]
+                "scientific_metadata": (
+                    dataset.scientific_metadata.scientific_metadata
+                    if include_metadata and dataset.scientific_metadata else None
+                ),
+            })
+            for dataset in results
+        ]
 
 
-@router.get("/datasets/{dsid}")
+@router.get("/datasets/{dsid}", response_model=DatasetResponse, response_model_exclude_none=True)
 def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
     Returns a dataset found with the provided unique ID
@@ -352,9 +365,11 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str)
         ds = session.exec(ds_cmd).one_or_none()
         if ds is None:
             return None
-        return {**ds.model_dump(),
-                "creation_time": ds.resource.creation_time if ds.resource else None,
-                "modification_time": ds.resource.modification_time if ds.resource else None}
+        return DatasetResponse.model_validate({
+            **ds.model_dump(),
+            "creation_time": ds.resource.creation_time if ds.resource else None,
+            "modification_time": ds.resource.modification_time if ds.resource else None,
+        })
 
 
 @router.post("/datasets/{parent_dataset_id}/children/{child_dataset_id}", response_model=DatasetLink)
@@ -420,7 +435,7 @@ def unlink_parent_child(parent_dataset_id: str, child_dataset_id: str, admin_acc
         return {"message": f"Successfully unlinked {parent_dataset_id} -> {child_dataset_id}"}
 
 
-@router.get("/datasets/{child_dataset_id}/parents", response_model=List[Dataset])
+@router.get("/datasets/{child_dataset_id}/parents", response_model=List[DatasetRead])
 def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of parent datasets for a given dataset
@@ -455,7 +470,7 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depen
         return parents
 
 
-@router.get("/datasets/{parent_dataset_id}/children", response_model=List[Dataset])
+@router.get("/datasets/{parent_dataset_id}/children", response_model=List[DatasetRead])
 def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of child datasets for a given parent dataset
@@ -491,11 +506,9 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depen
         return children
 
 
-@router.delete("/datasets/{dsid}", response_model=Dataset)
+@router.delete("/datasets/{dsid}")
 def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
-    access_group_name, ag_ids = auth_res
-    # TODO: DEFINE THIS
-    pass
+    raise HTTPException(status_code=501, detail="Hard deletion not implemented. Use the deletion request system.")
 
 
 @router.delete('/datasets/{dsid}/samples/{sample_id}')
@@ -556,7 +569,7 @@ def generate_signed_url_download_link(auth_res: Annotated[tuple, Depends(authori
     return urls
 
 
-@router.post("/datasets/{dsid}/upload", response_model=AssociatedFile)
+@router.post("/datasets/{dsid}/upload", response_model=AssociatedFileRead)
 async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], File(description="List of files")],
                                           auth_res:  Annotated[tuple, Depends(authorize_user)],
                                           dsid: str):
@@ -575,13 +588,12 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
             f.write(await file.read())
 
     # create associated files record
-    af = {"filename": os.path.join("api-uploads", file.filename),
-          "size": os.path.getsize(save_file_path),
-          "sha256_hash": checkhash(save_file_path)}
-
-    # add associated file
-    added_af = add_associated_file(auth_res, dsid, AssociatedFile(**af))
-    return(added_af)
+    af = AssociatedFileCreate(
+        filename=os.path.join("api-uploads", file.filename),
+        size=os.path.getsize(save_file_path),
+        sha256_hash=checkhash(save_file_path),
+    )
+    return add_associated_file(auth_res, dsid, af)
 
 
 @router.post("/datasets/{dsid}/ingest", response_model=IngestionRequest)
@@ -790,7 +802,7 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
         return(md_obj)
 
 
-@router.get("/datasets/{dsid}/thumbnails", response_model=List[Thumbnail])
+@router.get("/datasets/{dsid}/thumbnails", response_model=List[ThumbnailRead])
 def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of thumbnail objects associated with the dataset ID provided
@@ -862,10 +874,10 @@ def get_first_thumbnails(
             for t in first_thumbnails
         }
     
-@router.post("/datasets/{dsid}/thumbnails", response_model=Thumbnail)
+@router.post("/datasets/{dsid}/thumbnails", response_model=ThumbnailRead)
 def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
                   dsid: str,
-                  thumbnail: Thumbnail):
+                  thumbnail: ThumbnailCreate):
     '''
     Adds a thumbnail to a dataset. If the thumbnail exists, it will simply add the existing thumbnail to the dataset object.
     Otherwise, the thumbnail will be created and then added to the dataset.
@@ -918,7 +930,7 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
     return(tn_obj)
 
 
-@router.get("/datasets/{dsid}/associated_files", response_model=List[AssociatedFile])
+@router.get("/datasets/{dsid}/associated_files", response_model=List[AssociatedFileRead])
 def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of the files associated with the dataset ID provided.
@@ -936,10 +948,10 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
         return ds_files
 
 
-@router.post("/datasets/{dsid}/associated_files", response_model=AssociatedFile)
+@router.post("/datasets/{dsid}/associated_files", response_model=AssociatedFileRead)
 def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
                         dsid: str,
-                        associated_file: AssociatedFile):
+                        associated_file: AssociatedFileCreate):
     '''
     Adds an associated file to a dataset.
     Creates the AF object if it doesn't already exist.
@@ -1042,7 +1054,7 @@ def add_keyword(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, 
         return(kw_obj)
 
 
-@router.get("/datasets/{dsid}/access_groups", response_model=List[AccessGroup])
+@router.get("/datasets/{dsid}/access_groups", response_model=List[AccessGroupRead])
 def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     with Session(engine) as session:
         # Verify dataset exists
@@ -1101,7 +1113,7 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
     return info
 
 
-@router.get("/datasets/{dsid}/samples", response_model=List[Sample])
+@router.get("/datasets/{dsid}/samples", response_model=List[SampleRead])
 def read_samples_in_dataset(dsid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of samples associated with the dataset ID provided

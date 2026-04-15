@@ -222,11 +222,10 @@ class ApiToken(SQLModel, table = True):
 class Project(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     project_id: str = Field(index=True, unique=True)
-    organization: str 
+    organization: str
     status: Optional[str]
     title: Optional[str]
-    project_lead_name: Optional[str]
-    project_lead_email: str
+    project_lead_orcid: str = Field(index=True)
     users: List[User] = Relationship(back_populates="projects", link_model=UserProjectLink)
 
 
@@ -253,7 +252,7 @@ class NewScientificMetadata(SQLModel, table = True):
         Index(
             "ix_scientific_metadata_new_fts",
             func.to_tsvector(
-                text("'english'"), 
+                text("'english'"),
                 func.jsonb_path_query_array(text('scientific_metadata'), text("'$[*]'")).cast(Text)
             ),
             postgresql_using="gin"
@@ -261,6 +260,70 @@ class NewScientificMetadata(SQLModel, table = True):
     )
 
 
+# --- Resource / Identity ---
+
+class Resource(SQLModel, table=True):
+    __tablename__ = "idtype"
+    mfid: str = Field(default=None, primary_key=True, index=True, alias="unique_id")
+    resource_type: str = Field(default=None, alias="object_type")
+    creation_time: Optional[str] = Field(default_factory=get_tz_isoformat)
+    modification_time: Optional[str] = Field(default_factory=get_tz_isoformat)
+    deletion_requests: List["DeletionRequest"] = Relationship(
+        back_populates="resource",
+        sa_relationship_kwargs={"foreign_keys": "[DeletionRequest.resource_id]"}
+    )
+    model_config = ConfigDict(populate_by_name=True)
 
 
+class DeletionRequest(SQLModel, table=True):
+    """Tracks a request to soft-delete a Dataset or Sample."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    resource_id: str = Field(foreign_key="idtype.mfid", index=True)
+    resource: Optional["Resource"] = Relationship(
+        back_populates="deletion_requests",
+        sa_relationship_kwargs={"foreign_keys": "[DeletionRequest.resource_id]"}
+    )
+    resource_name: Optional[str] = Field(default=None)
+    requester_id: str = Field(index=True)
+    reason: Optional[str] = Field(default=None)
+    status: str = Field(default="pending", index=True)
+    request_time: Optional[str] = Field(default_factory=get_tz_isoformat)
+    review_time: Optional[str] = Field(default=None)
+    reviewer_id: Optional[str] = Field(default=None)
+    reviewer_notes: Optional[str] = Field(default=None)
+
+
+# --- Instrument ---
+
+class Instrument(SQLModel, table=True):
+    id: int = Field(default=None, primary_key=True)
+    unique_id: Optional[str] = Field(default_factory=get_mfid_value)
+    other_id: Optional[str]
+    other_id_source: Optional[str]
+    instrument_name: str
+    manufacturer: Optional[str]
+    model: Optional[str]
+    owner: str
+    location: str
+    description: Optional[str]
+    instrument_type: Optional[str]
+
+
+# --- Task tracking ---
+
+class SciCatUpdateRequest(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    dataset_id: str = Field(default=None, index=True)
+    time_created: Optional[str] = None
+    time_completed: Optional[str] = None
+    status: Optional[str] = None
+
+
+class IngestionRequest(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    dataset_id: str = Field(default=None, index=True)
+    file_to_upload: str = None
+    time_created: Optional[str] = None
+    time_completed: Optional[str] = None
+    status: Optional[str] = None
 

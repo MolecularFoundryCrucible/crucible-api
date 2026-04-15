@@ -14,12 +14,15 @@ from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
+from app.models.users import UserCreate, UserRead, UserUpdate
+from app.models.projects import ProjectWithLead
+from app.models.access_groups import AccessGroupRead
 
 router = APIRouter(tags=["users"])
 engine = get_engine()
 
 
-@router.get("/users", response_model=List[User])
+@router.get("/users", response_model=List[UserRead])
 def list_users(admin_acct: Annotated[str, Depends(is_admin)], request: Request, permissive=True):
 
     query_params = request.query_params
@@ -40,7 +43,7 @@ def list_users(admin_acct: Annotated[str, Depends(is_admin)], request: Request, 
         return users
 
 
-@router.get("/users/{orcid}", response_model=Union[None, User])
+@router.get("/users/{orcid}", response_model=Union[None, UserRead])
 def read_user(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
     '''
     Returns the User object associated with the provided ORCID if found. Otherwise returns None.
@@ -50,8 +53,8 @@ def read_user(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
         return users
 
 
-@router.post("/users", response_model=User)
-def create_user(admin_acct: Annotated[str, Depends(is_admin)], user_info: User, project_ids: List[str] = Body(...)):
+@router.post("/users", response_model=UserRead)
+def create_user(admin_acct: Annotated[str, Depends(is_admin)], user_info: UserCreate, project_ids: List[str] = Body(...)):
     """
     Add or update a user record in the database.
     Add the user to an Access Group with their ORCID
@@ -113,7 +116,29 @@ def create_user(admin_acct: Annotated[str, Depends(is_admin)], user_info: User, 
 
         session.add(user)
         session.commit()
-    return user_info
+        session.refresh(user)
+    return user
+
+
+@router.patch("/users/{orcid}", response_model=UserRead)
+def update_user(orcid: str, admin_acct: Annotated[str, Depends(is_admin)], user_update: UserUpdate):
+    '''
+    Partially update a user record. Only fields provided in the request body are modified.
+    '''
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        update_data = user_update.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(user, key, value)
+
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user
 
 
 @router.get("/users/{orcid}/datasets", response_model=List[str])
@@ -153,7 +178,7 @@ def read_user_access_to_dataset(dsid: str, orcid: str, admin_acct: Annotated[str
         return(perms)
 
 
-@router.post("/users/{orcid}/access_groups/{group_name}", response_model=AccessGroup)
+@router.post("/users/{orcid}/access_groups/{group_name}", response_model=AccessGroupRead)
 def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orcid: str, group_name: str):
     with Session(engine) as session:
         ag = sql_add_user_to_access_group(orcid, group_name, session)
@@ -174,10 +199,39 @@ def list_user_access_groups(auth_res: Annotated[tuple, Depends(authorize_user)],
         return([ag.group_name for ag in ags])
 
 
-@router.get("/users/{orcid}/projects", response_model=List[Project])
+@router.delete("/users/{orcid}/access_groups/{group_name}")
+def remove_user_from_access_group(admin_acct: Annotated[str, Depends(is_admin)], orcid: str, group_name: str):
+    '''
+    Remove a user from an access group.
+    '''
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
+        if ag is None:
+            raise HTTPException(status_code=404, detail="Access group not found")
+
+        link = session.exec(
+            select(UserAccessGroupLink).where(
+                UserAccessGroupLink.user_id == user.id,
+                UserAccessGroupLink.accessgroup_id == ag.id
+            )
+        ).one_or_none()
+
+        if link is None:
+            raise HTTPException(status_code=404, detail="User is not a member of this access group")
+
+        session.delete(link)
+        session.commit()
+        return {"detail": f"User {orcid} removed from access group {group_name}"}
+
+
+@router.get("/users/{orcid}/projects", response_model=List[ProjectWithLead])
 def read_projects_for_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
-    Returns a list of the projects that this User is associated with.
+    Returns a list of the projects that this User is associated with, including the resolved project lead.
     '''
     access_group_name, ag_ids = auth_res
 
@@ -190,4 +244,9 @@ def read_projects_for_user(orcid: str, auth_res: Annotated[tuple, Depends(author
         if projects is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        return projects
+        orcids = [p.project_lead_orcid for p in projects if p.project_lead_orcid]
+        leads = {u.orcid: u for u in session.exec(select(User).where(User.orcid.in_(orcids))).all()}
+        return [
+            ProjectWithLead(**proj.model_dump(), lead=leads.get(proj.project_lead_orcid))
+            for proj in projects
+        ]

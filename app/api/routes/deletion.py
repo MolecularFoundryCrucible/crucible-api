@@ -6,9 +6,8 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.general_utils import get_tz_isoformat
-from app.models.core_models import Dataset, Sample
-from app.models.resource import Resource
-from app.models.deletion import DeletionRequest, DeletionRequestRead
+from app.models.core_models import Dataset, DeletionRequest, Resource, Sample
+from app.models.deletion import DeletionRequestRead
 from app.utils.auth_utils import authorize_user, is_admin
 
 router = APIRouter(tags=["deletion"])

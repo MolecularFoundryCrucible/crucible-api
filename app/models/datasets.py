@@ -94,7 +94,9 @@ class AssociatedFileRead(SQLModel):
 
 
 class DatasetResponse(DatasetRead):
-    '''DatasetRead extended with Resource timestamps and optional scientific metadata.'''
+    '''DatasetRead extended with Resource timestamps, optional scientific metadata, and deletion status.'''
+    resource_type: Optional[str] = "dataset"
     creation_time: Optional[str] = None
     modification_time: Optional[str] = None
     scientific_metadata: Optional[dict] = None
+    deletion_request: Optional[dict] = None

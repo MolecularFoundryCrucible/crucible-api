@@ -1,4 +1,4 @@
-from typing import Annotated, List
+from typing import Annotated, List, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -9,6 +9,8 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.models.core_models import Dataset, DatasetACL, DeletionRequest, Keyword, NewScientificMetadata, Resource, Sample
+from app.models.datasets import DatasetRead, DatasetResponse
+from app.models.samples import SampleResponse
 from app.utils.auth_utils import authorize_user
 
 router = APIRouter(tags=["misc"])
@@ -113,7 +115,7 @@ def get_object_type(auth_res: Annotated[tuple, Depends(authorize_user)], unique_
             return object_type
 
 
-@router.get("/resources/{resource_id}")
+@router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse], response_model_exclude_none=True)
 def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_id: str):
     """
     Fetch a dataset or sample by ID without knowing its type in advance.
@@ -146,13 +148,12 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
             ).one_or_none()
             if ds is None:
                 raise HTTPException(status_code=404, detail="Dataset not found or access denied")
-            return {
+            return DatasetResponse.model_validate({
                 **ds.model_dump(),
-                "resource_type": "dataset",
                 "creation_time": ds.resource.creation_time if ds.resource else None,
                 "modification_time": ds.resource.modification_time if ds.resource else None,
                 "deletion_request": deletion_req_dict,
-            }
+            })
 
         elif resource.resource_type == "sample":
             samp = session.exec(
@@ -162,14 +163,13 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
             ).one_or_none()
             if samp is None:
                 raise HTTPException(status_code=404, detail="Sample not found")
-            return {
+            return SampleResponse.model_validate({
                 **samp.model_dump(),
-                "resource_type": "sample",
-                "datasets": samp.datasets,
+                "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
                 "creation_time": samp.resource.creation_time if samp.resource else None,
                 "modification_time": samp.resource.modification_time if samp.resource else None,
                 "deletion_request": deletion_req_dict,
-            }
+            })
 
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported resource type: {resource.resource_type}")

@@ -33,7 +33,9 @@ class SampleRead(SQLModel):
 
 
 class SampleResponse(SampleRead):
-    '''SampleRead extended with Resource timestamps and associated datasets.'''
+    '''SampleRead extended with Resource timestamps, associated datasets, and deletion status.'''
+    resource_type: Optional[str] = "sample"
     creation_time: Optional[str] = None
     modification_time: Optional[str] = None
     datasets: Optional[List[DatasetRead]] = None
+    deletion_request: Optional[dict] = None

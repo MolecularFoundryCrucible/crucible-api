@@ -1,10 +1,10 @@
 apiVersion: "v1"
 kind: "ConfigMap"
 metadata:
-  name: "crucible-api-config-main"
+  name: "crucible-api-config-v1"
   namespace: "default"
   labels:
-    app: "crucible-api-main"
+    app: "crucible-api-v1"
 data:
   # api - currently only API_CONF_FILE is used
   API_CONF_FILE: "app/conf/api_conf-v1.yaml"

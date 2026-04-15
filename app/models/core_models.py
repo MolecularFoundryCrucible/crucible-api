@@ -226,6 +226,7 @@ class Project(SQLModel, table=True):
     status: Optional[str]
     title: Optional[str]
     project_lead_orcid: str = Field(index=True)
+    project_lead_email: Optional[str] = None  # stored for old-API backward compat; not exposed in new response schemas
     users: List[User] = Relationship(back_populates="projects", link_model=UserProjectLink)
 
 

@@ -61,6 +61,7 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
             status=P.status,
             title=P.title,
             project_lead_orcid=project_lead.orcid,
+            project_lead_email=project_lead.lbl_email or project_lead.email,
         )
         session.add(prop)
 
@@ -144,6 +145,7 @@ def update_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_us
             lead = session.exec(select(User).where(User.orcid == update_data["project_lead_orcid"])).one_or_none()
             if lead is None:
                 raise HTTPException(status_code=404, detail=f"Project lead user '{update_data['project_lead_orcid']}' not found")
+            update_data["project_lead_email"] = lead.lbl_email or lead.email
         elif "project_lead_email" in update_data:
             email = update_data.pop("project_lead_email").lower()
             lead = session.exec(
@@ -154,6 +156,7 @@ def update_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_us
             if lead is None:
                 raise HTTPException(status_code=404, detail=f"Project lead user '{email}' not found")
             update_data["project_lead_orcid"] = lead.orcid
+            update_data["project_lead_email"] = lead.lbl_email or lead.email
         else:
             update_data.pop("project_lead_email", None)
 

@@ -1,0 +1,142 @@
+apiVersion: "apps/v1"
+kind: "Deployment"
+metadata:
+  name: "crucible-api-v1"
+  namespace: "default"
+  labels:
+    app: crucible-api-v1
+spec:
+  progressDeadlineSeconds: 120
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: "crucible-api-v1"
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 100%
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        gke-gcsfuse/cpu-limit: "4"
+        gke-gcsfuse/cpu-request: 1000m
+        gke-gcsfuse/memory-limit: 1Gi
+        gke-gcsfuse/memory-request: 1Gi
+        gke-gcsfuse/volumes: "true"
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "10"
+        autoscaling.knative.dev/target: "8"
+      labels:
+        app: "crucible-api-v1"
+      name: crucible-api-v1
+      namespace: default
+    spec:
+      containers:
+      - env:
+        - name: "PYTHONUNBUFFERED"
+          value: "True"
+        - name: "API_CONF_FILE"
+          valueFrom:
+            configMapKeyRef:
+              key: API_CONF_FILE
+              name: crucible-api-config-v1
+        - name: "DB_TYPE"
+          valueFrom:
+            configMapKeyRef:
+              key: db_type
+              name: crucible-api-config-v1
+        - name: "DB_SERVER"
+          valueFrom:
+            configMapKeyRef:
+              key: db_server
+              name: crucible-api-config-v1
+        - name: "DB_USERNAME"
+          valueFrom:
+            configMapKeyRef:
+              key: db_username
+              name: crucible-api-config-v1
+        - name: "DB_DATABASE"
+          valueFrom:
+            configMapKeyRef:
+              key: db_database
+              name: crucible-api-config-v1
+        - name: "DB_AUTH"
+          valueFrom:
+            configMapKeyRef:
+              key: db_auth
+              name: crucible-api-config-v1
+        image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-v1:latest"
+        imagePullPolicy: Always
+        name: "crucible-api-container"
+        ports:
+        - containerPort: 7777
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 4000m
+            memory: 4Gi
+            ephemeral-storage: 2Gi
+          requests:
+            cpu: 1000m
+            memory: 1Gi
+            ephemeral-storage: 1Gi
+        securityContext:
+          capabilities:
+            drop:
+            - NET_RAW
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /mnt/gcs
+          name: cruc-upload-vol2
+          readOnly: false
+        - mountPath: /mnt/mf-storage-prod
+          name: mf-storage-prod
+          readOnly: true
+      initContainers:
+        - name: cloud-sql-proxy
+          restartPolicy: Always
+          # It is recommended to use the latest version of the Cloud SQL Auth Proxy
+          # Make sure to update on a regular schedule!
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
+          args:
+            - "--private-ip"
+            - "--auto-iam-authn"
+            - "--structured-logs"
+            - "--port=5432"
+            - "mf-crucible:us-central1:crucible-db"
+
+          securityContext:
+            runAsNonRoot: true
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1"
+
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: default
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - effect: NoSchedule
+        key: kubernetes.io/arch
+        operator: Equal
+        value: amd64
+      volumes:
+      - name: cruc-upload-vol2
+        persistentVolumeClaim:
+          claimName: cruc-upload-pvc2
+          readOnly: false
+      - name: mf-storage-prod
+        persistentVolumeClaim:
+          claimName: mf-storage-prod-pvc
+          readOnly: true
+
+
+
+

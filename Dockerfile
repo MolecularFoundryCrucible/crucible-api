@@ -12,7 +12,7 @@ ARG githash
 ENV GITHASH=$githash
 ARG BRANCH_NAME
 ENV BRANCH_NAME=$BRANCH_NAME
-RUN if [ "$BRANCH_NAME" = "main" ]; then echo 7777 > /root/.port; else echo 8889 > /root/.port; fi
+RUN if [ "$BRANCH_NAME" = "main" ]; then echo 7777 > /root/.port; elif [ "$BRANCH_NAME" = "staging" ]; then echo 8889 > /root/.port; else echo 7788 > /root/.port; fi
 
 # rclone
 RUN curl https://rclone.org/install.sh | bash

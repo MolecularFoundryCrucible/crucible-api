@@ -6,6 +6,6 @@ spec:
   type: LoadBalancer
   ports:
   - port: 8889
-    targetPort: 88889
+    targetPort: 8889
   selector:
     app: crucible-api-staging

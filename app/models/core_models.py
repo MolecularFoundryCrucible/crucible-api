@@ -206,8 +206,8 @@ class User(SQLModel, table=True):
     first_name: str
     last_name: str
     email: Optional[str]
-    lbl_email: Optional[str]
     unique_id: str = Field(sa_column=Column("orcid", String, index=True, unique=True))
+    is_service_account: bool = Field(default=False)
     projects: List["Project"] = Relationship(back_populates="users", link_model=UserProjectLink)
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
 

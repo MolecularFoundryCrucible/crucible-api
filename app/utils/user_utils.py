@@ -4,14 +4,7 @@ from app.utils.sql_utils import add_or_update
 
 
 def sql_get_user_by_email(email: str, session):
-    """
-    Look up a user by email address. Checks lbl_email first (preferred lab
-    address), then falls back to email. Returns the User or None if not found.
-    """
-    user = session.exec(select(User).where(User.lbl_email == email)).one_or_none()
-    if user is None:
-        user = session.exec(select(User).where(User.email == email)).one_or_none()
-    return user
+    return session.exec(select(User).where(User.email == email)).one_or_none()
 
 
 def sql_add_user_to_access_group(orcid, group_name, session):

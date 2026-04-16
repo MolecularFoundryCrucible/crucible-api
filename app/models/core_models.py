@@ -207,14 +207,13 @@ class User(SQLModel, table=True):
     last_name: str
     email: Optional[str]
     lbl_email: Optional[str]
-    orcid: str = Field(index=True, unique=True)
-    employee_number: Optional[str]
+    unique_id: str = Field(sa_column=Column("orcid", String, index=True, unique=True))
     projects: List["Project"] = Relationship(back_populates="users", link_model=UserProjectLink)
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
 
 
 class ApiToken(SQLModel, table = True):
-    user_unique_id: str = Field(default = None, foreign_key = "user.unique_id", index = True)
+    user_unique_id: str = Field(default = None, foreign_key = "user.orcid", index = True)
     token: str = Field(default = None, primary_key = True, index = True)
     token_created: str
 

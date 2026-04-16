@@ -119,11 +119,11 @@ def get_apikey(request: Request):
             group_name=orcid
         )
         # add the user
-        user_updates = {key: user_info[key] for key in ['orcid', 'given_name', 'family_name'] if user_info.get(key) is not None}
+        user_updates = {('unique_id' if key == 'orcid' else key): user_info[key] for key in ['orcid', 'given_name', 'family_name'] if user_info.get(key) is not None}
         add_or_update(
             session,
             User,
-            User.orcid == orcid,
+            User.unique_id == orcid,
             **user_updates
         )
 
@@ -164,13 +164,14 @@ def regenerate_apikey(request: Request):
 @router.get("/account", response_model=AccountInfo)
 def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
     """Use API key to get basic info about your access in Crucible"""
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
-        is_user = session.exec(select(User).where(User.orcid == access_group_name)).one_or_none()
+        is_user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         user_info = is_user.model_dump(exclude={"projects", "accessgroups"}) if is_user else {}
 
     return AccountInfo(
-        access_group_name=access_group_name,
+        user_unique_id=user_unique_id,
         access_group_ids=ag_ids,
         user_info=user_info
     )

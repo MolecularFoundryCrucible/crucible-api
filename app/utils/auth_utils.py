@@ -125,21 +125,15 @@ def find_key(credentials, engine):
 def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     """
     Authorize a user based on their API credentials.
-    
+
     Args:
         credentials: HTTPAuthorizationCredentials object containing the API token
-        
+
     Returns:
-        List of access group IDs the user belongs to
-        
+        Tuple of (user_unique_id, list of AccessGroup objects the user belongs to)
+
     Raises:
         HTTPException: If the API key is invalid or expired
-        
-    This function validates the provided API credentials and returns the access groups
-    associated with the user. For ORCID-based users, it looks up their access groups
-    through the User and UserAccessGroupLink tables. For direct access group users (provided API key corrresponds to a group name not an ORCID; 
-    note: ORCIDs are used as Access Group Names, but a user with an ORCID can be a member of multiple access groups),
-    it looks up the access group ID directly.
     """
     from app.models.core_models import User
     api_acct = find_key(credentials, engine)
@@ -156,6 +150,11 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
         return api_acct.user_unique_id, ag
 
 
+def require_groups(ag_list, allowed_groups={'admin'}):
+    if not any(ag.group_name in allowed_groups for ag in ag_list):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+
 def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     """
     Check if a user is an admin based on their API credentials.
@@ -170,6 +169,6 @@ def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(securi
     """
     _, aglist = authorize_user(credentials)
     
-    if 'admin' in [ag.name for ag in aglist]:
+    if 'admin' in [ag.group_name for ag in aglist]:
         return('admin')
 

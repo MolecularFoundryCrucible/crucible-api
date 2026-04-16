@@ -37,6 +37,6 @@ class DatasetSampleLinkResponse(BaseModel):
 
 
 class AccountInfo(BaseModel):
-    access_group_name: str
+    user_unique_id: str
     access_group_ids: List[int]
     user_info: dict

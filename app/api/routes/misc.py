@@ -76,7 +76,8 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
     Perform a ranked Full-Text Search (FTS) on scientific metadata using PostgreSQL's tsvector, 
     tsquery, and ts_rank_cd. Default limit is 50 results, max is 200.
     """
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     search_query = func.plainto_tsquery('english', q)
     metadata_vector = func.to_tsvector(
@@ -121,7 +122,8 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
     Fetch a dataset or sample by ID without knowing its type in advance.
     Resolves the type from idtype, then returns the full resource record.
     """
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         resource = session.exec(

@@ -7,7 +7,7 @@ class UserCreate(SQLModel):
     '''Input schema for creating a user.'''
     first_name: str
     last_name: str
-    orcid: str
+    unique_id: str
     email: Optional[str] = None
     lbl_email: Optional[str] = None
 
@@ -18,7 +18,7 @@ class UserRead(SQLModel):
     first_name: str
     last_name: str
     email: Optional[str] = None
-    orcid: str
+    unique_id: str
     # employee_number: Optional[str] = None
 
     @model_validator(mode='before')
@@ -34,7 +34,7 @@ class UserRead(SQLModel):
                     'first_name': data.first_name,
                     'last_name': data.last_name,
                     'email': lbl,
-                    'orcid': data.orcid,
+                    'unique_id': data.unique_id,
                     # 'employee_number': getattr(data, 'employee_number', None),
                 }
         return data

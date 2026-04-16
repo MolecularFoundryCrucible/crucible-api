@@ -214,7 +214,7 @@ class User(SQLModel, table=True):
 
 
 class ApiToken(SQLModel, table = True):
-    access_group_id: str = Field(default = None, primary_key = True, index = True)
+    user_unique_id: str = Field(default = None, foreign_key = "user.unique_id", index = True)
     token: str = Field(default = None, primary_key = True, index = True)
     token_created: str
 

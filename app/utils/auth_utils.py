@@ -9,7 +9,7 @@ from fastapi import Depends,  HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.general_utils import  get_secret, is_orcid
+from app.general_utils import  get_secret
 from app.api.dependencies import get_engine, get_api_path, get_api_url
 from app.models.core_models import ApiToken
 from sqlmodel import Session, select
@@ -27,12 +27,12 @@ api_path = get_api_path()
 api_url = get_api_url()
 
 # ====== Functions
-def find_or_add_api_access(orcid: str, engine, instrument_name = None, regenerate = False):
+def find_or_add_api_access(orcid: str, engine, regenerate = False):
 
     # query the database for orcid
     one_year_ago = (date.today()-timedelta(365)).isoformat()
     with Session(engine) as session:
-        api_acct = session.exec(select(ApiToken).where(and_(ApiToken.access_group_id == orcid,
+        api_acct = session.exec(select(ApiToken).where(and_(ApiToken.user_unique_id == orcid,
                                                             ApiToken.token_created > one_year_ago))).one_or_none()
 
         if api_acct is not None and regenerate == False:
@@ -52,7 +52,7 @@ def generate_apikey(orcid: str, session):
     # create token
     new_token = secrets.token_hex(32)
     # add to database
-    new_api_acct = ApiToken(access_group_id = orcid,
+    new_api_acct = ApiToken(user_unique_id = orcid,
                             token = new_token,
                             token_created = date.today().isoformat())
     session.add(new_api_acct)
@@ -61,7 +61,7 @@ def generate_apikey(orcid: str, session):
 
     
 def delete_apikey(orcid, session):
-    session.query(ApiToken).filter(ApiToken.access_group_id == orcid).delete(synchronize_session=False)
+    session.query(ApiToken).filter(ApiToken.user_unique_id == orcid).delete(synchronize_session=False)
     session.commit()
 
 
@@ -141,26 +141,19 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
     note: ORCIDs are used as Access Group Names, but a user with an ORCID can be a member of multiple access groups),
     it looks up the access group ID directly.
     """
-    from app.models.core_models import UserAccessGroupLink, User, AccessGroup
+    from app.models.core_models import User
     api_acct = find_key(credentials, engine)
     
     if api_acct is None:
-        raise HTTPException(status_code=400, detail="Incorrect apikey.  Please try again or visit https://crucible.lbl.gov/api/v1/regenerate_apikey to create a new key.")
-    else:
-        access_group_name = api_acct.access_group_id
-
-    # If the APIKEY is associated with an ORCID; make sure that ORCID is a user in our database
-    if is_orcid(access_group_name):
-        with Session(engine) as session:
-            ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.orcid == access_group_name)).all()
-        ag_ids = [x.accessgroup_id for x in ag]
-        return(access_group_name, ag_ids)
-        
-    else:
-        with Session(engine) as session:
-            ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).all()
-        ag_ids = [x.id for x in ag]
-        return(access_group_name, ag_ids)  
+        raise HTTPException(status_code=400, detail="Invalid apikey.")
+    
+    with Session(engine) as session:
+        user = session.exec(                                                                                                                                      
+            select(User).where(User.unique_id == api_acct.user_unique_id)).first()                                                                                                                                                 
+        print(f'User found: {user}')
+        ag = user.accessgroups  # relationship handles the join for you           
+        print(f'{ag=}')        
+        return api_acct.user_unique_id, ag
 
 
 def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
@@ -171,13 +164,12 @@ def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(securi
         credentials: HTTPAuthorizationCredentials object containing the API token
         
     Returns:
-        Access group ID if the user is an admin, raises HTTPException otherwise
+        "admin" if the user is an admin, raises HTTPException otherwise
         
     This function validates the provided API credentials and checks if the user belongs to the 'admin' access group.
     """
-    api_acct = find_key(credentials, engine)
-    if api_acct.access_group_id.startswith('admin'):
-        return(api_acct.access_group_id)
-    else:
-        raise HTTPException(status_code=403, detail="Not authorized for this endpoint")
+    _, aglist = authorize_user(credentials)
+    
+    if 'admin' in [ag.name for ag in aglist]:
+        return('admin')
 

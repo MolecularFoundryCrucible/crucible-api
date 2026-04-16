@@ -106,7 +106,7 @@ def get_apikey(request: Request):
         return response
 
     user_info = decode_token(user_info_jwt)
-    print(f'{user_info=}')
+    print(f'Orcid User Profile: {user_info=}')
     orcid = user_info["orcid"]
     crucible_token = find_or_add_api_access(orcid, engine, regenerate=False)
 
@@ -119,15 +119,14 @@ def get_apikey(request: Request):
             group_name=orcid
         )
         # add the user
+        user_updates = {key: user_info[key] for key in ['orcid', 'given_name', 'family_name'] if user_info.get(key) is not None}
         add_or_update(
             session,
             User,
             User.orcid == orcid,
-            orcid = user_info['orcid'],
-            first_name = user_info['given_name'],
-            last_name = user_info['family_name']
-            )
-  
+            **user_updates
+        )
+
         # add the user to their orcid access group  
         sql_add_user_to_access_group(orcid, orcid, session)
 

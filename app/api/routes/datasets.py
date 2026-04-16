@@ -29,6 +29,7 @@ from app.models.core_models import (
     Resource,
     Sample,
     ScientificMetadata,
+    NewScientificMetadata,
     Thumbnail,
     User,
 )
@@ -800,6 +801,81 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
         session.commit()
         session.refresh(md_obj)
         return(md_obj)
+
+
+@router.post("/datasets/{dsid}/scientific_metadata_new", response_model = NewScientificMetadata)
+def add_scientific_metadata_new(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md: dict):
+    access_group_name, ag_ids = auth_res
+    ds_cmd = select(Dataset).select_from(join(Dataset,
+                                              DatasetACL,
+                                              DatasetACL.dataset_id == Dataset.id)).where(
+                                                  Dataset.unique_id == dsid).filter(
+                                                        DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        md_obj = add_or_update(
+            session,
+            NewScientificMetadata,
+            where=(NewScientificMetadata.dataset_mfid == dsid),
+            dataset_mfid=dsid,
+            dataset_id=ds.id,
+            scientific_metadata=scientific_md,
+        )
+
+        attributes.flag_modified(md_obj, 'scientific_metadata')
+
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
+
+        session.commit()
+        session.refresh(md_obj)
+        return md_obj
+
+
+@router.patch("/datasets/{dsid}/scientific_metadata_new", response_model = NewScientificMetadata)
+def update_scientific_metadata_new(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md_updates: dict):
+    access_group_name, ag_ids = auth_res
+    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        stored_md = session.exec(select(NewScientificMetadata).where(NewScientificMetadata.dataset_mfid == dsid)).one_or_none()
+
+        if stored_md:
+            md_dict = stored_md.scientific_metadata
+        else:
+            md_dict = {}
+
+        for k, v in scientific_md_updates.items():
+            md_dict[k] = v
+
+        md_obj = add_or_update(
+            session,
+            NewScientificMetadata,
+            where=(NewScientificMetadata.dataset_mfid == dsid),
+            dataset_mfid=dsid,
+            dataset_id=ds.id,
+            scientific_metadata=md_dict,
+        )
+        attributes.flag_modified(md_obj, 'scientific_metadata')
+
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
+
+        session.commit()
+        session.refresh(md_obj)
+        return md_obj
 
 
 @router.get("/datasets/{dsid}/thumbnails", response_model=List[ThumbnailRead])

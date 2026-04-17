@@ -663,10 +663,7 @@ def entity_graph_cte(
             if user_unique_id.startswith("admin"):
                 pass
             elif is_orcid(user_unique_id):
-                associated_groups = session.exec(
-                    select(AccessGroup).where(AccessGroup.id.in_(ag_ids))
-                ).all()
-                associated_group_names = [ag.group_name for ag in associated_groups]
+                associated_group_names = [ag.group_name for ag in ag_list]
                 if (
                     sample_target.owner_orcid != user_unique_id
                     and sample_target.project_id not in associated_group_names

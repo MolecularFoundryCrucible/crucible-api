@@ -186,15 +186,19 @@ def add_user_to_access_group(auth_res: Annotated[tuple, Depends(authorize_user)]
 @router.get("/users/{orcid}/access_groups", response_model=List[str])
 def list_user_access_groups(auth_res: Annotated[tuple, Depends(authorize_user)], orcid: str):
     user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
+    require_groups(ag_list, {'admin', orcid})
     with Session(engine) as session:
-        # Verify user exists
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
 
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        return([ag.group_name for ag in ag_list])
+        user_ags = session.exec(
+            select(AccessGroup)
+            .join(UserAccessGroupLink, UserAccessGroupLink.accessgroup_id == AccessGroup.id)
+            .where(UserAccessGroupLink.user_id == user.id)
+        ).all()
+        return([ag.group_name for ag in user_ags])
 
 
 @router.delete("/users/{orcid}/access_groups/{group_name}")

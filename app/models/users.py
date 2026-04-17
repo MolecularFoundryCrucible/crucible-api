@@ -1,13 +1,15 @@
 from typing import Any, Optional
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from sqlmodel import SQLModel
 
 
 class UserCreate(SQLModel):
     '''Input schema for creating a user.'''
+    model_config = {"populate_by_name": True}
+
     first_name: str
     last_name: str
-    unique_id: str
+    unique_id: str = Field(validation_alias="orcid")
     email: Optional[str] = None
     is_service_account: Optional[bool] = False
 

@@ -108,6 +108,9 @@ def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user
     '''
     Returns the project object for the provided ID, including the resolved project lead.
     '''
+    user_unique_id, ag_list = auth_res
+    require_groups(ag_list, {'admin', proj_id})
+
     with Session(engine) as session:
         prop = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if prop is None:
@@ -125,21 +128,14 @@ def update_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_us
     '''
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
+    require_groups(ag_list, {'admin', proj_id})
 
     with Session(engine) as session:
         project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
 
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-
-        if not user_unique_id.startswith('admin'):
-            if is_orcid(user_unique_id):
-                requester = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-                if not requester or requester.unique_id != project.project_lead_orcid:
-                    raise HTTPException(status_code=403, detail="Only the project lead or an admin can update a project")
-            else:
-                raise HTTPException(status_code=403, detail="Only the project lead or an admin can update a project")
-
+        
         update_data = project_update.model_dump(exclude_unset=True)
 
         if "project_lead_orcid" in update_data:
@@ -189,23 +185,12 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(autho
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
+    require_groups(ag_list, {'admin', proj_id})
+
     with Session(engine) as session:
         project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-
-        if not user_unique_id.startswith('admin'):
-            if is_orcid(user_unique_id):
-                member = session.exec(
-                    select(UserProjectLink).where(
-                        UserProjectLink.project_id == proj_id,
-                        UserProjectLink.user_id == select(User.id).where(User.unique_id == user_unique_id).scalar_subquery()
-                    )
-                ).one_or_none()
-                if member is None:
-                    raise HTTPException(status_code=403, detail="Not a member of this project")
-            else:
-                raise HTTPException(status_code=403, detail="Not authorized")
 
         return _get_project_users(proj_id, session)
 
@@ -310,23 +295,10 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
 def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
 
     user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
+    require_groups(ag_list, {'admin', project_id})
 
     with Session(engine) as session:
         samp_cmd = select(Sample).options(joinedload(Sample.parents))
-
-        # Admin API keys can see all samples
-        if user_unique_id.startswith('admin'):
-            print('using admin account')
-            pass
-        elif is_orcid(user_unique_id):
-            print(f'filtering on owner_orcid={user_unique_id}')
-            associated_group_names = [ag.group_name for ag in ag_list]
-            samp_cmd = samp_cmd.where(or_(Sample.owner_orcid == user_unique_id,
-                                          Sample.project_id.in_(associated_group_names)))
-        else:
-            print(f'apikey does not have access to samples')
-            return []
 
         # Filter samples on proj_id
         samp_cmd = samp_cmd.where(Sample.project_id == project_id)
@@ -385,19 +357,11 @@ def project_entity_graph(project_id: str, auth_res: Annotated[tuple, Depends(aut
     '''
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
+    require_groups(ag_list, {'admin', project_id})
 
     with Session(engine) as session:
         # Load all samples in the project with parent relationships
-        samp_cmd = select(Sample).options(joinedload(Sample.parents))
-        if not user_unique_id.startswith('admin'):
-            if is_orcid(user_unique_id):
-                associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
-                associated_group_names = [ag.group_name for ag in associated_groups]
-                samp_cmd = samp_cmd.where(or_(Sample.owner_orcid == user_unique_id,
-                                              Sample.project_id.in_(associated_group_names)))
-            else:
-                return json_graph.node_link_data(nx.DiGraph())
-        samp_cmd = samp_cmd.where(Sample.project_id == project_id)
+        samp_cmd = select(Sample).options(joinedload(Sample.parents)).where(Sample.project_id == project_id)
         samp_list = session.exec(samp_cmd).unique().all()
 
         # Load all authorized datasets in the project with parent relationships

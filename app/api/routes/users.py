@@ -61,6 +61,7 @@ def read_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
 def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: UserCreate, project_ids: List[str] = Body(...)):
     _, ag_list = auth_res
     require_groups(ag_list)
+
     # Validate required fields
     missing_fields = []
     if not user_info.first_name or not user_info.first_name.strip():

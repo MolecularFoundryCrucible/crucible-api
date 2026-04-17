@@ -973,7 +973,7 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        af_obj = add_or_update(session, AssociatedFile, where=((AssociatedFile.sha256_hash == associated_file.sha256_hash) & (AssociatedFile.dataset_id == ds.id))   
+        af_obj = add_or_update(session, AssociatedFile, where=((AssociatedFile.sha256_hash == associated_file.sha256_hash) & (AssociatedFile.dataset_id == ds.id)),   
                                        filename = associated_file.filename,
                                        size = associated_file.size,
                                        sha256_hash = associated_file.sha256_hash,

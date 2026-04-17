@@ -198,7 +198,7 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(autho
 @router.post("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
 def add_users_to_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
+    require_groups(ag_list, {'admin', proj_id})
     
     with Session(engine) as session:
         # get user details
@@ -210,18 +210,6 @@ def add_users_to_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, De
         proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if proj is None:
             raise HTTPException(status_code=404, detail = f'Project {proj_id} not found')
-        
-        # if the APIkey is not associated with an admin account
-        # get requester details
-        requester_notauth_detail = f'User must be the project lead or an admin to add other users to a project'
-        if is_orcid(user_unique_id):
-            requester = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-
-            if not requester:
-                raise HTTPException(status_code = 403, detail = requester_notauth_detail)
-
-            if requester.unique_id != proj.project_lead_orcid:
-                raise HTTPException(status_code=403, detail=requester_notauth_detail)
 
         # add link between user and project
         link = add_or_update(session,
@@ -244,8 +232,7 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
     Only admins or the project lead can remove users.
     '''
     user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-
+    require_groups(ag_list, {'admin', proj_id})
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
         if user is None:
@@ -254,15 +241,6 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
         proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project {proj_id} not found")
-
-        # Non-admins must be the project lead to remove users
-        requester_notauth_detail = "User must be the project lead or an admin to remove users from a project"
-        if is_orcid(user_unique_id):
-            requester = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-            if not requester:
-                raise HTTPException(status_code=403, detail=requester_notauth_detail)
-            if requester.unique_id != proj.project_lead_orcid:
-                raise HTTPException(status_code=403, detail=requester_notauth_detail)
 
         # Remove the user-project link
         link = session.exec(

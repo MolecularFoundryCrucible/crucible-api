@@ -24,7 +24,7 @@ engine = get_engine()
 
 @router.get("/users", response_model=List[UserRead])
 def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, permissive=True):
-    _, ag_list = auth_res
+    user_unique_id, ag_list = auth_res
     require_groups(ag_list)
 
     query_params = request.query_params
@@ -50,8 +50,12 @@ def read_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns the User object associated with the provided ORCID if found. Otherwise returns None.
     '''
-    _, ag_list = auth_res
-    require_groups(ag_list)
+    user_unique_id, ag_list = auth_res
+
+    # you can get yourself
+    if user_unique_id != orcid:
+        require_groups(ag_list)
+
     with Session(engine) as session:
         users = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
         return users
@@ -112,8 +116,8 @@ def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: 
 
 @router.patch("/users/{orcid}", response_model=UserRead)
 def update_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)], user_update: UserUpdate):
-    _, ag_list = auth_res
-    require_groups(ag_list)
+    user_unique_id, ag_list = auth_res
+    require_groups(ag_list, {'admin', orcid})
     '''
     Partially update a user record. Only fields provided in the request body are modified.
     '''
@@ -139,7 +143,7 @@ def read_user_datasets(orcid: str, auth_res: Annotated[tuple, Depends(authorize_
     Returns a list of all the datasets the user has access to based on the ORCID provided.
     '''
     _, ag_list = auth_res
-    require_groups(ag_list)
+    require_groups(ag_list, {'admin', orcid})
     with Session(engine) as session:
         # Verify user exists
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
@@ -160,7 +164,7 @@ def read_user_access_to_dataset(dsid: str, orcid: str, auth_res: Annotated[tuple
     Returns boolean: True is user with provided ORCID has access to the provided dataset ID, False if no access or dataset does not exist.
     '''
     _, ag_list = auth_res
-    require_groups(ag_list)
+    require_groups(ag_list, {'admin', orcid})
     with Session(engine) as session:
         ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.unique_id == orcid)).all()
         ag_ids = [x.accessgroup_id for x in ag]
@@ -238,10 +242,7 @@ def read_projects_for_user(orcid: str, auth_res: Annotated[tuple, Depends(author
     Returns a list of the projects that this User is associated with, including the resolved project lead.
     '''
     user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-
-    if not user_unique_id.startswith('admin') and user_unique_id != orcid:
-        raise HTTPException(status_code=403, detail="Not authorized to view projects for this user")
+    require_groups(ag_list, {'admin', orcid})
 
     with Session(engine) as session:
         projects = sql_get_projects_for_user(orcid, session)

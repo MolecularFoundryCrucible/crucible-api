@@ -13,7 +13,7 @@ from app.models.core_models import (
     AccessGroup, Dataset, DatasetACL, DatasetLink, DatasetSampleLink,
     Sample, SampleLink,
 )
-from app.utils.auth_utils import authorize_user
+from app.utils.auth_utils import authorize_user, require_groups
 
 router = APIRouter(tags=["entities"])
 engine = get_engine()
@@ -41,14 +41,8 @@ def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_us
         ).one_or_none()
 
         if sample_target is not None:
-            if user_unique_id.startswith('admin'):
-                pass
-            elif is_orcid(user_unique_id):
-                associated_group_names = [ag.group_name for ag in ag_list]
-                if sample_target.owner_orcid != user_unique_id and sample_target.project_id not in associated_group_names:
-                    raise HTTPException(status_code=403, detail="Access denied")
-            else:
-                raise HTTPException(status_code=403, detail="Access denied")
+            allowed_groups = {'admin', sample_target.owner_orcid, sample_target.project_id}
+            require_groups(ag_list, allowed_groups)
             project_id = sample_target.project_id
         else:
             auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
@@ -176,14 +170,8 @@ def entity_graph_bfs(entity_id: str, auth_res: Annotated[tuple, Depends(authoriz
         ).one_or_none()
 
         if sample_target is not None:
-            if user_unique_id.startswith('admin'):
-                pass
-            elif is_orcid(user_unique_id):
-                associated_group_names = [ag.group_name for ag in ag_list]
-                if sample_target.owner_orcid != user_unique_id and sample_target.project_id not in associated_group_names:
-                    raise HTTPException(status_code=403, detail="Access denied")
-            else:
-                raise HTTPException(status_code=403, detail="Access denied")
+            allowed_groups = {'admin', sample_target.owner_orcid, sample_target.project_id}
+            require_groups(ag_list, allowed_groups)
         else:
             auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
             dataset_target = session.exec(
@@ -660,17 +648,8 @@ def entity_graph_cte(
         ).one_or_none()
 
         if sample_target is not None:
-            if user_unique_id.startswith("admin"):
-                pass
-            elif is_orcid(user_unique_id):
-                associated_group_names = [ag.group_name for ag in ag_list]
-                if (
-                    sample_target.owner_orcid != user_unique_id
-                    and sample_target.project_id not in associated_group_names
-                ):
-                    raise HTTPException(status_code=403, detail="Access denied")
-            else:
-                raise HTTPException(status_code=403, detail="Access denied")
+            allowed_groups = {'admin', sample_target.owner_orcid, sample_target.project_id}
+            require_groups(ag_list, allowed_groups)
             seed_id = sample_target.id
             sql = _SAMPLE_SEED_GRAPH_SQL if recursive else _SAMPLE_SEED_1HOP_SQL
         else:

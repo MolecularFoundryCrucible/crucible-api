@@ -173,18 +173,13 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
             )
         )
 
-        # Admin API keys can see all samples
-        if user_unique_id.startswith('admin'):
-            print('using admin account')
-            pass
-        elif is_orcid(user_unique_id):
-            print(f'filtering on owner_orcid={user_unique_id}')
-            associated_group_names = [ag.group_name for ag in ag_list]
+        # Users with admin privileges can see all samples, otherwise filter on owner ID + project. **TODO: need sample ACL like datasets
+        associated_group_names = [ag.group_name for ag in ag_list]
+        if 'admin' not in associated_group_names:
+            print(f'filtering on user_unique_id={user_unique_id}')
             samp_cmd = samp_cmd.where(or_(Sample.owner_orcid == user_unique_id,
                                           Sample.project_id.in_(associated_group_names)))
-        else:
-            print(f'apikey does not have access to samples')
-            return []
+
 
         # Filter on Resource timestamps
         if creation_time_gte:
@@ -361,8 +356,7 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
     relationships) to the given sample. Loads all samples in the project and
     returns the directed lineage subgraph (ancestors + descendants) of the target.
     '''
-    user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
+    _, ag_list = auth_res
 
     with Session(engine) as session:
         target = session.exec(
@@ -372,14 +366,8 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
         if target is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        if user_unique_id.startswith('admin'):
-            pass
-        elif is_orcid(user_unique_id):
-            associated_group_names = [ag.group_name for ag in ag_list]
-            if target.owner_orcid != user_unique_id and target.project_id not in associated_group_names:
-                raise HTTPException(status_code=403, detail="Access denied")
-        else:
-            raise HTTPException(status_code=403, detail="Access denied")
+        allowed_groups = {'admin', target.owner_orcid, target.project_id}
+        require_groups(ag_list, allowed_groups)
 
         samp_list = session.exec(
             select(Sample)
@@ -415,9 +403,8 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authoriz
     Returns a NetworkX node-link graph of all samples connected (via parent/child
     relationships) to the given sample, i.e. its full lineage subgraph.
     '''
-    user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-
+    _, ag_list = auth_res
+    
     with Session(engine) as session:
         target = session.exec(
             select(Sample).where(Sample.unique_id == sample_id)
@@ -427,14 +414,8 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authoriz
             raise HTTPException(status_code=404, detail="Sample not found")
 
         # Auth check: mirrors project_sample_graph logic
-        if user_unique_id.startswith('admin'):
-            pass
-        elif is_orcid(user_unique_id):
-            associated_group_names = [ag.group_name for ag in ag_list]
-            if target.owner_orcid != user_unique_id and target.project_id not in associated_group_names:
-                raise HTTPException(status_code=403, detail="Access denied")
-        else:
-            raise HTTPException(status_code=403, detail="Access denied")
+        allowed_groups = {'admin', target.owner_orcid, target.project_id}
+        require_groups(ag_list, allowed_groups)
 
         # Two recursive CTEs — one walking up (ancestors), one walking down
         # (descendants). PostgreSQL only allows a single UNION between the

@@ -24,7 +24,7 @@ engine = get_engine()
 
 @router.get("/users", response_model=List[UserRead])
 def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, permissive=True):
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     require_groups(ag_list)
 
     query_params = request.query_params
@@ -116,7 +116,7 @@ def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: 
 
 @router.patch("/users/{orcid}", response_model=UserRead)
 def update_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)], user_update: UserUpdate):
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     require_groups(ag_list, {'admin', orcid})
     '''
     Partially update a user record. Only fields provided in the request body are modified.
@@ -189,7 +189,7 @@ def add_user_to_access_group(auth_res: Annotated[tuple, Depends(authorize_user)]
 
 @router.get("/users/{orcid}/access_groups", response_model=List[str])
 def list_user_access_groups(auth_res: Annotated[tuple, Depends(authorize_user)], orcid: str):
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     require_groups(ag_list, {'admin', orcid})
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
@@ -241,7 +241,7 @@ def read_projects_for_user(orcid: str, auth_res: Annotated[tuple, Depends(author
     '''
     Returns a list of the projects that this User is associated with, including the resolved project lead.
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     require_groups(ag_list, {'admin', orcid})
 
     with Session(engine) as session:

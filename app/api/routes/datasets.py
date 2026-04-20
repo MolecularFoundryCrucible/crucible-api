@@ -103,7 +103,7 @@ async def create_dataset(
 ):
     print(f"received {dataset}")
     user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
+    #ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         ds = add_or_update(
             session,
@@ -364,7 +364,7 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str)
     '''
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
-    print(f"{ag_ids=}")
+
     with Session(engine) as session:
         ds_cmd = select(Dataset).options(selectinload(Dataset.resource)).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
@@ -583,7 +583,7 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
     '''
 
     user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
+   # ag_ids = [ag.id for ag in ag_list]
     # upload the file
     for file in files:
         dest_dir = f"/mnt/gcs/api-uploads/{os.path.dirname(file.filename)}"

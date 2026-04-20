@@ -206,15 +206,14 @@ class User(SQLModel, table=True):
     first_name: str
     last_name: str
     email: Optional[str]
-    lbl_email: Optional[str]
-    orcid: str = Field(index=True, unique=True)
-    employee_number: Optional[str]
+    unique_id: str = Field(sa_column=Column("orcid", String, index=True, unique=True))
+    is_service_account: bool = Field(default=False)
     projects: List["Project"] = Relationship(back_populates="users", link_model=UserProjectLink)
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
 
 
 class ApiToken(SQLModel, table = True):
-    access_group_id: str = Field(default = None, primary_key = True, index = True)
+    user_unique_id: str = Field(default = None, foreign_key = "user.orcid", index = True)
     token: str = Field(default = None, primary_key = True, index = True)
     token_created: str
 

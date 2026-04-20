@@ -8,7 +8,7 @@ from app.api.dependencies import get_engine
 from app.general_utils import get_tz_isoformat
 from app.models.core_models import Dataset, DeletionRequest, Resource, Sample
 from app.models.deletion import DeletionRequestRead
-from app.utils.auth_utils import authorize_user, is_admin
+from app.utils.auth_utils import authorize_user, require_groups
 
 router = APIRouter(tags=["deletion"])
 engine = get_engine()
@@ -32,7 +32,7 @@ def create_deletion_request(
     resource_id: str,
     reason: Optional[str] = None,
 ):
-    # authorize_user returns (orcid_or_group_name, list_of_ag_ids)
+    # authorize_user returns (user_unique_id, list_of_AccessGroup_objects)
     requester_id, _ = auth_res
 
     with Session(engine) as session:
@@ -91,9 +91,11 @@ def create_deletion_request(
 # ---------------------------------------------------------------------------
 @router.get("/deletion_requests", response_model=List[DeletionRequestRead])
 def list_deletion_requests(
-    admin_id: Annotated[str, Depends(is_admin)],
+    auth_res: Annotated[tuple, Depends(authorize_user)],
     status: Optional[str] = None,
 ):
+    _, ag_list = auth_res
+    require_groups(ag_list)
     with Session(engine) as session:
         query = select(DeletionRequest).options(selectinload(DeletionRequest.resource))
         if status is not None:
@@ -108,9 +110,11 @@ def list_deletion_requests(
 # ---------------------------------------------------------------------------
 @router.get("/deletion_requests/{request_id}", response_model=DeletionRequestRead)
 def get_deletion_request(
-    admin_id: Annotated[str, Depends(is_admin)],
+    auth_res: Annotated[tuple, Depends(authorize_user)],
     request_id: int,
 ):
+    _, ag_list = auth_res
+    require_groups(ag_list)
     with Session(engine) as session:
         req = session.exec(
             select(DeletionRequest)
@@ -128,11 +132,13 @@ def get_deletion_request(
 # ---------------------------------------------------------------------------
 @router.patch("/deletion_requests/{request_id}", response_model=DeletionRequestRead)
 def review_deletion_request(
-    admin_id: Annotated[str, Depends(is_admin)],
+    auth_res: Annotated[tuple, Depends(authorize_user)],
     request_id: int,
     status: str,                          # must be "approved" or "rejected"
     reviewer_notes: Optional[str] = None,
 ):
+    user_unique_id, ag_list = auth_res
+    require_groups(ag_list)
     if status not in ("approved", "rejected"):
         raise HTTPException(status_code=422, detail="status must be 'approved' or 'rejected'.")
 
@@ -157,7 +163,7 @@ def review_deletion_request(
 
         # Update the request record.
         req.status = status
-        req.reviewer_id = admin_id
+        req.reviewer_id = user_unique_id
         req.reviewer_notes = reviewer_notes
         req.review_time = get_tz_isoformat()
         session.add(req)

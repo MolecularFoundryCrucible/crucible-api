@@ -15,7 +15,7 @@ from app.models.core_models import (
 )
 from app.models.datasets import DatasetRead
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
-from app.utils.auth_utils import authorize_user, is_admin
+from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.sql_utils import add_or_update, generate_kw_query
 
 router = APIRouter(tags=["samples"])
@@ -41,10 +41,9 @@ def link_parent_child_samples(parent_sample_id, child_sample_id, auth_res: Annot
 
 
 @router.delete("/samples/{parent_sample_id}/children/{child_sample_id}")
-def unlink_parent_child_samples(parent_sample_id: str, child_sample_id: str, admin_acct: Annotated[str, Depends(is_admin)]):
-    """
-    Remove the parent-child link between two samples. Admin access required.
-    """
+def unlink_parent_child_samples(parent_sample_id: str, child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    _, ag_list = auth_res
+    require_groups(ag_list)
     with Session(engine) as session:
         parent = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
         if not parent:
@@ -98,7 +97,8 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
     Create a new sample. If a sample with the same project_id and sample_name already
     exists, the existing record is returned without modification.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     if not S.sample_name.strip():
         raise HTTPException(status_code=400, detail="sample_name must not be empty.")
@@ -119,11 +119,11 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         session.refresh(sample)
 
         # Resolve owner from auth if not explicitly provided
-        if sample.owner_orcid is None and is_orcid(access_group_name):
-            sample.owner_orcid = access_group_name
+        if sample.owner_orcid is None and is_orcid(user_unique_id):
+            sample.owner_orcid = user_unique_id
         if sample.owner_user_id is None and sample.owner_orcid:
             sample.owner_user_id = session.exec(
-                select(User.id).where(User.orcid == sample.owner_orcid)
+                select(User.id).where(User.unique_id == sample.owner_orcid)
             ).one_or_none()
 
         now = get_tz_isoformat()
@@ -149,7 +149,8 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
     Returns a list of samples where the owner_orcid matches the orcid of the person who made the request.
     If an admin API key is used, returns all samples.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     query_params = request.query_params
     print(query_params)
@@ -173,14 +174,13 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         )
 
         # Admin API keys can see all samples
-        if access_group_name.startswith('admin'):
+        if user_unique_id.startswith('admin'):
             print('using admin account')
             pass
-        elif is_orcid(access_group_name):
-            print(f'filtering on owner_orcid={access_group_name}')
-            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
-            associated_group_names = [ag.group_name for ag in associated_groups]
-            samp_cmd = samp_cmd.where(or_(Sample.owner_orcid == access_group_name,
+        elif is_orcid(user_unique_id):
+            print(f'filtering on owner_orcid={user_unique_id}')
+            associated_group_names = [ag.group_name for ag in ag_list]
+            samp_cmd = samp_cmd.where(or_(Sample.owner_orcid == user_unique_id,
                                           Sample.project_id.in_(associated_group_names)))
         else:
             print(f'apikey does not have access to samples')
@@ -239,7 +239,8 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
     '''
     Returns a list of all datasets linked to a given sample
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop("keyword", None)
@@ -305,7 +306,8 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends
     '''
     Returns a list of parent samples for a given child sample
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         child_sample = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).one_or_none()
 
@@ -331,7 +333,8 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends
     '''
     Returns a list of child samples for a given parent sample
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
 
@@ -358,7 +361,8 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
     relationships) to the given sample. Loads all samples in the project and
     returns the directed lineage subgraph (ancestors + descendants) of the target.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         target = session.exec(
@@ -368,12 +372,11 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
         if target is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        if access_group_name.startswith('admin'):
+        if user_unique_id.startswith('admin'):
             pass
-        elif is_orcid(access_group_name):
-            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
-            associated_group_names = [ag.group_name for ag in associated_groups]
-            if target.owner_orcid != access_group_name and target.project_id not in associated_group_names:
+        elif is_orcid(user_unique_id):
+            associated_group_names = [ag.group_name for ag in ag_list]
+            if target.owner_orcid != user_unique_id and target.project_id not in associated_group_names:
                 raise HTTPException(status_code=403, detail="Access denied")
         else:
             raise HTTPException(status_code=403, detail="Access denied")
@@ -412,7 +415,8 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authoriz
     Returns a NetworkX node-link graph of all samples connected (via parent/child
     relationships) to the given sample, i.e. its full lineage subgraph.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         target = session.exec(
@@ -423,12 +427,11 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authoriz
             raise HTTPException(status_code=404, detail="Sample not found")
 
         # Auth check: mirrors project_sample_graph logic
-        if access_group_name.startswith('admin'):
+        if user_unique_id.startswith('admin'):
             pass
-        elif is_orcid(access_group_name):
-            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
-            associated_group_names = [ag.group_name for ag in associated_groups]
-            if target.owner_orcid != access_group_name and target.project_id not in associated_group_names:
+        elif is_orcid(user_unique_id):
+            associated_group_names = [ag.group_name for ag in ag_list]
+            if target.owner_orcid != user_unique_id and target.project_id not in associated_group_names:
                 raise HTTPException(status_code=403, detail="Access denied")
         else:
             raise HTTPException(status_code=403, detail="Access denied")

@@ -13,7 +13,7 @@ from app.models.core_models import (
     AccessGroup, Project, Sample, User, UserProjectLink, UserAccessGroupLink,
     DatasetACL, Dataset, DatasetSampleLink
 )
-from app.utils.auth_utils import authorize_user, is_admin
+from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.sql_utils import add_or_update
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
@@ -28,8 +28,7 @@ engine = get_engine()
 def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: ProjectCreate):
     """
     Create a new project. Either project_lead_orcid or project_lead_email must be
-    provided and must correspond to an existing user. If email is given, lbl_email
-    is checked first, then email. The resolved ORCID is stored on the project.
+    provided and must correspond to an existing user. The resolved ORCID is stored on the project.
     Returns 409 if a project with the given project_id already exists.
     """
     if not P.project_lead_orcid and not P.project_lead_email:
@@ -41,13 +40,13 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
             raise HTTPException(status_code=409, detail=f"Project '{P.project_id}' already exists. Use PATCH to update it.")
 
         if P.project_lead_orcid:
-            project_lead = session.exec(select(User).where(User.orcid == P.project_lead_orcid)).one_or_none()
+            project_lead = session.exec(select(User).where(User.unique_id == P.project_lead_orcid)).one_or_none()
             identifier = P.project_lead_orcid
         else:
             email = P.project_lead_email.lower()
             project_lead = session.exec(
                 select(User).where(
-                    (func.lower(User.lbl_email) == email) | (func.lower(User.email) == email)
+                    func.lower(User.email) == email
                 )
             ).first()
             identifier = P.project_lead_email
@@ -60,8 +59,8 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
             organization=P.organization,
             status=P.status,
             title=P.title,
-            project_lead_orcid=project_lead.orcid,
-            project_lead_email=project_lead.lbl_email or project_lead.email,
+            project_lead_orcid=project_lead.unique_id,
+            project_lead_email=project_lead.email,
         )
         session.add(prop)
 
@@ -85,18 +84,19 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of projects the user is authorized to see, including the resolved project lead.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        if access_group_name.startswith('admin'):
+        if user_unique_id.startswith('admin'):
             props = session.exec(select(Project)).all()
-        elif is_orcid(access_group_name):
-            props = sql_get_projects_for_user(access_group_name, session) or []
+        elif is_orcid(user_unique_id):
+            props = sql_get_projects_for_user(user_unique_id, session) or []
         else:
             raise HTTPException(status_code=403, detail="Not authorized to view projects")
 
         orcids = [p.project_lead_orcid for p in props if p.project_lead_orcid]
-        leads = {u.orcid: u for u in session.exec(select(User).where(User.orcid.in_(orcids))).all()}
+        leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}
         return [
             ProjectWithLead(**proj.model_dump(), lead=leads.get(proj.project_lead_orcid))
             for proj in props
@@ -108,11 +108,14 @@ def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user
     '''
     Returns the project object for the provided ID, including the resolved project lead.
     '''
+    user_unique_id, ag_list = auth_res
+    require_groups(ag_list, {'admin', proj_id})
+
     with Session(engine) as session:
         prop = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if prop is None:
             return None
-        lead = session.exec(select(User).where(User.orcid == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
+        lead = session.exec(select(User).where(User.unique_id == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
         return ProjectWithLead(**prop.model_dump(), lead=lead)
 
 
@@ -123,40 +126,34 @@ def update_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_us
     Accessible by admins and the project lead.
     If project_lead_orcid or project_lead_email is provided, it must correspond to an existing user.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+    require_groups(ag_list, {'admin', proj_id})
 
     with Session(engine) as session:
         project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
 
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-
-        if not access_group_name.startswith('admin'):
-            if is_orcid(access_group_name):
-                requester = session.exec(select(User).where(User.orcid == access_group_name)).one_or_none()
-                if not requester or requester.orcid != project.project_lead_orcid:
-                    raise HTTPException(status_code=403, detail="Only the project lead or an admin can update a project")
-            else:
-                raise HTTPException(status_code=403, detail="Only the project lead or an admin can update a project")
-
+        
         update_data = project_update.model_dump(exclude_unset=True)
 
         if "project_lead_orcid" in update_data:
-            lead = session.exec(select(User).where(User.orcid == update_data["project_lead_orcid"])).one_or_none()
+            lead = session.exec(select(User).where(User.unique_id == update_data["project_lead_orcid"])).one_or_none()
             if lead is None:
                 raise HTTPException(status_code=404, detail=f"Project lead user '{update_data['project_lead_orcid']}' not found")
-            update_data["project_lead_email"] = lead.lbl_email or lead.email
+            update_data["project_lead_email"] = lead.email
         elif "project_lead_email" in update_data:
             email = update_data.pop("project_lead_email").lower()
             lead = session.exec(
                 select(User).where(
-                    (func.lower(User.lbl_email) == email) | (func.lower(User.email) == email)
+                    func.lower(User.email) == email
                 )
             ).first()
             if lead is None:
                 raise HTTPException(status_code=404, detail=f"Project lead user '{email}' not found")
-            update_data["project_lead_orcid"] = lead.orcid
-            update_data["project_lead_email"] = lead.lbl_email or lead.email
+            update_data["project_lead_orcid"] = lead.unique_id
+            update_data["project_lead_email"] = lead.email
         else:
             update_data.pop("project_lead_email", None)
 
@@ -166,7 +163,7 @@ def update_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_us
         session.add(project)
         session.commit()
         session.refresh(project)
-        lead = session.exec(select(User).where(User.orcid == project.project_lead_orcid)).one_or_none() if project.project_lead_orcid else None
+        lead = session.exec(select(User).where(User.unique_id == project.project_lead_orcid)).one_or_none() if project.project_lead_orcid else None
         return ProjectWithLead(**project.model_dump(), lead=lead)
 
 
@@ -185,36 +182,27 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(autho
     Returns a list of users associated with the project ID.
     Accessible by admins and members of the project.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    require_groups(ag_list, {'admin', proj_id})
 
     with Session(engine) as session:
         project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        if not access_group_name.startswith('admin'):
-            if is_orcid(access_group_name):
-                member = session.exec(
-                    select(UserProjectLink).where(
-                        UserProjectLink.project_id == proj_id,
-                        UserProjectLink.user_id == select(User.id).where(User.orcid == access_group_name).scalar_subquery()
-                    )
-                ).one_or_none()
-                if member is None:
-                    raise HTTPException(status_code=403, detail="Not a member of this project")
-            else:
-                raise HTTPException(status_code=403, detail="Not authorized")
-
         return _get_project_users(proj_id, session)
 
 
 @router.post("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
 def add_users_to_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    require_groups(ag_list, {'admin', proj_id})
     
     with Session(engine) as session:
         # get user details
-        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail = f'User {orcid} not found')
         
@@ -222,18 +210,6 @@ def add_users_to_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, De
         proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if proj is None:
             raise HTTPException(status_code=404, detail = f'Project {proj_id} not found')
-        
-        # if the APIkey is not associated with an admin account
-        # get requester details
-        requester_notauth_detail = f'User must be the project lead or an admin to add other users to a project'
-        if is_orcid(access_group_name):
-            requester = session.exec(select(User).where(User.orcid == access_group_name)).one_or_none()
-
-            if not requester:
-                raise HTTPException(status_code = 403, detail = requester_notauth_detail)
-
-            if requester.orcid != proj.project_lead_orcid:
-                raise HTTPException(status_code=403, detail=requester_notauth_detail)
 
         # add link between user and project
         link = add_or_update(session,
@@ -255,25 +231,16 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
     Remove a user from a project and its associated access group.
     Only admins or the project lead can remove users.
     '''
-    access_group_name, ag_ids = auth_res
-
+    user_unique_id, ag_list = auth_res
+    require_groups(ag_list, {'admin', proj_id})
     with Session(engine) as session:
-        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail=f"User {orcid} not found")
 
         proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project {proj_id} not found")
-
-        # Non-admins must be the project lead to remove users
-        requester_notauth_detail = "User must be the project lead or an admin to remove users from a project"
-        if is_orcid(access_group_name):
-            requester = session.exec(select(User).where(User.orcid == access_group_name)).one_or_none()
-            if not requester:
-                raise HTTPException(status_code=403, detail=requester_notauth_detail)
-            if requester.orcid != proj.project_lead_orcid:
-                raise HTTPException(status_code=403, detail=requester_notauth_detail)
 
         # Remove the user-project link
         link = session.exec(
@@ -305,24 +272,11 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
 @router.get("/projects/{project_id}/sample_graph")
 def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
 
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    require_groups(ag_list, {'admin', project_id})
 
     with Session(engine) as session:
         samp_cmd = select(Sample).options(joinedload(Sample.parents))
-
-        # Admin API keys can see all samples
-        if access_group_name.startswith('admin'):
-            print('using admin account')
-            pass
-        elif is_orcid(access_group_name):
-            print(f'filtering on owner_orcid={access_group_name}')
-            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
-            associated_group_names = [ag.group_name for ag in associated_groups]
-            samp_cmd = samp_cmd.where(or_(Sample.owner_orcid == access_group_name,
-                                          Sample.project_id.in_(associated_group_names)))
-        else:
-            print(f'apikey does not have access to samples')
-            return []
 
         # Filter samples on proj_id
         samp_cmd = samp_cmd.where(Sample.project_id == project_id)
@@ -343,7 +297,8 @@ def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(aut
 @router.get("/projects/{project_id}/dataset_graph")
 def project_dataset_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
 
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
@@ -378,20 +333,13 @@ def project_entity_graph(project_id: str, auth_res: Annotated[tuple, Depends(aut
     project, connected via sample lineage, dataset lineage, and sample-dataset
     associations. Nodes carry entity_type ('sample' or 'dataset') and name.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+    require_groups(ag_list, {'admin', project_id})
 
     with Session(engine) as session:
         # Load all samples in the project with parent relationships
-        samp_cmd = select(Sample).options(joinedload(Sample.parents))
-        if not access_group_name.startswith('admin'):
-            if is_orcid(access_group_name):
-                associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
-                associated_group_names = [ag.group_name for ag in associated_groups]
-                samp_cmd = samp_cmd.where(or_(Sample.owner_orcid == access_group_name,
-                                              Sample.project_id.in_(associated_group_names)))
-            else:
-                return json_graph.node_link_data(nx.DiGraph())
-        samp_cmd = samp_cmd.where(Sample.project_id == project_id)
+        samp_cmd = select(Sample).options(joinedload(Sample.parents)).where(Sample.project_id == project_id)
         samp_list = session.exec(samp_cmd).unique().all()
 
         # Load all authorized datasets in the project with parent relationships

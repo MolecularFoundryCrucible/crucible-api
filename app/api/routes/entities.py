@@ -31,7 +31,8 @@ def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_us
     of broad queries, builds the combined graph in Python, then returns the weakly
     connected component containing the root entity.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         # Identify root entity type, enforce auth, and determine project scope
@@ -40,12 +41,11 @@ def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_us
         ).one_or_none()
 
         if sample_target is not None:
-            if access_group_name.startswith('admin'):
+            if user_unique_id.startswith('admin'):
                 pass
-            elif is_orcid(access_group_name):
-                associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
-                associated_group_names = [ag.group_name for ag in associated_groups]
-                if sample_target.owner_orcid != access_group_name and sample_target.project_id not in associated_group_names:
+            elif is_orcid(user_unique_id):
+                associated_group_names = [ag.group_name for ag in ag_list]
+                if sample_target.owner_orcid != user_unique_id and sample_target.project_id not in associated_group_names:
                     raise HTTPException(status_code=403, detail="Access denied")
             else:
                 raise HTTPException(status_code=403, detail="Access denied")
@@ -166,7 +166,8 @@ def entity_graph_bfs(entity_id: str, auth_res: Annotated[tuple, Depends(authoriz
     associations. entity_id may be a sample or dataset unique_id.
     Nodes carry entity_type ('sample' or 'dataset') and name attributes.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         # Identify root entity type and enforce auth before traversal
@@ -175,12 +176,11 @@ def entity_graph_bfs(entity_id: str, auth_res: Annotated[tuple, Depends(authoriz
         ).one_or_none()
 
         if sample_target is not None:
-            if access_group_name.startswith('admin'):
+            if user_unique_id.startswith('admin'):
                 pass
-            elif is_orcid(access_group_name):
-                associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
-                associated_group_names = [ag.group_name for ag in associated_groups]
-                if sample_target.owner_orcid != access_group_name and sample_target.project_id not in associated_group_names:
+            elif is_orcid(user_unique_id):
+                associated_group_names = [ag.group_name for ag in ag_list]
+                if sample_target.owner_orcid != user_unique_id and sample_target.project_id not in associated_group_names:
                     raise HTTPException(status_code=403, detail="Access denied")
             else:
                 raise HTTPException(status_code=403, detail="Access denied")
@@ -650,7 +650,8 @@ def entity_graph_cte(
     and cross-linked entities). Pass recursive=true for the full connected component.
     Use /project_graph/{project_id} to get all entities in a project.
     """
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         # --- Auth + identify root (1 query) ---
@@ -659,15 +660,12 @@ def entity_graph_cte(
         ).one_or_none()
 
         if sample_target is not None:
-            if access_group_name.startswith("admin"):
+            if user_unique_id.startswith("admin"):
                 pass
-            elif is_orcid(access_group_name):
-                associated_groups = session.exec(
-                    select(AccessGroup).where(AccessGroup.id.in_(ag_ids))
-                ).all()
-                associated_group_names = [ag.group_name for ag in associated_groups]
+            elif is_orcid(user_unique_id):
+                associated_group_names = [ag.group_name for ag in ag_list]
                 if (
-                    sample_target.owner_orcid != access_group_name
+                    sample_target.owner_orcid != user_unique_id
                     and sample_target.project_id not in associated_group_names
                 ):
                     raise HTTPException(status_code=403, detail="Access denied")
@@ -707,7 +705,8 @@ def project_graph(
     Returns all samples and authorized datasets belonging to project_id
     as a single node-link graph.
     """
-    _, ag_ids = auth_res
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         sample_ids = set(

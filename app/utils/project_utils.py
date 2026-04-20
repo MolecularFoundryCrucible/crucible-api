@@ -5,7 +5,7 @@ from app.models.core_models import Project, User, UserProjectLink
 
 def sql_get_projects_for_user(orcid, session):
     """Get all projects for a user by ORCID. Returns empty list if user not found."""
-    user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+    user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
     if user is None:
         return None
 

@@ -10,7 +10,7 @@ from app.models.core_models import (
     AccessGroup, Dataset, DatasetACL, Project, User,
     UserAccessGroupLink, UserProjectLink,
 )
-from app.utils.auth_utils import authorize_user, is_admin
+from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
@@ -23,7 +23,9 @@ engine = get_engine()
 
 
 @router.get("/users", response_model=List[UserRead])
-def list_users(admin_acct: Annotated[str, Depends(is_admin)], request: Request, permissive=True):
+def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, permissive=True):
+    _, ag_list = auth_res
+    require_groups(ag_list)
 
     query_params = request.query_params
     params_dict = dict(query_params)
@@ -44,56 +46,44 @@ def list_users(admin_acct: Annotated[str, Depends(is_admin)], request: Request, 
 
 
 @router.get("/users/{orcid}", response_model=Union[None, UserRead])
-def read_user(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
+def read_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns the User object associated with the provided ORCID if found. Otherwise returns None.
     '''
+    _, ag_list = auth_res
+    require_groups(ag_list)
     with Session(engine) as session:
-        users = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        users = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
         return users
 
 
 @router.post("/users", response_model=UserRead)
-def create_user(admin_acct: Annotated[str, Depends(is_admin)], user_info: UserCreate, project_ids: List[str] = Body(...)):
-    """
-    Add or update a user record in the database.
-    Add the user to an Access Group with their ORCID
-    Add the user to Access Groups for any project they are a USER on
-    Create a link to the projects that the User is a USER on
+def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: UserCreate, project_ids: List[str] = Body(...)):
+    _, ag_list = auth_res
+    require_groups(ag_list)
 
-    Args:
-        admin_acct: Admin account identifier
-        user_info: Instance of class User
-        project_ids: List of project IDs the user belongs to
-
-    Returns:
-        Added or updated user object
-
-    Raises:
-        HTTPException: If required user fields are missing
-    """
     # Validate required fields
     missing_fields = []
     if not user_info.first_name or not user_info.first_name.strip():
         missing_fields.append("first_name")
     if not user_info.last_name or not user_info.last_name.strip():
         missing_fields.append("last_name")
-    if not user_info.orcid or not user_info.orcid.strip():
-        missing_fields.append("orcid")
+    if not user_info.unique_id or not user_info.unique_id.strip():
+        missing_fields.append("unique_id")
 
     if missing_fields:
         raise HTTPException(
             status_code=400,
-            detail=f"Missing required user information: {', '.join(missing_fields)}. Please provide all required fields: first_name, last_name, and orcid."
+            detail=f"Missing required user information: {', '.join(missing_fields)}. Please provide all required fields: first_name, last_name, and unique_id."
         )
 
     with Session(engine) as session:
         # add user to user table
         user_dict = table_obj_to_dict(user_info)
-        user = add_or_update(session, User, User.orcid == user_info.orcid, **user_dict)
+        user = add_or_update(session, User, User.unique_id == user_info.unique_id, **user_dict)
         session.commit()
 
-        sql_add_user_to_access_group(user.orcid, user.orcid, session)
+        sql_add_user_to_access_group(user.unique_id, user.unique_id, session)
 
         # for each project that the user is a USER on:
         # 1. get the project object from the database
@@ -112,7 +102,7 @@ def create_user(admin_acct: Annotated[str, Depends(is_admin)], user_info: UserCr
                 user.projects.append(prop)
 
             # add user to access group
-            sql_add_user_to_access_group(user.orcid, pname, session)
+            sql_add_user_to_access_group(user.unique_id, pname, session)
 
         session.add(user)
         session.commit()
@@ -121,12 +111,14 @@ def create_user(admin_acct: Annotated[str, Depends(is_admin)], user_info: UserCr
 
 
 @router.patch("/users/{orcid}", response_model=UserRead)
-def update_user(orcid: str, admin_acct: Annotated[str, Depends(is_admin)], user_update: UserUpdate):
+def update_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)], user_update: UserUpdate):
+    _, ag_list = auth_res
+    require_groups(ag_list)
     '''
     Partially update a user record. Only fields provided in the request body are modified.
     '''
     with Session(engine) as session:
-        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
 
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
@@ -142,18 +134,20 @@ def update_user(orcid: str, admin_acct: Annotated[str, Depends(is_admin)], user_
 
 
 @router.get("/users/{orcid}/datasets", response_model=List[str])
-def read_user_datasets(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
+def read_user_datasets(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of all the datasets the user has access to based on the ORCID provided.
     '''
+    _, ag_list = auth_res
+    require_groups(ag_list)
     with Session(engine) as session:
         # Verify user exists
-        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
 
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.orcid == orcid)).all()
+        ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.unique_id == orcid)).all()
         ag_ids = [x.accessgroup_id for x in ag]
         ds_list = session.exec(select(Dataset).select_from(join(DatasetACL, Dataset, DatasetACL.dataset_id == Dataset.id)).where(DatasetACL.accessgroup_id.in_(ag_ids))).all()
 
@@ -161,12 +155,14 @@ def read_user_datasets(orcid: str, admin_acct: Annotated[str, Depends(is_admin)]
 
 
 @router.get("/users/{orcid}/datasets/{dsid}", response_model=Dict)
-def read_user_access_to_dataset(dsid: str, orcid: str, admin_acct: Annotated[str, Depends(is_admin)]):
+def read_user_access_to_dataset(dsid: str, orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns boolean: True is user with provided ORCID has access to the provided dataset ID, False if no access or dataset does not exist.
     '''
+    _, ag_list = auth_res
+    require_groups(ag_list)
     with Session(engine) as session:
-        ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.orcid == orcid)).all()
+        ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.unique_id == orcid)).all()
         ag_ids = [x.accessgroup_id for x in ag]
         ds_acl = session.exec(select(DatasetACL).select_from(join(DatasetACL, Dataset, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))).all()
         perms = {"read": False, "write": False}
@@ -179,7 +175,9 @@ def read_user_access_to_dataset(dsid: str, orcid: str, admin_acct: Annotated[str
 
 
 @router.post("/users/{orcid}/access_groups/{group_name}", response_model=AccessGroupRead)
-def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orcid: str, group_name: str):
+def add_user_to_access_group(auth_res: Annotated[tuple, Depends(authorize_user)], orcid: str, group_name: str):
+    _, ag_list = auth_res
+    require_groups(ag_list)
     with Session(engine) as session:
         ag = sql_add_user_to_access_group(orcid, group_name, session)
     return(ag)
@@ -187,25 +185,31 @@ def add_user_to_access_group(admin_acct: Annotated[str, Depends(is_admin)], orci
 
 @router.get("/users/{orcid}/access_groups", response_model=List[str])
 def list_user_access_groups(auth_res: Annotated[tuple, Depends(authorize_user)], orcid: str):
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    require_groups(ag_list, {'admin', orcid})
     with Session(engine) as session:
-        # Verify user exists
-        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
 
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        ags = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
-        return([ag.group_name for ag in ags])
+        user_ags = session.exec(
+            select(AccessGroup)
+            .join(UserAccessGroupLink, UserAccessGroupLink.accessgroup_id == AccessGroup.id)
+            .where(UserAccessGroupLink.user_id == user.id)
+        ).all()
+        return([ag.group_name for ag in user_ags])
 
 
 @router.delete("/users/{orcid}/access_groups/{group_name}")
-def remove_user_from_access_group(admin_acct: Annotated[str, Depends(is_admin)], orcid: str, group_name: str):
+def remove_user_from_access_group(auth_res: Annotated[tuple, Depends(authorize_user)], orcid: str, group_name: str):
     '''
     Remove a user from an access group.
     '''
+    _, ag_list = auth_res
+    require_groups(ag_list)
     with Session(engine) as session:
-        user = session.exec(select(User).where(User.orcid == orcid)).one_or_none()
+        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
@@ -233,9 +237,10 @@ def read_projects_for_user(orcid: str, auth_res: Annotated[tuple, Depends(author
     '''
     Returns a list of the projects that this User is associated with, including the resolved project lead.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
-    if not access_group_name.startswith('admin') and access_group_name != orcid:
+    if not user_unique_id.startswith('admin') and user_unique_id != orcid:
         raise HTTPException(status_code=403, detail="Not authorized to view projects for this user")
 
     with Session(engine) as session:
@@ -245,7 +250,7 @@ def read_projects_for_user(orcid: str, auth_res: Annotated[tuple, Depends(author
             raise HTTPException(status_code=404, detail="User not found")
 
         orcids = [p.project_lead_orcid for p in projects if p.project_lead_orcid]
-        leads = {u.orcid: u for u in session.exec(select(User).where(User.orcid.in_(orcids))).all()}
+        leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}
         return [
             ProjectWithLead(**proj.model_dump(), lead=leads.get(proj.project_lead_orcid))
             for proj in projects

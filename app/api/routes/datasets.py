@@ -17,43 +17,38 @@ from app.models.core_models import (
     AccessGroup,
     AssociatedFile,
     Dataset,
-    DatasetACL,
+    ResourceACL,
     DatasetKeywordLink,
     DatasetLink,
     DatasetSampleLink,
+    DeletionRequest,
+    IngestionRequest,
+    Instrument,
     Keyword,
     Project,
+    Resource,
     Sample,
     ScientificMetadata,
+    NewScientificMetadata,
     Thumbnail,
-    User
+    User,
 )
-from app.models.instrument import Instrument
-from app.models.resource import Resource
-from app.models.deletion import DeletionRequest
 from app.models.response_schemas import DatasetSampleLinkResponse
-from app.models.tasks import IngestionRequest
-from app.utils.auth_utils import authorize_user, is_admin
+from app.models.datasets import (
+    AssociatedFileCreate, AssociatedFileRead,
+    DatasetCreate, DatasetRead, DatasetResponse, DatasetUpdate,
+    ThumbnailCreate, ThumbnailRead,
+)
+from app.models.access_groups import AccessGroupRead
+from app.models.samples import SampleRead
+from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.rmq_utils import send_pika_message
-from app.utils.sql_utils import add_or_update, only_update, generate_kw_query
+from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
 
 
-def sql_create_ds_acl(ag, ds, read, write, session):
-    if ag is None:
-        return None
-    acl = session.exec(select(DatasetACL).where(DatasetACL.accessgroup == ag).where(DatasetACL.dataset == ds)).one_or_none()
-    print(f"{acl=} for {ds.unique_id}")
-    if not acl:
-        acl = DatasetACL(accessgroup_id = ag.id, dataset_id = ds.id, accessgroup=ag, dataset=ds)
-        acl.read = read
-        acl.write = write
-        session.add(acl)
-        session.commit()
-        session.refresh(acl)
-    return(acl)
 
 
 @router.post("/datasets/{dsid}/carrier_segmentation")
@@ -88,13 +83,14 @@ def request_insitu_aggregation(dsid, auth_res: Annotated[tuple, Depends(authoriz
     )
     return
 
-@router.post("/datasets", response_model=Dataset)
+@router.post("/datasets", response_model=DatasetRead)
 async def create_dataset(
     auth_res: Annotated[tuple, Depends(authorize_user)],
-    dataset: Dataset
+    dataset: DatasetCreate
 ):
     print(f"received {dataset}")
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    #ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         ds = add_or_update(
             session,
@@ -105,67 +101,6 @@ async def create_dataset(
 
         session.commit()
         session.refresh(ds)
-
-        print(f'added dataset {ds}')
-        # set appropriate access controls
-        admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
-        admin_acl = sql_create_ds_acl(admin, ds, read = True, write = True, session=session)
-
-        ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
-        ro_acl = sql_create_ds_acl(ro, ds, read = True, write = False, session=session)
-        print(f"add ro access to {ds.unique_id}")
-
-        if dataset.owner_user_id is not None:
-            print(f'adding owner orcid access to {ds.unique_id}')
-            user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id)).one_or_none()
-            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
-            user_acl = sql_create_ds_acl(user_ag, ds, read = True, write = True, session=session)
-            print(f'added owner orcid access to {ds.unique_id}')
-
-        else:
-            # use the apikey associated accessgroup as owner
-            creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
-            print(f'{access_group_name=} for {ds.unique_id}')
-            print(f'{creator=} for {ds.unique_id}')
-            creator_acl = sql_create_ds_acl(creator, ds, read = True, write = True, session=session)
-            print(f'add creator access to {ds.unique_id}')
-
-            if is_orcid(access_group_name):
-                ds.owner_orcid = access_group_name
-                creator_user_id = session.exec(select(User.id).where(User.orcid == dataset.owner_orcid)).one_or_none()
-                ds.owner_user_id = creator_user_id
-
-        if dataset.project_id is not None:
-            print(f'adding proposal access to {ds.unique_id}')
-            prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset.project_id)).one_or_none()
-            prop_acl = sql_create_ds_acl(prop_ag, ds, read = True, write = True, session=session)
-            print(f'added proposal access to {ds.unique_id}')
-
-        if dataset.instrument_id is not None:
-            print(f'adding instrument group access to {ds.unique_id}')
-            inst_query = select(Instrument.instrument_name).where(Instrument.id == dataset.instrument_id)
-            inst_name = session.exec(inst_query).one_or_none()
-
-            ag_query = select(AccessGroup).where(AccessGroup.group_name == inst_name.lower())
-            inst_ag = session.exec(ag_query).one_or_none()
-            if inst_ag is not None:
-                inst_acl = sql_create_ds_acl(inst_ag,
-                                             ds,
-                                             read = True,
-                                             write = True,
-                                             session=session)
-            else:
-                inst_ag = add_or_update(session,
-                                        AccessGroup,
-                                        AccessGroup.group_name == inst_name.lower(),
-                                        group_name = inst_name.lower())
-
-                inst_acl = sql_create_ds_acl(inst_ag,
-                                             ds,
-                                             read = True,
-                                             write = True,
-                                             session=session)
-            print(f'added instrument group access to {ds.unique_id}')
 
         try:
             print(f'Resource mfid being written: {ds.unique_id}')
@@ -187,20 +122,67 @@ async def create_dataset(
         except:
             print(f"#=========== ID TYPE FAILED for dataset {ds.unique_id=}")
 
+        print(f'added dataset {ds}')
+        # set appropriate access controls
+        admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
+        sql_create_resource_acl(admin, ds.unique_id, read=True, write=True, session=session)
+
+        ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
+        sql_create_resource_acl(ro, ds.unique_id, read=True, write=False, session=session)
+        print(f"add ro access to {ds.unique_id}")
+
+        if dataset.owner_orcid is not None:
+            print(f'adding owner orcid access to {ds.unique_id}')
+            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset.owner_orcid)).one_or_none()
+        else:   
+            creator_user_id = session.exec(select(User.id).where(User.unique_id == user_unique_id)).one_or_none()
+            ds.owner_orcid = user_unique_id
+            ds.owner_user_id = creator_user_id
+            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_unique_id)).one_or_none()
+        
+        if user_ag:
+            sql_create_resource_acl(user_ag, ds.unique_id, read=True, write=True, session=session)
+            print(f'added owner orcid access to {ds.unique_id}')
+
+
+        if dataset.project_id is not None:
+            print(f'adding proposal access to {ds.unique_id}')
+            prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset.project_id)).one_or_none()
+            sql_create_resource_acl(prop_ag, ds.unique_id, read=True, write=True, session=session)
+            print(f'added proposal access to {ds.unique_id}')
+
+        if dataset.instrument_id is not None:
+            print(f'adding instrument group access to {ds.unique_id}')
+            inst_query = select(Instrument.instrument_name).where(Instrument.id == dataset.instrument_id)
+            inst_name = session.exec(inst_query).one_or_none()
+
+            ag_query = select(AccessGroup).where(AccessGroup.group_name == inst_name.lower())
+            inst_ag = session.exec(ag_query).one_or_none()
+            if inst_ag is None:
+                inst_ag = add_or_update(session,
+                                        AccessGroup,
+                                        AccessGroup.group_name == inst_name.lower(),
+                                        group_name=inst_name.lower())
+            sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True, session=session)
+            print(f'added instrument group access to {ds.unique_id}')
+
+
+
     return ds
 
 
-@router.patch("/datasets/{dsid}", response_model=Dataset)
-def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, updated_dataset: Dataset):
+@router.patch("/datasets/{dsid}", response_model=DatasetRead)
+def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, updated_dataset: DatasetUpdate):
     '''
     Updates a dataset in SQL and returns the Updated Dataset object.
     Sends a message to RabbitMQ to alert RMQ that updates have been made.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     ds_cmd = select(Dataset).select_from(
-                                join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(
+                                join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(
                                     Dataset.unique_id == dsid).filter(
-                                        DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+                                        ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
         ds_list = session.exec(ds_cmd).all()
@@ -227,21 +209,21 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
             ri.modification_time = get_tz_isoformat()
 
         if upds.owner_user_id is not None:
-            user_orcid = session.exec(select(User.orcid).where(User.id == upds.owner_user_id)).one_or_none()
+            user_orcid = session.exec(select(User.unique_id).where(User.id == upds.owner_user_id)).one_or_none()
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
-            user_acl = sql_create_ds_acl(user_ag, upds, read = True, write = True, session=session)
+            sql_create_resource_acl(user_ag, upds.unique_id, read=True, write=True, session=session)
             print('add owner orcid access')
 
         if upds.project_id is not None:
             prop_name = session.exec(select(Project.project_id).where(Project.project_id == upds.project_id)).one_or_none()
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
-            prop_acl = sql_create_ds_acl(prop_ag, upds, read = True, write = True, session=session)
+            sql_create_resource_acl(prop_ag, upds.unique_id, read=True, write=True, session=session)
             print('add proposal access')
 
         if upds.instrument_id is not None:
             inst_name = session.exec(select(Instrument.instrument_name).where(Instrument.id == upds.instrument_id)).one_or_none()
             inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
-            inst_acl = sql_create_ds_acl(inst_ag, upds, read = True, write = True, session=session)
+            sql_create_resource_acl(inst_ag, upds.unique_id, read=True, write=True, session=session)
             print('add instrument group access')
 
         session.commit()
@@ -249,7 +231,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         return upds
 
 
-@router.get("/datasets")
+@router.get("/datasets", response_model=List[DatasetResponse], response_model_exclude_none=True)
 def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: bool = False, limit: Optional[int] = None,
                   creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                   modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
@@ -266,7 +248,8 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         modification_time_gte: Filter datasets modified on or after this ISO timestamp
         modification_time_lte: Filter datasets modified on or before this ISO timestamp
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
     # Remove explicit query params so they don't get applied as Dataset attribute filters
@@ -278,8 +261,8 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         # EXISTS subquery for ACL check — avoids JOIN fanout (one row per ACL entry)
         # and eliminates the need for DISTINCT on the outer query.
         acl_subquery = exists().where(
-            DatasetACL.dataset_id == Dataset.id,
-            DatasetACL.accessgroup_id.in_(ag_ids)
+            ResourceACL.mfid == Dataset.unique_id,
+            ResourceACL.accessgroup_id.in_(ag_ids)
         )
         auth_filter = (Dataset.public == True) | acl_subquery
 
@@ -330,42 +313,52 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             query = query.limit(limit)
 
         results = session.exec(query).all()
-        return [{**dataset.model_dump(),
+        return [
+            DatasetResponse.model_validate({
+                **dataset.model_dump(),
                 "creation_time": dataset.resource.creation_time if dataset.resource else None,
                 "modification_time": dataset.resource.modification_time if dataset.resource else None,
-                **({"scientific_metadata": dataset.scientific_metadata.model_dump() if dataset.scientific_metadata else None} if include_metadata else {})
-                }
-                for dataset in results]
+                "scientific_metadata": (
+                    dataset.scientific_metadata.scientific_metadata
+                    if include_metadata and dataset.scientific_metadata else None
+                ),
+            })
+            for dataset in results
+        ]
 
 
-@router.get("/datasets/{dsid}")
+@router.get("/datasets/{dsid}", response_model=DatasetResponse, response_model_exclude_none=True)
 def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
     Returns a dataset found with the provided unique ID
     if one is exists and the requesting user is
     authorized to view the dataset. Otherwise, returns None
     '''
-    access_group_name, ag_ids = auth_res
-    print(f"{ag_ids=}")
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
     with Session(engine) as session:
-        ds_cmd = select(Dataset).options(selectinload(Dataset.resource)).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
+        ds_cmd = select(Dataset).options(selectinload(Dataset.resource)).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         if ds is None:
             return None
-        return {**ds.model_dump(),
-                "creation_time": ds.resource.creation_time if ds.resource else None,
-                "modification_time": ds.resource.modification_time if ds.resource else None}
+        return DatasetResponse.model_validate({
+            **ds.model_dump(),
+            "creation_time": ds.resource.creation_time if ds.resource else None,
+            "modification_time": ds.resource.modification_time if ds.resource else None,
+        })
 
 
 @router.post("/datasets/{parent_dataset_id}/children/{child_dataset_id}", response_model=DatasetLink)
 def link_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     ds_cmd = select(Dataset).select_from(
                                         join(Dataset,
-                                                DatasetACL,
-                                                DatasetACL.dataset_id == Dataset.id, isouter=True)
+                                                ResourceACL,
+                                                ResourceACL.mfid == Dataset.unique_id, isouter=True)
                                         ).filter(
-                                                (DatasetACL.accessgroup_id.in_(ag_ids)) |
+                                                (ResourceACL.accessgroup_id.in_(ag_ids)) |
                                                 (Dataset.public == True)
                                         )
 
@@ -392,10 +385,9 @@ def link_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[t
 
 
 @router.delete("/datasets/{parent_dataset_id}/children/{child_dataset_id}")
-def unlink_parent_child(parent_dataset_id: str, child_dataset_id: str, admin_acct: Annotated[str, Depends(is_admin)]):
-    """
-    Remove the parent-child link between two datasets. Admin access required.
-    """
+def unlink_parent_child(parent_dataset_id: str, child_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    _, ag_list = auth_res
+    require_groups(ag_list)
     with Session(engine) as session:
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
         if not parent:
@@ -420,19 +412,20 @@ def unlink_parent_child(parent_dataset_id: str, child_dataset_id: str, admin_acc
         return {"message": f"Successfully unlinked {parent_dataset_id} -> {child_dataset_id}"}
 
 
-@router.get("/datasets/{child_dataset_id}/parents", response_model=List[Dataset])
+@router.get("/datasets/{child_dataset_id}/parents", response_model=List[DatasetRead])
 def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of parent datasets for a given dataset
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(
                                             join(Dataset,
-                                                    DatasetACL,
-                                                    DatasetACL.dataset_id == Dataset.id, isouter=True)
+                                                    ResourceACL,
+                                                    ResourceACL.mfid == Dataset.unique_id, isouter=True)
                                             ).filter(
-                                                    (DatasetACL.accessgroup_id.in_(ag_ids)) |
+                                                    (ResourceACL.accessgroup_id.in_(ag_ids)) |
                                                     (Dataset.public == True)
                                             ).distinct()
         child = session.exec(ds_cmd.where(Dataset.unique_id == child_dataset_id)).one_or_none()
@@ -455,22 +448,23 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depen
         return parents
 
 
-@router.get("/datasets/{parent_dataset_id}/children", response_model=List[Dataset])
+@router.get("/datasets/{parent_dataset_id}/children", response_model=List[DatasetRead])
 def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of child datasets for a given parent dataset
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(
                                             join(Dataset,
-                                                    DatasetACL,
-                                                    DatasetACL.dataset_id == Dataset.id, isouter=True)
+                                                    ResourceACL,
+                                                    ResourceACL.mfid == Dataset.unique_id, isouter=True)
                                             ).filter(
-                                                    (DatasetACL.accessgroup_id.in_(ag_ids)) |
+                                                    (ResourceACL.accessgroup_id.in_(ag_ids)) |
                                                     (Dataset.public == True)
                                             ).distinct()
-        
+
         parent = session.exec(ds_cmd.where(Dataset.unique_id == parent_dataset_id)).one_or_none()
 
         if not parent:
@@ -491,19 +485,15 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depen
         return children
 
 
-@router.delete("/datasets/{dsid}", response_model=Dataset)
+@router.delete("/datasets/{dsid}")
 def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
-    access_group_name, ag_ids = auth_res
-    # TODO: DEFINE THIS
-    pass
+    raise HTTPException(status_code=501, detail="Hard deletion not implemented. Use the deletion request system.")
 
 
 @router.delete('/datasets/{dsid}/samples/{sample_id}')
-def delete_dataset_sample_link(auth_res: Annotated[tuple, Depends(is_admin)], dsid: str, sample_id: str):
-    """
-    Delete the link between a dataset and a sample.
-    Admin access required.
-    """
+def delete_dataset_sample_link(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, sample_id: str):
+    _, ag_list = auth_res
+    require_groups(ag_list)
     ds_cmd = select(Dataset).where(Dataset.unique_id == dsid)
     samp_cmd = select(Sample).where(Sample.unique_id == sample_id)
 
@@ -556,7 +546,7 @@ def generate_signed_url_download_link(auth_res: Annotated[tuple, Depends(authori
     return urls
 
 
-@router.post("/datasets/{dsid}/upload", response_model=AssociatedFile)
+@router.post("/datasets/{dsid}/upload", response_model=AssociatedFileRead)
 async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], File(description="List of files")],
                                           auth_res:  Annotated[tuple, Depends(authorize_user)],
                                           dsid: str):
@@ -564,7 +554,8 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
     Upload files to cloud bucket and add to associated files list for dataset.
     '''
 
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+   # ag_ids = [ag.id for ag in ag_list]
     # upload the file
     for file in files:
         dest_dir = f"/mnt/gcs/api-uploads/{os.path.dirname(file.filename)}"
@@ -575,13 +566,12 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
             f.write(await file.read())
 
     # create associated files record
-    af = {"filename": os.path.join("api-uploads", file.filename),
-          "size": os.path.getsize(save_file_path),
-          "sha256_hash": checkhash(save_file_path)}
-
-    # add associated file
-    added_af = add_associated_file(auth_res, dsid, AssociatedFile(**af))
-    return(added_af)
+    af = AssociatedFileCreate(
+        filename=os.path.join("api-uploads", file.filename),
+        size=os.path.getsize(save_file_path),
+        sha256_hash=checkhash(save_file_path),
+    )
+    return add_associated_file(auth_res, dsid, af)
 
 
 @router.post("/datasets/{dsid}/ingest", response_model=IngestionRequest)
@@ -590,11 +580,12 @@ def request_dataset_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)
                               file_to_upload: Optional[str]=None,
                               ingestion_class: Optional[str]=None):
 
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     print("request received")
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(
+    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(
                                         Dataset.unique_id == dsid).filter(
-                                        DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+                                        ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
@@ -658,11 +649,12 @@ def get_ingestion_request(auth_res: Annotated[tuple, Depends(authorize_user)], r
     Raises:
         HTTPException: If request not found or access denied
     """
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     # Check dataset access first
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(
-        Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(
+        Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
@@ -682,7 +674,9 @@ def get_ingestion_request(auth_res: Annotated[tuple, Depends(authorize_user)], r
 
 
 @router.patch("/datasets/{dsid}/ingest/{reqid}", response_model=IngestionRequest)
-def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], reqid: int, dsid: str, ing_req: IngestionRequest):
+def patch_ingestion_request(auth_res: Annotated[tuple, Depends(authorize_user)], reqid: int, dsid: str, ing_req: IngestionRequest):
+    _, ag_list = auth_res
+    require_groups(ag_list)
     if ing_req.id:
         print(f"{reqid=}")
         print(f"{ing_req.id=}")
@@ -708,9 +702,10 @@ def patch_ingestion_request(is_admin: Annotated[str, Depends(is_admin)], reqid: 
 
 @router.get("/datasets/{dsid}/scientific_metadata")
 def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
+        ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:
@@ -722,12 +717,13 @@ def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
 
 @router.post("/datasets/{dsid}/scientific_metadata", response_model=ScientificMetadata)
 def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md: dict):
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     ds_cmd = select(Dataset).select_from(join(Dataset,
-                                              DatasetACL,
-                                              DatasetACL.dataset_id == Dataset.id)).where(
+                                              ResourceACL,
+                                              ResourceACL.mfid == Dataset.unique_id)).where(
                                                   Dataset.unique_id == dsid).filter(
-                                                        DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+                                                        ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
@@ -751,8 +747,9 @@ def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)],
 
 @router.patch("/datasets/{dsid}/scientific_metadata", response_model=ScientificMetadata)
 def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md_updates: dict):
-    access_group_name, ag_ids = auth_res
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
@@ -790,14 +787,92 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
         return(md_obj)
 
 
-@router.get("/datasets/{dsid}/thumbnails", response_model=List[Thumbnail])
+@router.post("/datasets/{dsid}/scientific_metadata_new", response_model = NewScientificMetadata)
+def add_scientific_metadata_new(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md: dict):
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+    ds_cmd = select(Dataset).select_from(join(Dataset,
+                                              ResourceACL,
+                                              ResourceACL.mfid == Dataset.unique_id)).where(
+                                                  Dataset.unique_id == dsid).filter(
+                                                        ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
+
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        md_obj = add_or_update(
+            session,
+            NewScientificMetadata,
+            where=(NewScientificMetadata.dataset_mfid == dsid),
+            dataset_mfid=dsid,
+            dataset_id=ds.id,
+            scientific_metadata=scientific_md,
+        )
+
+        attributes.flag_modified(md_obj, 'scientific_metadata')
+
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
+
+        session.commit()
+        session.refresh(md_obj)
+        return md_obj
+
+
+@router.patch("/datasets/{dsid}/scientific_metadata_new", response_model = NewScientificMetadata)
+def update_scientific_metadata_new(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md_updates: dict):
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
+
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        stored_md = session.exec(select(NewScientificMetadata).where(NewScientificMetadata.dataset_mfid == dsid)).one_or_none()
+
+        if stored_md:
+            md_dict = stored_md.scientific_metadata
+        else:
+            md_dict = {}
+
+        for k, v in scientific_md_updates.items():
+            md_dict[k] = v
+
+        md_obj = add_or_update(
+            session,
+            NewScientificMetadata,
+            where=(NewScientificMetadata.dataset_mfid == dsid),
+            dataset_mfid=dsid,
+            dataset_id=ds.id,
+            scientific_metadata=md_dict,
+        )
+        attributes.flag_modified(md_obj, 'scientific_metadata')
+
+        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+        if ri:
+            ri.modification_time = get_tz_isoformat()
+
+        session.commit()
+        session.refresh(md_obj)
+        return md_obj
+
+
+@router.get("/datasets/{dsid}/thumbnails", response_model=List[ThumbnailRead])
 def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of thumbnail objects associated with the dataset ID provided
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
+        ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:
@@ -818,14 +893,15 @@ def get_first_thumbnails(
 
     Intended for bulk thumbnail fetching after an entity_graph call.
     '''
-    _, ag_ids = auth_res
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
 
         authorized_ds = session.exec(
             select(Dataset)
-            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
             .filter(auth_filter)
             .where(Dataset.unique_id.in_(dataset_ids))
             .distinct()
@@ -862,10 +938,10 @@ def get_first_thumbnails(
             for t in first_thumbnails
         }
     
-@router.post("/datasets/{dsid}/thumbnails", response_model=Thumbnail)
+@router.post("/datasets/{dsid}/thumbnails", response_model=ThumbnailRead)
 def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
                   dsid: str,
-                  thumbnail: Thumbnail):
+                  thumbnail: ThumbnailCreate):
     '''
     Adds a thumbnail to a dataset. If the thumbnail exists, it will simply add the existing thumbnail to the dataset object.
     Otherwise, the thumbnail will be created and then added to the dataset.
@@ -873,7 +949,8 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
     Raises:
         HTTPException: If required thumbnail fields are missing or dataset not found
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     # Validate required fields
     missing_fields = []
@@ -888,7 +965,7 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
             detail=f"Missing required thumbnail information: {', '.join(missing_fields)}. Please provide all required fields: thumbnail_name and thumbnail_b64str."
         )
 
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
@@ -918,15 +995,16 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
     return(tn_obj)
 
 
-@router.get("/datasets/{dsid}/associated_files", response_model=List[AssociatedFile])
+@router.get("/datasets/{dsid}/associated_files", response_model=List[AssociatedFileRead])
 def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of the files associated with the dataset ID provided.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
+        ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:
@@ -936,10 +1014,10 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
         return ds_files
 
 
-@router.post("/datasets/{dsid}/associated_files", response_model=AssociatedFile)
+@router.post("/datasets/{dsid}/associated_files", response_model=AssociatedFileRead)
 def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
                         dsid: str,
-                        associated_file: AssociatedFile):
+                        associated_file: AssociatedFileCreate):
     '''
     Adds an associated file to a dataset.
     Creates the AF object if it doesn't already exist.
@@ -948,7 +1026,8 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
         HTTPException: If required associated file fields are missing or dataset not found
     '''
     print("accepted args")
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     # Validate required fields
     missing_fields = []
@@ -965,7 +1044,7 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
             detail=f"Missing required associated file information: {', '.join(missing_fields)}. Please provide all required fields: filename, size, and sha256_hash."
         )
 
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
@@ -998,10 +1077,11 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
 @router.get("/datasets/{dsid}/keywords", response_model=List[Keyword])
 def list_keywords_for_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
 
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
+        ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:
@@ -1017,8 +1097,9 @@ def add_keyword(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, 
     Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object.
     Otherwise, the keyword will be created and then added to the dataset.
     '''
-    access_group_name, ag_ids = auth_res
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
         kw_obj = add_or_update(session, Keyword, where=(Keyword.keyword == keyword), keyword=keyword)
@@ -1042,8 +1123,10 @@ def add_keyword(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, 
         return(kw_obj)
 
 
-@router.get("/datasets/{dsid}/access_groups", response_model=List[AccessGroup])
-def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
+@router.get("/datasets/{dsid}/access_groups", response_model=List[AccessGroupRead])
+def read_dataset_acl(dsid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    _, ag_list = auth_res
+    require_groups(ag_list)
     with Session(engine) as session:
         # Verify dataset exists
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
@@ -1051,31 +1134,37 @@ def read_dataset_acl(dsid: str, admin_acct: Annotated[str, Depends(is_admin)]):
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        dscmd = select(AccessGroup).select_from(join(AccessGroup, join(DatasetACL,
-                                                                     Dataset,
-                                                                     DatasetACL.dataset_id == Dataset.id),
-                                                    AccessGroup.id == DatasetACL.accessgroup_id))
-        dscmd = dscmd.where(Dataset.unique_id == dsid)
+        dscmd = select(AccessGroup).select_from(
+            join(AccessGroup,
+                 join(ResourceACL, Dataset, ResourceACL.mfid == Dataset.unique_id),
+                 AccessGroup.id == ResourceACL.accessgroup_id)
+        ).where(Dataset.unique_id == dsid)
         ds_acl = session.exec(dscmd).all()
 
         return ds_acl
 
 
-@router.post("/datasets/{dsid}/access_groups", response_model=DatasetACL)
-def create_dataset_acl(group_name: str, dsid: str, read: bool, write: bool, admin_acct: Annotated[str, Depends(is_admin)]):
+@router.post("/datasets/{dsid}/access_groups", response_model=ResourceACL)
+def create_dataset_acl(group_name: str, dsid: str, read: bool, write: bool, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    _, ag_list = auth_res
+    require_groups(ag_list)
     with Session(engine) as session:
         print(f"{dsid=}")
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
-
-        acl = sql_create_ds_acl(ag, ds, read, write, session)
-    return(acl)
+        if ag is None:
+            raise HTTPException(status_code=404, detail = "Access Group not found")
+        acl = sql_create_resource_acl(ag, dsid, read, write, session)
+    return acl
 
 
 @router.post("/datasets/{dsid}/samples/{sample_id}", response_model=DatasetSampleLinkResponse)
 def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, sample_id: str):
-    access_group_name, ag_ids = auth_res
-    ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids)).distinct()
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
     samp_cmd = select(Sample).where(Sample.unique_id == sample_id)
 
     with Session(engine) as session:
@@ -1101,14 +1190,15 @@ def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], d
     return info
 
 
-@router.get("/datasets/{dsid}/samples", response_model=List[Sample])
+@router.get("/datasets/{dsid}/samples", response_model=List[SampleRead])
 def read_samples_in_dataset(dsid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of samples associated with the dataset ID provided
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)).where(Dataset.unique_id == dsid).filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
+        ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:
@@ -1124,14 +1214,15 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_
     relationships) to the given dataset. Loads all authorized datasets in the
     project and returns the directed lineage subgraph (ancestors + descendants) of the target.
     '''
-    _, ag_ids = auth_res
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
 
         target = session.exec(
             select(Dataset)
-            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
             .filter(auth_filter)
             .where(Dataset.unique_id == dataset_id)
         ).first()
@@ -1142,7 +1233,7 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_
         ds_list = session.exec(
             select(Dataset)
             .options(joinedload(Dataset.parents))
-            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
             .filter(auth_filter)
             .where(Dataset.project_id == target.project_id)
         ).unique().all()
@@ -1175,14 +1266,15 @@ def dataset_graph_cte(dataset_id: str, auth_res: Annotated[tuple, Depends(author
     Returns a NetworkX node-link graph of all datasets connected (via parent/child
     relationships) to the given dataset, i.e. its full lineage subgraph.
     '''
-    _, ag_ids = auth_res
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
 
         target = session.exec(
             select(Dataset)
-            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
             .filter(auth_filter)
             .where(Dataset.unique_id == dataset_id)
         ).first()

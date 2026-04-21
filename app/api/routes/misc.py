@@ -1,4 +1,4 @@
-from typing import Annotated, List
+from typing import Annotated, List, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -8,9 +8,9 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import Dataset, DatasetACL, Keyword, NewScientificMetadata, Sample
-from app.models.resource import Resource
-from app.models.deletion import DeletionRequest
+from app.models.core_models import Dataset, ResourceACL, DeletionRequest, Keyword, NewScientificMetadata, Resource, Sample
+from app.models.datasets import DatasetRead, DatasetResponse
+from app.models.samples import SampleResponse
 from app.utils.auth_utils import authorize_user
 
 router = APIRouter(tags=["misc"])
@@ -76,7 +76,8 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
     Perform a ranked Full-Text Search (FTS) on scientific metadata using PostgreSQL's tsvector, 
     tsquery, and ts_rank_cd. Default limit is 50 results, max is 200.
     """
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     search_query = func.plainto_tsquery('english', q)
     metadata_vector = func.to_tsvector(
@@ -89,10 +90,10 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
     stmt = (
         select(NewScientificMetadata, rank_expr.label("rank"))
         .join(Dataset, NewScientificMetadata.dataset_id == Dataset.id)
-        .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+        .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
         .where(
             and_(
-                or_(DatasetACL.accessgroup_id.in_(ag_ids), Dataset.public == True),
+                or_(ResourceACL.accessgroup_id.in_(ag_ids), Dataset.public == True),
                 metadata_vector.op('@@')(search_query)
             )
         )
@@ -115,13 +116,14 @@ def get_object_type(auth_res: Annotated[tuple, Depends(authorize_user)], unique_
             return object_type
 
 
-@router.get("/resources/{resource_id}")
+@router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse], response_model_exclude_none=True)
 def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_id: str):
     """
     Fetch a dataset or sample by ID without knowing its type in advance.
     Resolves the type from idtype, then returns the full resource record.
     """
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         resource = session.exec(
@@ -141,20 +143,19 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
             ds = session.exec(
                 select(Dataset)
                 .options(selectinload(Dataset.resource))
-                .select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True))
+                .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
                 .where(Dataset.unique_id == resource_id)
-                .filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True))
+                .filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True))
                 .distinct()
             ).one_or_none()
             if ds is None:
                 raise HTTPException(status_code=404, detail="Dataset not found or access denied")
-            return {
+            return DatasetResponse.model_validate({
                 **ds.model_dump(),
-                "resource_type": "dataset",
                 "creation_time": ds.resource.creation_time if ds.resource else None,
                 "modification_time": ds.resource.modification_time if ds.resource else None,
                 "deletion_request": deletion_req_dict,
-            }
+            })
 
         elif resource.resource_type == "sample":
             samp = session.exec(
@@ -164,14 +165,13 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
             ).one_or_none()
             if samp is None:
                 raise HTTPException(status_code=404, detail="Sample not found")
-            return {
+            return SampleResponse.model_validate({
                 **samp.model_dump(),
-                "resource_type": "sample",
-                "datasets": samp.datasets,
+                "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
                 "creation_time": samp.resource.creation_time if samp.resource else None,
                 "modification_time": samp.resource.modification_time if samp.resource else None,
                 "deletion_request": deletion_req_dict,
-            }
+            })
 
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported resource type: {resource.resource_type}")

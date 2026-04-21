@@ -5,19 +5,18 @@ from networkx.readwrite import json_graph
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import exists, join, text
 from sqlalchemy.orm import joinedload, selectinload
-from sqlmodel import and_, or_, Session, select
+from sqlmodel import and_, Session, select
 
 from app.api.dependencies import get_engine
 from app.general_utils import get_tz_isoformat, is_orcid
 from app.models.core_models import (
-    AccessGroup, Dataset, DatasetACL, DatasetSampleLink,
-    Sample, SampleLink, User,
+    AccessGroup, Dataset, ResourceACL, DatasetSampleLink,
+    DeletionRequest, Resource, Sample, SampleLink, User,
 )
-from app.models.resource import Resource
-from app.models.deletion import DeletionRequest
-from app.models.response_schemas import SampleWithDatasetsResponse
-from app.utils.auth_utils import authorize_user, is_admin
-from app.utils.sql_utils import add_or_update, generate_kw_query
+from app.models.datasets import DatasetRead
+from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
+from app.utils.auth_utils import authorize_user, require_groups
+from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl
 
 router = APIRouter(tags=["samples"])
 engine = get_engine()
@@ -42,10 +41,9 @@ def link_parent_child_samples(parent_sample_id, child_sample_id, auth_res: Annot
 
 
 @router.delete("/samples/{parent_sample_id}/children/{child_sample_id}")
-def unlink_parent_child_samples(parent_sample_id: str, child_sample_id: str, admin_acct: Annotated[str, Depends(is_admin)]):
-    """
-    Remove the parent-child link between two samples. Admin access required.
-    """
+def unlink_parent_child_samples(parent_sample_id: str, child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    _, ag_list = auth_res
+    require_groups(ag_list)
     with Session(engine) as session:
         parent = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
         if not parent:
@@ -70,19 +68,18 @@ def unlink_parent_child_samples(parent_sample_id: str, child_sample_id: str, adm
         return {"message": f"Successfully unlinked {parent_sample_id} -> {child_sample_id}"}
 
 
-@router.patch('/samples/{sample_id}', response_model=Sample)
-def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id: str, updated_sample: Sample):
-    access_group_name, ag_ids = auth_res
-    cmd = select(Sample).where(Sample.unique_id == sample_id)
-    update_fields = updated_sample.model_dump(exclude_unset=True)
+@router.patch('/samples/{sample_id}', response_model=SampleRead)
+def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id: str, updated_sample: SampleUpdate):
+    '''
+    Partially update a sample record. Only provided fields are modified.
+    '''
     with Session(engine) as session:
-        sample = session.exec(cmd).one_or_none()
+        sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
         if not sample:
             raise HTTPException(status_code=404, detail='Sample not found')
 
-        for key, value in update_fields.items():
+        for key, value in updated_sample.model_dump(exclude_unset=True).items():
             setattr(sample, key, value)
-            print(key, value)
 
         ri = session.exec(select(Resource).where(Resource.mfid == sample_id)).one_or_none()
         if ri:
@@ -94,84 +91,77 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
         return sample
 
 
-@router.post("/samples", response_model=Sample)
-def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample):
-    """
-    Create a new sample in the database.
+@router.post("/samples", response_model=SampleRead)
+def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: SampleCreate):
+    '''
+    Create a new sample. If a sample with the same project_id and sample_name already
+    exists, the existing record is returned without modification.
+    '''
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
-    Args:
-        auth_res: Authorization result containing access group info
-        S: Sample object to be added
-
-    Returns:
-        Added sample object
-
-    Raises:
-        HTTPException: If required sample fields are missing
-    """
-    access_group_name, ag_ids = auth_res
-    
-    # Validate required fields
-    missing_fields = []
-    if not S.sample_name or not S.sample_name.strip():
-        missing_fields.append("sample_name")
-
-    if missing_fields:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Missing required sample information: {', '.join(missing_fields)}. \
-                     Please provide all required fields: sample_name."
-        )
+    if not S.sample_name.strip():
+        raise HTTPException(status_code=400, detail="sample_name must not be empty.")
 
     with Session(engine) as session:
-        print("starting sample addition")
-        where = or_(Sample.unique_id == S.unique_id,
-                and_(Sample.project_id == S.project_id,
-                     Sample.sample_name == S.sample_name))
-        statement = select(Sample).where(where)
-        sample = session.exec(statement).one_or_none()
+        # Dedup: return existing sample if (project_id, sample_name) already registered
+        existing = session.exec(
+            select(Sample).where(
+                and_(Sample.project_id == S.project_id, Sample.sample_name == S.sample_name)
+            )
+        ).one_or_none()
+        if existing:
+            return existing
 
-        print(f'{sample=}')
-        if sample:
-            return sample
-
-        sample = Sample(**S.model_dump(exclude_unset=True, exclude={"parents", "children"}))
-        print(f'{sample=}')
+        sample = Sample(**S.model_dump(exclude_unset=True))
         session.add(sample)
         session.commit()
         session.refresh(sample)
 
-        if sample.owner_user_id is None and sample.owner_orcid is None:
-            creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
-            if is_orcid(access_group_name):
-                sample.owner_orcid = access_group_name
-                creator_user_id = session.exec(select(User.id).where(User.orcid == sample.owner_orcid)).one_or_none()
-                sample.owner_user_id = creator_user_id
+        # Resolve owner from auth if not explicitly provided
+        if sample.owner_orcid is None and is_orcid(user_unique_id):
+            sample.owner_orcid = user_unique_id
+        if sample.owner_user_id is None and sample.owner_orcid:
+            sample.owner_user_id = session.exec(
+                select(User.id).where(User.unique_id == sample.owner_orcid)
+            ).one_or_none()
 
-        elif sample.owner_user_id is None:
-            creator_user_id = session.exec(select(User.id).where(User.orcid == sample.owner_orcid)).one_or_none()
-            sample.owner_user_id = creator_user_id
-
-        else:
-            pass
-
-        session.add(sample)
         now = get_tz_isoformat()
         ri = add_or_update(session,
-                            Resource,
-                            where=(Resource.mfid == sample.unique_id),
-                            mfid=sample.unique_id,
-                            resource_type="sample")
+                           Resource,
+                           where=(Resource.mfid == sample.unique_id),
+                           mfid=sample.unique_id,
+                           resource_type="sample")
         ri.creation_time = now
         ri.modification_time = now
-
         session.commit()
-        print('final commit')
+
+        print ('adding admin')
+        admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
+        sql_create_resource_acl(admin, sample.unique_id, read=True, write=True, session=session)
+
+        print('adding read only')
+        ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
+        sql_create_resource_acl(ro, sample.unique_id, read=True, write=False, session=session)
+
+        if sample.owner_orcid:
+            print('adding owner')
+            owner_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.owner_orcid)).one_or_none()
+            sql_create_resource_acl(owner_ag, sample.unique_id, read=True, write=True, session=session)
+
+        if sample.project_id:
+            print('adding project')
+            proj_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.project_id)).one_or_none()
+            sql_create_resource_acl(proj_ag, sample.unique_id, read=True, write=True, session=session)
+
+        session.add(sample)
+        session.commit()
         session.refresh(sample)
-        return(sample)
+        print(f'{sample=}')
+        return sample
 
 
-@router.get("/samples")
+@router.get("/samples", response_model=List[SampleResponse], response_model_exclude_none=True)
 def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                  modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
@@ -179,7 +169,8 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
     Returns a list of samples where the owner_orcid matches the orcid of the person who made the request.
     If an admin API key is used, returns all samples.
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     query_params = request.query_params
     print(query_params)
@@ -202,19 +193,12 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
             )
         )
 
-        # Admin API keys can see all samples
-        if access_group_name.startswith('admin'):
-            print('using admin account')
-            pass
-        elif is_orcid(access_group_name):
-            print(f'filtering on owner_orcid={access_group_name}')
-            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
-            associated_group_names = [ag.group_name for ag in associated_groups]
-            samp_cmd = samp_cmd.where(or_(Sample.owner_orcid == access_group_name,
-                                          Sample.project_id.in_(associated_group_names)))
-        else:
-            print(f'apikey does not have access to samples')
-            return []
+        acl_subquery = exists().where(
+            ResourceACL.mfid == Sample.unique_id,
+            ResourceACL.accessgroup_id.in_(ag_ids)
+        )
+        samp_cmd = samp_cmd.where(acl_subquery)
+
 
         # Filter on Resource timestamps
         if creation_time_gte:
@@ -235,27 +219,44 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
 
         samp_cmd = samp_cmd.options(selectinload(Sample.datasets), selectinload(Sample.resource))
         samp_list = session.exec(samp_cmd).all()
-        return [{**samp.model_dump(),
-                "datasets": samp.datasets,
+        return [
+            SampleResponse.model_validate({
+                **samp.model_dump(),
+                "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
                 "creation_time": samp.resource.creation_time if samp.resource else None,
-                "modification_time": samp.resource.modification_time if samp.resource else None}
-                for samp in samp_list]
+                "modification_time": samp.resource.modification_time if samp.resource else None,
+            })
+            for samp in samp_list
+        ]
 
 
-@router.get("/samples/{sample_id}")
+@router.get("/samples/{sample_id}", response_model=SampleResponse, response_model_exclude_none=True)
 def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns the sample for the provided ID
     '''
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         query = select(Sample).options(selectinload(Sample.datasets), selectinload(Sample.resource)).where(Sample.unique_id == sample_id)
         samp = session.exec(query).first()
         if samp is None:
             return None
-        return {**samp.model_dump(),
-                "datasets": samp.datasets,
-                "creation_time": samp.resource.creation_time if samp.resource else None,
-                "modification_time": samp.resource.modification_time if samp.resource else None}
+        acl_ok = session.exec(
+            select(ResourceACL)
+            .where(ResourceACL.mfid == sample_id)
+            .where(ResourceACL.accessgroup_id.in_(ag_ids))
+        ).first()
+        print(f'{acl_ok=}')
+        if acl_ok is None:
+            return None
+        print(f'{samp=}')
+        return SampleResponse.model_validate({
+            **samp.model_dump(),
+            "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
+            "creation_time": samp.resource.creation_time if samp.resource else None,
+            "modification_time": samp.resource.modification_time if samp.resource else None,
+        })
 
 
 @router.get("/samples/{sample_id}/datasets")
@@ -263,7 +264,8 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
     '''
     Returns a list of all datasets linked to a given sample
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop("keyword", None)
@@ -275,20 +277,20 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
         if sample is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
         print(f'{include_metadata=}')
         if include_metadata:
             query = (
                     select(Dataset)
                     .options(selectinload(Dataset.scientific_metadata))
-                    .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                    .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
                     .filter(auth_filter)
                 )
 
         else:
             query = (select(Dataset)
                         .select_from(
-                            join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                            join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
                         )
                         .filter(auth_filter)
                     )
@@ -324,12 +326,13 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
             return datasets
 
 
-@router.get("/samples/{child_sample_id}/parents", response_model=List[Sample])
+@router.get("/samples/{child_sample_id}/parents", response_model=List[SampleRead])
 def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of parent samples for a given child sample
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         child_sample = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).one_or_none()
 
@@ -350,12 +353,13 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends
         return parent_samples
 
 
-@router.get("/samples/{parent_sample_id}/children", response_model=List[Sample])
+@router.get("/samples/{parent_sample_id}/children", response_model=List[SampleRead])
 def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns a list of child samples for a given parent sample
     '''
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
 
@@ -382,7 +386,8 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
     relationships) to the given sample. Loads all samples in the project and
     returns the directed lineage subgraph (ancestors + descendants) of the target.
     '''
-    access_group_name, ag_ids = auth_res
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         target = session.exec(
@@ -392,14 +397,12 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
         if target is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        if access_group_name.startswith('admin'):
-            pass
-        elif is_orcid(access_group_name):
-            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
-            associated_group_names = [ag.group_name for ag in associated_groups]
-            if target.owner_orcid != access_group_name and target.project_id not in associated_group_names:
-                raise HTTPException(status_code=403, detail="Access denied")
-        else:
+        acl_ok = session.exec(
+            select(ResourceACL)
+            .where(ResourceACL.mfid == sample_id)
+            .where(ResourceACL.accessgroup_id.in_(ag_ids))
+        ).one_or_none()
+        if acl_ok is None:
             raise HTTPException(status_code=403, detail="Access denied")
 
         samp_list = session.exec(
@@ -436,7 +439,8 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authoriz
     Returns a NetworkX node-link graph of all samples connected (via parent/child
     relationships) to the given sample, i.e. its full lineage subgraph.
     '''
-    access_group_name, ag_ids = auth_res
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         target = session.exec(
@@ -446,15 +450,12 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authoriz
         if target is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        # Auth check: mirrors project_sample_graph logic
-        if access_group_name.startswith('admin'):
-            pass
-        elif is_orcid(access_group_name):
-            associated_groups = session.exec(select(AccessGroup).where(AccessGroup.id.in_(ag_ids))).all()
-            associated_group_names = [ag.group_name for ag in associated_groups]
-            if target.owner_orcid != access_group_name and target.project_id not in associated_group_names:
-                raise HTTPException(status_code=403, detail="Access denied")
-        else:
+        acl_ok = session.exec(
+            select(ResourceACL)
+            .where(ResourceACL.mfid == sample_id)
+            .where(ResourceACL.accessgroup_id.in_(ag_ids))
+        ).one_or_none()
+        if acl_ok is None:
             raise HTTPException(status_code=403, detail="Access denied")
 
         # Two recursive CTEs — one walking up (ancestors), one walking down

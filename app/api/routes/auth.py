@@ -106,7 +106,7 @@ def get_apikey(request: Request):
         return response
 
     user_info = decode_token(user_info_jwt)
-    print(f'{user_info=}')
+    print(f'Orcid User Profile: {user_info=}')
     orcid = user_info["orcid"]
     crucible_token = find_or_add_api_access(orcid, engine, regenerate=False)
 
@@ -119,15 +119,14 @@ def get_apikey(request: Request):
             group_name=orcid
         )
         # add the user
+        user_updates = {('unique_id' if key == 'orcid' else key): user_info[key] for key in ['orcid', 'given_name', 'family_name'] if user_info.get(key) is not None}
         add_or_update(
             session,
             User,
-            User.orcid == orcid,
-            orcid = user_info['orcid'],
-            first_name = user_info['given_name'],
-            last_name = user_info['family_name']
-            )
-  
+            User.unique_id == orcid,
+            **user_updates
+        )
+
         # add the user to their orcid access group  
         sql_add_user_to_access_group(orcid, orcid, session)
 
@@ -165,14 +164,14 @@ def regenerate_apikey(request: Request):
 @router.get("/account", response_model=AccountInfo)
 def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
     """Use API key to get basic info about your access in Crucible"""
-    access_group_name, ag_ids = auth_res
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
-        is_user = session.exec(select(User).where(User.orcid == access_group_name)).one_or_none()
-
-    user_info = is_user.model_dump() if is_user else {}
+        is_user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
+        user_info = is_user.model_dump(exclude={"projects", "accessgroups"}) if is_user else {}
 
     return AccountInfo(
-        access_group_name=access_group_name,
+        user_unique_id=user_unique_id,
         access_group_ids=ag_ids,
         user_info=user_info
     )

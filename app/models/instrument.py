@@ -1,22 +1,43 @@
 from typing import Optional
-from sqlmodel import Field, SQLModel
-from mfid import mfid
+from sqlmodel import SQLModel
 
 
-def get_mfid_value():
-    x = mfid()[0]
-    return(x)
-
-
-class Instrument(SQLModel, table = True):
-    id: int = Field(default=None, primary_key=True)
-    unique_id: Optional[str] = Field(default_factory=get_mfid_value)
-    other_id: Optional[str]
-    other_id_source: Optional[str]
+class InstrumentCreate(SQLModel):
+    '''Fields required to register a new instrument.'''
     instrument_name: str
-    manufacturer: Optional[str]
-    model: Optional[str]
     owner: str
     location: str
-    description: Optional[str]
-    instrument_type: Optional[str]
+    other_id: Optional[str] = None
+    other_id_source: Optional[str] = None
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    description: Optional[str] = None
+    instrument_type: Optional[str] = None
+
+
+class InstrumentUpdate(SQLModel):
+    '''Partial update schema for Instrument. Only provided fields are modified.'''
+    instrument_name: Optional[str] = None
+    owner: Optional[str] = None
+    location: Optional[str] = None
+    other_id: Optional[str] = None
+    other_id_source: Optional[str] = None
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    description: Optional[str] = None
+    instrument_type: Optional[str] = None
+
+
+class InstrumentRead(SQLModel):
+    '''Response model for Instrument. Includes server-generated fields.'''
+    # id: int
+    unique_id: Optional[str] = None
+    instrument_name: str
+    owner: str
+    location: str
+    other_id: Optional[str] = None
+    other_id_source: Optional[str] = None
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    description: Optional[str] = None
+    instrument_type: Optional[str] = None

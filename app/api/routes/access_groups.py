@@ -5,46 +5,33 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.models.core_models import AccessGroup
-from app.utils.auth_utils import is_admin
+from app.models.access_groups import AccessGroupCreate, AccessGroupRead
+from app.utils.auth_utils import authorize_user, require_groups
 
 router = APIRouter(tags=["access_groups"])
 engine = get_engine()
 
 
-@router.post("/access_groups", response_model=AccessGroup)
-def create_access_group(admin_acct: Annotated[str, Depends(is_admin)], ag: AccessGroup):
-    """
-    Create a new access group in the database.
-
-    Args:
-        admin_acct: Admin account identifier
-        ag: AccessGroup object to be added
-
-    Returns:
-        Added AccessGroup object
-
-    Raises:
-        HTTPException: If required access group fields are missing
-    """
-    # Validate required fields
-    missing_fields = []
-    if not ag.group_name or not ag.group_name.strip():
-        missing_fields.append("group_name")
-
-    if missing_fields:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Missing required access group information: {', '.join(missing_fields)}. Please provide all required fields: group_name."
-        )
+@router.post("/access_groups", response_model=AccessGroupRead)
+def create_access_group(auth_res: Annotated[tuple, Depends(authorize_user)], ag: AccessGroupCreate):
+    _, ag_list = auth_res
+    require_groups(ag_list)
+    if not ag.group_name.strip():
+        raise HTTPException(status_code=400, detail="group_name must not be empty.")
 
     with Session(engine) as session:
-        session.add(ag)
+        db_ag = AccessGroup(group_name=ag.group_name)
+        session.add(db_ag)
         session.commit()
-    return(ag)
+        session.refresh(db_ag)
+        return db_ag
 
 
-@router.get("/access_groups/{group_name}", response_model=Union[None, AccessGroup])
-def read_access_group(admin_acct: Annotated[str, Depends(is_admin)], group_name: str):
+@router.get("/access_groups/{group_name}", response_model=Union[None, AccessGroupRead])
+def read_access_group(auth_res: Annotated[tuple, Depends(authorize_user)], group_name: str):
+    _, ag_list = auth_res
+    require_groups(ag_list)
     with Session(engine) as session:
-        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
-        return(ag)
+        return session.exec(
+            select(AccessGroup).where(AccessGroup.group_name == group_name)
+        ).one_or_none()

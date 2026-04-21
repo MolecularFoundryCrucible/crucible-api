@@ -4,9 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import Instrument
+from app.general_utils import get_tz_isoformat
+from app.models.core_models import Instrument, Resource
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentUpdate
 from app.utils.auth_utils import authorize_user
+from app.utils.sql_utils import add_or_update
 
 router = APIRouter(tags=["instruments"])
 engine = get_engine()
@@ -27,7 +29,9 @@ def list_instruments(auth_res: Annotated[tuple, Depends(authorize_user)], reques
             statement = statement.where(getattr(Instrument, k) == v.lower().strip())
 
     with Session(engine) as session:
-        return session.exec(statement).all()
+        instruments = session.exec(statement).all()
+        print(instruments)
+        return instruments
 
 
 @router.get("/instruments/{instrument_unique_id}", response_model=Union[None, InstrumentRead])
@@ -50,8 +54,20 @@ def create_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instr
         db_instrument = Instrument(**instrument.model_dump())
         db_instrument.instrument_name = db_instrument.instrument_name.lower()
         session.add(db_instrument)
+        # session.commit()
+        # session.refresh(db_instrument)
+        # print('refreshed the instrument')
+        now = get_tz_isoformat()
+        ri = add_or_update(session, Resource,
+                           where=(Resource.mfid == db_instrument.unique_id),
+                           mfid=db_instrument.unique_id,
+                           resource_type="instrument")
+        ri.creation_time = now
+        ri.modification_time = now
         session.commit()
         session.refresh(db_instrument)
+        print('refreshed the instrument')
+        print(f'{db_instrument=}')
         return db_instrument
 
 

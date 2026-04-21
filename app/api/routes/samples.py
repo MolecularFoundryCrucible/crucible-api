@@ -5,18 +5,18 @@ from networkx.readwrite import json_graph
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import exists, join, text
 from sqlalchemy.orm import joinedload, selectinload
-from sqlmodel import and_, or_, Session, select
+from sqlmodel import and_, Session, select
 
 from app.api.dependencies import get_engine
 from app.general_utils import get_tz_isoformat, is_orcid
 from app.models.core_models import (
-    AccessGroup, Dataset, DatasetACL, DatasetSampleLink,
+    AccessGroup, Dataset, ResourceACL, DatasetSampleLink,
     DeletionRequest, Resource, Sample, SampleLink, User,
 )
 from app.models.datasets import DatasetRead
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups
-from app.utils.sql_utils import add_or_update, generate_kw_query
+from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl
 
 router = APIRouter(tags=["samples"])
 engine = get_engine()
@@ -134,10 +134,30 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                            resource_type="sample")
         ri.creation_time = now
         ri.modification_time = now
+        session.commit()
+
+        print ('adding admin')
+        admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
+        sql_create_resource_acl(admin, sample.unique_id, read=True, write=True, session=session)
+
+        print('adding read only')
+        ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
+        sql_create_resource_acl(ro, sample.unique_id, read=True, write=False, session=session)
+
+        if sample.owner_orcid:
+            print('adding owner')
+            owner_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.owner_orcid)).one_or_none()
+            sql_create_resource_acl(owner_ag, sample.unique_id, read=True, write=True, session=session)
+
+        if sample.project_id:
+            print('adding project')
+            proj_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.project_id)).one_or_none()
+            sql_create_resource_acl(proj_ag, sample.unique_id, read=True, write=True, session=session)
 
         session.add(sample)
         session.commit()
         session.refresh(sample)
+        print(f'{sample=}')
         return sample
 
 
@@ -173,12 +193,11 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
             )
         )
 
-        # Users with admin privileges can see all samples, otherwise filter on owner ID + project. **TODO: need sample ACL like datasets
-        associated_group_names = [ag.group_name for ag in ag_list]
-        if 'admin' not in associated_group_names:
-            print(f'filtering on user_unique_id={user_unique_id}')
-            samp_cmd = samp_cmd.where(or_(Sample.owner_orcid == user_unique_id,
-                                          Sample.project_id.in_(associated_group_names)))
+        acl_subquery = exists().where(
+            ResourceACL.mfid == Sample.unique_id,
+            ResourceACL.accessgroup_id.in_(ag_ids)
+        )
+        samp_cmd = samp_cmd.where(acl_subquery)
 
 
         # Filter on Resource timestamps
@@ -216,11 +235,22 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
     '''
     Returns the sample for the provided ID
     '''
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         query = select(Sample).options(selectinload(Sample.datasets), selectinload(Sample.resource)).where(Sample.unique_id == sample_id)
         samp = session.exec(query).first()
         if samp is None:
             return None
+        acl_ok = session.exec(
+            select(ResourceACL)
+            .where(ResourceACL.mfid == sample_id)
+            .where(ResourceACL.accessgroup_id.in_(ag_ids))
+        ).first()
+        print(f'{acl_ok=}')
+        if acl_ok is None:
+            return None
+        print(f'{samp=}')
         return SampleResponse.model_validate({
             **samp.model_dump(),
             "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
@@ -247,20 +277,20 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
         if sample is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
         print(f'{include_metadata=}')
         if include_metadata:
             query = (
                     select(Dataset)
                     .options(selectinload(Dataset.scientific_metadata))
-                    .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                    .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
                     .filter(auth_filter)
                 )
 
         else:
             query = (select(Dataset)
                         .select_from(
-                            join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                            join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
                         )
                         .filter(auth_filter)
                     )
@@ -357,6 +387,7 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
     returns the directed lineage subgraph (ancestors + descendants) of the target.
     '''
     _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         target = session.exec(
@@ -366,8 +397,13 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
         if target is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        allowed_groups = {'admin', target.owner_orcid, target.project_id}
-        require_groups(ag_list, allowed_groups)
+        acl_ok = session.exec(
+            select(ResourceACL)
+            .where(ResourceACL.mfid == sample_id)
+            .where(ResourceACL.accessgroup_id.in_(ag_ids))
+        ).one_or_none()
+        if acl_ok is None:
+            raise HTTPException(status_code=403, detail="Access denied")
 
         samp_list = session.exec(
             select(Sample)
@@ -404,7 +440,8 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authoriz
     relationships) to the given sample, i.e. its full lineage subgraph.
     '''
     _, ag_list = auth_res
-    
+    ag_ids = [ag.id for ag in ag_list]
+
     with Session(engine) as session:
         target = session.exec(
             select(Sample).where(Sample.unique_id == sample_id)
@@ -413,9 +450,13 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authoriz
         if target is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        # Auth check: mirrors project_sample_graph logic
-        allowed_groups = {'admin', target.owner_orcid, target.project_id}
-        require_groups(ag_list, allowed_groups)
+        acl_ok = session.exec(
+            select(ResourceACL)
+            .where(ResourceACL.mfid == sample_id)
+            .where(ResourceACL.accessgroup_id.in_(ag_ids))
+        ).one_or_none()
+        if acl_ok is None:
+            raise HTTPException(status_code=403, detail="Access denied")
 
         # Two recursive CTEs — one walking up (ancestors), one walking down
         # (descendants). PostgreSQL only allows a single UNION between the

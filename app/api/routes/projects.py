@@ -11,7 +11,7 @@ from app.api.dependencies import get_engine
 from app.general_utils import is_orcid
 from app.models.core_models import (
     AccessGroup, Project, Sample, User, UserProjectLink, UserAccessGroupLink,
-    DatasetACL, Dataset, DatasetSampleLink
+    ResourceACL, Dataset, DatasetSampleLink
 )
 from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.sql_utils import add_or_update
@@ -87,13 +87,13 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)]):
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
-    with Session(engine) as session:
-        if user_unique_id.startswith('admin'):
-            props = session.exec(select(Project)).all()
-        elif is_orcid(user_unique_id):
+    with Session(engine) as session: 
+        if is_orcid(user_unique_id):
             props = sql_get_projects_for_user(user_unique_id, session) or []
         else:
-            raise HTTPException(status_code=403, detail="Not authorized to view projects")
+            print(ag_list)
+            require_groups(ag_list)
+            props = session.exec(select(Project)).all()
 
         orcids = [p.project_lead_orcid for p in props if p.project_lead_orcid]
         leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}
@@ -182,8 +182,7 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(autho
     Returns a list of users associated with the project ID.
     Accessible by admins and members of the project.
     '''
-    user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
+    _, ag_list = auth_res
 
     require_groups(ag_list, {'admin', proj_id})
 
@@ -197,7 +196,7 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(autho
 
 @router.post("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
 def add_users_to_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     require_groups(ag_list, {'admin', proj_id})
     
     with Session(engine) as session:
@@ -231,7 +230,7 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
     Remove a user from a project and its associated access group.
     Only admins or the project lead can remove users.
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     require_groups(ag_list, {'admin', proj_id})
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
@@ -272,7 +271,7 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
 @router.get("/projects/{project_id}/sample_graph")
 def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
 
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     require_groups(ag_list, {'admin', project_id})
 
     with Session(engine) as session:
@@ -297,16 +296,16 @@ def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(aut
 @router.get("/projects/{project_id}/dataset_graph")
 def project_dataset_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
 
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
 
         ds_cmd = (
             select(Dataset)
             .options(joinedload(Dataset.parents))
-            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
             .filter(auth_filter)
             .where(Dataset.project_id == project_id)
         )
@@ -333,7 +332,7 @@ def project_entity_graph(project_id: str, auth_res: Annotated[tuple, Depends(aut
     project, connected via sample lineage, dataset lineage, and sample-dataset
     associations. Nodes carry entity_type ('sample' or 'dataset') and name.
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     require_groups(ag_list, {'admin', project_id})
 
@@ -343,11 +342,11 @@ def project_entity_graph(project_id: str, auth_res: Annotated[tuple, Depends(aut
         samp_list = session.exec(samp_cmd).unique().all()
 
         # Load all authorized datasets in the project with parent relationships
-        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
         ds_list = session.exec(
             select(Dataset)
             .options(joinedload(Dataset.parents))
-            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
             .filter(auth_filter)
             .where(Dataset.project_id == project_id)
         ).unique().all()

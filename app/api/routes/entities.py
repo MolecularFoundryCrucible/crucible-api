@@ -8,12 +8,11 @@ from sqlalchemy.orm import joinedload
 from sqlmodel import or_, Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import is_orcid
 from app.models.core_models import (
-    AccessGroup, Dataset, DatasetACL, DatasetLink, DatasetSampleLink,
+    AccessGroup, Dataset, ResourceACL, DatasetLink, DatasetSampleLink,
     Sample, SampleLink,
 )
-from app.utils.auth_utils import authorize_user, require_groups
+from app.utils.auth_utils import authorize_user
 
 router = APIRouter(tags=["entities"])
 engine = get_engine()
@@ -41,14 +40,19 @@ def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_us
         ).one_or_none()
 
         if sample_target is not None:
-            allowed_groups = {'admin', sample_target.owner_orcid, sample_target.project_id}
-            require_groups(ag_list, allowed_groups)
+            acl_ok = session.exec(
+                select(ResourceACL)
+                .where(ResourceACL.mfid == entity_id)
+                .where(ResourceACL.accessgroup_id.in_(ag_ids))
+            ).one_or_none()
+            if acl_ok is None:
+                raise HTTPException(status_code=403, detail="Access denied")
             project_id = sample_target.project_id
         else:
-            auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+            auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
             dataset_target = session.exec(
                 select(Dataset)
-                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
                 .filter(auth_filter)
                 .where(Dataset.unique_id == entity_id)
             ).first()
@@ -64,11 +68,11 @@ def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_us
         ).unique().all()
 
         # Load all authorized datasets in the project with parent relationships
-        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
         ds_list = session.exec(
             select(Dataset)
             .options(joinedload(Dataset.parents))
-            .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
             .filter(auth_filter)
             .where(Dataset.project_id == project_id)
         ).unique().all()
@@ -170,13 +174,18 @@ def entity_graph_bfs(entity_id: str, auth_res: Annotated[tuple, Depends(authoriz
         ).one_or_none()
 
         if sample_target is not None:
-            allowed_groups = {'admin', sample_target.owner_orcid, sample_target.project_id}
-            require_groups(ag_list, allowed_groups)
+            acl_ok = session.exec(
+                select(ResourceACL)
+                .where(ResourceACL.mfid == entity_id)
+                .where(ResourceACL.accessgroup_id.in_(ag_ids))
+            ).one_or_none()
+            if acl_ok is None:
+                raise HTTPException(status_code=403, detail="Access denied")
         else:
-            auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+            auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
             dataset_target = session.exec(
                 select(Dataset)
-                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
                 .filter(auth_filter)
                 .where(Dataset.unique_id == entity_id)
             ).first()
@@ -648,15 +657,20 @@ def entity_graph_cte(
         ).one_or_none()
 
         if sample_target is not None:
-            allowed_groups = {'admin', sample_target.owner_orcid, sample_target.project_id}
-            require_groups(ag_list, allowed_groups)
+            acl_ok = session.exec(
+                select(ResourceACL)
+                .where(ResourceACL.mfid == entity_id)
+                .where(ResourceACL.accessgroup_id.in_(ag_ids))
+            ).one_or_none()
+            if acl_ok is None:
+                raise HTTPException(status_code=403, detail="Access denied")
             seed_id = sample_target.id
             sql = _SAMPLE_SEED_GRAPH_SQL if recursive else _SAMPLE_SEED_1HOP_SQL
         else:
-            auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+            auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
             dataset_target = session.exec(
                 select(Dataset)
-                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
                 .filter(auth_filter)
                 .where(Dataset.unique_id == entity_id)
             ).first()
@@ -691,11 +705,11 @@ def project_graph(
         sample_ids = set(
             session.exec(select(Sample.id).where(Sample.project_id == project_id)).all()
         )
-        auth_filter = (DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
         dataset_ids = set(
             session.exec(
                 select(Dataset.id)
-                .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+                .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
                 .filter(auth_filter)
                 .where(Dataset.project_id == project_id)
             ).unique().all()

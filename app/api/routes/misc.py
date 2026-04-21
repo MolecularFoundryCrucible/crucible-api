@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import Dataset, DatasetACL, DeletionRequest, Keyword, NewScientificMetadata, Resource, Sample
+from app.models.core_models import Dataset, ResourceACL, DeletionRequest, Keyword, NewScientificMetadata, Resource, Sample
 from app.models.datasets import DatasetRead, DatasetResponse
 from app.models.samples import SampleResponse
 from app.utils.auth_utils import authorize_user
@@ -90,10 +90,10 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
     stmt = (
         select(NewScientificMetadata, rank_expr.label("rank"))
         .join(Dataset, NewScientificMetadata.dataset_id == Dataset.id)
-        .join(DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True)
+        .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
         .where(
             and_(
-                or_(DatasetACL.accessgroup_id.in_(ag_ids), Dataset.public == True),
+                or_(ResourceACL.accessgroup_id.in_(ag_ids), Dataset.public == True),
                 metadata_vector.op('@@')(search_query)
             )
         )
@@ -143,9 +143,9 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
             ds = session.exec(
                 select(Dataset)
                 .options(selectinload(Dataset.resource))
-                .select_from(join(Dataset, DatasetACL, DatasetACL.dataset_id == Dataset.id, isouter=True))
+                .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
                 .where(Dataset.unique_id == resource_id)
-                .filter((DatasetACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True))
+                .filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True))
                 .distinct()
             ).one_or_none()
             if ds is None:

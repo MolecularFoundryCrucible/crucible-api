@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.api.dependencies import get_engine
 from app.general_utils import is_orcid
 from app.models.core_models import (
-    AccessGroup, Dataset, DatasetACL, Project, User,
+    AccessGroup, Dataset, ResourceACL, Project, User,
     UserAccessGroupLink, UserProjectLink,
 )
 from app.utils.auth_utils import authorize_user, require_groups
@@ -153,7 +153,11 @@ def read_user_datasets(orcid: str, auth_res: Annotated[tuple, Depends(authorize_
 
         ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.unique_id == orcid)).all()
         ag_ids = [x.accessgroup_id for x in ag]
-        ds_list = session.exec(select(Dataset).select_from(join(DatasetACL, Dataset, DatasetACL.dataset_id == Dataset.id)).where(DatasetACL.accessgroup_id.in_(ag_ids))).all()
+        ds_list = session.exec(
+            select(Dataset)
+            .select_from(join(ResourceACL, Dataset, ResourceACL.mfid == Dataset.unique_id))
+            .where(ResourceACL.accessgroup_id.in_(ag_ids))
+        ).all()
 
         return [ds.unique_id for ds in ds_list]
 
@@ -168,14 +172,19 @@ def read_user_access_to_dataset(dsid: str, orcid: str, auth_res: Annotated[tuple
     with Session(engine) as session:
         ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.unique_id == orcid)).all()
         ag_ids = [x.accessgroup_id for x in ag]
-        ds_acl = session.exec(select(DatasetACL).select_from(join(DatasetACL, Dataset, DatasetACL.dataset_id == Dataset.id)).where(Dataset.unique_id == dsid).filter(DatasetACL.accessgroup_id.in_(ag_ids))).all()
+        ds_acl = session.exec(
+            select(ResourceACL)
+            .join(Dataset, Dataset.unique_id == ResourceACL.mfid)
+            .where(Dataset.unique_id == dsid)
+            .filter(ResourceACL.accessgroup_id.in_(ag_ids))
+        ).all()
         perms = {"read": False, "write": False}
         for acc in ds_acl:
             if acc.read is True:
                 perms['read'] = True
             if acc.write is True:
                 perms['write'] = True
-        return(perms)
+        return perms
 
 
 @router.post("/users/{orcid}/access_groups/{group_name}", response_model=AccessGroupRead)

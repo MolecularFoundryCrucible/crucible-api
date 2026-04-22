@@ -75,6 +75,24 @@ def delete_link(table, dataset_id, session):
         session.delete(rec)
 
 
+def sql_create_resource_acl(ag, mfid, read, write, session):
+    from app.models.core_models import ResourceACL
+    from sqlmodel import select
+    if ag is None:
+        return None
+    acl = session.exec(
+        select(ResourceACL)
+        .where(ResourceACL.accessgroup_id == ag.id)
+        .where(ResourceACL.mfid == mfid)
+    ).one_or_none()
+    if not acl:
+        acl = ResourceACL(accessgroup_id=ag.id, mfid=mfid, read=read, write=write)
+        session.add(acl)
+        session.commit()
+        session.refresh(acl)
+    return acl
+
+
 def generate_kw_query(session, base_query, keyword_filter):
     from app.models.core_models import Dataset, DatasetKeywordLink, Keyword
 

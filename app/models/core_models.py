@@ -140,7 +140,6 @@ class Dataset(SQLModel, table=True):
     thumbnails: List[Thumbnail] = Relationship(back_populates = "dataset")
     associated_files: List[AssociatedFile] = Relationship(back_populates = "dataset")
     resource: Optional["Resource"] = Relationship(sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Dataset.unique_id", "lazy": "noload",})
-    acl: List["DatasetACL"] = Relationship(back_populates="dataset")
     parents: List["Dataset"] = Relationship(
         back_populates="children",
         link_model=DatasetLink,
@@ -161,17 +160,14 @@ class Dataset(SQLModel, table=True):
     model_config = ConfigDict(arbitrary_types_allowed=True, from_attributes=True, populate_by_name=True) #type: ignore
 
 
-class DatasetACL(SQLModel, table=True):
+class ResourceACL(SQLModel, table=True):
+    mfid: str = Field(foreign_key="idtype.mfid", primary_key=True, index=True)
     accessgroup_id: Optional[int] = Field(
         default=None, foreign_key="accessgroup.id", primary_key=True
     )
-    dataset_id: Optional[int] = Field(
-        default=None, foreign_key="dataset.id", primary_key=True
-    )
-    read:  bool = Field(index=True)
+    read: bool = Field(index=True)
     write: bool = Field(index=True)
 
-    dataset: Dataset = Relationship(back_populates="acl")
     accessgroup: "AccessGroup" = Relationship(back_populates="acl")
 
 
@@ -188,8 +184,7 @@ class AccessGroup(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     group_name: str = Field(index=True, unique=True)
     users: List["User"] = Relationship(back_populates="accessgroups", link_model=UserAccessGroupLink)
-    #datasets: List[Dataset] = Relationship(back_populates="accessgroups", link_model=DatasetAccessGroupLink)
-    acl: List[DatasetACL] = Relationship(back_populates="accessgroup")
+    acl: List["ResourceACL"] = Relationship(back_populates="accessgroup")
 
 
 class UserProjectLink(SQLModel, table=True):

@@ -241,15 +241,14 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
         query = select(Sample).options(selectinload(Sample.datasets), selectinload(Sample.resource)).where(Sample.unique_id == sample_id)
         samp = session.exec(query).first()
         if samp is None:
-            return None
+            raise HTTPException(status_code=404, detail="Sample not found")
         acl_ok = session.exec(
             select(ResourceACL)
             .where(ResourceACL.mfid == sample_id)
             .where(ResourceACL.accessgroup_id.in_(ag_ids))
         ).first()
-        print(f'{acl_ok=}')
         if acl_ok is None:
-            return None
+            raise HTTPException(status_code=403, detail="Access denied")
         print(f'{samp=}')
         return SampleResponse.model_validate({
             **samp.model_dump(),

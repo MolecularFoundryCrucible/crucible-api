@@ -18,6 +18,7 @@ class DatasetCreate(SQLModel):
     data_format: Optional[str] = None
     measurement: Optional[str] = None
     session_name: Optional[str] = None
+    timestamp: Optional[str] = None
     # json_link: Optional[str] = None
     public: bool = False
     # owner_user_id: Optional[int] = None   # falls back to the authenticated user if not provided
@@ -35,6 +36,7 @@ class DatasetUpdate(SQLModel):
     data_format: Optional[str] = None
     measurement: Optional[str] = None
     session_name: Optional[str] = None
+    timestamp: Optional[str] = None
     # json_link: Optional[str] = None
     public: Optional[bool] = None
     # owner_user_id: Optional[int] = None

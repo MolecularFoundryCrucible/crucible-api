@@ -41,3 +41,10 @@ class InstrumentRead(SQLModel):
     model: Optional[str] = None
     description: Optional[str] = None
     instrument_type: Optional[str] = None
+
+
+class InstrumentResponse(InstrumentRead):
+    '''InstrumentRead extended with Resource timestamps.'''
+    resource_type: Optional[str] = "instrument"
+    creation_time: Optional[str] = None
+    modification_time: Optional[str] = None

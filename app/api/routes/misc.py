@@ -8,8 +8,9 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import Dataset, ResourceACL, DeletionRequest, Keyword, NewScientificMetadata, Resource, Sample
+from app.models.core_models import Dataset, Instrument, ResourceACL, DeletionRequest, Keyword, NewScientificMetadata, Resource, Sample
 from app.models.datasets import DatasetRead, DatasetResponse
+from app.models.instrument import InstrumentResponse
 from app.models.samples import SampleResponse
 from app.utils.auth_utils import authorize_user
 
@@ -116,7 +117,7 @@ def get_object_type(auth_res: Annotated[tuple, Depends(authorize_user)], unique_
             return object_type
 
 
-@router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse], response_model_exclude_none=True)
+@router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse, InstrumentResponse], response_model_exclude_none=True)
 def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_id: str):
     """
     Fetch a dataset or sample by ID without knowing its type in advance.
@@ -173,5 +174,17 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
                 "deletion_request": deletion_req_dict,
             })
 
+        elif resource.resource_type == "instrument":
+            inst = session.exec(
+                select(Instrument).where(Instrument.unique_id == resource_id)
+            ).one_or_none()
+            if inst is None:
+                raise HTTPException(status_code=404, detail="Instrument not found")
+            return InstrumentResponse.model_validate({
+                **inst.model_dump(),
+                "creation_time": resource.creation_time,
+                "modification_time": resource.modification_time,
+            })
+
         else:
-            raise HTTPException(status_code=400, detail=f"Unsupported resource type: {resource.resource_type}")
+            raise HTTPException(status_code=404, detail=f"Resource not found")

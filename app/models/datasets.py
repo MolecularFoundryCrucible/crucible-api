@@ -17,6 +17,7 @@ class DatasetCreate(SQLModel):
     instrument_name: Optional[str] = None
     data_format: Optional[str] = None
     measurement: Optional[str] = None
+    data_type: Optional[str] = None
     session_name: Optional[str] = None
     # json_link: Optional[str] = None
     public: bool = False
@@ -34,6 +35,7 @@ class DatasetUpdate(SQLModel):
     instrument_name: Optional[str] = None
     data_format: Optional[str] = None
     measurement: Optional[str] = None
+    data_type: Optional[str] = None
     session_name: Optional[str] = None
     # json_link: Optional[str] = None
     public: Optional[bool] = None
@@ -58,6 +60,7 @@ class DatasetRead(SQLModel):
     size: Optional[int] = None
     data_format: Optional[str] = None
     measurement: Optional[str] = None
+    data_type: Optional[str] = None
     session_name: Optional[str] = None
     # json_link: Optional[str] = None
     sha256_hash_file_to_upload: Optional[str] = None

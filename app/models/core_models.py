@@ -127,8 +127,8 @@ class Dataset(SQLModel, table=True):
     size: Optional[int] = Field(sa_column=Column(BigInteger())) 
     data_format: Optional[str]
     measurement: Optional[str]
+    data_type: Optional[str]
     session_name: Optional[str]
-    json_link: Optional[str]
     sha256_hash_file_to_upload: Optional[str]
     scientific_metadata: Optional["ScientificMetadata"] = Relationship(
         back_populates = 'dataset')
@@ -305,15 +305,6 @@ class Instrument(SQLModel, table=True):
 
 
 # --- Task tracking ---
-
-class SciCatUpdateRequest(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    dataset_id: str = Field(default=None, index=True)
-    time_created: Optional[str] = None
-    time_completed: Optional[str] = None
-    status: Optional[str] = None
-
-
 class IngestionRequest(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     dataset_id: str = Field(default=None, index=True)

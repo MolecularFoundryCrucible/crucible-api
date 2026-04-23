@@ -7,6 +7,7 @@ import pytz
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
+from requests import session
 from sqlalchemy import exists, func, join, text
 from sqlalchemy.orm import joinedload, selectinload, attributes
 from sqlmodel import and_, or_, Session, select
@@ -18,6 +19,7 @@ from app.models.core_models import (
     AssociatedFile,
     Dataset,
     DatasetACL,
+    ResourceACL,
     DatasetKeywordLink,
     DatasetLink,
     DatasetSampleLink,
@@ -35,7 +37,7 @@ from app.models.response_schemas import DatasetSampleLinkResponse
 from app.models.tasks import IngestionRequest
 from app.utils.auth_utils import authorize_user, is_admin
 from app.utils.rmq_utils import send_pika_message
-from app.utils.sql_utils import add_or_update, only_update, generate_kw_query
+from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
@@ -110,9 +112,11 @@ async def create_dataset(
         # set appropriate access controls
         admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
         admin_acl = sql_create_ds_acl(admin, ds, read = True, write = True, session=session)
-
+        res_alc = sql_create_resource_acl(admin, ds.unique_id, read=True, write=True, session=session)
+        
         ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
         ro_acl = sql_create_ds_acl(ro, ds, read = True, write = False, session=session)
+        res_alc = sql_create_resource_acl(ro, ds.unique_id, read=True, write=False, session=session)
         print(f"add ro access to {ds.unique_id}")
 
         if dataset.owner_user_id is not None:
@@ -120,6 +124,7 @@ async def create_dataset(
             user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id)).one_or_none()
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
             user_acl = sql_create_ds_acl(user_ag, ds, read = True, write = True, session=session)
+            res_alc = sql_create_resource_acl(user_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added owner orcid access to {ds.unique_id}')
 
         else:
@@ -128,6 +133,7 @@ async def create_dataset(
             print(f'{access_group_name=} for {ds.unique_id}')
             print(f'{creator=} for {ds.unique_id}')
             creator_acl = sql_create_ds_acl(creator, ds, read = True, write = True, session=session)
+            res_alc = sql_create_resource_acl(creator, ds.unique_id, read=True, write=True, session=session)
             print(f'add creator access to {ds.unique_id}')
 
             if is_orcid(access_group_name):
@@ -139,6 +145,7 @@ async def create_dataset(
             print(f'adding proposal access to {ds.unique_id}')
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset.project_id)).one_or_none()
             prop_acl = sql_create_ds_acl(prop_ag, ds, read = True, write = True, session=session)
+            res_alc = sql_create_resource_acl(prop_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added proposal access to {ds.unique_id}')
 
         if dataset.instrument_id is not None:
@@ -154,6 +161,7 @@ async def create_dataset(
                                              read = True,
                                              write = True,
                                              session=session)
+                res_alc = sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True, session=session)
             else:
                 inst_ag = add_or_update(session,
                                         AccessGroup,
@@ -165,6 +173,7 @@ async def create_dataset(
                                              read = True,
                                              write = True,
                                              session=session)
+                res_alc = sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added instrument group access to {ds.unique_id}')
 
         try:
@@ -230,18 +239,21 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
             user_orcid = session.exec(select(User.orcid).where(User.id == upds.owner_user_id)).one_or_none()
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
             user_acl = sql_create_ds_acl(user_ag, upds, read = True, write = True, session=session)
+            res_alc = sql_create_resource_acl(user_ag, dsid, read=True, write=True, session=session)
             print('add owner orcid access')
 
         if upds.project_id is not None:
             prop_name = session.exec(select(Project.project_id).where(Project.project_id == upds.project_id)).one_or_none()
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
             prop_acl = sql_create_ds_acl(prop_ag, upds, read = True, write = True, session=session)
+            res_alc = sql_create_resource_acl(prop_ag, dsid, read=True, write=True, session=session)
             print('add proposal access')
 
         if upds.instrument_id is not None:
             inst_name = session.exec(select(Instrument.instrument_name).where(Instrument.id == upds.instrument_id)).one_or_none()
             inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
             inst_acl = sql_create_ds_acl(inst_ag, upds, read = True, write = True, session=session)
+            res_alc = sql_create_resource_acl(inst_ag, dsid, read=True, write=True, session=session)
             print('add instrument group access')
 
         session.commit()
@@ -1069,6 +1081,7 @@ def create_dataset_acl(group_name: str, dsid: str, read: bool, write: bool, admi
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
 
         acl = sql_create_ds_acl(ag, ds, read, write, session)
+        res_acl = sql_create_resource_acl(ag, dsid, read, write, session)
     return(acl)
 
 

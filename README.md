@@ -15,7 +15,6 @@ https://crucible.lbl.gov/testapi-staging/docs
 - **Metadata Support**: Scientific metadata, thumbnails, and keywords
 - **Project Organization**: Group datasets and users into projects
 - **Access Control**: Fine-grained permissions with access groups
-- **External Integrations**: Google Drive transfers, SciCat synchronization
 - **Instrument Tracking**: Manage and track scientific instruments
 
 ## Quick Start
@@ -156,11 +155,6 @@ Authorization: Bearer your_api_key_here
 - `POST /users/{orcid}/access_groups/{group_name}` - Add user to group
 - `GET /users/{orcid}/access_groups` - Get user's access groups
 
-### External Integrations
-- `POST /datasets/{dsid}/google_drive_transfer` - Transfer to Google Drive
-- `POST /datasets/{dsid}/scicat_update` - Sync with SciCat
-- `GET /google_drives` - List Google Drive configurations
-- `POST /google_drives` - Add Google Drive configuration
 
 ### Instruments & Keywords
 - `GET /instruments` - List instruments

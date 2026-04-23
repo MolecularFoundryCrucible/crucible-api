@@ -341,7 +341,7 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str)
         ds_cmd = select(Dataset).options(selectinload(Dataset.resource)).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         if ds is None:
-            return None
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
         return DatasetResponse.model_validate({
             **ds.model_dump(),
             "creation_time": ds.resource.creation_time if ds.resource else None,

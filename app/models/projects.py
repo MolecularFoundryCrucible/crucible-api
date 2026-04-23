@@ -1,4 +1,6 @@
+import warnings
 from typing import Optional
+from pydantic import model_validator
 from sqlmodel import SQLModel
 from app.models.users import UserRead
 
@@ -18,9 +20,15 @@ class ProjectRead(SQLModel):
     # id: int
     project_id: str
     organization: str
-    project_lead_orcid: str
+    project_lead_orcid: Optional[str] = None
     status: Optional[str] = None
     title: Optional[str] = None
+
+    @model_validator(mode="after")
+    def warn_missing_lead(self):
+        if not self.project_lead_orcid:
+            warnings.warn(f"Project '{self.project_id}' has no project_lead_orcid", stacklevel=2)
+        return self
 
 
 class ProjectWithLead(ProjectRead):

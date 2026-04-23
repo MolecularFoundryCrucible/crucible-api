@@ -12,13 +12,14 @@ class DatasetCreate(SQLModel):
     dataset_name: Optional[str] = None
     file_to_upload: Optional[str] = None
     project_id: Optional[str] = None
-    instrument_id: Optional[int] = None
+    # instrument_id: Optional[int] = None
     source_folder: Optional[str] = None
     instrument_name: Optional[str] = None
     data_format: Optional[str] = None
     measurement: Optional[str] = None
     data_type: Optional[str] = None
     session_name: Optional[str] = None
+    timestamp: Optional[str] = None
     # json_link: Optional[str] = None
     public: bool = False
     # owner_user_id: Optional[int] = None   # falls back to the authenticated user if not provided
@@ -28,15 +29,16 @@ class DatasetCreate(SQLModel):
 class DatasetUpdate(SQLModel):
     '''Partial update schema for Dataset. Only provided fields are modified.'''
     dataset_name: Optional[str] = None
-    file_to_upload: Optional[str] = None
+    # file_to_upload: Optional[str] = None
     project_id: Optional[str] = None
-    instrument_id: Optional[int] = None
-    source_folder: Optional[str] = None
+    # instrument_id: Optional[int] = None
+    # source_folder: Optional[str] = None
     instrument_name: Optional[str] = None
     data_format: Optional[str] = None
     measurement: Optional[str] = None
     data_type: Optional[str] = None
     session_name: Optional[str] = None
+    timestamp: Optional[str] = None
     # json_link: Optional[str] = None
     public: Optional[bool] = None
     # owner_user_id: Optional[int] = None

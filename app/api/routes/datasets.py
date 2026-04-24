@@ -151,10 +151,9 @@ async def create_dataset(
             sql_create_resource_acl(prop_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added proposal access to {ds.unique_id}')
 
-        if dataset.instrument_id is not None:
+        if dataset.instrument_name is not None:
             print(f'adding instrument group access to {ds.unique_id}')
-            inst_query = select(Instrument.instrument_name).where(Instrument.id == dataset.instrument_id)
-            inst_name = session.exec(inst_query).one_or_none()
+            inst_name = dataset.instrument_name
 
             ag_query = select(AccessGroup).where(AccessGroup.group_name == inst_name.lower())
             inst_ag = session.exec(ag_query).one_or_none()
@@ -220,10 +219,10 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
             sql_create_resource_acl(prop_ag, upds.unique_id, read=True, write=True, session=session)
             print('add proposal access')
 
-        if upds.instrument_id is not None:
-            inst_name = session.exec(select(Instrument.instrument_name).where(Instrument.id == upds.instrument_id)).one_or_none()
-            inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
-            sql_create_resource_acl(inst_ag, upds.unique_id, read=True, write=True, session=session)
+        if upds.instrument_name is not None:
+            inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == upds.instrument_name.lower())).one_or_none()
+            if inst_ag is not None:
+                sql_create_resource_acl(inst_ag, upds.unique_id, read=True, write=True, session=session)
             print('add instrument group access')
 
         session.commit()

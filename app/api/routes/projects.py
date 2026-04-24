@@ -54,9 +54,14 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
 
     with Session(engine) as session:
         project_lead = sql_get_user_by_email(P.project_lead_email, session)
-        project_lead_orcid = project_lead.orcid if project_lead else None
+        if project_lead is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No user found with email '{P.project_lead_email}'. The project lead must have an existing account."
+            )
+
         project_details = dict(P)
-        project_details['project_lead_orcid'] = project_lead_orcid
+        project_details['project_lead_orcid'] = project_lead.orcid
 
         prop = add_or_update(session, Project, Project.id == P.id, **project_details)
         ag = add_or_update(session,

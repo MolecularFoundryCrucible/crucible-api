@@ -3,8 +3,6 @@ from typing import Annotated, List, Optional, Union
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, Depends, HTTPException, Request
-from numpy.random import sample
-from requests import session
 from sqlalchemy import exists, join, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
@@ -32,8 +30,8 @@ def add_sample_access_groups(sample, api_access_group_name, session):
     sql_create_resource_acl(admin, sample.unique_id, read=True, write=True, session=session)
     
     # add readonly
-    ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "ro")).one_or_none()
-    sql_create_resource_acl(ro, sample.unique_id, read=True, write=True, session=session)
+    ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
+    sql_create_resource_acl(ro, sample.unique_id, read=True, write=False, session=session)
 
     # add project
     if sample.project_id:
@@ -192,6 +190,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                             resource_type="sample")
         ri.creation_time = now
         ri.modification_time = now
+        session.flush()  # ensure idtype row exists before ResourceACL FK references it
 
         # add resource ACLs
         add_sample_access_groups(sample, access_group_name, session)

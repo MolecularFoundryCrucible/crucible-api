@@ -103,6 +103,4 @@ def sql_create_resource_acl(ag, mfid, read, write, session):
     if not acl:
         acl = ResourceACL(accessgroup_id=ag.id, mfid=mfid, read=read, write=write)
         session.add(acl)
-        session.commit()
-        session.refresh(acl)
     return acl

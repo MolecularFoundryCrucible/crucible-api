@@ -7,7 +7,6 @@ import pytz
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
-from requests import session
 from sqlalchemy import exists, func, join, text
 from sqlalchemy.orm import joinedload, selectinload, attributes
 from sqlmodel import and_, or_, Session, select
@@ -109,14 +108,31 @@ async def create_dataset(
         session.refresh(ds)
 
         print(f'added dataset {ds}')
+
+        # Create the Resource (idtype) entry first — ResourceACL has a FK to it
+        try:
+            print(f'Resource mfid being written: {ds.unique_id}')
+            now = get_tz_isoformat()
+            ri = add_or_update(session,
+                        Resource,
+                        where=(Resource.mfid == ds.unique_id),
+                        mfid = ds.unique_id,
+                        resource_type = "dataset")
+            ri.creation_time = now
+            ri.modification_time = now
+            session.commit()
+            print(f"#=========== ID TYPE ADDED for dataset {ds.unique_id=}")
+        except:
+            print(f"#=========== ID TYPE FAILED for dataset {ds.unique_id=}")
+
         # set appropriate access controls
         admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
         admin_acl = sql_create_ds_acl(admin, ds, read = True, write = True, session=session)
-        res_alc = sql_create_resource_acl(admin, ds.unique_id, read=True, write=True, session=session)
-        
+        res_acl = sql_create_resource_acl(admin, ds.unique_id, read=True, write=True, session=session)
+
         ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
         ro_acl = sql_create_ds_acl(ro, ds, read = True, write = False, session=session)
-        res_alc = sql_create_resource_acl(ro, ds.unique_id, read=True, write=False, session=session)
+        res_acl = sql_create_resource_acl(ro, ds.unique_id, read=True, write=False, session=session)
         print(f"add ro access to {ds.unique_id}")
 
         if dataset.owner_user_id is not None:
@@ -124,7 +140,7 @@ async def create_dataset(
             user_orcid = session.exec(select(User.orcid).where(User.id == dataset.owner_user_id)).one_or_none()
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
             user_acl = sql_create_ds_acl(user_ag, ds, read = True, write = True, session=session)
-            res_alc = sql_create_resource_acl(user_ag, ds.unique_id, read=True, write=True, session=session)
+            res_acl = sql_create_resource_acl(user_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added owner orcid access to {ds.unique_id}')
 
         else:
@@ -133,7 +149,7 @@ async def create_dataset(
             print(f'{access_group_name=} for {ds.unique_id}')
             print(f'{creator=} for {ds.unique_id}')
             creator_acl = sql_create_ds_acl(creator, ds, read = True, write = True, session=session)
-            res_alc = sql_create_resource_acl(creator, ds.unique_id, read=True, write=True, session=session)
+            res_acl = sql_create_resource_acl(creator, ds.unique_id, read=True, write=True, session=session)
             print(f'add creator access to {ds.unique_id}')
 
             if is_orcid(access_group_name):
@@ -145,7 +161,7 @@ async def create_dataset(
             print(f'adding proposal access to {ds.unique_id}')
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset.project_id)).one_or_none()
             prop_acl = sql_create_ds_acl(prop_ag, ds, read = True, write = True, session=session)
-            res_alc = sql_create_resource_acl(prop_ag, ds.unique_id, read=True, write=True, session=session)
+            res_acl = sql_create_resource_acl(prop_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added proposal access to {ds.unique_id}')
 
         if dataset.instrument_id is not None:
@@ -161,7 +177,7 @@ async def create_dataset(
                                              read = True,
                                              write = True,
                                              session=session)
-                res_alc = sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True, session=session)
+                res_acl = sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True, session=session)
             else:
                 inst_ag = add_or_update(session,
                                         AccessGroup,
@@ -173,28 +189,11 @@ async def create_dataset(
                                              read = True,
                                              write = True,
                                              session=session)
-                res_alc = sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True, session=session)
+                res_acl = sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added instrument group access to {ds.unique_id}')
 
-        try:
-            print(f'Resource mfid being written: {ds.unique_id}')
-            now = get_tz_isoformat()
-            ri = add_or_update(session,
-                        Resource,
-                        where=(Resource.mfid == ds.unique_id),
-                        mfid = ds.unique_id,
-                        resource_type = "dataset")
-            ri.creation_time = now
-            ri.modification_time = now
-
-            print('added the Resource entry')
-            session.commit()
-            print('committed')
-            session.refresh(ds)
-            print(f"#=========== ID TYPE ADDED for dataset {ds.unique_id=}")
-
-        except:
-            print(f"#=========== ID TYPE FAILED for dataset {ds.unique_id=}")
+        session.commit()
+        session.refresh(ds)
 
     return ds
 

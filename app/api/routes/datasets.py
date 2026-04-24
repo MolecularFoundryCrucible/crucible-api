@@ -89,25 +89,25 @@ async def create_dataset(
     dataset: DatasetCreate
 ):
     print(f"received {dataset}")
+    dataset_details = dataset.model_dump()
     user_unique_id, ag_list = auth_res
-    #ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
-        if not dataset.owner_orcid and is_orcid(user_unique_id):
-            dataset.owner_orcid = user_unique_id
+        if not dataset.owner_orcid:
+            dataset_details['owner_orcid'] = user_unique_id
 
-        if dataset.owner_orcid:
-            user = session.exec(select(User).where(User.orcid == dataset.owner_orcid)).one_or_none()
-            dataset.owner_user_id = user.id if user else None
+        if dataset_details.get('owner_orcid', None) is not None:
+            user = session.exec(select(User).where(User.unique_id == dataset_details['owner_orcid'])).one_or_none()
+            dataset_details['owner_user_id'] = user.id if user else None
 
-        if dataset.instrument_name:
-            instrument = session.exec(select(Instrument).where(Instrument.instrument_name == dataset.instrument_name)).one_or_none()
-            dataset.instrument_id = instrument.id if instrument else None
+        if dataset_details.get('instrument_name', None):
+            instrument = session.exec(select(Instrument).where(Instrument.instrument_name == dataset_details['instrument_name'])).one_or_none()
+            dataset_details['instrument_id'] = instrument.id if instrument else None
 
         ds = add_or_update(
             session,
             Dataset,
-            Dataset.unique_id == dataset.unique_id,
-            **dataset.model_dump(exclude_unset=True)
+            Dataset.unique_id == dataset_details['unique_id'],
+            **dataset_details
         )
 
         session.commit()
@@ -142,37 +142,31 @@ async def create_dataset(
         sql_create_resource_acl(ro, ds.unique_id, read=True, write=False, session=session)
         print(f"add ro access to {ds.unique_id}")
 
-        if dataset.owner_orcid is not None:
-            print(f'adding owner orcid access to {ds.unique_id}')
-            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset.owner_orcid)).one_or_none()
-        
-        if user_ag:
+        if dataset_details.get('owner_orcid', None) is not None:
+            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset_details['owner_orcid'])).one_or_none()
             sql_create_resource_acl(user_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added owner orcid access to {ds.unique_id}')
 
+        if user_unique_id != dataset_details.get('owner_orcid', None):
+            requestor_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_unique_id)).one_or_none()
+            sql_create_resource_acl(requestor_ag, ds.unique_id, read=True, write=True, session=session)
+            print(f'added requestor orcid access to {ds.unique_id}')
 
-        if dataset.project_id is not None:
-            print(f'adding proposal access to {ds.unique_id}')
-            prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset.project_id)).one_or_none()
+        if dataset_details.get('project_id', None) is not None:
+            prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset_details['project_id'])).one_or_none()
             sql_create_resource_acl(prop_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added proposal access to {ds.unique_id}')
 
-        if dataset.instrument_id is not None:
-            print(f'adding instrument group access to {ds.unique_id}')
-            inst_query = select(Instrument.instrument_name).where(Instrument.id == dataset.instrument_id)
-            inst_name = session.exec(inst_query).one_or_none()
-
-            ag_query = select(AccessGroup).where(AccessGroup.group_name == inst_name.lower())
+        if dataset_details.get('instrument_name', None) is not None:
+            ag_query = select(AccessGroup).where(AccessGroup.group_name == dataset_details['instrument_name'].lower())
             inst_ag = session.exec(ag_query).one_or_none()
             if inst_ag is None:
                 inst_ag = add_or_update(session,
                                         AccessGroup,
-                                        AccessGroup.group_name == inst_name.lower(),
-                                        group_name=inst_name.lower())
+                                        AccessGroup.group_name == dataset_details['instrument_name'].lower(),
+                                        group_name=dataset_details['instrument_name'].lower())
             sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added instrument group access to {ds.unique_id}')
-
-
 
     return ds
 
@@ -226,9 +220,8 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
             sql_create_resource_acl(prop_ag, upds.unique_id, read=True, write=True, session=session)
             print('add proposal access')
 
-        if upds.instrument_id is not None:
-            inst_name = session.exec(select(Instrument.instrument_name).where(Instrument.id == upds.instrument_id)).one_or_none()
-            inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst_name)).one_or_none()
+        if upds.instrument_name is not None:
+            inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == upds.instrument_name.lower())).one_or_none()
             sql_create_resource_acl(inst_ag, upds.unique_id, read=True, write=True, session=session)
             print('add instrument group access')
 

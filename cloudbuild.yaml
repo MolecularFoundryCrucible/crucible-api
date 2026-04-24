@@ -10,7 +10,8 @@ steps:
  # Get the git release tag
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
-    args: ['-c', 'export GIT_RELEASE_TAG=$(git describe --tags --abrev=0) && echo "RELEASE_TAG: $GIT_RELEASE_TAG" && echo "RELEASE_TAG=$GIT_RELEASE_TAG" >> $BUILDER_OUTPUT/envsubst']
+    args: ['-c', 'export GIT_RELEASE_TAG=$(git describe --tags --abrev=0)']
+  
   # Build with both SHA tag and latest tag
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'

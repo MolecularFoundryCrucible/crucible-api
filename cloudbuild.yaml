@@ -10,7 +10,7 @@ steps:
   # Build with both SHA tag and latest tag
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
-    args: [-c, 'docker build --build-arg BRANCH_NAME=${BRANCH_NAME} --build-arg githash=${SHORT_SHA} --build-arg api_version=${TAG_NAME} -t ${_IMAGE_PATH}:${SHORT_SHA} -t ${_IMAGE_PATH}:latest --cache-from ${_IMAGE_PATH}:latest .']
+    args: [-c, 'docker build --build-arg BRANCH_NAME=${BRANCH_NAME} --build-arg githash=${SHORT_SHA} --build-arg api_version=${REF_NAME} -t ${_IMAGE_PATH}:${SHORT_SHA} -t ${_IMAGE_PATH}:latest --cache-from ${_IMAGE_PATH}:latest .']
 
   # Push SHA-tagged image
   - name: 'gcr.io/cloud-builders/docker'

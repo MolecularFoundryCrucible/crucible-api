@@ -1,5 +1,6 @@
 from typing import Annotated, List, Optional, Union
 
+import os
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -21,6 +22,8 @@ from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_res
 router = APIRouter(tags=["samples"])
 engine = get_engine()
 
+API_VERSION = os.getenv('API_VERSION', None)
+API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 @router.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model=SampleLink)
 def link_parent_child_samples(parent_sample_id, child_sample_id, auth_res: Annotated[tuple, Depends(authorize_user)]):
@@ -131,7 +134,9 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                            Resource,
                            where=(Resource.mfid == sample.unique_id),
                            mfid=sample.unique_id,
-                           resource_type="sample")
+                           resource_type="sample",
+                           created_with_api_version = API_VERSION,
+                           api_version_githash = API_VERSION_GITHASH)
         ri.creation_time = now
         ri.modification_time = now
         session.commit()

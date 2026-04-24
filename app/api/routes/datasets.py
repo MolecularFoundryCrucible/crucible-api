@@ -12,7 +12,7 @@ from sqlalchemy.orm import joinedload, selectinload, attributes
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_secret, get_tz_isoformat, is_orcid, checkhash
+from app.general_utils import get_secret, get_tz_isoformat, checkhash
 from app.models.core_models import (
     AccessGroup,
     AssociatedFile,
@@ -48,6 +48,8 @@ from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, s
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
 
+API_VERSION = os.getenv('API_VERSION', None)
+API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 
 
@@ -120,7 +122,10 @@ async def create_dataset(
                         Resource,
                         where=(Resource.mfid == ds.unique_id),
                         mfid = ds.unique_id,
-                        resource_type = "dataset")
+                        resource_type = "dataset",
+                        created_with_api_version = API_VERSION,
+                        api_version_githash = API_VERSION_GITHASH)
+            
             ri.creation_time = now
             ri.modification_time = now
 

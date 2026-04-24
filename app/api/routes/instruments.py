@@ -1,5 +1,6 @@
 from typing import Annotated, List, Optional, Union
 
+import os
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, select
 
@@ -13,6 +14,8 @@ from app.utils.sql_utils import add_or_update
 router = APIRouter(tags=["instruments"])
 engine = get_engine()
 
+API_VERSION = os.getenv('API_VERSION', None)
+API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 @router.get("/instruments", response_model=List[InstrumentRead])
 def list_instruments(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request):
@@ -61,7 +64,9 @@ def create_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instr
         ri = add_or_update(session, Resource,
                            where=(Resource.mfid == db_instrument.unique_id),
                            mfid=db_instrument.unique_id,
-                           resource_type="instrument")
+                           resource_type="instrument", 
+                           created_with_api_version = API_VERSION,
+                           api_version_githash = API_VERSION_GITHASH)
         ri.creation_time = now
         ri.modification_time = now
         session.commit()

@@ -129,6 +129,8 @@ class Dataset(SQLModel, table=True):
     measurement: Optional[str]
     data_type: Optional[str]
     session_name: Optional[str]
+    ingestion_githash: Optional[str] = None
+    ingestion_class: Optional[str] = None
     sha256_hash_file_to_upload: Optional[str]
     scientific_metadata: Optional["ScientificMetadata"] = Relationship(
         back_populates = 'dataset')
@@ -210,7 +212,7 @@ class User(SQLModel, table=True):
 class ApiToken(SQLModel, table = True):
     user_unique_id: str = Field(default = None, foreign_key = "user.orcid", index = True)
     token: str = Field(default = None, primary_key = True, index = True)
-    token_created: str
+    token_created: str = Field(default_factory=get_tz_isoformat)
 
 
 class Project(SQLModel, table=True):
@@ -263,6 +265,9 @@ class Resource(SQLModel, table=True):
     resource_type: str = Field(default=None, alias="object_type")
     creation_time: Optional[str] = Field(default_factory=get_tz_isoformat)
     modification_time: Optional[str] = Field(default_factory=get_tz_isoformat)
+    created_with_api_version: Optional[str] = Field(default=None)
+    api_version_githash: Optional[str] = Field(default=None)
+   # last_modified_by_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.unique_id")
     deletion_requests: List["DeletionRequest"] = Relationship(
         back_populates="resource",
         sa_relationship_kwargs={"foreign_keys": "[DeletionRequest.resource_id]"}

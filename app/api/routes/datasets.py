@@ -122,12 +122,12 @@ async def create_dataset(
                         Resource,
                         where=(Resource.mfid == ds.unique_id),
                         mfid = ds.unique_id,
-                        resource_type = "dataset",
-                        created_with_api_version = API_VERSION,
-                        api_version_githash = API_VERSION_GITHASH)
+                        resource_type = "dataset")
             
             ri.creation_time = now
             ri.modification_time = now
+            ri.created_with_api_version = API_VERSION
+            ri.api_version_githash = API_VERSION_GITHASH
 
             print('added the Resource entry')
             session.commit()
@@ -135,8 +135,8 @@ async def create_dataset(
             session.refresh(ds)
             print(f"#=========== ID TYPE ADDED for dataset {ds.unique_id=}")
 
-        except:
-            print(f"#=========== ID TYPE FAILED for dataset {ds.unique_id=}")
+        except Exception as e:
+            print(f"#=========== ID TYPE FAILED for dataset {ds.unique_id=}: {e}")
 
         print(f'added dataset {ds}')
         # set appropriate access controls

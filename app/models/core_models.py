@@ -261,7 +261,16 @@ class NewScientificMetadata(SQLModel, table = True):
         ),
     )
 
+class ResourceACL(SQLModel, table=True):
+    mfid: str = Field(foreign_key="idtype.mfid", primary_key=True, index=True)
+    accessgroup_id: Optional[int] = Field(
+        default=None, foreign_key="accessgroup.id", primary_key=True
+    )
+    read: bool = Field(index=True)
+    write: bool = Field(index=True)
 
+   # THIS RELATIONSHIP AVAILABLE IN V2
+   # accessgroup: "AccessGroup" = Relationship(back_populates="acl")
 
 
 

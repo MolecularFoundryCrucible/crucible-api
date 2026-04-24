@@ -64,8 +64,6 @@ def add_or_update(session, cls, where, **kwargs):
     session.add(obj)
     return obj
 
-
-
 def delete_link(table, dataset_id, session):
     statement = select(table).where(table.dataset_id == dataset_id)
     found_records = session.exec(statement).all()
@@ -90,3 +88,19 @@ def generate_kw_query(session, base_query, keyword_filter):
         ).filter(DatasetKeywordLink.keyword_id.in_(keyword_ids))
     )
     return query
+
+
+def sql_create_resource_acl(ag, mfid, read, write, session):
+    from app.models.core_models import ResourceACL
+    from sqlmodel import select
+    if ag is None:
+        return None
+    acl = session.exec(
+        select(ResourceACL)
+        .where(ResourceACL.accessgroup_id == ag.id)
+        .where(ResourceACL.mfid == mfid)
+    ).one_or_none()
+    if not acl:
+        acl = ResourceACL(accessgroup_id=ag.id, mfid=mfid, read=read, write=write)
+        session.add(acl)
+    return acl

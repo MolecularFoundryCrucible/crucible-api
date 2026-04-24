@@ -11,16 +11,56 @@ from app.api.dependencies import get_engine
 from app.general_utils import get_tz_isoformat, is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, DatasetACL, DatasetSampleLink,
-    Sample, SampleLink, User,
+    Sample, SampleLink, User, ResourceACL
 )
 from app.models.resource import Resource
 from app.models.deletion import DeletionRequest
 from app.models.response_schemas import SampleWithDatasetsResponse
 from app.utils.auth_utils import authorize_user, is_admin
-from app.utils.sql_utils import add_or_update, generate_kw_query
+from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl
 
 router = APIRouter(tags=["samples"])
 engine = get_engine()
+
+
+
+def add_sample_access_groups(sample, api_access_group_name, session):
+    # add admin access
+    admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
+    sql_create_resource_acl(admin, sample.unique_id, read=True, write=True, session=session)
+    
+    # add readonly
+    ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
+    sql_create_resource_acl(ro, sample.unique_id, read=True, write=False, session=session)
+
+    # add project
+    if sample.project_id:
+        proj_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.project_id)).one_or_none()
+        sql_create_resource_acl(proj_ag, sample.unique_id, read=True, write=True, session=session)
+    
+    # add creator
+    creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == api_access_group_name)).one_or_none()
+    sql_create_resource_acl(creator, sample.unique_id, read=True, write=True, session=session)
+
+    # add the sample owner if they exist
+    if sample.owner_orcid:
+        orcid = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.owner_orcid)).one_or_none()
+        sql_create_resource_acl(orcid, sample.unique_id, read=True, write=True, session=session)
+
+        # set the user ID if not set 
+        if not sample.owner_user_id:
+            creator_user_id = session.exec(select(User.id).where(User.orcid == sample.owner_orcid)).one_or_none()
+            sample.owner_user_id = creator_user_id
+        return
+    
+    # otherwise if API key is associated with ORCID, set that as owner
+    if is_orcid(api_access_group_name):
+        sample.owner_orcid = api_access_group_name
+        creator_user_id = session.exec(select(User.id).where(User.orcid == sample.owner_orcid)).one_or_none()
+        sample.owner_user_id = creator_user_id
+        return
+    
+    return
 
 
 @router.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model=SampleLink)
@@ -141,20 +181,6 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         session.commit()
         session.refresh(sample)
 
-        if sample.owner_user_id is None and sample.owner_orcid is None:
-            creator = session.exec(select(AccessGroup).where(AccessGroup.group_name == access_group_name)).one_or_none()
-            if is_orcid(access_group_name):
-                sample.owner_orcid = access_group_name
-                creator_user_id = session.exec(select(User.id).where(User.orcid == sample.owner_orcid)).one_or_none()
-                sample.owner_user_id = creator_user_id
-
-        elif sample.owner_user_id is None:
-            creator_user_id = session.exec(select(User.id).where(User.orcid == sample.owner_orcid)).one_or_none()
-            sample.owner_user_id = creator_user_id
-
-        else:
-            pass
-
         session.add(sample)
         now = get_tz_isoformat()
         ri = add_or_update(session,
@@ -164,6 +190,10 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                             resource_type="sample")
         ri.creation_time = now
         ri.modification_time = now
+        session.flush()  # ensure idtype row exists before ResourceACL FK references it
+
+        # add resource ACLs
+        add_sample_access_groups(sample, access_group_name, session)
 
         session.commit()
         print('final commit')

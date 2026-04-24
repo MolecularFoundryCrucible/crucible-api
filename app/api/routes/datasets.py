@@ -116,7 +116,7 @@ async def create_dataset(
         session.refresh(ds)
 
         try:
-            print(f'Resource mfid being written: {ds.unique_id}')
+            print(f'Resource mfid being written: {ds.unique_id}; {API_VERSION}; {API_VERSION_GITHASH}')
             now = get_tz_isoformat()
             ri = add_or_update(session,
                         Resource,

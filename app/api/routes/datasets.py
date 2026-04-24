@@ -92,6 +92,17 @@ async def create_dataset(
     user_unique_id, ag_list = auth_res
     #ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
+        if not dataset.owner_orcid and is_orcid(user_unique_id):
+            dataset.owner_orcid = user_unique_id
+
+        if dataset.owner_orcid:
+            user = session.exec(select(User).where(User.orcid == dataset.owner_orcid)).one_or_none()
+            dataset.owner_user_id = user.id if user else None
+
+        if dataset.instrument_name:
+            instrument = session.exec(select(Instrument).where(Instrument.instrument_name == dataset.instrument_name)).one_or_none()
+            dataset.instrument_id = instrument.id if instrument else None
+
         ds = add_or_update(
             session,
             Dataset,
@@ -134,11 +145,6 @@ async def create_dataset(
         if dataset.owner_orcid is not None:
             print(f'adding owner orcid access to {ds.unique_id}')
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset.owner_orcid)).one_or_none()
-        else:   
-            creator_user_id = session.exec(select(User.id).where(User.unique_id == user_unique_id)).one_or_none()
-            ds.owner_orcid = user_unique_id
-            ds.owner_user_id = creator_user_id
-            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_unique_id)).one_or_none()
         
         if user_ag:
             sql_create_resource_acl(user_ag, ds.unique_id, read=True, write=True, session=session)

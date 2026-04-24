@@ -1,5 +1,6 @@
-from typing import Optional
+from typing import List, Optional
 from sqlmodel import SQLModel
+from app.models.links import LinkedResource
 
 
 class DatasetCreate(SQLModel):
@@ -105,3 +106,4 @@ class DatasetResponse(DatasetRead):
     modification_time: Optional[str] = None
     scientific_metadata: Optional[dict] = None
     deletion_request: Optional[dict] = None
+    links: Optional[List[LinkedResource]] = None

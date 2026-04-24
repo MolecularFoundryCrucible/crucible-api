@@ -2,6 +2,7 @@ from typing import List, Optional
 from sqlmodel import SQLModel
 
 from app.models.datasets import DatasetRead
+from app.models.links import LinkedResource
 
 
 class SampleCreate(SQLModel):
@@ -42,3 +43,4 @@ class SampleResponse(SampleRead):
     modification_time: Optional[str] = None
     datasets: Optional[List[DatasetRead]] = None
     deletion_request: Optional[dict] = None
+    links: Optional[List[LinkedResource]] = None

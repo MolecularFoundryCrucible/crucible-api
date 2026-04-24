@@ -400,7 +400,7 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
             select(ResourceACL)
             .where(ResourceACL.mfid == sample_id)
             .where(ResourceACL.accessgroup_id.in_(ag_ids))
-        ).one_or_none()
+        ).first()
         if acl_ok is None:
             raise HTTPException(status_code=403, detail="Access denied")
 
@@ -453,7 +453,7 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authoriz
             select(ResourceACL)
             .where(ResourceACL.mfid == sample_id)
             .where(ResourceACL.accessgroup_id.in_(ag_ids))
-        ).one_or_none()
+        ).first()
         if acl_ok is None:
             raise HTTPException(status_code=403, detail="Access denied")
 

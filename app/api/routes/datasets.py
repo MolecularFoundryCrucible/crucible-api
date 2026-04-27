@@ -735,7 +735,7 @@ def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
         return ds_md
 
 
-@router.post("/datasets/{dsid}/scientific_metadata", response_model=ScientificMetadata)
+@router.post("/datasets/{dsid}/scientific_metadata", response_model=Union[ScientificMetadata, NewScientificMetadata])
 def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md: dict):
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -750,22 +750,38 @@ def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)],
 
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        md_obj = add_or_update(session,
-                               ScientificMetadata,
-                               where=(ScientificMetadata.dataset_unique_id == dsid),
-                               dataset_unique_id = dsid,
-                               scientific_metadata = scientific_md)
+        
+        md_obj = add_or_update(
+            session,
+            ScientificMetadata,
+            where=(ScientificMetadata.dataset_unique_id == dsid),
+            dataset_unique_id = dsid,
+            scientific_metadata = scientific_md)
+
+        attributes.flag_modified(md_obj, 'scientific_metadata')
+
+        new_md_obj = add_or_update(
+            session,
+            NewScientificMetadata,
+            where=(NewScientificMetadata.dataset_mfid == dsid),
+            dataset_mfid=dsid,
+            dataset_id=ds.id,
+            scientific_metadata=scientific_md,
+        )
+
+        attributes.flag_modified(new_md_obj, 'scientific_metadata')
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
             ri.modification_time = get_tz_isoformat()
 
+        # returns the old formatted md obj
         session.commit()
         session.refresh(md_obj)
         return(md_obj)
 
 
-@router.patch("/datasets/{dsid}/scientific_metadata", response_model=ScientificMetadata)
+@router.patch("/datasets/{dsid}/scientific_metadata", response_model=Union[ScientificMetadata, NewScientificMetadata])
 def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md_updates: dict):
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -787,85 +803,21 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
 
         print(f'{md_dict=}')
 
-        # this doesn't allow for updating nested fields without providing the whole tree from the first level down.
+        # this doesn't allow for updating nested fields without providing the whole tree 
+        # from the first level down.
         # could make recursive?
         for k,v in scientific_md_updates.items():
             md_dict[k] = v
         print(f'after update: {md_dict=}')
-        md_obj = add_or_update(session, ScientificMetadata,
-                               where=(ScientificMetadata.dataset_unique_id == dsid),
-                               dataset_unique_id = dsid, scientific_metadata = md_dict)
-        print(f'{md_obj=}')
-        attributes.flag_modified(md_obj, 'scientific_metadata')
-
-        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
-        if ri:
-            ri.modification_time = get_tz_isoformat()
-
-        session.commit()
-        session.refresh(md_obj)
-        return(md_obj)
-
-
-@router.post("/datasets/{dsid}/scientific_metadata_new", response_model = NewScientificMetadata)
-def add_scientific_metadata_new(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md: dict):
-    user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-    ds_cmd = select(Dataset).select_from(join(Dataset,
-                                              ResourceACL,
-                                              ResourceACL.mfid == Dataset.unique_id)).where(
-                                                  Dataset.unique_id == dsid).filter(
-                                                        ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
-
-    with Session(engine) as session:
-        ds = session.exec(ds_cmd).one_or_none()
-
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
         md_obj = add_or_update(
             session,
-            NewScientificMetadata,
-            where=(NewScientificMetadata.dataset_mfid == dsid),
-            dataset_mfid=dsid,
-            dataset_id=ds.id,
-            scientific_metadata=scientific_md,
-        )
-
+            ScientificMetadata,
+            where=(ScientificMetadata.dataset_unique_id == dsid),
+            dataset_unique_id = dsid,
+            scientific_metadata = md_dict)
         attributes.flag_modified(md_obj, 'scientific_metadata')
 
-        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
-        if ri:
-            ri.modification_time = get_tz_isoformat()
-
-        session.commit()
-        session.refresh(md_obj)
-        return md_obj
-
-
-@router.patch("/datasets/{dsid}/scientific_metadata_new", response_model = NewScientificMetadata)
-def update_scientific_metadata_new(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md_updates: dict):
-    user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
-
-    with Session(engine) as session:
-        ds = session.exec(ds_cmd).one_or_none()
-
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
-        stored_md = session.exec(select(NewScientificMetadata).where(NewScientificMetadata.dataset_mfid == dsid)).one_or_none()
-
-        if stored_md:
-            md_dict = stored_md.scientific_metadata
-        else:
-            md_dict = {}
-
-        for k, v in scientific_md_updates.items():
-            md_dict[k] = v
-
-        md_obj = add_or_update(
+        new_md_obj = add_or_update(
             session,
             NewScientificMetadata,
             where=(NewScientificMetadata.dataset_mfid == dsid),
@@ -873,15 +825,15 @@ def update_scientific_metadata_new(auth_res: Annotated[tuple, Depends(authorize_
             dataset_id=ds.id,
             scientific_metadata=md_dict,
         )
-        attributes.flag_modified(md_obj, 'scientific_metadata')
 
+        attributes.flag_modified(new_md_obj, 'scientific_metadata')
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
             ri.modification_time = get_tz_isoformat()
 
         session.commit()
         session.refresh(md_obj)
-        return md_obj
+        return(md_obj)
 
 
 @router.get("/datasets/{dsid}/thumbnails", response_model=List[ThumbnailRead])

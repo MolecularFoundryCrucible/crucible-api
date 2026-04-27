@@ -2,6 +2,7 @@ from typing import List, Optional
 from sqlmodel import SQLModel
 
 from app.models.datasets import DatasetRead
+from app.models.links import LinkedResource
 
 
 class SampleCreate(SQLModel):
@@ -10,6 +11,7 @@ class SampleCreate(SQLModel):
     sample_type: Optional[str] = None
     project_id: Optional[str] = None
     description: Optional[str] = None
+    timestamp: Optional[str] = None
     owner_orcid: Optional[str] = None  # falls back to the authenticated user if not provided
 
 
@@ -19,6 +21,7 @@ class SampleUpdate(SQLModel):
     sample_type: Optional[str] = None
     project_id: Optional[str] = None
     description: Optional[str] = None
+    timestamp: Optional[str] = None
 
 
 class SampleRead(SQLModel):
@@ -30,6 +33,7 @@ class SampleRead(SQLModel):
     owner_orcid: Optional[str] = None
     project_id: Optional[str] = None
     description: Optional[str] = None
+    timestamp: Optional[str] = None
 
 
 class SampleResponse(SampleRead):
@@ -39,3 +43,4 @@ class SampleResponse(SampleRead):
     modification_time: Optional[str] = None
     datasets: Optional[List[DatasetRead]] = None
     deletion_request: Optional[dict] = None
+    links: Optional[List[LinkedResource]] = None

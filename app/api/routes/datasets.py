@@ -48,9 +48,17 @@ from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, s
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
 
+BRANCH_NAME = os.getenv('BRANCH_NAME', None)
 API_VERSION = os.getenv('API_VERSION', None)
-API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
+if API_VERSION is None and BRANCH_NAME == 'v1':
+    API_VERSION = 'v1.0.0'
+elif API_VERSION is None:
+    API_VERSION = 'dev'
+else:
+    API_VERSION = API_VERSION
+
+API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 
 @router.post("/datasets/{dsid}/carrier_segmentation")

@@ -7,15 +7,20 @@ steps:
     entrypoint: 'bash'
     args: [-c, 'docker pull ${_IMAGE_PATH}:latest || exit 0']
 
- # Get the git release tag
-  - name: 'gcr.io/cloud-builders/gcloud'
-    entrypoint: 'bash'
-    args: ['-c', 'export GIT_RELEASE_TAG=$(git describe --tags --abrev=0)']
-  
   # Build with both SHA tag and latest tag
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
-    args: [-c, 'docker build --build-arg BRANCH_NAME=${BRANCH_NAME} --build-arg githash=${SHORT_SHA} --build-arg api_version=${GIT_RELEASE_TAG} -t ${_IMAGE_PATH}:${SHORT_SHA} -t ${_IMAGE_PATH}:latest --cache-from ${_IMAGE_PATH}:latest .']
+    args:
+      - -c
+      - >
+        docker build
+        --build-arg githash=$(git rev-parse HEAD)
+        --build-arg BRANCH_NAME=${BRANCH_NAME}
+        --build-arg api_version=${TAG_NAME} # only works if the trigger is tag-based, otherwise it will be empty
+        -t ${_IMAGE_PATH}:${SHORT_SHA}
+        -t ${_IMAGE_PATH}:latest
+        --cache-from ${_IMAGE_PATH}:latest
+        .
 
   # Push SHA-tagged image
   - name: 'gcr.io/cloud-builders/docker'

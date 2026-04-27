@@ -44,7 +44,7 @@ def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_us
                 select(ResourceACL)
                 .where(ResourceACL.mfid == entity_id)
                 .where(ResourceACL.accessgroup_id.in_(ag_ids))
-            ).one_or_none()
+            ).first()
             if acl_ok is None:
                 raise HTTPException(status_code=403, detail="Access denied")
             project_id = sample_target.project_id
@@ -178,7 +178,7 @@ def entity_graph_bfs(entity_id: str, auth_res: Annotated[tuple, Depends(authoriz
                 select(ResourceACL)
                 .where(ResourceACL.mfid == entity_id)
                 .where(ResourceACL.accessgroup_id.in_(ag_ids))
-            ).one_or_none()
+            ).first()
             if acl_ok is None:
                 raise HTTPException(status_code=403, detail="Access denied")
         else:
@@ -661,7 +661,7 @@ def entity_graph_cte(
                 select(ResourceACL)
                 .where(ResourceACL.mfid == entity_id)
                 .where(ResourceACL.accessgroup_id.in_(ag_ids))
-            ).one_or_none()
+            ).first()
             if acl_ok is None:
                 raise HTTPException(status_code=403, detail="Access denied")
             seed_id = sample_target.id

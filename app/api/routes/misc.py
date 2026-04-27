@@ -8,8 +8,10 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import Dataset, ResourceACL, DeletionRequest, Keyword, NewScientificMetadata, Resource, Sample
+from app.models.core_models import Dataset, DatasetLink, DatasetSampleLink, Instrument, ResourceACL, DeletionRequest, Keyword, NewScientificMetadata, Resource, Sample, SampleLink
 from app.models.datasets import DatasetRead, DatasetResponse
+from app.models.instrument import InstrumentResponse
+from app.models.links import LinkedResource
 from app.models.samples import SampleResponse
 from app.utils.auth_utils import authorize_user
 
@@ -116,7 +118,7 @@ def get_object_type(auth_res: Annotated[tuple, Depends(authorize_user)], unique_
             return object_type
 
 
-@router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse], response_model_exclude_none=True)
+@router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse, InstrumentResponse])
 def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_id: str):
     """
     Fetch a dataset or sample by ID without knowing its type in advance.
@@ -173,5 +175,102 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
                 "deletion_request": deletion_req_dict,
             })
 
+        elif resource.resource_type == "instrument":
+            inst = session.exec(
+                select(Instrument).where(Instrument.unique_id == resource_id)
+            ).one_or_none()
+            if inst is None:
+                raise HTTPException(status_code=404, detail="Instrument not found")
+            return InstrumentResponse.model_validate({
+                **inst.model_dump(),
+                "creation_time": resource.creation_time,
+                "modification_time": resource.modification_time,
+            })
+
         else:
-            raise HTTPException(status_code=400, detail=f"Unsupported resource type: {resource.resource_type}")
+            raise HTTPException(status_code=404, detail=f"Resource not found")
+
+
+@router.get("/resources/{resource_id}/links", response_model=List[LinkedResource])
+def get_linked_resources(resource_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    """
+    Returns the immediate links for a resource (dataset or sample):
+    - parent/child via lineage (DatasetLink or SampleLink)
+    - associated resources (DatasetSampleLink)
+    """
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    with Session(engine) as session:
+        resource = session.exec(
+            select(Resource).where(Resource.mfid == resource_id)
+        ).one_or_none()
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+
+        acl_ok = session.exec(
+            select(ResourceACL)
+            .where(ResourceACL.mfid == resource_id)
+            .where(ResourceACL.accessgroup_id.in_(ag_ids))
+        ).first()
+        if acl_ok is None and resource.resource_type != "instrument":
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        results: List[LinkedResource] = []
+
+        if resource.resource_type == "dataset":
+            entity = session.exec(select(Dataset).where(Dataset.unique_id == resource_id)).one_or_none()
+            if entity is None:
+                raise HTTPException(status_code=404, detail="Dataset not found")
+
+            # Parent datasets
+            parents = session.exec(
+                select(Dataset).join(DatasetLink, DatasetLink.parent_dataset_id == Dataset.id)
+                .where(DatasetLink.child_dataset_id == entity.id)
+            ).all()
+            results += [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="parent") for d in parents]
+
+            # Child datasets
+            children = session.exec(
+                select(Dataset).join(DatasetLink, DatasetLink.child_dataset_id == Dataset.id)
+                .where(DatasetLink.parent_dataset_id == entity.id)
+            ).all()
+            results += [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="child") for d in children]
+
+            # Associated samples
+            samples = session.exec(
+                select(Sample).join(DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)
+                .where(DatasetSampleLink.dataset_id == entity.id)
+            ).all()
+            results += [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="associated") for s in samples]
+
+        elif resource.resource_type == "sample":
+            entity = session.exec(select(Sample).where(Sample.unique_id == resource_id)).one_or_none()
+            if entity is None:
+                raise HTTPException(status_code=404, detail="Sample not found")
+
+            # Parent samples
+            parents = session.exec(
+                select(Sample).join(SampleLink, SampleLink.parent_sample_id == Sample.id)
+                .where(SampleLink.sample_id == entity.id)
+            ).all()
+            results += [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="parent") for s in parents]
+
+            # Child samples
+            children = session.exec(
+                select(Sample).join(SampleLink, SampleLink.sample_id == Sample.id)
+                .where(SampleLink.parent_sample_id == entity.id)
+            ).all()
+            results += [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="child") for s in children]
+
+            # Associated datasets
+            datasets = session.exec(
+                select(Dataset).join(DatasetSampleLink, DatasetSampleLink.dataset_id == Dataset.id)
+                .where(DatasetSampleLink.sample_id == entity.id)
+            ).all()
+            results += [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="associated") for d in datasets]
+
+        else:
+            raise HTTPException(status_code=400, detail=f"Links not supported for resource type '{resource.resource_type}'")
+
+        return results

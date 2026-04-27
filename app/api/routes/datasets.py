@@ -40,6 +40,7 @@ from app.models.datasets import (
     ThumbnailCreate, ThumbnailRead,
 )
 from app.models.access_groups import AccessGroupRead
+from app.models.links import LinkedResource
 from app.models.samples import SampleRead
 from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.rmq_utils import send_pika_message
@@ -101,7 +102,7 @@ def request_insitu_aggregation(dsid, auth_res: Annotated[tuple, Depends(authoriz
     )
     return
 
-@router.post("/datasets", response_model=DatasetRead)
+@router.post("/datasets", response_model=DatasetResponse)
 async def create_dataset(
     auth_res: Annotated[tuple, Depends(authorize_user)],
     dataset: DatasetCreate
@@ -189,10 +190,17 @@ async def create_dataset(
             sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added instrument group access to {ds.unique_id}')
 
-    return ds
+        session.commit()
+        session.refresh(ds)
+        ri = session.exec(select(Resource).where(Resource.mfid == ds.unique_id)).one_or_none()
+        return DatasetResponse.model_validate({
+            **ds.model_dump(),
+            "creation_time": ri.creation_time if ri else None,
+            "modification_time": ri.modification_time if ri else None,
+        })
 
 
-@router.patch("/datasets/{dsid}", response_model=DatasetRead)
+@router.patch("/datasets/{dsid}", response_model=DatasetResponse)
 def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, updated_dataset: DatasetUpdate):
     '''
     Updates a dataset in SQL and returns the Updated Dataset object.
@@ -248,10 +256,14 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
         session.commit()
         session.refresh(upds)
-        return upds
+        return DatasetResponse.model_validate({
+            **upds.model_dump(),
+            "creation_time": ri.creation_time if ri else None,
+            "modification_time": ri.modification_time if ri else None,
+        })
 
 
-@router.get("/datasets", response_model=List[DatasetResponse], response_model_exclude_none=True)
+@router.get("/datasets", response_model=List[DatasetResponse])
 def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: bool = False, limit: Optional[int] = None,
                   creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                   modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
@@ -347,12 +359,11 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         ]
 
 
-@router.get("/datasets/{dsid}", response_model=DatasetResponse, response_model_exclude_none=True)
-def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
+@router.get("/datasets/{dsid}", response_model=DatasetResponse)
+def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, include_links: bool = False):
     '''
-    Returns a dataset found with the provided unique ID
-    if one is exists and the requesting user is
-    authorized to view the dataset. Otherwise, returns None
+    Returns a dataset found with the provided unique ID.
+    Pass include_links=true to include parent, child, and associated resources.
     '''
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -361,69 +372,100 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str)
         ds_cmd = select(Dataset).options(selectinload(Dataset.resource)).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
         ds = session.exec(ds_cmd).one_or_none()
         if ds is None:
-            return None
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+        deletion_req = session.exec(
+            select(DeletionRequest)
+            .where(DeletionRequest.resource_id == dsid)
+            .where(DeletionRequest.status.in_(["pending", "approved"]))
+        ).first()
+
+        links = None
+        if include_links:
+            parents = session.exec(
+                select(Dataset).join(DatasetLink, DatasetLink.parent_dataset_id == Dataset.id)
+                .where(DatasetLink.child_dataset_id == ds.id)
+            ).all()
+            children = session.exec(
+                select(Dataset).join(DatasetLink, DatasetLink.child_dataset_id == Dataset.id)
+                .where(DatasetLink.parent_dataset_id == ds.id)
+            ).all()
+            samples = session.exec(
+                select(Sample).join(DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)
+                .where(DatasetSampleLink.dataset_id == ds.id)
+            ).all()
+            links = (
+                [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="parent") for d in parents] +
+                [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="child") for d in children] +
+                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="associated") for s in samples]
+            )
+
         return DatasetResponse.model_validate({
             **ds.model_dump(),
             "creation_time": ds.resource.creation_time if ds.resource else None,
             "modification_time": ds.resource.modification_time if ds.resource else None,
+            "deletion_request": deletion_req.model_dump() if deletion_req else None,
+            "links": links,
         })
 
 
 @router.post("/datasets/{parent_dataset_id}/children/{child_dataset_id}", response_model=DatasetLink)
-def link_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    user_unique_id, ag_list = auth_res
+def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
-    ds_cmd = select(Dataset).select_from(
-                                        join(Dataset,
-                                                ResourceACL,
-                                                ResourceACL.mfid == Dataset.unique_id, isouter=True)
-                                        ).filter(
-                                                (ResourceACL.accessgroup_id.in_(ag_ids)) |
-                                                (Dataset.public == True)
-                                        )
 
     with Session(engine) as session:
-        parent = session.exec(ds_cmd.where(Dataset.unique_id == parent_dataset_id)).first()
+        acl_check = exists().where(
+            ResourceACL.mfid.in_([parent_dataset_id, child_dataset_id]),
+            ResourceACL.accessgroup_id.in_(ag_ids),
+            ResourceACL.write == True
+        )
+        if not session.exec(select(acl_check)).one():
+            raise HTTPException(status_code=403, detail="Write access required to at least one of the datasets")
+
+        parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).first()
         if not parent:
             raise HTTPException(status_code=404, detail="Parent dataset not found")
-
-        child = session.exec(ds_cmd.where(Dataset.unique_id == child_dataset_id)).first()
+        child = session.exec(select(Dataset).where(Dataset.unique_id == child_dataset_id)).first()
         if not child:
             raise HTTPException(status_code=404, detail="Child dataset not found")
 
         link = add_or_update(session,
                      DatasetLink,
-                     where = (and_(DatasetLink.parent_dataset_id == parent.id,
-                                   DatasetLink.child_dataset_id == child.id)),
-                     parent_dataset_id = parent.id,
-                     child_dataset_id = child.id)
+                     where=and_(DatasetLink.parent_dataset_id == parent.id, DatasetLink.child_dataset_id == child.id),
+                     parent_dataset_id=parent.id,
+                     child_dataset_id=child.id)
 
         session.commit()
         session.refresh(link)
-
-        return(link)
+        return link
 
 
 @router.delete("/datasets/{parent_dataset_id}/children/{child_dataset_id}")
-def unlink_parent_child(parent_dataset_id: str, child_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     _, ag_list = auth_res
-    require_groups(ag_list)
+    ag_ids = [ag.id for ag in ag_list]
+
     with Session(engine) as session:
+        acl_check = exists().where(
+            ResourceACL.mfid.in_([parent_dataset_id, child_dataset_id]),
+            ResourceACL.accessgroup_id.in_(ag_ids),
+            ResourceACL.write == True
+        )
+        if not session.exec(select(acl_check)).one():
+            raise HTTPException(status_code=403, detail="Write access required to at least one of the datasets")
+
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
         if not parent:
             raise HTTPException(status_code=404, detail="Parent dataset not found")
-
         child = session.exec(select(Dataset).where(Dataset.unique_id == child_dataset_id)).one_or_none()
         if not child:
             raise HTTPException(status_code=404, detail="Child dataset not found")
 
         link = session.exec(
             select(DatasetLink).where(
-                and_(DatasetLink.parent_dataset_id == parent.id,
-                     DatasetLink.child_dataset_id == child.id)
+                and_(DatasetLink.parent_dataset_id == parent.id, DatasetLink.child_dataset_id == child.id)
             )
         ).one_or_none()
-
         if link is None:
             raise HTTPException(status_code=404, detail="No link found between these datasets")
 
@@ -511,35 +553,37 @@ def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
 
 @router.delete('/datasets/{dsid}/samples/{sample_id}')
-def delete_dataset_sample_link(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, sample_id: str):
+def unlink_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, sample_id: str):
     _, ag_list = auth_res
-    require_groups(ag_list)
-    ds_cmd = select(Dataset).where(Dataset.unique_id == dsid)
-    samp_cmd = select(Sample).where(Sample.unique_id == sample_id)
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        ds = session.exec(ds_cmd).one_or_none()
-        samp = session.exec(samp_cmd).one_or_none()
+        acl_check = exists().where(
+            ResourceACL.mfid.in_([dsid, sample_id]),
+            ResourceACL.accessgroup_id.in_(ag_ids),
+            ResourceACL.write == True
+        )
+        if not session.exec(select(acl_check)).one():
+            raise HTTPException(status_code=403, detail="Write access required to at least one of the resources")
 
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        samp = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
         if samp is None:
             raise HTTPException(status_code=404, detail="Sample not found")
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
 
-        # Delete the link
         link = session.exec(
             select(DatasetSampleLink).where(
                 and_(DatasetSampleLink.dataset_id == ds.id, DatasetSampleLink.sample_id == samp.id)
             )
         ).one_or_none()
-
         if link is None:
-            return {"warning": f"No link found between dataset {dsid} and sample {sample_id}"}
+            raise HTTPException(status_code=404, detail=f"No link found between dataset {dsid} and sample {sample_id}")
 
         session.delete(link)
         session.commit()
-
-        return {"message": f"Successfully deleted link between dataset {dsid} and sample {sample_id}"}
+        return {"message": f"Successfully unlinked dataset {dsid} and sample {sample_id}"}
 
 
 @router.get('/datasets/{dsid}/download_links')
@@ -1181,33 +1225,34 @@ def create_dataset_acl(group_name: str, dsid: str, read: bool, write: bool, auth
 
 
 @router.post("/datasets/{dsid}/samples/{sample_id}", response_model=DatasetSampleLinkResponse)
-def add_sample_to_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, sample_id: str):
-    user_unique_id, ag_list = auth_res
+def link_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, sample_id: str):
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
-    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
-    samp_cmd = select(Sample).where(Sample.unique_id == sample_id)
 
     with Session(engine) as session:
-        ds = session.exec(ds_cmd).one_or_none()
-        samp = session.exec(samp_cmd).one_or_none()
+        acl_check = exists().where(
+            ResourceACL.mfid.in_([dsid, sample_id]),
+            ResourceACL.accessgroup_id.in_(ag_ids),
+            ResourceACL.write == True
+        )
+        if not session.exec(select(acl_check)).one():
+            raise HTTPException(status_code=403, detail="Write access required to at least one of the resources")
 
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        samp = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
         if samp is None:
             raise HTTPException(status_code=404, detail="Sample not found")
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
-
 
         add_or_update(session,
                       DatasetSampleLink,
-                      where=(and_(DatasetSampleLink.sample_id == samp.id, DatasetSampleLink.dataset_id == ds.id)),
-                      sample_id = samp.id,
-                      dataset_id = ds.id
-                      )
+                      where=and_(DatasetSampleLink.sample_id == samp.id, DatasetSampleLink.dataset_id == ds.id),
+                      sample_id=samp.id,
+                      dataset_id=ds.id)
 
         session.commit()
-
-        info = DatasetSampleLinkResponse(dataset_id = ds.unique_id, dataset_name = ds.dataset_name, sample_id = samp.unique_id, sample_type = samp.sample_type, sample_name = samp.sample_name)
-    return info
+        return DatasetSampleLinkResponse(dataset_id=ds.unique_id, dataset_name=ds.dataset_name, sample_id=samp.unique_id, sample_type=samp.sample_type, sample_name=samp.sample_name)
 
 
 @router.get("/datasets/{dsid}/samples", response_model=List[SampleRead])

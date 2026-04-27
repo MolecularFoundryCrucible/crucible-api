@@ -15,6 +15,7 @@ from app.models.core_models import (
     DeletionRequest, Resource, Sample, SampleLink, User,
 )
 from app.models.datasets import DatasetRead
+from app.models.links import LinkedResource
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl
@@ -26,43 +27,63 @@ API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 @router.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model=SampleLink)
-def link_parent_child_samples(parent_sample_id, child_sample_id, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
+        acl_check = exists().where(
+            ResourceACL.mfid.in_([parent_sample_id, child_sample_id]),
+            ResourceACL.accessgroup_id.in_(ag_ids),
+            ResourceACL.write == True
+        )
+        if not session.exec(select(acl_check)).one():
+            raise HTTPException(status_code=403, detail="Write access required to at least one of the samples")
+
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()
+        if not parent_sample:
+            raise HTTPException(status_code=404, detail="Parent sample not found")
         child_sample = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).first()
+        if not child_sample:
+            raise HTTPException(status_code=404, detail="Child sample not found")
+
         link = add_or_update(session,
                      SampleLink,
-                     where = (and_(SampleLink.parent_sample_id == parent_sample.id, SampleLink.sample_id == child_sample.id)),
-                     parent_sample_id = parent_sample.id,
-                     sample_id = child_sample.id)
+                     where=and_(SampleLink.parent_sample_id == parent_sample.id, SampleLink.sample_id == child_sample.id),
+                     parent_sample_id=parent_sample.id,
+                     sample_id=child_sample.id)
 
         session.commit()
         session.refresh(link)
-
-        return(link)
+        return link
 
 
 @router.delete("/samples/{parent_sample_id}/children/{child_sample_id}")
-def unlink_parent_child_samples(parent_sample_id: str, child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def unlink_sample_parent_child(parent_sample_id: str, child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     _, ag_list = auth_res
-    require_groups(ag_list)
+    ag_ids = [ag.id for ag in ag_list]
+
     with Session(engine) as session:
+        acl_check = exists().where(
+            ResourceACL.mfid.in_([parent_sample_id, child_sample_id]),
+            ResourceACL.accessgroup_id.in_(ag_ids),
+            ResourceACL.write == True
+        )
+        if not session.exec(select(acl_check)).one():
+            raise HTTPException(status_code=403, detail="Write access required to at least one of the samples")
+
         parent = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
         if not parent:
             raise HTTPException(status_code=404, detail="Parent sample not found")
-
         child = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).one_or_none()
         if not child:
             raise HTTPException(status_code=404, detail="Child sample not found")
 
         link = session.exec(
             select(SampleLink).where(
-                and_(SampleLink.parent_sample_id == parent.id,
-                     SampleLink.sample_id == child.id)
+                and_(SampleLink.parent_sample_id == parent.id, SampleLink.sample_id == child.id)
             )
         ).one_or_none()
-
         if link is None:
             raise HTTPException(status_code=404, detail="No link found between these samples")
 
@@ -71,7 +92,7 @@ def unlink_parent_child_samples(parent_sample_id: str, child_sample_id: str, aut
         return {"message": f"Successfully unlinked {parent_sample_id} -> {child_sample_id}"}
 
 
-@router.patch('/samples/{sample_id}', response_model=SampleRead)
+@router.patch('/samples/{sample_id}', response_model=SampleResponse)
 def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id: str, updated_sample: SampleUpdate):
     '''
     Partially update a sample record. Only provided fields are modified.
@@ -91,10 +112,14 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
         session.add(sample)
         session.commit()
         session.refresh(sample)
-        return sample
+        return SampleResponse.model_validate({
+            **sample.model_dump(),
+            "creation_time": ri.creation_time if ri else None,
+            "modification_time": ri.modification_time if ri else None,
+        })
 
 
-@router.post("/samples", response_model=SampleRead)
+@router.post("/samples", response_model=SampleResponse)
 def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: SampleCreate):
     '''
     Create a new sample. If a sample with the same project_id and sample_name already
@@ -114,7 +139,12 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             )
         ).one_or_none()
         if existing:
-            return existing
+            ri = session.exec(select(Resource).where(Resource.mfid == existing.unique_id)).one_or_none()
+            return SampleResponse.model_validate({
+                **existing.model_dump(),
+                "creation_time": ri.creation_time if ri else None,
+                "modification_time": ri.modification_time if ri else None,
+            })
 
         sample = Sample(**S.model_dump(exclude_unset=True))
         session.add(sample)
@@ -162,11 +192,14 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         session.add(sample)
         session.commit()
         session.refresh(sample)
-        print(f'{sample=}')
-        return sample
+        return SampleResponse.model_validate({
+            **sample.model_dump(),
+            "creation_time": ri.creation_time if ri else None,
+            "modification_time": ri.modification_time if ri else None,
+        })
 
 
-@router.get("/samples", response_model=List[SampleResponse], response_model_exclude_none=True)
+@router.get("/samples", response_model=List[SampleResponse])
 def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                  modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
@@ -235,10 +268,11 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         ]
 
 
-@router.get("/samples/{sample_id}", response_model=SampleResponse, response_model_exclude_none=True)
-def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+@router.get("/samples/{sample_id}", response_model=SampleResponse)
+def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], include_links: bool = False):
     '''
-    Returns the sample for the provided ID
+    Returns the sample for the provided ID.
+    Pass include_links=true to include parent, child, and associated resources.
     '''
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -246,21 +280,43 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
         query = select(Sample).options(selectinload(Sample.datasets), selectinload(Sample.resource)).where(Sample.unique_id == sample_id)
         samp = session.exec(query).first()
         if samp is None:
-            return None
+            raise HTTPException(status_code=404, detail="Sample not found")
         acl_ok = session.exec(
             select(ResourceACL)
             .where(ResourceACL.mfid == sample_id)
             .where(ResourceACL.accessgroup_id.in_(ag_ids))
         ).first()
-        print(f'{acl_ok=}')
         if acl_ok is None:
-            return None
-        print(f'{samp=}')
+            raise HTTPException(status_code=403, detail="Access denied")
+        deletion_req = session.exec(
+            select(DeletionRequest)
+            .where(DeletionRequest.resource_id == sample_id)
+            .where(DeletionRequest.status.in_(["pending", "approved"]))
+        ).first()
+
+        links = None
+        if include_links:
+            parents = session.exec(
+                select(Sample).join(SampleLink, SampleLink.parent_sample_id == Sample.id)
+                .where(SampleLink.sample_id == samp.id)
+            ).all()
+            children = session.exec(
+                select(Sample).join(SampleLink, SampleLink.sample_id == Sample.id)
+                .where(SampleLink.parent_sample_id == samp.id)
+            ).all()
+            links = (
+                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="parent") for s in parents] +
+                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="child") for s in children] +
+                [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="associated") for d in samp.datasets]
+            )
+
         return SampleResponse.model_validate({
             **samp.model_dump(),
             "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
             "creation_time": samp.resource.creation_time if samp.resource else None,
             "modification_time": samp.resource.modification_time if samp.resource else None,
+            "deletion_request": deletion_req.model_dump() if deletion_req else None,
+            "links": links,
         })
 
 
@@ -406,7 +462,7 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
             select(ResourceACL)
             .where(ResourceACL.mfid == sample_id)
             .where(ResourceACL.accessgroup_id.in_(ag_ids))
-        ).one_or_none()
+        ).first()
         if acl_ok is None:
             raise HTTPException(status_code=403, detail="Access denied")
 
@@ -459,7 +515,7 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authoriz
             select(ResourceACL)
             .where(ResourceACL.mfid == sample_id)
             .where(ResourceACL.accessgroup_id.in_(ag_ids))
-        ).one_or_none()
+        ).first()
         if acl_ok is None:
             raise HTTPException(status_code=403, detail="Access denied")
 

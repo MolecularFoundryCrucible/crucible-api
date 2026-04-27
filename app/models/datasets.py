@@ -1,5 +1,6 @@
-from typing import Optional
+from typing import List, Optional
 from sqlmodel import SQLModel
+from app.models.links import LinkedResource
 
 
 class DatasetCreate(SQLModel):
@@ -12,7 +13,7 @@ class DatasetCreate(SQLModel):
     dataset_name: Optional[str] = None
     file_to_upload: Optional[str] = None
     project_id: Optional[str] = None
-    instrument_id: Optional[int] = None
+    # instrument_id: Optional[int] = None
     source_folder: Optional[str] = None
     instrument_name: Optional[str] = None
     data_format: Optional[str] = None
@@ -21,6 +22,7 @@ class DatasetCreate(SQLModel):
     session_name: Optional[str] = None
     ingestion_githash: Optional[str] = None
     ingestion_class: Optional[str] = None
+    timestamp: Optional[str] = None
     public: bool = False
     owner_orcid: Optional[str] = None     # falls back to the authenticated user if not provided
 
@@ -28,10 +30,10 @@ class DatasetCreate(SQLModel):
 class DatasetUpdate(SQLModel):
     '''Partial update schema for Dataset. Only provided fields are modified.'''
     dataset_name: Optional[str] = None
-    file_to_upload: Optional[str] = None
+    # file_to_upload: Optional[str] = None
     project_id: Optional[str] = None
-    instrument_id: Optional[int] = None
-    source_folder: Optional[str] = None
+    # instrument_id: Optional[int] = None
+    # source_folder: Optional[str] = None
     instrument_name: Optional[str] = None
     data_format: Optional[str] = None
     measurement: Optional[str] = None
@@ -39,6 +41,7 @@ class DatasetUpdate(SQLModel):
     session_name: Optional[str] = None
     ingestion_githash: Optional[str] = None
     ingestion_class: Optional[str] = None
+    timestamp: Optional[str] = None
     public: Optional[bool] = None
     owner_orcid: Optional[str] = None
 
@@ -101,3 +104,4 @@ class DatasetResponse(DatasetRead):
     modification_time: Optional[str] = None
     scientific_metadata: Optional[dict] = None
     deletion_request: Optional[dict] = None
+    links: Optional[List[LinkedResource]] = None

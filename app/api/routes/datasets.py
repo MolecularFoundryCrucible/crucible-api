@@ -48,15 +48,23 @@ from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, s
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
 
-BRANCH_NAME = os.getenv('BRANCH_NAME', None)
-API_VERSION = os.getenv('API_VERSION', None)
+# eventually could switch to pushing + using github tags
+with open('pyproject.toml', 'r') as f:
+    for line in f:
+        if line.startswith('version = '):
+            version_line = line
+            break
+    version = version_line.split('=')[1].strip().strip('"')
+    API_VERSION = f'v{version}'
 
-if API_VERSION is None and BRANCH_NAME == 'v1':
-    API_VERSION = 'v1.0.0'
-elif API_VERSION is None:
-    API_VERSION = 'dev'
-else:
-    API_VERSION = API_VERSION
+#API_VERSION = os.getenv('API_VERSION', None)
+
+# if API_VERSION is None and BRANCH_NAME == 'v1':
+#     API_VERSION = 'v1.0.0'
+# elif API_VERSION is None:
+#     API_VERSION = 'dev'
+# else:
+#     API_VERSION = API_VERSION
 
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 

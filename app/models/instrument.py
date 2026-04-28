@@ -48,3 +48,4 @@ class InstrumentResponse(InstrumentRead):
     resource_type: Optional[str] = "instrument"
     creation_time: Optional[str] = None
     modification_time: Optional[str] = None
+    scientific_metadata: Optional[dict] = None

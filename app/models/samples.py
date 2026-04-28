@@ -41,6 +41,7 @@ class SampleResponse(SampleRead):
     resource_type: Optional[str] = "sample"
     creation_time: Optional[str] = None
     modification_time: Optional[str] = None
+    scientific_metadata: Optional[dict] = None
     datasets: Optional[List[DatasetRead]] = None
     deletion_request: Optional[dict] = None
     links: Optional[List[LinkedResource]] = None

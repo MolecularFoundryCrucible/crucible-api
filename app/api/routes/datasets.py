@@ -46,6 +46,10 @@ from app.models.samples import SampleRead
 from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.rmq_utils import send_pika_message
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl
+from app.api.routes.metadata import (
+    add_scientific_metadata as _metadata_post,
+    update_scientific_metadata as _metadata_patch,
+)
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
@@ -824,36 +828,18 @@ def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)],
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
-
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        
         md_obj = add_or_update(
             session,
             ScientificMetadata,
             where=(ScientificMetadata.dataset_unique_id == dsid),
-            dataset_unique_id = dsid,
-            scientific_metadata = scientific_md)
-
+            dataset_unique_id=dsid,
+            scientific_metadata=scientific_md)
         attributes.flag_modified(md_obj, 'scientific_metadata')
-
-        new_md_obj = add_or_update(
-            session,
-            ScientificMetadataBinary,
-            where=(ScientificMetadataBinary.unique_id == dsid),
-            unique_id=dsid,
-            scientific_metadata=scientific_md,
-        )
-
-        attributes.flag_modified(new_md_obj, 'scientific_metadata')
-
-        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
-        if ri:
-            ri.modification_time = get_tz_isoformat()
-
         session.commit()
-        session.refresh(new_md_obj)
-        return(new_md_obj)
+
+    return _metadata_post(auth_res=auth_res, unique_id=dsid, scientific_md=scientific_md)
 
 
 @router.patch("/datasets/{dsid}/scientific_metadata", response_model=Union[ScientificMetadata, ScientificMetadataBinary])
@@ -864,50 +850,22 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
-
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        stored_md = session.exec(select(ScientificMetadataBinary).where(ScientificMetadataBinary.unique_id == dsid)).one_or_none()
-        print(f'{stored_md=}')
-        if stored_md:
-            md_dict = stored_md.scientific_metadata
+    result = _metadata_patch(auth_res=auth_res, unique_id=dsid, scientific_md_updates=scientific_md_updates)
 
-        else:
-            md_dict = {}
-
-        print(f'{md_dict=}')
-
-        # this doesn't allow for updating nested fields without providing the whole tree 
-        # from the first level down.
-        # could make recursive?
-        for k,v in scientific_md_updates.items():
-            md_dict[k] = v
-        print(f'after update: {md_dict=}')
+    with Session(engine) as session:
         md_obj = add_or_update(
             session,
             ScientificMetadata,
             where=(ScientificMetadata.dataset_unique_id == dsid),
-            dataset_unique_id = dsid,
-            scientific_metadata = md_dict)
+            dataset_unique_id=dsid,
+            scientific_metadata=result.scientific_metadata)
         attributes.flag_modified(md_obj, 'scientific_metadata')
-
-        new_md_obj = add_or_update(
-            session,
-            ScientificMetadataBinary,
-            where=(ScientificMetadataBinary.unique_id == dsid),
-            unique_id=dsid,
-            scientific_metadata=md_dict,
-        )
-
-        attributes.flag_modified(new_md_obj, 'scientific_metadata')
-        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
-        if ri:
-            ri.modification_time = get_tz_isoformat()
-
         session.commit()
-        session.refresh(new_md_obj)
-        return(new_md_obj)
+
+    return result
 
 
 @router.get("/datasets/{dsid}/thumbnails", response_model=List[ThumbnailRead])

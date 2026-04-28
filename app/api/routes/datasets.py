@@ -280,15 +280,21 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         modification_time_gte: Filter datasets modified on or after this ISO timestamp
         modification_time_lte: Filter datasets modified on or before this ISO timestamp
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
+
     # Remove explicit query params so they don't get applied as Dataset attribute filters
-    for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte', 'modification_time_lte',
-              'include_metadata', 'limit'):
+    for k in ('creation_time_gte',
+              'creation_time_lte',
+              'modification_time_gte',
+              'modification_time_lte',
+              'include_metadata',
+              'limit'):
         params_dict.pop(k, None)
-    print(f'{include_metadata=}')
+
+
     with Session(engine) as session:
         # EXISTS subquery for ACL check — avoids JOIN fanout (one row per ACL entry)
         # and eliminates the need for DISTINCT on the outer query.
@@ -360,19 +366,45 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
 
 
 @router.get("/datasets/{dsid}", response_model=DatasetResponse)
-def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, include_links: bool = False):
+def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, include_metadata: bool = False, include_links: bool = False):
     '''
     Returns a dataset found with the provided unique ID.
     Pass include_links=true to include parent, child, and associated resources.
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        ds_cmd = select(Dataset).options(selectinload(Dataset.resource)).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
-        ds = session.exec(ds_cmd).one_or_none()
+        acl_subquery = exists().where(
+            Dataset.unique_id == dsid,
+            ResourceACL.mfid == Dataset.unique_id,
+            ResourceACL.accessgroup_id.in_(ag_ids)
+        )
+        
+        auth_filter = (Dataset.public == True) | acl_subquery
+
+        if include_metadata:
+            query = (
+                select(Dataset)
+                .options(selectinload(Dataset.scientific_metadata), selectinload(Dataset.resource))
+                .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+                .where(Dataset.unique_id == dsid)
+                .where(auth_filter)
+            )
+        else:
+            query = (
+                select(Dataset)
+                .options(selectinload(Dataset.resource))
+                .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+                .where(Dataset.unique_id == dsid)
+                .where(auth_filter)
+            )
+
+        ds = session.exec(query).one_or_none()
+
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+        
         deletion_req = session.exec(
             select(DeletionRequest)
             .where(DeletionRequest.resource_id == dsid)
@@ -403,6 +435,10 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
             **ds.model_dump(),
             "creation_time": ds.resource.creation_time if ds.resource else None,
             "modification_time": ds.resource.modification_time if ds.resource else None,
+            "scientific_metadata": (
+                    ds.scientific_metadata.scientific_metadata
+                    if include_metadata and ds.scientific_metadata else None
+                ),
             "deletion_request": deletion_req.model_dump() if deletion_req else None,
             "links": links,
         })

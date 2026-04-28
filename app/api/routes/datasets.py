@@ -29,7 +29,8 @@ from app.models.core_models import (
     Resource,
     Sample,
     ScientificMetadata,
-    NewScientificMetadata,
+    ScientificMetadataBinary,
+    #NewScientificMetadata,
     Thumbnail,
     User,
 )
@@ -307,7 +308,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         if include_metadata:
             query = (
                 select(Dataset)
-                .options(selectinload(Dataset.scientific_metadata), selectinload(Dataset.resource))
+                .options(selectinload(Dataset.resource).selectinload(Resource.scientific_metadata))
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
                 .where(auth_filter)
             )
@@ -351,18 +352,16 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             query = query.limit(limit)
 
         results = session.exec(query).all()
-        return [
-            DatasetResponse.model_validate({
+        response_list = []
+        for dataset in results:
+            resource_md = dataset.resource.scientific_metadata if dataset.resource else None
+            response_list.append(DatasetResponse.model_validate({
                 **dataset.model_dump(),
                 "creation_time": dataset.resource.creation_time if dataset.resource else None,
                 "modification_time": dataset.resource.modification_time if dataset.resource else None,
-                "scientific_metadata": (
-                    dataset.scientific_metadata.scientific_metadata
-                    if include_metadata and dataset.scientific_metadata else None
-                ),
-            })
-            for dataset in results
-        ]
+                "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
+            }))
+        return response_list
 
 
 @router.get("/datasets/{dsid}", response_model=DatasetResponse)
@@ -386,7 +385,7 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
         if include_metadata:
             query = (
                 select(Dataset)
-                .options(selectinload(Dataset.scientific_metadata), selectinload(Dataset.resource))
+                .options(selectinload(Dataset.resource).selectinload(Resource.scientific_metadata))
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
                 .where(Dataset.unique_id == dsid)
                 .where(auth_filter)
@@ -431,14 +430,12 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
                 [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="associated") for s in samples]
             )
 
+        resource_md = ds.resource.scientific_metadata if ds.resource else None
         return DatasetResponse.model_validate({
             **ds.model_dump(),
             "creation_time": ds.resource.creation_time if ds.resource else None,
             "modification_time": ds.resource.modification_time if ds.resource else None,
-            "scientific_metadata": (
-                    ds.scientific_metadata.scientific_metadata
-                    if include_metadata and ds.scientific_metadata else None
-                ),
+            "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
             "deletion_request": deletion_req.model_dump() if deletion_req else None,
             "links": links,
         })
@@ -811,13 +808,13 @@ def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found or access denied")
 
-        ds_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == ds.unique_id)).one_or_none()
+        ds_md = session.exec(select(ScientificMetadataBinary).where(ScientificMetadataBinary.unique_id == ds.unique_id)).one_or_none()
         return ds_md
 
 
-@router.post("/datasets/{dsid}/scientific_metadata", response_model=Union[ScientificMetadata, NewScientificMetadata])
+@router.post("/datasets/{dsid}/scientific_metadata", response_model=Union[ScientificMetadata, ScientificMetadataBinary])
 def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md: dict):
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     ds_cmd = select(Dataset).select_from(join(Dataset,
                                               ResourceACL,
@@ -842,10 +839,9 @@ def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)],
 
         new_md_obj = add_or_update(
             session,
-            NewScientificMetadata,
-            where=(NewScientificMetadata.dataset_mfid == dsid),
-            dataset_mfid=dsid,
-            dataset_id=ds.id,
+            ScientificMetadataBinary,
+            where=(ScientificMetadataBinary.unique_id == dsid),
+            unique_id=dsid,
             scientific_metadata=scientific_md,
         )
 
@@ -855,15 +851,14 @@ def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)],
         if ri:
             ri.modification_time = get_tz_isoformat()
 
-        # returns the old formatted md obj
         session.commit()
-        session.refresh(md_obj)
-        return(md_obj)
+        session.refresh(new_md_obj)
+        return(new_md_obj)
 
 
-@router.patch("/datasets/{dsid}/scientific_metadata", response_model=Union[ScientificMetadata, NewScientificMetadata])
+@router.patch("/datasets/{dsid}/scientific_metadata", response_model=Union[ScientificMetadata, ScientificMetadataBinary])
 def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md_updates: dict):
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
@@ -873,7 +868,7 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        stored_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == dsid)).one_or_none()
+        stored_md = session.exec(select(ScientificMetadataBinary).where(ScientificMetadataBinary.unique_id == dsid)).one_or_none()
         print(f'{stored_md=}')
         if stored_md:
             md_dict = stored_md.scientific_metadata
@@ -899,10 +894,9 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
 
         new_md_obj = add_or_update(
             session,
-            NewScientificMetadata,
-            where=(NewScientificMetadata.dataset_mfid == dsid),
-            dataset_mfid=dsid,
-            dataset_id=ds.id,
+            ScientificMetadataBinary,
+            where=(ScientificMetadataBinary.unique_id == dsid),
+            unique_id=dsid,
             scientific_metadata=md_dict,
         )
 
@@ -912,8 +906,8 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
             ri.modification_time = get_tz_isoformat()
 
         session.commit()
-        session.refresh(md_obj)
-        return(md_obj)
+        session.refresh(new_md_obj)
+        return(new_md_obj)
 
 
 @router.get("/datasets/{dsid}/thumbnails", response_model=List[ThumbnailRead])

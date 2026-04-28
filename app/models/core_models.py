@@ -134,9 +134,6 @@ class Dataset(SQLModel, table=True):
     sha256_hash_file_to_upload: Optional[str]
     scientific_metadata: Optional["ScientificMetadata"] = Relationship(
         back_populates = 'dataset')
-    scientific_metadata_new: Optional["NewScientificMetadata"] = Relationship(
-        back_populates="dataset", 
-        sa_relationship_kwargs={"foreign_keys": "[NewScientificMetadata.dataset_id]"})
     samples: List[Sample] = Relationship(back_populates="datasets", link_model = DatasetSampleLink)
     keywords: List[Keyword] = Relationship(back_populates="datasets", link_model=DatasetKeywordLink)
     thumbnails: List[Thumbnail] = Relationship(back_populates = "dataset")
@@ -233,21 +230,21 @@ class ScientificMetadata(SQLModel, table = True):
     dataset: Optional["Dataset"] = Relationship(back_populates="scientific_metadata")
 
 
-#New Scientific Metadata table for FTS (Full-Text Search)
-class NewScientificMetadata(SQLModel, table = True):
+# --- Resource / Identity ---
+
+class ScientificMetadataBinary(SQLModel, table = True):
     __tablename__ = "scientific_metadata_new"
     id: Optional[int] = Field(default=None, primary_key=True)
-    dataset_mfid: str = Field(foreign_key="dataset.unique_id", index=True)
-    dataset_id: Optional[int] = Field(foreign_key="dataset.id", index=True)
+    unique_id: str = Field(foreign_key="idtype.mfid", index=True)
     scientific_metadata: dict = Field(sa_column=Column(JSONB), default={})
-    dataset: Optional["Dataset"] = Relationship(
-        back_populates="scientific_metadata_new",
-        sa_relationship_kwargs={"foreign_keys": "[NewScientificMetadata.dataset_id]"}
+    resource: Optional["Resource"] = Relationship(
+        back_populates="scientific_metadata",
+        sa_relationship_kwargs={"foreign_keys": "[ScientificMetadataBinary.unique_id]"}
     )
     
     __table_args__ = (
         Index(
-            "ix_scientific_metadata_new_fts",
+            "ix_scientific_metadata_fts",
             func.to_tsvector(
                 text("'english'"),
                 func.jsonb_path_query_array(text('scientific_metadata'), text("'$[*]'")).cast(Text)
@@ -256,8 +253,6 @@ class NewScientificMetadata(SQLModel, table = True):
         ),
     )
 
-
-# --- Resource / Identity ---
 
 class Resource(SQLModel, table=True):
     __tablename__ = "idtype"
@@ -268,6 +263,10 @@ class Resource(SQLModel, table=True):
     created_with_api_version: Optional[str] = Field(default=None)
     api_version_githash: Optional[str] = Field(default=None)
    # last_modified_by_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.unique_id")
+    scientific_metadata: Optional["ScientificMetadataBinary"] = Relationship(
+            back_populates="resource", 
+            sa_relationship_kwargs={"foreign_keys": "[ScientificMetadataBinary.unique_id]"})
+    
     deletion_requests: List["DeletionRequest"] = Relationship(
         back_populates="resource",
         sa_relationship_kwargs={"foreign_keys": "[DeletionRequest.resource_id]"}

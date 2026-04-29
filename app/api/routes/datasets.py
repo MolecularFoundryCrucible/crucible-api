@@ -42,6 +42,7 @@ from app.models.datasets import (
 )
 from app.models.access_groups import AccessGroupRead
 from app.models.links import LinkedResource
+from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
 from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.rmq_utils import send_pika_message
@@ -268,7 +269,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         })
 
 
-@router.get("/datasets", response_model=List[DatasetResponse])
+@router.get("/datasets", response_model=PaginatedResponse[DatasetResponse])
 def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
                   include_metadata: bool = False,
                   limit: int = Query(default=100, ge=1, le=1000),
@@ -278,6 +279,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     '''
     Returns a paginated list of datasets the requesting user is authorized to view.
     Default limit is 100, max is 1000. Use offset for pagination.
+    Response includes total count to support parallel fetching.
     '''
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -294,61 +296,67 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             ResourceACL.accessgroup_id.in_(ag_ids)
         )
         auth_filter = (Dataset.public == True) | acl_subquery
+        deletion_filter = ~exists().where(
+            DeletionRequest.resource_id == Dataset.unique_id,
+            DeletionRequest.status.in_(["pending", "approved"])
+        )
+
+        # Base filters shared between count and data queries
+        def apply_filters(q):
+            q = q.where(auth_filter).where(deletion_filter)
+            if creation_time_gte:
+                q = q.where(Resource.creation_time >= creation_time_gte)
+            if creation_time_lte:
+                q = q.where(Resource.creation_time <= creation_time_lte)
+            if modification_time_gte:
+                q = q.where(Resource.modification_time >= modification_time_gte)
+            if modification_time_lte:
+                q = q.where(Resource.modification_time <= modification_time_lte)
+            for key, value in params_dict.items():
+                if hasattr(Dataset, key):
+                    q = q.where(getattr(Dataset, key) == value)
+            return q
+
+        count_query = apply_filters(
+            select(func.count()).select_from(Dataset)
+            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+        )
+        if keyword_filter:
+            count_query = generate_kw_query(session, count_query, keyword_filter)
+        total = session.exec(count_query).one()
 
         if include_metadata:
             query = (
                 select(Dataset, Resource.creation_time, Resource.modification_time, ScientificMetadataBinary.scientific_metadata)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
                 .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Dataset.unique_id, isouter=True)
-                .where(auth_filter)
             )
         else:
             query = (
                 select(Dataset, Resource.creation_time, Resource.modification_time)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
-                .where(auth_filter)
             )
 
-        query = query.where(
-            ~exists().where(
-                DeletionRequest.resource_id == Dataset.unique_id,
-                DeletionRequest.status.in_(["pending", "approved"])
-            )
-        )
-
-        if creation_time_gte:
-            query = query.where(Resource.creation_time >= creation_time_gte)
-        if creation_time_lte:
-            query = query.where(Resource.creation_time <= creation_time_lte)
-        if modification_time_gte:
-            query = query.where(Resource.modification_time >= modification_time_gte)
-        if modification_time_lte:
-            query = query.where(Resource.modification_time <= modification_time_lte)
-
+        query = apply_filters(query)
         if keyword_filter:
             query = generate_kw_query(session, query, keyword_filter)
-
-        for key, value in params_dict.items():
-            if hasattr(Dataset, key):
-                query = query.where(getattr(Dataset, key) == value)
-
         query = query.order_by(Resource.creation_time.desc()).offset(offset).limit(limit)
 
         results = session.exec(query).all()
-        response_list = []
+        items = []
         for row in results:
             if include_metadata:
                 dataset, creation_time, modification_time, sci_md = row
             else:
                 dataset, creation_time, modification_time = row
                 sci_md = None
-            response_list.append(DatasetResponse.model_validate({
+            items.append(DatasetResponse.model_validate({
                 **dataset.model_dump(),
                 "creation_time": creation_time,
                 "modification_time": modification_time,
                 "scientific_metadata": sci_md,
             }))
-        return response_list
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
 @router.get("/datasets/{dsid}", response_model=DatasetResponse)

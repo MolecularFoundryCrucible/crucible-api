@@ -4,7 +4,7 @@ import os
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import exists, join, text
+from sqlalchemy import exists, func, join, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, Session, select
 
@@ -16,6 +16,7 @@ from app.models.core_models import (
 )
 from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
+from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl
@@ -199,7 +200,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         })
 
 
-@router.get("/samples", response_model=List[SampleResponse])
+@router.get("/samples", response_model=PaginatedResponse[SampleResponse])
 def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
                  include_metadata: bool = False,
                  include_datasets: bool = False,
@@ -210,6 +211,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
     '''
     Returns a paginated list of samples the requesting user is authorized to view.
     Default limit is 100, max is 1000. Use offset for pagination.
+    Response includes total count to support parallel fetching.
     Pass include_datasets=true to include associated datasets (adds a query).
     '''
     _, ag_list = auth_res
@@ -225,6 +227,30 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
             ResourceACL.mfid == Sample.unique_id,
             ResourceACL.accessgroup_id.in_(ag_ids)
         )
+        deletion_filter = ~exists().where(
+            DeletionRequest.resource_id == Sample.unique_id,
+            DeletionRequest.status.in_(["pending", "approved"])
+        )
+
+        def apply_filters(q):
+            q = q.where(deletion_filter).where(acl_subquery)
+            if creation_time_gte:
+                q = q.where(Resource.creation_time >= creation_time_gte)
+            if creation_time_lte:
+                q = q.where(Resource.creation_time <= creation_time_lte)
+            if modification_time_gte:
+                q = q.where(Resource.modification_time >= modification_time_gte)
+            if modification_time_lte:
+                q = q.where(Resource.modification_time <= modification_time_lte)
+            for k, v in params_dict.items():
+                if hasattr(Sample, k) and v is not None:
+                    q = q.where(getattr(Sample, k) == v)
+            return q
+
+        total = session.exec(apply_filters(
+            select(func.count()).select_from(Sample)
+            .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+        )).one()
 
         if include_metadata:
             samp_cmd = (
@@ -238,31 +264,10 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
             )
 
-        samp_cmd = samp_cmd.where(
-            ~exists().where(
-                DeletionRequest.resource_id == Sample.unique_id,
-                DeletionRequest.status.in_(["pending", "approved"])
-            )
-        ).where(acl_subquery)
-
-        if creation_time_gte:
-            samp_cmd = samp_cmd.where(Resource.creation_time >= creation_time_gte)
-        if creation_time_lte:
-            samp_cmd = samp_cmd.where(Resource.creation_time <= creation_time_lte)
-        if modification_time_gte:
-            samp_cmd = samp_cmd.where(Resource.modification_time >= modification_time_gte)
-        if modification_time_lte:
-            samp_cmd = samp_cmd.where(Resource.modification_time <= modification_time_lte)
-
-        for k, v in params_dict.items():
-            if hasattr(Sample, k) and v is not None:
-                samp_cmd = samp_cmd.where(getattr(Sample, k) == v)
-
+        samp_cmd = apply_filters(samp_cmd)
         samp_cmd = samp_cmd.order_by(Resource.creation_time.desc()).offset(offset).limit(limit)
-
         rows = session.exec(samp_cmd).all()
 
-        # Optionally load datasets for the returned samples in one query
         if include_datasets:
             sample_ids = [row[0].id for row in rows]
             datasets_by_sample: dict = {}
@@ -275,21 +280,21 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
                 for ds, sid in ds_rows:
                     datasets_by_sample.setdefault(sid, []).append(DatasetRead.model_validate(ds))
 
-        response_list = []
+        items = []
         for row in rows:
             if include_metadata:
                 samp, creation_time, modification_time, sci_md = row
             else:
                 samp, creation_time, modification_time = row
                 sci_md = None
-            response_list.append(SampleResponse.model_validate({
+            items.append(SampleResponse.model_validate({
                 **samp.model_dump(),
                 "creation_time": creation_time,
                 "modification_time": modification_time,
                 "scientific_metadata": sci_md,
                 "datasets": datasets_by_sample.get(samp.id, []) if include_datasets else None,
             }))
-        return response_list
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
 @router.get("/samples/{sample_id}", response_model=SampleResponse)

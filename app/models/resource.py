@@ -9,6 +9,10 @@ class Resource(SQLModel, table=True):
     resource_type: str = Field(default=None, alias="object_type")
     creation_time: Optional[str] = Field(default_factory=get_tz_isoformat)
     modification_time: Optional[str] = Field(default_factory=get_tz_isoformat)
+    scientific_metadata: Optional["ScientificMetadataBinary"] = Relationship(back_populates="resource",
+                                                                      sa_relationship_kwargs={
+                                                                          "foreign_keys": "[ScientificMetadataBinary.unique_id]"
+                                                                      })
     deletion_requests: List["DeletionRequest"] = Relationship(back_populates = 'resource',
                                                                 sa_relationship_kwargs={
                                                                     "foreign_keys": "[DeletionRequest.resource_id]"

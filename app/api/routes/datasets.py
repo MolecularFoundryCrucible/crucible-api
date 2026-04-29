@@ -26,6 +26,7 @@ from app.models.core_models import (
     Project,
     Sample,
     ScientificMetadata,
+    ScientificMetadataBinary,
     Thumbnail,
     User
 )
@@ -743,6 +744,12 @@ def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)],
                                where=(ScientificMetadata.dataset_unique_id == dsid),
                                dataset_unique_id = dsid,
                                scientific_metadata = scientific_md)
+        
+        binary_md_obj = add_or_update(session,
+                               ScientificMetadataBinary,
+                               where=(ScientificMetadataBinary.unique_id == dsid),
+                               unique_id = dsid,
+                               scientific_metadata = scientific_md)
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
@@ -784,6 +791,12 @@ def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
                                dataset_unique_id = dsid, scientific_metadata = md_dict)
         print(f'{md_obj=}')
         attributes.flag_modified(md_obj, 'scientific_metadata')
+
+        binary_md_obj = add_or_update(session, ScientificMetadataBinary,
+                               where=(ScientificMetadataBinary.unique_id == dsid),
+                               unique_id = dsid, scientific_metadata = md_dict)
+        print(f'{binary_md_obj=}')
+        attributes.flag_modified(binary_md_obj, 'scientific_metadata')
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:

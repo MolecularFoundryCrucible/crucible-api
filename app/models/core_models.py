@@ -239,22 +239,21 @@ class ScientificMetadata(SQLModel, table = True):
 
 
 #New Scientific Metadata table for FTS (Full-Text Search)
-class NewScientificMetadata(SQLModel, table = True):
+class ScientificMetadataBinary(SQLModel, table = True):
     __tablename__ = "scientific_metadata_new"
     id: Optional[int] = Field(default=None, primary_key=True)
-    dataset_mfid: str = Field(foreign_key="dataset.unique_id", index=True)
-    dataset_id: Optional[int] = Field(foreign_key="dataset.id", index=True)
+    unique_id: str = Field(foreign_key="idtype.mfid", index=True)
     scientific_metadata: dict = Field(sa_column=Column(JSONB), default={})
-    dataset: Optional["Dataset"] = Relationship(
-        back_populates="scientific_metadata_new",
-        sa_relationship_kwargs={"foreign_keys": "[NewScientificMetadata.dataset_id]"}
+    resource: Optional["Resource"] = Relationship(
+        back_populates="scientific_metadata",
+        sa_relationship_kwargs={"foreign_keys": "[ScientificMetadataBinary.unique_id]"}
     )
     
     __table_args__ = (
         Index(
-            "ix_scientific_metadata_new_fts",
+            "ix_scientific_metadata_fts",
             func.to_tsvector(
-                text("'english'"), 
+                text("'english'"),
                 func.jsonb_path_query_array(text('scientific_metadata'), text("'$[*]'")).cast(Text)
             ),
             postgresql_using="gin"

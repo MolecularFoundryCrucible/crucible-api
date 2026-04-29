@@ -12,7 +12,7 @@ from sqlalchemy.orm import joinedload, selectinload, attributes
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_secret, get_tz_isoformat, is_orcid, checkhash
+from app.general_utils import get_secret, get_tz_isoformat, checkhash
 from app.models.core_models import (
     AccessGroup,
     AssociatedFile,
@@ -29,7 +29,8 @@ from app.models.core_models import (
     Resource,
     Sample,
     ScientificMetadata,
-    NewScientificMetadata,
+    ScientificMetadataBinary,
+    #NewScientificMetadata,
     Thumbnail,
     User,
 )
@@ -45,11 +46,33 @@ from app.models.samples import SampleRead
 from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.rmq_utils import send_pika_message
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl
+from app.api.routes.metadata import (
+    add_scientific_metadata as _metadata_post,
+    update_scientific_metadata as _metadata_patch,
+)
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
 
+# eventually could switch to pushing + using github tags
+with open('pyproject.toml', 'r') as f:
+    for line in f:
+        if line.startswith('version = '):
+            version_line = line
+            break
+    version = version_line.split('=')[1].strip().strip('"')
+    API_VERSION = f'v{version}'
 
+#API_VERSION = os.getenv('API_VERSION', None)
+
+# if API_VERSION is None and BRANCH_NAME == 'v1':
+#     API_VERSION = 'v1.0.0'
+# elif API_VERSION is None:
+#     API_VERSION = 'dev'
+# else:
+#     API_VERSION = API_VERSION
+
+API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 
 @router.post("/datasets/{dsid}/carrier_segmentation")
@@ -90,29 +113,43 @@ async def create_dataset(
     dataset: DatasetCreate
 ):
     print(f"received {dataset}")
+    dataset_details = dataset.model_dump()
     user_unique_id, ag_list = auth_res
-    #ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
+        if not dataset.owner_orcid:
+            dataset_details['owner_orcid'] = user_unique_id
+
+        if dataset_details.get('owner_orcid', None) is not None:
+            user = session.exec(select(User).where(User.unique_id == dataset_details['owner_orcid'])).one_or_none()
+            dataset_details['owner_user_id'] = user.id if user else None
+
+        if dataset_details.get('instrument_name', None):
+            instrument = session.exec(select(Instrument).where(Instrument.instrument_name == dataset_details['instrument_name'])).one_or_none()
+            dataset_details['instrument_id'] = instrument.id if instrument else None
+
         ds = add_or_update(
             session,
             Dataset,
-            Dataset.unique_id == dataset.unique_id,
-            **dataset.model_dump(exclude_unset=True)
+            Dataset.unique_id == dataset_details['unique_id'],
+            **dataset_details
         )
 
         session.commit()
         session.refresh(ds)
 
         try:
-            print(f'Resource mfid being written: {ds.unique_id}')
+            print(f'Resource mfid being written: {ds.unique_id}; {API_VERSION}; {API_VERSION_GITHASH}')
             now = get_tz_isoformat()
             ri = add_or_update(session,
                         Resource,
                         where=(Resource.mfid == ds.unique_id),
                         mfid = ds.unique_id,
                         resource_type = "dataset")
+            
             ri.creation_time = now
             ri.modification_time = now
+            ri.created_with_api_version = API_VERSION
+            ri.api_version_githash = API_VERSION_GITHASH
 
             print('added the Resource entry')
             session.commit()
@@ -120,8 +157,8 @@ async def create_dataset(
             session.refresh(ds)
             print(f"#=========== ID TYPE ADDED for dataset {ds.unique_id=}")
 
-        except:
-            print(f"#=========== ID TYPE FAILED for dataset {ds.unique_id=}")
+        except Exception as e:
+            print(f"#=========== ID TYPE FAILED for dataset {ds.unique_id=}: {e}")
 
         print(f'added dataset {ds}')
         # set appropriate access controls
@@ -132,37 +169,29 @@ async def create_dataset(
         sql_create_resource_acl(ro, ds.unique_id, read=True, write=False, session=session)
         print(f"add ro access to {ds.unique_id}")
 
-        if dataset.owner_orcid is not None:
-            print(f'adding owner orcid access to {ds.unique_id}')
-            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset.owner_orcid)).one_or_none()
-        else:   
-            creator_user_id = session.exec(select(User.id).where(User.unique_id == user_unique_id)).one_or_none()
-            ds.owner_orcid = user_unique_id
-            ds.owner_user_id = creator_user_id
-            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_unique_id)).one_or_none()
-        
-        if user_ag:
+        if dataset_details.get('owner_orcid', None) is not None:
+            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset_details['owner_orcid'])).one_or_none()
             sql_create_resource_acl(user_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added owner orcid access to {ds.unique_id}')
 
+        if user_unique_id != dataset_details.get('owner_orcid', None):
+            requestor_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_unique_id)).one_or_none()
+            sql_create_resource_acl(requestor_ag, ds.unique_id, read=True, write=True, session=session)
+            print(f'added requestor orcid access to {ds.unique_id}')
 
-        if dataset.project_id is not None:
-            print(f'adding proposal access to {ds.unique_id}')
-            prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset.project_id)).one_or_none()
+        if dataset_details.get('project_id', None) is not None:
+            prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset_details['project_id'])).one_or_none()
             sql_create_resource_acl(prop_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added proposal access to {ds.unique_id}')
 
-        if dataset.instrument_name is not None:
-            print(f'adding instrument group access to {ds.unique_id}')
-            inst_name = dataset.instrument_name
-
-            ag_query = select(AccessGroup).where(AccessGroup.group_name == inst_name.lower())
+        if dataset_details.get('instrument_name', None) is not None:
+            ag_query = select(AccessGroup).where(AccessGroup.group_name == dataset_details['instrument_name'].lower())
             inst_ag = session.exec(ag_query).one_or_none()
             if inst_ag is None:
                 inst_ag = add_or_update(session,
                                         AccessGroup,
-                                        AccessGroup.group_name == inst_name.lower(),
-                                        group_name=inst_name.lower())
+                                        AccessGroup.group_name == dataset_details['instrument_name'].lower(),
+                                        group_name=dataset_details['instrument_name'].lower())
             sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True, session=session)
             print(f'added instrument group access to {ds.unique_id}')
 
@@ -227,8 +256,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
         if upds.instrument_name is not None:
             inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == upds.instrument_name.lower())).one_or_none()
-            if inst_ag is not None:
-                sql_create_resource_acl(inst_ag, upds.unique_id, read=True, write=True, session=session)
+            sql_create_resource_acl(inst_ag, upds.unique_id, read=True, write=True, session=session)
             print('add instrument group access')
 
         session.commit()
@@ -257,15 +285,21 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         modification_time_gte: Filter datasets modified on or after this ISO timestamp
         modification_time_lte: Filter datasets modified on or before this ISO timestamp
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
+
     # Remove explicit query params so they don't get applied as Dataset attribute filters
-    for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte', 'modification_time_lte',
-              'include_metadata', 'limit'):
+    for k in ('creation_time_gte',
+              'creation_time_lte',
+              'modification_time_gte',
+              'modification_time_lte',
+              'include_metadata',
+              'limit'):
         params_dict.pop(k, None)
-    print(f'{include_metadata=}')
+
+
     with Session(engine) as session:
         # EXISTS subquery for ACL check — avoids JOIN fanout (one row per ACL entry)
         # and eliminates the need for DISTINCT on the outer query.
@@ -278,7 +312,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         if include_metadata:
             query = (
                 select(Dataset)
-                .options(selectinload(Dataset.scientific_metadata), selectinload(Dataset.resource))
+                .options(selectinload(Dataset.resource).selectinload(Resource.scientific_metadata))
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
                 .where(auth_filter)
             )
@@ -322,34 +356,58 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             query = query.limit(limit)
 
         results = session.exec(query).all()
-        return [
-            DatasetResponse.model_validate({
+        response_list = []
+        for dataset in results:
+            resource_md = dataset.resource.scientific_metadata if dataset.resource else None
+            response_list.append(DatasetResponse.model_validate({
                 **dataset.model_dump(),
                 "creation_time": dataset.resource.creation_time if dataset.resource else None,
                 "modification_time": dataset.resource.modification_time if dataset.resource else None,
-                "scientific_metadata": (
-                    dataset.scientific_metadata.scientific_metadata
-                    if include_metadata and dataset.scientific_metadata else None
-                ),
-            })
-            for dataset in results
-        ]
+                "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
+            }))
+        return response_list
 
 
 @router.get("/datasets/{dsid}", response_model=DatasetResponse)
-def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, include_links: bool = False):
+def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, include_metadata: bool = False, include_links: bool = False):
     '''
     Returns a dataset found with the provided unique ID.
     Pass include_links=true to include parent, child, and associated resources.
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        ds_cmd = select(Dataset).options(selectinload(Dataset.resource)).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
-        ds = session.exec(ds_cmd).one_or_none()
+        acl_subquery = exists().where(
+            Dataset.unique_id == dsid,
+            ResourceACL.mfid == Dataset.unique_id,
+            ResourceACL.accessgroup_id.in_(ag_ids)
+        )
+        
+        auth_filter = (Dataset.public == True) | acl_subquery
+
+        if include_metadata:
+            query = (
+                select(Dataset)
+                .options(selectinload(Dataset.resource).selectinload(Resource.scientific_metadata))
+                .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+                .where(Dataset.unique_id == dsid)
+                .where(auth_filter)
+            )
+        else:
+            query = (
+                select(Dataset)
+                .options(selectinload(Dataset.resource))
+                .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+                .where(Dataset.unique_id == dsid)
+                .where(auth_filter)
+            )
+
+        ds = session.exec(query).one_or_none()
+
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+        
         deletion_req = session.exec(
             select(DeletionRequest)
             .where(DeletionRequest.resource_id == dsid)
@@ -376,10 +434,12 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
                 [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="associated") for s in samples]
             )
 
+        resource_md = ds.resource.scientific_metadata if ds.resource else None
         return DatasetResponse.model_validate({
             **ds.model_dump(),
             "creation_time": ds.resource.creation_time if ds.resource else None,
             "modification_time": ds.resource.modification_time if ds.resource else None,
+            "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
             "deletion_request": deletion_req.model_dump() if deletion_req else None,
             "links": links,
         })
@@ -752,13 +812,13 @@ def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found or access denied")
 
-        ds_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == ds.unique_id)).one_or_none()
+        ds_md = session.exec(select(ScientificMetadataBinary).where(ScientificMetadataBinary.unique_id == ds.unique_id)).one_or_none()
         return ds_md
 
 
-@router.post("/datasets/{dsid}/scientific_metadata", response_model=ScientificMetadata)
+@router.post("/datasets/{dsid}/scientific_metadata", response_model=Union[ScientificMetadata, ScientificMetadataBinary])
 def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md: dict):
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     ds_cmd = select(Dataset).select_from(join(Dataset,
                                               ResourceACL,
@@ -768,141 +828,44 @@ def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)],
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
-
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        md_obj = add_or_update(session,
-                               ScientificMetadata,
-                               where=(ScientificMetadata.dataset_unique_id == dsid),
-                               dataset_unique_id = dsid,
-                               scientific_metadata = scientific_md)
-
-        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
-        if ri:
-            ri.modification_time = get_tz_isoformat()
-
+        md_obj = add_or_update(
+            session,
+            ScientificMetadata,
+            where=(ScientificMetadata.dataset_unique_id == dsid),
+            dataset_unique_id=dsid,
+            scientific_metadata=scientific_md)
+        attributes.flag_modified(md_obj, 'scientific_metadata')
         session.commit()
-        session.refresh(md_obj)
-        return(md_obj)
+
+    return _metadata_post(auth_res=auth_res, unique_id=dsid, scientific_md=scientific_md)
 
 
-@router.patch("/datasets/{dsid}/scientific_metadata", response_model=ScientificMetadata)
+@router.patch("/datasets/{dsid}/scientific_metadata", response_model=Union[ScientificMetadata, ScientificMetadataBinary])
 def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md_updates: dict):
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
-
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        stored_md = session.exec(select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == dsid)).one_or_none()
-        print(f'{stored_md=}')
-        if stored_md:
-            md_dict = stored_md.scientific_metadata
-
-        else:
-            md_dict = {}
-
-        print(f'{md_dict=}')
-
-        # this doesn't allow for updating nested fields without providing the whole tree from the first level down.
-        # could make recursive?
-        for k,v in scientific_md_updates.items():
-            md_dict[k] = v
-        print(f'after update: {md_dict=}')
-        md_obj = add_or_update(session, ScientificMetadata,
-                               where=(ScientificMetadata.dataset_unique_id == dsid),
-                               dataset_unique_id = dsid, scientific_metadata = md_dict)
-        print(f'{md_obj=}')
-        attributes.flag_modified(md_obj, 'scientific_metadata')
-
-        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
-        if ri:
-            ri.modification_time = get_tz_isoformat()
-
-        session.commit()
-        session.refresh(md_obj)
-        return(md_obj)
-
-
-@router.post("/datasets/{dsid}/scientific_metadata_new", response_model = NewScientificMetadata)
-def add_scientific_metadata_new(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md: dict):
-    user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-    ds_cmd = select(Dataset).select_from(join(Dataset,
-                                              ResourceACL,
-                                              ResourceACL.mfid == Dataset.unique_id)).where(
-                                                  Dataset.unique_id == dsid).filter(
-                                                        ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
+    result = _metadata_patch(auth_res=auth_res, unique_id=dsid, scientific_md_updates=scientific_md_updates)
 
     with Session(engine) as session:
-        ds = session.exec(ds_cmd).one_or_none()
-
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
         md_obj = add_or_update(
             session,
-            NewScientificMetadata,
-            where=(NewScientificMetadata.dataset_mfid == dsid),
-            dataset_mfid=dsid,
-            dataset_id=ds.id,
-            scientific_metadata=scientific_md,
-        )
-
+            ScientificMetadata,
+            where=(ScientificMetadata.dataset_unique_id == dsid),
+            dataset_unique_id=dsid,
+            scientific_metadata=result.scientific_metadata)
         attributes.flag_modified(md_obj, 'scientific_metadata')
-
-        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
-        if ri:
-            ri.modification_time = get_tz_isoformat()
-
         session.commit()
-        session.refresh(md_obj)
-        return md_obj
 
-
-@router.patch("/datasets/{dsid}/scientific_metadata_new", response_model = NewScientificMetadata)
-def update_scientific_metadata_new(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md_updates: dict):
-    user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
-
-    with Session(engine) as session:
-        ds = session.exec(ds_cmd).one_or_none()
-
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
-        stored_md = session.exec(select(NewScientificMetadata).where(NewScientificMetadata.dataset_mfid == dsid)).one_or_none()
-
-        if stored_md:
-            md_dict = stored_md.scientific_metadata
-        else:
-            md_dict = {}
-
-        for k, v in scientific_md_updates.items():
-            md_dict[k] = v
-
-        md_obj = add_or_update(
-            session,
-            NewScientificMetadata,
-            where=(NewScientificMetadata.dataset_mfid == dsid),
-            dataset_mfid=dsid,
-            dataset_id=ds.id,
-            scientific_metadata=md_dict,
-        )
-        attributes.flag_modified(md_obj, 'scientific_metadata')
-
-        ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
-        if ri:
-            ri.modification_time = get_tz_isoformat()
-
-        session.commit()
-        session.refresh(md_obj)
-        return md_obj
+    return result
 
 
 @router.get("/datasets/{dsid}/thumbnails", response_model=List[ThumbnailRead])

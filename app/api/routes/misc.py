@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import Dataset, DatasetLink, DatasetSampleLink, Instrument, ResourceACL, DeletionRequest, Keyword, NewScientificMetadata, Resource, Sample, SampleLink
+from app.models.core_models import Dataset, DatasetLink, DatasetSampleLink, Instrument, ResourceACL, DeletionRequest, Keyword, ScientificMetadataBinary, Resource, Sample, SampleLink
 from app.models.datasets import DatasetRead, DatasetResponse
 from app.models.instrument import InstrumentResponse
 from app.models.links import LinkedResource
@@ -72,7 +72,7 @@ def read_keyword(keyword: str, permissive: bool = True):
     return(K)
 
 
-@router.get("/scientific_metadata/search", response_model=List[NewScientificMetadata])
+@router.get("/scientific_metadata/search", response_model=List[ScientificMetadataBinary])
 def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str, limit: int = Query(default=50, ge=1, le=200)):
     """
     Perform a ranked Full-Text Search (FTS) on scientific metadata using PostgreSQL's tsvector, 
@@ -84,14 +84,14 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
     search_query = func.plainto_tsquery('english', q)
     metadata_vector = func.to_tsvector(
         'english',
-        func.jsonb_path_query_array(NewScientificMetadata.scientific_metadata, text("'$[*]'")).cast(Text)
+        func.jsonb_path_query_array(ScientificMetadataBinary.scientific_metadata, text("'$[*]'")).cast(Text)
     )
 
     rank_expr = func.ts_rank_cd(metadata_vector, search_query)
 
     stmt = (
-        select(NewScientificMetadata, rank_expr.label("rank"))
-        .join(Dataset, NewScientificMetadata.dataset_id == Dataset.id)
+        select(ScientificMetadataBinary, rank_expr.label("rank"))
+        .join(Dataset, ScientificMetadataBinary.dataset_id == Dataset.id)
         .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
         .where(
             and_(

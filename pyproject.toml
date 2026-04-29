@@ -1,6 +1,6 @@
 [project]
 name = "crucible-api"
-version = "0.1.0"
+version = "2.0.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,6 +35,3 @@ dependencies = [
     "uvicorn==0.32.1",
     "prometheus-fastapi-instrumentator>=7.1.0",
 ]
-
-[tool.uv.sources]
-pycrucible = { git = "https://github.com/MolecularFoundryCrucible/pycrucible.git" }

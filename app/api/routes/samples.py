@@ -1,5 +1,6 @@
 from typing import Annotated, List, Optional, Union
 
+import os
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -11,7 +12,7 @@ from app.api.dependencies import get_engine
 from app.general_utils import get_tz_isoformat, is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, DatasetSampleLink,
-    DeletionRequest, Resource, Sample, SampleLink, User,
+    DeletionRequest, Resource, Sample, SampleLink, ScientificMetadataBinary, User,
 )
 from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
@@ -22,6 +23,8 @@ from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_res
 router = APIRouter(tags=["samples"])
 engine = get_engine()
 
+API_VERSION = os.getenv('API_VERSION', None)
+API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 @router.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model=SampleLink)
 def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annotated[tuple, Depends(authorize_user)]):
@@ -161,7 +164,9 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                            Resource,
                            where=(Resource.mfid == sample.unique_id),
                            mfid=sample.unique_id,
-                           resource_type="sample")
+                           resource_type="sample",
+                           created_with_api_version = API_VERSION,
+                           api_version_githash = API_VERSION_GITHASH)
         ri.creation_time = now
         ri.modification_time = now
         session.commit()
@@ -196,6 +201,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
 
 @router.get("/samples", response_model=List[SampleResponse])
 def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
+                 include_metadata: bool = False,
                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                  modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
     '''
@@ -210,7 +216,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
 
     params_dict = dict(query_params)
     # Remove explicit query params so they don't get applied as Sample attribute filters
-    for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte', 'modification_time_lte'):
+    for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte', 'modification_time_lte', 'include_metadata'):
         params_dict.pop(k, None)
     print(params_dict)
 
@@ -250,21 +256,27 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
             else:
                pass
 
-        samp_cmd = samp_cmd.options(selectinload(Sample.datasets), selectinload(Sample.resource))
+        resource_opts = (
+            selectinload(Sample.resource).selectinload(Resource.scientific_metadata)
+            if include_metadata else selectinload(Sample.resource)
+        )
+        samp_cmd = samp_cmd.options(selectinload(Sample.datasets), resource_opts)
         samp_list = session.exec(samp_cmd).all()
-        return [
-            SampleResponse.model_validate({
+        response_list = []
+        for samp in samp_list:
+            resource_md = samp.resource.scientific_metadata if samp.resource else None
+            response_list.append(SampleResponse.model_validate({
                 **samp.model_dump(),
                 "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
                 "creation_time": samp.resource.creation_time if samp.resource else None,
                 "modification_time": samp.resource.modification_time if samp.resource else None,
-            })
-            for samp in samp_list
-        ]
+                "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
+            }))
+        return response_list
 
 
 @router.get("/samples/{sample_id}", response_model=SampleResponse)
-def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], include_links: bool = False):
+def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], include_links: bool = False, include_metadata: bool = False):
     '''
     Returns the sample for the provided ID.
     Pass include_links=true to include parent, child, and associated resources.
@@ -272,7 +284,11 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
-        query = select(Sample).options(selectinload(Sample.datasets), selectinload(Sample.resource)).where(Sample.unique_id == sample_id)
+        resource_opts = (
+            selectinload(Sample.resource).selectinload(Resource.scientific_metadata)
+            if include_metadata else selectinload(Sample.resource)
+        )
+        query = select(Sample).options(selectinload(Sample.datasets), resource_opts).where(Sample.unique_id == sample_id)
         samp = session.exec(query).first()
         if samp is None:
             raise HTTPException(status_code=404, detail="Sample not found")
@@ -305,11 +321,13 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
                 [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="associated") for d in samp.datasets]
             )
 
+        resource_md = samp.resource.scientific_metadata if samp.resource else None
         return SampleResponse.model_validate({
             **samp.model_dump(),
             "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
             "creation_time": samp.resource.creation_time if samp.resource else None,
             "modification_time": samp.resource.modification_time if samp.resource else None,
+            "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
             "deletion_request": deletion_req.model_dump() if deletion_req else None,
             "links": links,
         })

@@ -10,6 +10,11 @@ ENV UV_NO_DEV=1
 
 ARG githash
 ENV GITHASH=$githash
+
+ARG api_version
+ENV API_VERSION=$api_version
+RUN echo "API_VERSION: $(API_VERSION)"
+
 ARG BRANCH_NAME
 ENV BRANCH_NAME=$BRANCH_NAME
 RUN if [ "$BRANCH_NAME" = "main" ]; then echo 7777 > /root/.port; else echo 8889 > /root/.port; fi

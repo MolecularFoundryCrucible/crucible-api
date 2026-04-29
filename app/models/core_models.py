@@ -129,12 +129,11 @@ class Dataset(SQLModel, table=True):
     measurement: Optional[str]
     data_type: Optional[str]
     session_name: Optional[str]
+    ingestion_githash: Optional[str] = None
+    ingestion_class: Optional[str] = None
     sha256_hash_file_to_upload: Optional[str]
     scientific_metadata: Optional["ScientificMetadata"] = Relationship(
         back_populates = 'dataset')
-    scientific_metadata_new: Optional["NewScientificMetadata"] = Relationship(
-        back_populates="dataset", 
-        sa_relationship_kwargs={"foreign_keys": "[NewScientificMetadata.dataset_id]"})
     samples: List[Sample] = Relationship(back_populates="datasets", link_model = DatasetSampleLink)
     keywords: List[Keyword] = Relationship(back_populates="datasets", link_model=DatasetKeywordLink)
     thumbnails: List[Thumbnail] = Relationship(back_populates = "dataset")
@@ -210,7 +209,7 @@ class User(SQLModel, table=True):
 class ApiToken(SQLModel, table = True):
     user_unique_id: str = Field(default = None, foreign_key = "user.orcid", index = True)
     token: str = Field(default = None, primary_key = True, index = True)
-    token_created: str
+    token_created: str = Field(default_factory=get_tz_isoformat)
 
 
 class Project(SQLModel, table=True):
@@ -222,6 +221,9 @@ class Project(SQLModel, table=True):
     project_lead_orcid: str = Field(index=True)
     project_lead_email: Optional[str] = None  # stored for old-API backward compat; not exposed in new response schemas
     users: List[User] = Relationship(back_populates="projects", link_model=UserProjectLink)
+    resource: Optional["Resource"] = Relationship(
+        sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Project.project_id", "lazy": "noload"}
+    )
 
 
 class ScientificMetadata(SQLModel, table = True):
@@ -231,21 +233,21 @@ class ScientificMetadata(SQLModel, table = True):
     dataset: Optional["Dataset"] = Relationship(back_populates="scientific_metadata")
 
 
-#New Scientific Metadata table for FTS (Full-Text Search)
-class NewScientificMetadata(SQLModel, table = True):
+# --- Resource / Identity ---
+
+class ScientificMetadataBinary(SQLModel, table = True):
     __tablename__ = "scientific_metadata_new"
     id: Optional[int] = Field(default=None, primary_key=True)
-    dataset_mfid: str = Field(foreign_key="dataset.unique_id", index=True)
-    dataset_id: Optional[int] = Field(foreign_key="dataset.id", index=True)
+    unique_id: str = Field(foreign_key="idtype.mfid", index=True)
     scientific_metadata: dict = Field(sa_column=Column(JSONB), default={})
-    dataset: Optional["Dataset"] = Relationship(
-        back_populates="scientific_metadata_new",
-        sa_relationship_kwargs={"foreign_keys": "[NewScientificMetadata.dataset_id]"}
+    resource: Optional["Resource"] = Relationship(
+        back_populates="scientific_metadata",
+        sa_relationship_kwargs={"foreign_keys": "[ScientificMetadataBinary.unique_id]"}
     )
     
     __table_args__ = (
         Index(
-            "ix_scientific_metadata_new_fts",
+            "ix_scientific_metadata_fts",
             func.to_tsvector(
                 text("'english'"),
                 func.jsonb_path_query_array(text('scientific_metadata'), text("'$[*]'")).cast(Text)
@@ -255,14 +257,19 @@ class NewScientificMetadata(SQLModel, table = True):
     )
 
 
-# --- Resource / Identity ---
-
 class Resource(SQLModel, table=True):
     __tablename__ = "idtype"
     mfid: str = Field(default=None, primary_key=True, index=True, alias="unique_id")
     resource_type: str = Field(default=None, alias="object_type")
     creation_time: Optional[str] = Field(default_factory=get_tz_isoformat)
     modification_time: Optional[str] = Field(default_factory=get_tz_isoformat)
+    created_with_api_version: Optional[str] = Field(default=None)
+    api_version_githash: Optional[str] = Field(default=None)
+   # last_modified_by_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.unique_id")
+    scientific_metadata: Optional["ScientificMetadataBinary"] = Relationship(
+            back_populates="resource", 
+            sa_relationship_kwargs={"foreign_keys": "[ScientificMetadataBinary.unique_id]"})
+    
     deletion_requests: List["DeletionRequest"] = Relationship(
         back_populates="resource",
         sa_relationship_kwargs={"foreign_keys": "[DeletionRequest.resource_id]"}

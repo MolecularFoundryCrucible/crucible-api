@@ -96,6 +96,11 @@ class AssociatedFileRead(SQLModel):
     size: int
     sha256_hash: str
 
+class ScientificMetadataBinaryRead(SQLModel):
+    #id: Optional[int] = None
+    unique_id: str
+    scientific_metadata: dict
+
 
 class DatasetResponse(DatasetRead):
     '''DatasetRead extended with Resource timestamps, optional scientific metadata, and deletion status.'''
@@ -105,3 +110,4 @@ class DatasetResponse(DatasetRead):
     scientific_metadata: Optional[dict] = None
     deletion_request: Optional[dict] = None
     links: Optional[List[LinkedResource]] = None
+

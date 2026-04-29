@@ -1,22 +1,43 @@
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import join
-from sqlalchemy.orm import attributes
-from sqlmodel import Session, select
+from sqlalchemy.orm import attributes, selectinload
+from sqlmodel import Session, SQLModel, select
 
 from app.api.dependencies import get_engine
 from app.general_utils import get_tz_isoformat
-from app.models.core_models import Resource, ResourceACL, ScientificMetadataBinary
+from app.models.core_models import Dataset, Resource, ResourceACL, ScientificMetadataBinary
 from app.utils.auth_utils import authorize_user
 from app.utils.sql_utils import add_or_update
+from app.models.datasets import ScientificMetadataBinaryRead
+
 
 router = APIRouter(tags=["metadata"])
 engine = get_engine()
 
 
 
-@router.post("/metadata/{unique_id}", response_model=ScientificMetadataBinary)
+@router.get("/metadata/{unique_id}", response_model=ScientificMetadataBinaryRead)
+def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str):
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+    with Session(engine) as session:
+        query = select(Resource)\
+                    .options(selectinload(Resource.scientific_metadata))\
+                    .select_from(join(Resource, ResourceACL, ResourceACL.mfid == Resource.mfid, isouter=True))\
+                    .where(Resource.mfid == unique_id)\
+                    .filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Resource.public == True)).distinct()
+
+        resource = session.exec(query).one_or_none()
+
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found or access denied")
+        
+        return resource.scientific_metadata
+
+
+@router.post("/metadata/{unique_id}", response_model=ScientificMetadataBinaryRead)
 def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md: dict):
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -51,7 +72,7 @@ def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)],
 
 
 
-@router.patch("/metadata/{unique_id}", response_model=ScientificMetadataBinary)
+@router.patch("/metadata/{unique_id}", response_model=ScientificMetadataBinaryRead)
 def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md_updates: dict):
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]

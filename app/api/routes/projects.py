@@ -2,7 +2,7 @@ from typing import Annotated, List, Union
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, join
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 import networkx as nx
 from networkx.readwrite import json_graph
@@ -10,8 +10,8 @@ from networkx.readwrite import json_graph
 from app.api.dependencies import get_engine
 from app.general_utils import is_orcid
 from app.models.core_models import (
-    AccessGroup, Project, Sample, User, UserProjectLink, UserAccessGroupLink,
-    ResourceACL, Dataset, DatasetSampleLink
+    AccessGroup, Project, Resource, Sample, User, UserProjectLink, UserAccessGroupLink,
+    ResourceACL, Dataset, DatasetSampleLink,
 )
 from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.sql_utils import add_or_update
@@ -80,31 +80,45 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
 
 
 @router.get("/projects", response_model=List[ProjectWithLead])
-def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)]):
+def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)], include_metadata: bool = False):
     '''
     Returns a list of projects the user is authorized to see, including the resolved project lead.
     '''
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
-    with Session(engine) as session: 
+    loader_opts = (
+        [selectinload(Project.resource).selectinload(Resource.scientific_metadata)]
+        if include_metadata else None
+    )
+
+    with Session(engine) as session:
         if is_orcid(user_unique_id):
-            props = sql_get_projects_for_user(user_unique_id, session) or []
+            props = sql_get_projects_for_user(user_unique_id, session, options=loader_opts) or []
         else:
             print(ag_list)
             require_groups(ag_list)
-            props = session.exec(select(Project)).all()
+            query = select(Project)
+            if loader_opts:
+                query = query.options(*loader_opts)
+            props = session.exec(query).all()
 
         orcids = [p.project_lead_orcid for p in props if p.project_lead_orcid]
         leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}
-        return [
-            ProjectWithLead(**proj.model_dump(), lead=leads.get(proj.project_lead_orcid))
-            for proj in props
-        ]
+
+        response_list = []
+        for proj in props:
+            resource_md = proj.resource.scientific_metadata if proj.resource else None
+            response_list.append(ProjectWithLead(
+                **proj.model_dump(),
+                lead=leads.get(proj.project_lead_orcid),
+                scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
+            ))
+        return response_list
 
 
 @router.get("/projects/{proj_id}", response_model=Union[None, ProjectWithLead])
-def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], include_metadata: bool = False):
     '''
     Returns the project object for the provided ID, including the resolved project lead.
     '''
@@ -112,11 +126,19 @@ def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user
     require_groups(ag_list, {'admin', proj_id})
 
     with Session(engine) as session:
-        prop = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
+        query = select(Project).where(Project.project_id == proj_id)
+        if include_metadata:
+            query = query.options(selectinload(Project.resource).selectinload(Resource.scientific_metadata))
+        prop = session.exec(query).one_or_none()
         if prop is None:
             return None
         lead = session.exec(select(User).where(User.unique_id == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
-        return ProjectWithLead(**prop.model_dump(), lead=lead)
+        resource_md = prop.resource.scientific_metadata if prop.resource else None
+        return ProjectWithLead(
+            **prop.model_dump(),
+            lead=lead,
+            scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
+        )
 
 
 @router.patch("/projects/{proj_id}", response_model=ProjectWithLead)

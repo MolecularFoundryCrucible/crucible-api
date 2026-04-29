@@ -3,7 +3,7 @@ from typing import Annotated, List, Optional, Union
 import os
 import networkx as nx
 from networkx.readwrite import json_graph
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import exists, join, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, Session, select
@@ -202,44 +202,49 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
 @router.get("/samples", response_model=List[SampleResponse])
 def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
                  include_metadata: bool = False,
+                 include_datasets: bool = False,
+                 limit: int = Query(default=100, ge=1, le=1000),
+                 offset: int = Query(default=0, ge=0),
                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                  modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
     '''
-    Returns a list of samples where the owner_orcid matches the orcid of the person who made the request.
-    If an admin API key is used, returns all samples.
+    Returns a paginated list of samples the requesting user is authorized to view.
+    Default limit is 100, max is 1000. Use offset for pagination.
+    Pass include_datasets=true to include associated datasets (adds a query).
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
-    query_params = request.query_params
-    print(query_params)
-
-    params_dict = dict(query_params)
-    # Remove explicit query params so they don't get applied as Sample attribute filters
-    for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte', 'modification_time_lte', 'include_metadata'):
+    params_dict = dict(request.query_params)
+    for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
+              'modification_time_lte', 'include_metadata', 'include_datasets', 'limit', 'offset'):
         params_dict.pop(k, None)
-    print(params_dict)
 
     with Session(engine) as session:
+        acl_subquery = exists().where(
+            ResourceACL.mfid == Sample.unique_id,
+            ResourceACL.accessgroup_id.in_(ag_ids)
+        )
 
-        samp_cmd = select(Sample).join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+        if include_metadata:
+            samp_cmd = (
+                select(Sample, Resource.creation_time, Resource.modification_time, ScientificMetadataBinary.scientific_metadata)
+                .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+                .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Sample.unique_id, isouter=True)
+            )
+        else:
+            samp_cmd = (
+                select(Sample, Resource.creation_time, Resource.modification_time)
+                .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+            )
 
-        # Exclude soft-deleted resources (pending or approved deletion)
         samp_cmd = samp_cmd.where(
             ~exists().where(
                 DeletionRequest.resource_id == Sample.unique_id,
                 DeletionRequest.status.in_(["pending", "approved"])
             )
-        )
+        ).where(acl_subquery)
 
-        acl_subquery = exists().where(
-            ResourceACL.mfid == Sample.unique_id,
-            ResourceACL.accessgroup_id.in_(ag_ids)
-        )
-        samp_cmd = samp_cmd.where(acl_subquery)
-
-
-        # Filter on Resource timestamps
         if creation_time_gte:
             samp_cmd = samp_cmd.where(Resource.creation_time >= creation_time_gte)
         if creation_time_lte:
@@ -251,26 +256,38 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
 
         for k, v in params_dict.items():
             if hasattr(Sample, k) and v is not None:
-                print(f'filtering results on {k}={v}')
                 samp_cmd = samp_cmd.where(getattr(Sample, k) == v)
-            else:
-               pass
 
-        resource_opts = (
-            selectinload(Sample.resource).selectinload(Resource.scientific_metadata)
-            if include_metadata else selectinload(Sample.resource)
-        )
-        samp_cmd = samp_cmd.options(selectinload(Sample.datasets), resource_opts)
-        samp_list = session.exec(samp_cmd).all()
+        samp_cmd = samp_cmd.order_by(Resource.creation_time.desc()).offset(offset).limit(limit)
+
+        rows = session.exec(samp_cmd).all()
+
+        # Optionally load datasets for the returned samples in one query
+        if include_datasets:
+            sample_ids = [row[0].id for row in rows]
+            datasets_by_sample: dict = {}
+            if sample_ids:
+                ds_rows = session.exec(
+                    select(Dataset, DatasetSampleLink.sample_id)
+                    .join(DatasetSampleLink, DatasetSampleLink.dataset_id == Dataset.id)
+                    .where(DatasetSampleLink.sample_id.in_(sample_ids))
+                ).all()
+                for ds, sid in ds_rows:
+                    datasets_by_sample.setdefault(sid, []).append(DatasetRead.model_validate(ds))
+
         response_list = []
-        for samp in samp_list:
-            resource_md = samp.resource.scientific_metadata if samp.resource else None
+        for row in rows:
+            if include_metadata:
+                samp, creation_time, modification_time, sci_md = row
+            else:
+                samp, creation_time, modification_time = row
+                sci_md = None
             response_list.append(SampleResponse.model_validate({
                 **samp.model_dump(),
-                "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
-                "creation_time": samp.resource.creation_time if samp.resource else None,
-                "modification_time": samp.resource.modification_time if samp.resource else None,
-                "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
+                "creation_time": creation_time,
+                "modification_time": modification_time,
+                "scientific_metadata": sci_md,
+                "datasets": datasets_by_sample.get(samp.id, []) if include_datasets else None,
             }))
         return response_list
 

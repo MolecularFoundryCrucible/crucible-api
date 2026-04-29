@@ -6,7 +6,7 @@ from typing import Annotated, List, Optional, Union
 import pytz
 import networkx as nx
 from networkx.readwrite import json_graph
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy import exists, func, join, text
 from sqlalchemy.orm import joinedload, selectinload, attributes
 from sqlmodel import and_, or_, Session, select
@@ -269,40 +269,26 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
 
 @router.get("/datasets", response_model=List[DatasetResponse])
-def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: bool = False, limit: Optional[int] = None,
+def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
+                  include_metadata: bool = False,
+                  limit: int = Query(default=100, ge=1, le=1000),
+                  offset: int = Query(default=0, ge=0),
                   creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                   modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
     '''
-    Returns a list of all dataset IDs the requesting user is authorized to view.
-    If no dataset IDs are authorized for the user, an empty list will be returned.
-
-    Args:
-        auth_res: Authorization result containing access group info
-        request: Request object containing query parameters
-        limit: Optional maximum number of datasets to return
-        creation_time_gte: Filter datasets created on or after this ISO timestamp
-        creation_time_lte: Filter datasets created on or before this ISO timestamp
-        modification_time_gte: Filter datasets modified on or after this ISO timestamp
-        modification_time_lte: Filter datasets modified on or before this ISO timestamp
+    Returns a paginated list of datasets the requesting user is authorized to view.
+    Default limit is 100, max is 1000. Use offset for pagination.
     '''
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
 
-    # Remove explicit query params so they don't get applied as Dataset attribute filters
-    for k in ('creation_time_gte',
-              'creation_time_lte',
-              'modification_time_gte',
-              'modification_time_lte',
-              'include_metadata',
-              'limit'):
+    for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
+              'modification_time_lte', 'include_metadata', 'limit', 'offset'):
         params_dict.pop(k, None)
 
-
     with Session(engine) as session:
-        # EXISTS subquery for ACL check — avoids JOIN fanout (one row per ACL entry)
-        # and eliminates the need for DISTINCT on the outer query.
         acl_subquery = exists().where(
             ResourceACL.mfid == Dataset.unique_id,
             ResourceACL.accessgroup_id.in_(ag_ids)
@@ -311,20 +297,18 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
 
         if include_metadata:
             query = (
-                select(Dataset)
-                .options(selectinload(Dataset.resource).selectinload(Resource.scientific_metadata))
+                select(Dataset, Resource.creation_time, Resource.modification_time, ScientificMetadataBinary.scientific_metadata)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+                .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Dataset.unique_id, isouter=True)
                 .where(auth_filter)
             )
         else:
             query = (
-                select(Dataset)
-                .options(selectinload(Dataset.resource))
+                select(Dataset, Resource.creation_time, Resource.modification_time)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
                 .where(auth_filter)
             )
 
-        # Exclude soft-deleted resources (pending or approved deletion)
         query = query.where(
             ~exists().where(
                 DeletionRequest.resource_id == Dataset.unique_id,
@@ -332,7 +316,6 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             )
         )
 
-        # Filter on Resource timestamps
         if creation_time_gte:
             query = query.where(Resource.creation_time >= creation_time_gte)
         if creation_time_lte:
@@ -342,28 +325,28 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         if modification_time_lte:
             query = query.where(Resource.modification_time <= modification_time_lte)
 
-        # join and filter on keywords
         if keyword_filter:
             query = generate_kw_query(session, query, keyword_filter)
 
-        # Apply additional filters for Dataset attributes
         for key, value in params_dict.items():
             if hasattr(Dataset, key):
                 query = query.where(getattr(Dataset, key) == value)
 
-        # Apply limit if specified
-        if limit is not None:
-            query = query.limit(limit)
+        query = query.order_by(Resource.creation_time.desc()).offset(offset).limit(limit)
 
         results = session.exec(query).all()
         response_list = []
-        for dataset in results:
-            resource_md = dataset.resource.scientific_metadata if dataset.resource else None
+        for row in results:
+            if include_metadata:
+                dataset, creation_time, modification_time, sci_md = row
+            else:
+                dataset, creation_time, modification_time = row
+                sci_md = None
             response_list.append(DatasetResponse.model_validate({
                 **dataset.model_dump(),
-                "creation_time": dataset.resource.creation_time if dataset.resource else None,
-                "modification_time": dataset.resource.modification_time if dataset.resource else None,
-                "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
+                "creation_time": creation_time,
+                "modification_time": modification_time,
+                "scientific_metadata": sci_md,
             }))
         return response_list
 

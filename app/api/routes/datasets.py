@@ -928,7 +928,7 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
         return ds_files
 
 
-@router.post("/datasets/{dsid}/associated_files", response_model=AssociatedFileRead)
+@router.post("/datasets/{dsid}/associated_files", response_model=dict[AssociatedFileRead, IngestionRequest])
 def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
                         associated_file: AssociatedFileCreate, ingestion_class: Optional[str] = None):
     '''
@@ -973,9 +973,9 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)], dsi
 
         # request ingestion
         from app.utils.rmq_utils import request_ingestion
-        ingestion_request = request_ingestion(session, af_obj, dsid, ingestion_class) # TODO: something probably needs this
+        ingestion_request = request_ingestion(session, af_obj, dsid, ingestion_class) 
 
-        return(af_obj)
+        return({'associated_file': af_obj, 'ingestion_request': ingestion_request})
 
 
 @router.get("/datasets/{dsid}/keywords", response_model=List[Keyword])

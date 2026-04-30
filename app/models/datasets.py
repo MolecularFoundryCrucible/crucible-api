@@ -11,7 +11,7 @@ class DatasetCreate(SQLModel):
     '''
     unique_id: Optional[str] = None
     dataset_name: Optional[str] = None
-    file_to_upload: Optional[str] = None
+   # file_to_upload: Optional[str] = None
     project_id: Optional[str] = None
     # instrument_id: Optional[int] = None
     source_folder: Optional[str] = None
@@ -51,7 +51,7 @@ class DatasetRead(SQLModel):
     unique_id: str
     public: bool
     dataset_name: Optional[str] = None
-    file_to_upload: Optional[str] = None
+   # file_to_upload: Optional[str] = None
     owner_orcid: Optional[str] = None
     project_id: Optional[str] = None
     source_folder: Optional[str] = None

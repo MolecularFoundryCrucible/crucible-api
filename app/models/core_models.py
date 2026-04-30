@@ -116,7 +116,7 @@ class Dataset(SQLModel, table=True):
     unique_id: str = Field(default_factory = get_mfid_value, index=True, unique=True)
     public: bool = Field(default = False, index = True)
     dataset_name: Optional[str] = Field(default = "") 
-    file_to_upload: Optional[str] = Field(default = None)  
+   # file_to_upload: Optional[str] = Field(default = None)  
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     owner_orcid: Optional[str] = Field(default = None)
     project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")

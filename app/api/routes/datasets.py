@@ -619,63 +619,28 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
     return add_associated_file(auth_res, dsid, af)
 
 
-@router.post("/datasets/{dsid}/ingest", response_model=IngestionRequest)
-def request_dataset_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
+
+@router.post("/datasets/{dsid}/associated_file/{af_id}/ingest", response_model=IngestionRequest)
+def request_file_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
                               dsid: str,
-                              file_to_upload: Optional[str]=None,
+                              af_id: str,
                               ingestion_class: Optional[str]=None):
 
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
-    print("request received")
     ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(
                                         Dataset.unique_id == dsid).filter(
                                         ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
+        af = session.exec(select(AssociatedFile).where(AssociatedFile.id == af_id, AssociatedFile.dataset_id == ds.id)).one_or_none()
 
-    if ds is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    if af is None:
+        raise HTTPException(status_code=404, detail="Associated file not found")
 
-    elif file_to_upload is None:
-        file_to_upload = ds.file_to_upload
-
-    else:
-        ds.file_to_upload = file_to_upload
-
-    if not file_to_upload:
-        raise HTTPException(status_code=400, detail="No file listed to ingest")
-
-    pst= pytz.timezone("America/Los_Angeles")
-    creation_time = get_tz_isoformat()
-    ingestion_request = IngestionRequest(dataset_id=dsid,
-                                         time_created=creation_time,
-                                         file_to_upload=file_to_upload,
-                                         status="requested")
-    with Session(engine) as session:
-        session.add(ingestion_request)
-        session.commit()
-        session.refresh(ingestion_request)
-        print('committed')
-
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    msg = {
-        "filename": file_to_upload,
-        "reqid": ingestion_request.id,
-        "dsid": dsid,
-        "ingestion_class": ingestion_class
-    }
-
-    send_pika_message(
-        message=json.dumps(msg),
-        exchange="",
-        routing_key="ingest-newapi",
-        user="admin",
-        rmq_pw=rmq_pw
-    )
-
-    return ingestion_request
+    from app.utils.rmq_utils import request_ingestion
+    return request_ingestion(af, dsid, ingestion_class)
 
 
 @router.get("/datasets/{dsid}/ingest/{reqid}", response_model=IngestionRequest)
@@ -829,6 +794,7 @@ def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: s
         ds_thumbnails = session.exec(select(Thumbnail).where(Thumbnail.dataset_id == ds.id)).all()
         return ds_thumbnails
 
+
 @router.post("/datasets/first_thumbnails")
 def get_first_thumbnails(
     auth_res: Annotated[tuple, Depends(authorize_user)],
@@ -948,7 +914,7 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
     '''
     Returns a list of the files associated with the dataset ID provided.
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -963,34 +929,19 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
 
 
 @router.post("/datasets/{dsid}/associated_files", response_model=AssociatedFileRead)
-def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
-                        dsid: str,
-                        associated_file: AssociatedFileCreate):
+def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
+                        associated_file: AssociatedFileCreate, ingestion_class: Optional[str] = None):
     '''
     Adds an associated file to a dataset.
     Creates the AF object if it doesn't already exist.
+    Requests ingestion for the AF
 
     Raises:
         HTTPException: If required associated file fields are missing or dataset not found
     '''
     print("accepted args")
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
-
-    # Validate required fields
-    missing_fields = []
-    if not associated_file.filename or not associated_file.filename.strip():
-        missing_fields.append("filename")
-    if associated_file.size is None:
-        missing_fields.append("size")
-    if not associated_file.sha256_hash or not associated_file.sha256_hash.strip():
-        missing_fields.append("sha256_hash")
-
-    if missing_fields:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Missing required associated file information: {', '.join(missing_fields)}. Please provide all required fields: filename, size, and sha256_hash."
-        )
 
     ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
@@ -1000,32 +951,37 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
+        # add associated file
         af_obj = add_or_update(session, AssociatedFile, where=(AssociatedFile.sha256_hash == associated_file.sha256_hash),
                                        filename = associated_file.filename,
                                        size = associated_file.size,
                                        sha256_hash = associated_file.sha256_hash,
                                        dataset_id = ds.id)
-        print("added af_obj")
+        
+        # link to dataset
         if not (af_obj in ds.associated_files):
-            print("adding afobj to ds")
             ds.associated_files.append(af_obj)
             session.add(ds)
-            print("added afobj to ds")
 
+        # update resource modification time
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
             ri.modification_time = get_tz_isoformat()
 
         session.commit()
-        print("committed session")
         session.refresh(af_obj)
+
+        # request ingestion
+        from app.utils.rmq_utils import request_ingestion
+        ingestion_request = request_ingestion(session, af_obj, dsid, ingestion_class) # TODO: something probably needs this
+
         return(af_obj)
 
 
 @router.get("/datasets/{dsid}/keywords", response_model=List[Keyword])
 def list_keywords_for_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
 
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -1045,7 +1001,7 @@ def add_keyword(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, 
     Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object.
     Otherwise, the keyword will be created and then added to the dataset.
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 

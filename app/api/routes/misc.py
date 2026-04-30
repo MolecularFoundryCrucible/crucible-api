@@ -152,15 +152,6 @@ def search_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user
         return [row[0] for row in results]
 
 
-@router.get("/idtype/{unique_id}")
-def get_object_type(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str):
-    with Session(engine) as session:
-        object_type = session.exec(select(Resource).where(Resource.mfid == unique_id)).one_or_none()
-        if object_type is None:
-            raise HTTPException(status_code=404, detail="MFID not found")
-        else:
-            return object_type
-
 
 @router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse, InstrumentResponse, ProjectWithLead])
 def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_id: str,

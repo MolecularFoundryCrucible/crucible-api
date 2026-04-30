@@ -62,9 +62,7 @@ class DatasetRead(SQLModel):
     measurement: Optional[str] = None
     data_type: Optional[str] = None
     session_name: Optional[str] = None
-    ingestion_githash: Optional[str] = None
-    ingestion_class: Optional[str] = None
-    sha256_hash_file_to_upload: Optional[str] = None
+   # sha256_hash_file_to_upload: Optional[str] = None
 
 
 class ThumbnailCreate(SQLModel):
@@ -86,6 +84,7 @@ class AssociatedFileCreate(SQLModel):
     filename: str
     size: int
     sha256_hash: str
+    ingestion_class: Optional[str] = None
 
 
 class AssociatedFileRead(SQLModel):
@@ -95,6 +94,8 @@ class AssociatedFileRead(SQLModel):
     filename: str
     size: int
     sha256_hash: str
+    ingestion_githash: Optional[str] = None
+    ingestion_class: Optional[str] = None
 
 class ScientificMetadataBinaryRead(SQLModel):
     #id: Optional[int] = None

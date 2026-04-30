@@ -41,6 +41,8 @@ class AssociatedFile(SQLModel, table=True):
     filename: str
     size: int = Field(sa_column=Column(BigInteger())) 
     sha256_hash: str
+    ingestion_githash: Optional[str] = None
+    ingestion_class: Optional[str] = None
     dataset_id: int = Field(foreign_key = "dataset.id")
     dataset: "Dataset" = Relationship(back_populates = 'associated_files')
 

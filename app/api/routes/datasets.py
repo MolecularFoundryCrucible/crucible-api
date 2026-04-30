@@ -209,35 +209,19 @@ async def create_dataset(
 @router.patch("/datasets/{dsid}", response_model=DatasetResponse)
 def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, updated_dataset: DatasetUpdate):
     '''
-    Updates a dataset in SQL and returns the Updated Dataset object.
-    Sends a message to RabbitMQ to alert RMQ that updates have been made.
+    Partially update a dataset record. Only provided fields are modified.
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
-    ds_cmd = select(Dataset).select_from(
-                                join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(
-                                    Dataset.unique_id == dsid).filter(
-                                        ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
-        ds_list = session.exec(ds_cmd).all()
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
 
-    if not ds_list:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+        require_write_access(session, ag_ids, [dsid])
 
-
-    with Session(engine) as session:
-        stored_ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if stored_ds:
-            stored_ds_dict = dict(stored_ds)
-        print(f"{stored_ds_dict=}")
-
-        update_attr = updated_dataset.model_dump(exclude_unset=True)
-        print(f"{update_attr=}")
-        filtered_updates = {k: v for k, v in update_attr.items()}
-
-
-        upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **filtered_updates)
+        upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **updated_dataset.model_dump(exclude_unset=True))
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
@@ -247,18 +231,15 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
             user_orcid = session.exec(select(User.unique_id).where(User.id == upds.owner_user_id)).one_or_none()
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
             sql_create_resource_acl(user_ag, upds.unique_id, read=True, write=True, session=session)
-            print('add owner orcid access')
 
         if upds.project_id is not None:
             prop_name = session.exec(select(Project.project_id).where(Project.project_id == upds.project_id)).one_or_none()
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
             sql_create_resource_acl(prop_ag, upds.unique_id, read=True, write=True, session=session)
-            print('add proposal access')
 
         if upds.instrument_name is not None:
             inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == upds.instrument_name.lower())).one_or_none()
             sql_create_resource_acl(inst_ag, upds.unique_id, read=True, write=True, session=session)
-            print('add instrument group access')
 
         session.commit()
         session.refresh(upds)

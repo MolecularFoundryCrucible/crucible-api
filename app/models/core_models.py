@@ -133,7 +133,7 @@ class Dataset(SQLModel, table=True):
     session_name: Optional[str]
     ingestion_githash: Optional[str] = None
     ingestion_class: Optional[str] = None
-    sha256_hash_file_to_upload: Optional[str]
+    # sha256_hash_file_to_upload: Optional[str]
     scientific_metadata: Optional["ScientificMetadata"] = Relationship(
         back_populates = 'dataset')
     samples: List[Sample] = Relationship(back_populates="datasets", link_model = DatasetSampleLink)

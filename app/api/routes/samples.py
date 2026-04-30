@@ -86,10 +86,15 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
     '''
     Partially update a sample record. Only provided fields are modified.
     '''
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
     with Session(engine) as session:
         sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
         if not sample:
             raise HTTPException(status_code=404, detail='Sample not found')
+
+        require_write_access(session, ag_ids, [sample_id])
 
         for key, value in updated_sample.model_dump(exclude_unset=True).items():
             setattr(sample, key, value)

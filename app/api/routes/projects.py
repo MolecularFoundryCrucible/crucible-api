@@ -203,10 +203,12 @@ def _get_project_users(proj_id: str, session) -> List[User]:
     ).all()
 
 
-@router.get("/projects/{proj_id}/users", response_model=List[UserRead])
-def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+@router.get("/projects/{proj_id}/users", response_model=PaginatedResponse[UserRead])
+def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+                          limit: int = Query(default=100, ge=1, le=1000),
+                          offset: int = Query(default=0, ge=0)):
     '''
-    Returns a list of users associated with the project ID.
+    Returns a paginated list of users associated with the project ID.
     Accessible by admins and members of the project.
     '''
     _, ag_list = auth_res
@@ -218,7 +220,8 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(autho
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        return _get_project_users(proj_id, session)
+        all_users = _get_project_users(proj_id, session)
+        return PaginatedResponse(total=len(all_users), limit=limit, offset=offset, items=all_users[offset:offset + limit])
 
 
 @router.post("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])

@@ -461,77 +461,66 @@ def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, a
         return {"message": f"Successfully unlinked {parent_dataset_id} -> {child_dataset_id}"}
 
 
-@router.get("/datasets/{child_dataset_id}/parents", response_model=List[DatasetRead])
-def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+@router.get("/datasets/{child_dataset_id}/parents", response_model=PaginatedResponse[DatasetRead])
+def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+                         limit: int = Query(default=100, ge=1, le=1000),
+                         offset: int = Query(default=0, ge=0)):
     '''
-    Returns a list of parent datasets for a given dataset
+    Returns a paginated list of parent datasets for a given dataset.
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(
-                                            join(Dataset,
-                                                    ResourceACL,
-                                                    ResourceACL.mfid == Dataset.unique_id, isouter=True)
-                                            ).filter(
-                                                    (ResourceACL.accessgroup_id.in_(ag_ids)) |
-                                                    (Dataset.public == True)
-                                            ).distinct()
-        child = session.exec(ds_cmd.where(Dataset.unique_id == child_dataset_id)).one_or_none()
-
+        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        child = session.exec(
+            select(Dataset)
+            .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
+            .where(Dataset.unique_id == child_dataset_id)
+            .filter(auth_filter).distinct()
+        ).one_or_none()
         if child is None:
             raise HTTPException(status_code=404, detail="Child dataset not found")
 
-        # TODO: JOIN ON ACL BUT PERMISSIONS SHOULD PROBABLY INHERIT..
-        parents = session.exec(
+        query = (
             select(Dataset)
             .select_from(join(Dataset, DatasetLink, DatasetLink.parent_dataset_id == Dataset.id))
             .where(DatasetLink.child_dataset_id == child.id)
-            .where(
-                ~exists().where(
-                    DeletionRequest.resource_id == Dataset.unique_id,
-                    DeletionRequest.status.in_(["pending", "approved"])
-                )
-            )
-        ).all()
-        return parents
+            .where(~exists().where(DeletionRequest.resource_id == Dataset.unique_id, DeletionRequest.status.in_(["pending", "approved"])))
+        )
+        total = session.exec(select(func.count()).select_from(query.subquery())).one()
+        parents = session.exec(query.offset(offset).limit(limit)).all()
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=parents)
 
 
-@router.get("/datasets/{parent_dataset_id}/children", response_model=List[DatasetRead])
-def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+@router.get("/datasets/{parent_dataset_id}/children", response_model=PaginatedResponse[DatasetRead])
+def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+                        limit: int = Query(default=100, ge=1, le=1000),
+                        offset: int = Query(default=0, ge=0)):
     '''
-    Returns a list of child datasets for a given parent dataset
+    Returns a paginated list of child datasets for a given parent dataset.
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(
-                                            join(Dataset,
-                                                    ResourceACL,
-                                                    ResourceACL.mfid == Dataset.unique_id, isouter=True)
-                                            ).filter(
-                                                    (ResourceACL.accessgroup_id.in_(ag_ids)) |
-                                                    (Dataset.public == True)
-                                            ).distinct()
+        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        parent = session.exec(
+            select(Dataset)
+            .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
+            .where(Dataset.unique_id == parent_dataset_id)
+            .filter(auth_filter).distinct()
+        ).one_or_none()
+        if parent is None:
+            raise HTTPException(status_code=404, detail="Parent dataset not found")
 
-        parent = session.exec(ds_cmd.where(Dataset.unique_id == parent_dataset_id)).one_or_none()
-
-        if not parent:
-            raise HTTPException(status_code=404, detail="Parent sample not found")
-
-        # TODO: JOIN ON ACL BUT PERMISSIONS SHOULD PROBABLY INHERIT..
-        children = session.exec(
+        query = (
             select(Dataset)
             .select_from(join(Dataset, DatasetLink, DatasetLink.child_dataset_id == Dataset.id))
             .where(DatasetLink.parent_dataset_id == parent.id)
-            .where(
-                ~exists().where(
-                    DeletionRequest.resource_id == Dataset.unique_id,
-                    DeletionRequest.status.in_(["pending", "approved"])
-                )
-            )
-        ).all()
-        return children
+            .where(~exists().where(DeletionRequest.resource_id == Dataset.unique_id, DeletionRequest.status.in_(["pending", "approved"])))
+        )
+        total = session.exec(select(func.count()).select_from(query.subquery())).one()
+        children = session.exec(query.offset(offset).limit(limit)).all()
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=children)
 
 
 @router.delete("/datasets/{dsid}")
@@ -1133,22 +1122,34 @@ def link_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], dsi
         return DatasetSampleLinkResponse(dataset_id=ds.unique_id, dataset_name=ds.dataset_name, sample_id=samp.unique_id, sample_type=samp.sample_type, sample_name=samp.sample_name)
 
 
-@router.get("/datasets/{dsid}/samples", response_model=List[SampleRead])
-def read_samples_in_dataset(dsid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+@router.get("/datasets/{dsid}/samples", response_model=PaginatedResponse[SampleRead])
+def read_samples_in_dataset(dsid: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+                            limit: int = Query(default=100, ge=1, le=1000),
+                            offset: int = Query(default=0, ge=0)):
     '''
-    Returns a list of samples associated with the dataset ID provided
+    Returns a paginated list of samples associated with the dataset ID provided.
     '''
-    user_unique_id, ag_list = auth_res
+    _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
-        ds = session.exec(ds_cmd).one_or_none()
-
+        ds = session.exec(
+            select(Dataset)
+            .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
+            .where(Dataset.unique_id == dsid)
+            .filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True))
+            .distinct()
+        ).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found or access denied")
 
-        samples = session.exec(select(Sample).select_from(join(Sample, DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)).where(DatasetSampleLink.dataset_id == ds.id)).all()
-        return samples
+        query = (
+            select(Sample)
+            .select_from(join(Sample, DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id))
+            .where(DatasetSampleLink.dataset_id == ds.id)
+        )
+        total = session.exec(select(func.count()).select_from(query.subquery())).one()
+        samples = session.exec(query.offset(offset).limit(limit)).all()
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=samples)
 
 @router.get("/datasets/{dataset_id}/dataset_graph")
 def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):

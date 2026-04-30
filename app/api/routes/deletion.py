@@ -1,6 +1,6 @@
 from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
@@ -8,6 +8,7 @@ from app.api.dependencies import get_engine
 from app.general_utils import get_tz_isoformat
 from app.models.core_models import Dataset, DeletionRequest, Resource, Sample
 from app.models.deletion import DeletionRequestRead
+from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_groups
 
 router = APIRouter(tags=["deletion"])
@@ -89,10 +90,12 @@ def create_deletion_request(
 # GET /deletion_requests
 # Admin-only. Returns all requests, optionally filtered by status.
 # ---------------------------------------------------------------------------
-@router.get("/deletion_requests", response_model=List[DeletionRequestRead])
+@router.get("/deletion_requests", response_model=PaginatedResponse[DeletionRequestRead])
 def list_deletion_requests(
     auth_res: Annotated[tuple, Depends(authorize_user)],
     status: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
 ):
     _, ag_list = auth_res
     require_groups(ag_list)
@@ -100,8 +103,10 @@ def list_deletion_requests(
         query = select(DeletionRequest).options(selectinload(DeletionRequest.resource))
         if status is not None:
             query = query.where(DeletionRequest.status == status)
-        results = session.exec(query).all()
-        return [_to_read(req) for req in results]
+        all_results = session.exec(query).all()
+        total = len(all_results)
+        items = [_to_read(req) for req in all_results[offset:offset + limit]]
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
 # ---------------------------------------------------------------------------

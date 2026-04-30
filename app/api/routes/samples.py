@@ -415,58 +415,50 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
             return datasets
 
 
-@router.get("/samples/{child_sample_id}/parents", response_model=List[SampleRead])
-def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+@router.get("/samples/{child_sample_id}/parents", response_model=PaginatedResponse[SampleRead])
+def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+                        limit: int = Query(default=100, ge=1, le=1000),
+                        offset: int = Query(default=0, ge=0)):
     '''
-    Returns a list of parent samples for a given child sample
+    Returns a paginated list of parent samples for a given child sample.
     '''
-    user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         child_sample = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).one_or_none()
-
         if child_sample is None:
             raise HTTPException(status_code=404, detail="Child sample not found")
 
-        parent_samples = session.exec(
+        query = (
             select(Sample)
             .select_from(join(Sample, SampleLink, SampleLink.parent_sample_id == Sample.id))
             .where(SampleLink.sample_id == child_sample.id)
-            .where(
-                ~exists().where(
-                    DeletionRequest.resource_id == Sample.unique_id,
-                    DeletionRequest.status.in_(["pending", "approved"])
-                )
-            )
-        ).all()
-        return parent_samples
+            .where(~exists().where(DeletionRequest.resource_id == Sample.unique_id, DeletionRequest.status.in_(["pending", "approved"])))
+        )
+        total = session.exec(select(func.count()).select_from(query.subquery())).one()
+        items = session.exec(query.offset(offset).limit(limit)).all()
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.get("/samples/{parent_sample_id}/children", response_model=List[SampleRead])
-def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+@router.get("/samples/{parent_sample_id}/children", response_model=PaginatedResponse[SampleRead])
+def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+                       limit: int = Query(default=100, ge=1, le=1000),
+                       offset: int = Query(default=0, ge=0)):
     '''
-    Returns a list of child samples for a given parent sample
+    Returns a paginated list of child samples for a given parent sample.
     '''
-    user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
-
         if parent_sample is None:
             raise HTTPException(status_code=404, detail="Parent sample not found")
 
-        child_samples = session.exec(
+        query = (
             select(Sample)
             .select_from(join(Sample, SampleLink, SampleLink.sample_id == Sample.id))
             .where(SampleLink.parent_sample_id == parent_sample.id)
-            .where(
-                ~exists().where(
-                    DeletionRequest.resource_id == Sample.unique_id,
-                    DeletionRequest.status.in_(["pending", "approved"])
-                )
-            )
-        ).all()
-        return child_samples
+            .where(~exists().where(DeletionRequest.resource_id == Sample.unique_id, DeletionRequest.status.in_(["pending", "approved"])))
+        )
+        total = session.exec(select(func.count()).select_from(query.subquery())).one()
+        items = session.exec(query.offset(offset).limit(limit)).all()
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 @router.get("/samples/{sample_id}/sample_graph")
 def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):

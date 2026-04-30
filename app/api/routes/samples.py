@@ -18,7 +18,7 @@ from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
-from app.utils.auth_utils import authorize_user, require_groups
+from app.utils.auth_utils import authorize_user, require_groups, require_write_access
 from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl
 
 router = APIRouter(tags=["samples"])
@@ -33,13 +33,7 @@ def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annota
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        acl_check = exists().where(
-            ResourceACL.mfid.in_([parent_sample_id, child_sample_id]),
-            ResourceACL.accessgroup_id.in_(ag_ids),
-            ResourceACL.write == True
-        )
-        if not session.exec(select(acl_check)).one():
-            raise HTTPException(status_code=403, detail="Write access required to at least one of the samples")
+        require_write_access(session, ag_ids, [parent_sample_id, child_sample_id])
 
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()
         if not parent_sample:
@@ -65,13 +59,7 @@ def unlink_sample_parent_child(parent_sample_id: str, child_sample_id: str, auth
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        acl_check = exists().where(
-            ResourceACL.mfid.in_([parent_sample_id, child_sample_id]),
-            ResourceACL.accessgroup_id.in_(ag_ids),
-            ResourceACL.write == True
-        )
-        if not session.exec(select(acl_check)).one():
-            raise HTTPException(status_code=403, detail="Write access required to at least one of the samples")
+        require_write_access(session, ag_ids, [parent_sample_id, child_sample_id])
 
         parent = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
         if not parent:

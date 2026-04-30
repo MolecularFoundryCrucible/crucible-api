@@ -44,7 +44,7 @@ from app.models.access_groups import AccessGroupRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
-from app.utils.auth_utils import authorize_user, require_groups
+from app.utils.auth_utils import authorize_user, require_groups, require_write_access
 from app.utils.rmq_utils import send_pika_message
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl
 from app.api.routes.metadata import (
@@ -442,13 +442,7 @@ def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Ann
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        acl_check = exists().where(
-            ResourceACL.mfid.in_([parent_dataset_id, child_dataset_id]),
-            ResourceACL.accessgroup_id.in_(ag_ids),
-            ResourceACL.write == True
-        )
-        if not session.exec(select(acl_check)).one():
-            raise HTTPException(status_code=403, detail="Write access required to at least one of the datasets")
+        require_write_access(session, ag_ids, [parent_dataset_id, child_dataset_id])
 
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).first()
         if not parent:
@@ -474,13 +468,7 @@ def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, a
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        acl_check = exists().where(
-            ResourceACL.mfid.in_([parent_dataset_id, child_dataset_id]),
-            ResourceACL.accessgroup_id.in_(ag_ids),
-            ResourceACL.write == True
-        )
-        if not session.exec(select(acl_check)).one():
-            raise HTTPException(status_code=403, detail="Write access required to at least one of the datasets")
+        require_write_access(session, ag_ids, [parent_dataset_id, child_dataset_id])
 
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
         if not parent:
@@ -586,13 +574,7 @@ def unlink_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], d
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        acl_check = exists().where(
-            ResourceACL.mfid.in_([dsid, sample_id]),
-            ResourceACL.accessgroup_id.in_(ag_ids),
-            ResourceACL.write == True
-        )
-        if not session.exec(select(acl_check)).one():
-            raise HTTPException(status_code=403, detail="Write access required to at least one of the resources")
+        require_write_access(session, ag_ids, [dsid, sample_id])
 
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
@@ -1161,13 +1143,7 @@ def link_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], dsi
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        acl_check = exists().where(
-            ResourceACL.mfid.in_([dsid, sample_id]),
-            ResourceACL.accessgroup_id.in_(ag_ids),
-            ResourceACL.write == True
-        )
-        if not session.exec(select(acl_check)).one():
-            raise HTTPException(status_code=403, detail="Write access required to at least one of the resources")
+        require_write_access(session, ag_ids, [dsid, sample_id])
 
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:

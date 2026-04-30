@@ -138,28 +138,18 @@ async def create_dataset(
         session.commit()
         session.refresh(ds)
 
-        try:
-            print(f'Resource mfid being written: {ds.unique_id}; {API_VERSION}; {API_VERSION_GITHASH}')
-            now = get_tz_isoformat()
-            ri = add_or_update(session,
-                        Resource,
-                        where=(Resource.mfid == ds.unique_id),
-                        mfid = ds.unique_id,
-                        resource_type = "dataset")
-            
-            ri.creation_time = now
-            ri.modification_time = now
-            ri.created_with_api_version = API_VERSION
-            ri.api_version_githash = API_VERSION_GITHASH
-
-            print('added the Resource entry')
-            session.commit()
-            print('committed')
-            session.refresh(ds)
-            print(f"#=========== ID TYPE ADDED for dataset {ds.unique_id=}")
-
-        except Exception as e:
-            print(f"#=========== ID TYPE FAILED for dataset {ds.unique_id=}: {e}")
+        now = get_tz_isoformat()
+        ri = add_or_update(session,
+                    Resource,
+                    where=(Resource.mfid == ds.unique_id),
+                    mfid = ds.unique_id,
+                    resource_type = "dataset")
+        ri.creation_time = now
+        ri.modification_time = now
+        ri.created_with_api_version = API_VERSION
+        ri.api_version_githash = API_VERSION_GITHASH
+        session.commit()
+        session.refresh(ds)
 
         print(f'added dataset {ds}')
         # set appropriate access controls

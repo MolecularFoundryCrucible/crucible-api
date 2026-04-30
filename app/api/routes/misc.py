@@ -167,6 +167,13 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
             ).one_or_none()
             if samp is None:
                 raise HTTPException(status_code=404, detail="Sample not found")
+            acl_ok = session.exec(
+                select(ResourceACL)
+                .where(ResourceACL.mfid == resource_id)
+                .where(ResourceACL.accessgroup_id.in_(ag_ids))
+            ).first()
+            if acl_ok is None:
+                raise HTTPException(status_code=403, detail="Access denied")
             return SampleResponse.model_validate({
                 **samp.model_dump(),
                 "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
@@ -208,13 +215,18 @@ def get_linked_resources(resource_id: str, auth_res: Annotated[tuple, Depends(au
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
 
-        acl_ok = session.exec(
-            select(ResourceACL)
-            .where(ResourceACL.mfid == resource_id)
-            .where(ResourceACL.accessgroup_id.in_(ag_ids))
-        ).first()
-        if acl_ok is None and resource.resource_type != "instrument":
-            raise HTTPException(status_code=403, detail="Access denied")
+        if resource.resource_type != "instrument":
+            acl_ok = session.exec(
+                select(ResourceACL)
+                .where(ResourceACL.mfid == resource_id)
+                .where(ResourceACL.accessgroup_id.in_(ag_ids))
+            ).first()
+            is_public = (
+                resource.resource_type == "dataset" and
+                session.exec(select(Dataset.public).where(Dataset.unique_id == resource_id)).one_or_none()
+            )
+            if acl_ok is None and not is_public:
+                raise HTTPException(status_code=403, detail="Access denied")
 
         results: List[LinkedResource] = []
 

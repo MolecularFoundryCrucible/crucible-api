@@ -1,8 +1,9 @@
 from typing import Annotated, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from sqlalchemy import join
-from sqlmodel import Session, select
+from sqlalchemy import func, join
+from sqlalchemy.orm import selectinload
+from sqlmodel import Session, select, col
 
 from app.api.dependencies import get_engine
 from app.general_utils import is_orcid
@@ -46,9 +47,10 @@ def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Req
                 search_cmd = search_cmd.where(getattr(User, k) == v)
 
     with Session(engine) as session:
-        all_users = session.exec(search_cmd).all()
-        total = len(all_users)
-        items = all_users[offset:offset + limit]
+        total = session.exec(select(func.count()).select_from(search_cmd.subquery())).one()
+        items = session.exec(
+            search_cmd.order_by(User.last_name, User.first_name).offset(offset).limit(limit)
+        ).all()
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
@@ -252,23 +254,42 @@ def remove_user_from_access_group(auth_res: Annotated[tuple, Depends(authorize_u
         return {"detail": f"User {orcid} removed from access group {group_name}"}
 
 
-@router.get("/users/{orcid}/projects", response_model=List[ProjectWithLead])
-def read_projects_for_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+@router.get("/users/{orcid}/projects", response_model=PaginatedResponse[ProjectWithLead])
+def read_projects_for_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+                           limit: int = Query(default=100, ge=1, le=1000),
+                           offset: int = Query(default=0, ge=0)):
     '''
-    Returns a list of the projects that this User is associated with, including the resolved project lead.
+    Returns a paginated list of the projects that this User is associated with, including the resolved project lead.
     '''
     _, ag_list = auth_res
     require_groups(ag_list, {'admin', orcid})
 
     with Session(engine) as session:
-        projects = sql_get_projects_for_user(orcid, session)
-
-        if projects is None:
+        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
+        if user is None:
             raise HTTPException(status_code=404, detail="User not found")
+
+        base = (
+            select(Project)
+            .join(UserProjectLink, Project.project_id == UserProjectLink.project_id)
+            .where(UserProjectLink.user_id == user.id)
+        )
+        total = session.exec(select(func.count()).select_from(base.subquery())).one()
+        projects = session.exec(
+            base.options(selectinload(Project.resource))
+            .order_by(col(Project.project_id))
+            .offset(offset).limit(limit)
+        ).all()
 
         orcids = [p.project_lead_orcid for p in projects if p.project_lead_orcid]
         leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}
-        return [
-            ProjectWithLead(**proj.model_dump(), lead=leads.get(proj.project_lead_orcid))
+        items = [
+            ProjectWithLead(
+                **proj.model_dump(),
+                lead=leads.get(proj.project_lead_orcid),
+                creation_time=proj.resource.creation_time if proj.resource else None,
+                modification_time=proj.resource.modification_time if proj.resource else None,
+            )
             for proj in projects
         ]
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)

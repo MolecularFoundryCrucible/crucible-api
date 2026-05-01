@@ -1,6 +1,7 @@
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
@@ -100,12 +101,15 @@ def list_deletion_requests(
     _, ag_list = auth_res
     require_groups(ag_list)
     with Session(engine) as session:
-        query = select(DeletionRequest).options(selectinload(DeletionRequest.resource))
+        count_query = select(func.count(DeletionRequest.id))
+        data_query = select(DeletionRequest).options(selectinload(DeletionRequest.resource))
         if status is not None:
-            query = query.where(DeletionRequest.status == status)
-        all_results = session.exec(query).all()
-        total = len(all_results)
-        items = [_to_read(req) for req in all_results[offset:offset + limit]]
+            count_query = count_query.where(DeletionRequest.status == status)
+            data_query = data_query.where(DeletionRequest.status == status)
+        total = session.exec(count_query).one()
+        items = [_to_read(req) for req in session.exec(
+            data_query.order_by(DeletionRequest.request_time.desc()).offset(offset).limit(limit)
+        ).all()]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 

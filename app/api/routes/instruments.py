@@ -2,7 +2,7 @@ from typing import Annotated, List, Optional, Union
 
 import os
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import join
+from sqlalchemy import func, join
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -36,6 +36,12 @@ def list_instruments(auth_res: Annotated[tuple, Depends(authorize_user)], reques
     filters = [getattr(Instrument, k) == v.lower().strip() for k, v in query_params.items() if hasattr(Instrument, k)]
 
     with Session(engine) as session:
+        base = select(Instrument).join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
+        for f in filters:
+            base = base.where(f)
+
+        total = session.exec(select(func.count()).select_from(base.subquery())).one()
+
         if include_metadata:
             statement = (
                 select(Instrument, Resource, ScientificMetadataBinary)
@@ -48,12 +54,10 @@ def list_instruments(auth_res: Annotated[tuple, Depends(authorize_user)], reques
         for f in filters:
             statement = statement.where(f)
 
-        all_results = session.exec(statement).all()
-        total = len(all_results)
-        page = all_results[offset:offset + limit]
+        rows = session.exec(statement.order_by(Resource.creation_time.desc()).offset(offset).limit(limit)).all()
 
         items = []
-        for row in page:
+        for row in rows:
             if include_metadata:
                 inst, ri, smb = row
                 items.append(InstrumentResponse.model_validate({

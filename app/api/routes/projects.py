@@ -3,7 +3,7 @@ from typing import Annotated, List, Union
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, join
 from sqlalchemy.orm import joinedload, selectinload
-from sqlmodel import and_, or_, Session, select
+from sqlmodel import and_, or_, Session, select, col
 import networkx as nx
 from networkx.readwrite import json_graph
 
@@ -97,16 +97,24 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)],
 
     with Session(engine) as session:
         if is_orcid(user_unique_id):
-            props = sql_get_projects_for_user(user_unique_id, session, options=loader_opts) or []
+            user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
+            if user is None:
+                return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
+            base = (
+                select(Project)
+                .join(UserProjectLink, Project.project_id == UserProjectLink.project_id)
+                .where(UserProjectLink.user_id == user.id)
+            )
         else:
             require_groups(ag_list)
-            query = select(Project)
-            if loader_opts:
-                query = query.options(*loader_opts)
-            props = session.exec(query).all()
+            base = select(Project)
 
-        total = len(props)
-        props = props[offset:offset + limit]
+        total = session.exec(select(func.count()).select_from(base.subquery())).one()
+
+        query = base.order_by(col(Project.project_id))
+        if loader_opts:
+            query = query.options(*loader_opts)
+        props = session.exec(query.offset(offset).limit(limit)).all()
 
         orcids = [p.project_lead_orcid for p in props if p.project_lead_orcid]
         leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}

@@ -1,7 +1,7 @@
 from typing import Annotated, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from sqlalchemy import join
+from sqlalchemy import func, join
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -46,9 +46,10 @@ def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Req
                 search_cmd = search_cmd.where(getattr(User, k) == v)
 
     with Session(engine) as session:
-        all_users = session.exec(search_cmd).all()
-        total = len(all_users)
-        items = all_users[offset:offset + limit]
+        total = session.exec(select(func.count()).select_from(search_cmd.subquery())).one()
+        items = session.exec(
+            search_cmd.order_by(User.last_name, User.first_name).offset(offset).limit(limit)
+        ).all()
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 

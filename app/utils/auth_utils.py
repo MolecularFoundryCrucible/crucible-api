@@ -149,6 +149,21 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
         return api_acct.user_unique_id, ag
 
 
+def require_write_access(session, ag_ids: list, mfids: list):
+    """Raise 403 if the user has no write ACL on any of the given MFIDs."""
+    from app.models.core_models import ResourceACL
+    from sqlmodel import select
+    acl_ok = session.exec(
+        select(ResourceACL).where(
+            ResourceACL.mfid.in_(mfids),
+            ResourceACL.accessgroup_id.in_(ag_ids),
+            ResourceACL.write == True
+        )
+    ).first()
+    if not acl_ok:
+        raise HTTPException(status_code=403, detail="Write access required to at least one of the resources")
+
+
 def require_groups(ag_list, allowed_groups={'admin'}):
     if not any(ag.group_name in allowed_groups for ag in ag_list):
         raise HTTPException(status_code=403, detail="Not authorized")

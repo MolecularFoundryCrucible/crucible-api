@@ -1,6 +1,6 @@
 from typing import Annotated, List, Union
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, join
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
@@ -17,6 +17,7 @@ from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.sql_utils import add_or_update
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
+from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
 from app.models.users import UserRead
 
@@ -79,13 +80,15 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
         return prop
 
 
-@router.get("/projects", response_model=List[ProjectWithLead])
-def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)], include_metadata: bool = False):
+@router.get("/projects", response_model=PaginatedResponse[ProjectWithLead])
+def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)],
+                  include_metadata: bool = False,
+                  limit: int = Query(default=100, ge=1, le=1000),
+                  offset: int = Query(default=0, ge=0)):
     '''
-    Returns a list of projects the user is authorized to see, including the resolved project lead.
+    Returns a paginated list of projects the user is authorized to see, including the resolved project lead.
     '''
     user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
 
     loader_opts = (
         [selectinload(Project.resource).selectinload(Resource.scientific_metadata)]
@@ -96,25 +99,27 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)], include_m
         if is_orcid(user_unique_id):
             props = sql_get_projects_for_user(user_unique_id, session, options=loader_opts) or []
         else:
-            print(ag_list)
             require_groups(ag_list)
             query = select(Project)
             if loader_opts:
                 query = query.options(*loader_opts)
             props = session.exec(query).all()
 
+        total = len(props)
+        props = props[offset:offset + limit]
+
         orcids = [p.project_lead_orcid for p in props if p.project_lead_orcid]
         leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}
 
-        response_list = []
+        items = []
         for proj in props:
             resource_md = proj.resource.scientific_metadata if proj.resource else None
-            response_list.append(ProjectWithLead(
+            items.append(ProjectWithLead(
                 **proj.model_dump(),
                 lead=leads.get(proj.project_lead_orcid),
                 scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
             ))
-        return response_list
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
 @router.get("/projects/{proj_id}", response_model=Union[None, ProjectWithLead])
@@ -198,10 +203,12 @@ def _get_project_users(proj_id: str, session) -> List[User]:
     ).all()
 
 
-@router.get("/projects/{proj_id}/users", response_model=List[UserRead])
-def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+@router.get("/projects/{proj_id}/users", response_model=PaginatedResponse[UserRead])
+def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+                          limit: int = Query(default=100, ge=1, le=1000),
+                          offset: int = Query(default=0, ge=0)):
     '''
-    Returns a list of users associated with the project ID.
+    Returns a paginated list of users associated with the project ID.
     Accessible by admins and members of the project.
     '''
     _, ag_list = auth_res
@@ -213,7 +220,8 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(autho
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        return _get_project_users(proj_id, session)
+        all_users = _get_project_users(proj_id, session)
+        return PaginatedResponse(total=len(all_users), limit=limit, offset=offset, items=all_users[offset:offset + limit])
 
 
 @router.post("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])

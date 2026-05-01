@@ -1,7 +1,7 @@
 from typing import Annotated, List, Optional, Union
 
 import os
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import join
 from sqlmodel import Session, select
 
@@ -9,6 +9,7 @@ from app.api.dependencies import get_engine
 from app.general_utils import get_tz_isoformat
 from app.models.core_models import Instrument, Resource, ScientificMetadataBinary
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
+from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user
 from app.utils.sql_utils import add_or_update
 
@@ -18,16 +19,20 @@ engine = get_engine()
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
-@router.get("/instruments", response_model=List[InstrumentResponse])
-def list_instruments(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: bool = False):
+@router.get("/instruments", response_model=PaginatedResponse[InstrumentResponse])
+def list_instruments(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
+                     include_metadata: bool = False,
+                     limit: int = Query(default=100, ge=1, le=1000),
+                     offset: int = Query(default=0, ge=0)):
     '''
-    Returns a list of instruments filtered by any provided query parameters that
+    Returns a paginated list of instruments filtered by any provided query parameters that
     match Instrument attributes. Matching is case-insensitive exact match.
     Filterable fields: other_id, other_id_source, instrument_name, manufacturer,
     model, owner, location, description, instrument_type.
     '''
     query_params = dict(request.query_params)
-    query_params.pop('include_metadata', None)
+    for k in ('include_metadata', 'limit', 'offset'):
+        query_params.pop(k, None)
     filters = [getattr(Instrument, k) == v.lower().strip() for k, v in query_params.items() if hasattr(Instrument, k)]
 
     with Session(engine) as session:
@@ -37,31 +42,34 @@ def list_instruments(auth_res: Annotated[tuple, Depends(authorize_user)], reques
                 .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
                 .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Instrument.unique_id, isouter=True)
             )
-            for f in filters:
-                statement = statement.where(f)
-            results = session.exec(statement).all()
-            return [
-                InstrumentResponse.model_validate({
+        else:
+            statement = select(Instrument, Resource).join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
+
+        for f in filters:
+            statement = statement.where(f)
+
+        all_results = session.exec(statement).all()
+        total = len(all_results)
+        page = all_results[offset:offset + limit]
+
+        items = []
+        for row in page:
+            if include_metadata:
+                inst, ri, smb = row
+                items.append(InstrumentResponse.model_validate({
                     **inst.model_dump(),
                     "creation_time": ri.creation_time if ri else None,
                     "modification_time": ri.modification_time if ri else None,
                     "scientific_metadata": smb.scientific_metadata if smb else None,
-                })
-                for inst, ri, smb in results
-            ]
-        else:
-            statement = select(Instrument, Resource).join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
-            for f in filters:
-                statement = statement.where(f)
-            results = session.exec(statement).all()
-            return [
-                InstrumentResponse.model_validate({
+                }))
+            else:
+                inst, ri = row
+                items.append(InstrumentResponse.model_validate({
                     **inst.model_dump(),
                     "creation_time": ri.creation_time if ri else None,
                     "modification_time": ri.modification_time if ri else None,
-                })
-                for inst, ri in results
-            ]
+                }))
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
 @router.get("/instruments/{instrument_unique_id}", response_model=InstrumentResponse)

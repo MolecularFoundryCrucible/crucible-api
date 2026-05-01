@@ -1,6 +1,6 @@
 from typing import Annotated, Dict, List, Optional, Union
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from sqlalchemy import join
 from sqlmodel import Session, select
 
@@ -14,6 +14,7 @@ from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
+from app.models.pagination import PaginatedResponse
 from app.models.users import UserCreate, UserRead, UserUpdate
 from app.models.projects import ProjectWithLead
 from app.models.access_groups import AccessGroupRead
@@ -22,15 +23,19 @@ router = APIRouter(tags=["users"])
 engine = get_engine()
 
 
-@router.get("/users", response_model=List[UserRead])
-def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, permissive=True):
+@router.get("/users", response_model=PaginatedResponse[UserRead])
+def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
+               permissive: bool = True,
+               limit: int = Query(default=100, ge=1, le=1000),
+               offset: int = Query(default=0, ge=0)):
     _, ag_list = auth_res
     require_groups(ag_list)
 
-    query_params = request.query_params
-    params_dict = dict(query_params)
-    search_cmd = select(User)
+    params_dict = dict(request.query_params)
+    for k in ('permissive', 'limit', 'offset'):
+        params_dict.pop(k, None)
 
+    search_cmd = select(User)
     if permissive:
         for k, v in params_dict.items():
             if hasattr(User, k):
@@ -41,8 +46,10 @@ def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Req
                 search_cmd = search_cmd.where(getattr(User, k) == v)
 
     with Session(engine) as session:
-        users = session.exec(search_cmd).all()
-        return users
+        all_users = session.exec(search_cmd).all()
+        total = len(all_users)
+        items = all_users[offset:offset + limit]
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
 @router.get("/users/{orcid}", response_model=Union[None, UserRead])

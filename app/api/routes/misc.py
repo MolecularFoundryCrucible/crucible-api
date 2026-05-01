@@ -1,3 +1,4 @@
+import time
 from typing import Annotated, List, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -62,30 +63,54 @@ def _fetch_links(session, resource_type: str, entity) -> List[LinkedResource]:
 
     return results
 
-@router.get("/health")
-def health():
-    """
-    Health check — no authentication required.
-    Returns 200 when the API and database are reachable, 503 if the DB is down.
-    """
+def _api_version():
+    try:
+        from importlib.metadata import version
+        return version("crucible-api")
+    except Exception:
+        return None
+
+
+def _check_db():
+    """Returns (status, latency_ms). status is 'ok' or 'error'."""
+    t0 = time.monotonic()
     try:
         with Session(engine) as session:
             session.execute(text("SELECT 1"))
-        db_status = "ok"
+        return "ok", round((time.monotonic() - t0) * 1000, 1)
     except Exception:
-        db_status = "error"
+        return "error", None
 
-    try:
-        from importlib.metadata import version
-        api_version = version("crucible-api")
-    except Exception:
-        api_version = None
 
+@router.get("/health/live")
+def liveness():
+    """Liveness probe — no auth, no DB check. Returns 200 if the process is running."""
+    return {"status": "ok"}
+
+
+@router.get("/health/ready")
+def readiness():
+    """
+    Readiness probe — no auth. Checks DB connectivity and returns 503 if unreachable.
+    Includes DB response latency in ms.
+    """
+    db_status, db_ms = _check_db()
     ok = db_status == "ok"
     return JSONResponse(
         status_code=200 if ok else 503,
-        content={"status": "ok" if ok else "degraded", "db": db_status, "version": api_version},
+        content={
+            "status": "ok" if ok else "degraded",
+            "db": db_status,
+            "db_ms": db_ms,
+            "version": _api_version(),
+        },
     )
+
+
+@router.get("/health")
+def health():
+    """Alias for /health/ready — kept for backwards compatibility."""
+    return readiness()
 
 
 @router.get("/keywords", response_model=List[Keyword])

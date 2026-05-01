@@ -3,7 +3,7 @@ from typing import Annotated, List, Union
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, join
 from sqlalchemy.orm import joinedload, selectinload
-from sqlmodel import and_, or_, Session, select
+from sqlmodel import and_, or_, Session, select, col
 import networkx as nx
 from networkx.readwrite import json_graph
 
@@ -90,23 +90,30 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)],
     '''
     user_unique_id, ag_list = auth_res
 
-    loader_opts = (
-        [selectinload(Project.resource).selectinload(Resource.scientific_metadata)]
-        if include_metadata else None
-    )
+    if include_metadata:
+        loader_opts = [selectinload(Project.resource).selectinload(Resource.scientific_metadata)]
+    else:
+        loader_opts = [selectinload(Project.resource)]
 
     with Session(engine) as session:
         if is_orcid(user_unique_id):
-            props = sql_get_projects_for_user(user_unique_id, session, options=loader_opts) or []
+            user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
+            if user is None:
+                return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
+            base = (
+                select(Project)
+                .join(UserProjectLink, Project.project_id == UserProjectLink.project_id)
+                .where(UserProjectLink.user_id == user.id)
+            )
         else:
             require_groups(ag_list)
-            query = select(Project)
-            if loader_opts:
-                query = query.options(*loader_opts)
-            props = session.exec(query).all()
+            base = select(Project)
 
-        total = len(props)
-        props = props[offset:offset + limit]
+        total = session.exec(select(func.count()).select_from(base.subquery())).one()
+
+        props = session.exec(
+            base.options(*loader_opts).order_by(col(Project.project_id)).offset(offset).limit(limit)
+        ).all()
 
         orcids = [p.project_lead_orcid for p in props if p.project_lead_orcid]
         leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}
@@ -117,6 +124,8 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)],
             items.append(ProjectWithLead(
                 **proj.model_dump(),
                 lead=leads.get(proj.project_lead_orcid),
+                creation_time=proj.resource.creation_time if proj.resource else None,
+                modification_time=proj.resource.modification_time if proj.resource else None,
                 scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
             ))
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
@@ -134,6 +143,8 @@ def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user
         query = select(Project).where(Project.project_id == proj_id)
         if include_metadata:
             query = query.options(selectinload(Project.resource).selectinload(Resource.scientific_metadata))
+        else:
+            query = query.options(selectinload(Project.resource))
         prop = session.exec(query).one_or_none()
         if prop is None:
             return None
@@ -142,6 +153,8 @@ def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user
         return ProjectWithLead(
             **prop.model_dump(),
             lead=lead,
+            creation_time=prop.resource.creation_time if prop.resource else None,
+            modification_time=prop.resource.modification_time if prop.resource else None,
             scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
         )
 
@@ -191,7 +204,13 @@ def update_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_us
         session.commit()
         session.refresh(project)
         lead = session.exec(select(User).where(User.unique_id == project.project_lead_orcid)).one_or_none() if project.project_lead_orcid else None
-        return ProjectWithLead(**project.model_dump(), lead=lead)
+        resource = session.exec(select(Resource).where(Resource.mfid == proj_id)).one_or_none()
+        return ProjectWithLead(
+            **project.model_dump(),
+            lead=lead,
+            creation_time=resource.creation_time if resource else None,
+            modification_time=resource.modification_time if resource else None,
+        )
 
 
 def _get_project_users(proj_id: str, session) -> List[User]:

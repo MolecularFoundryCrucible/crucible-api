@@ -144,7 +144,6 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
     with Session(engine) as session:
         user = session.exec(                                                                                                                                      
             select(User).where(User.unique_id == api_acct.user_unique_id)).first()                                                                                                                                                 
-        print(f'User found: {user}')
         ag = user.accessgroups  # relationship handles the join for you                
         return api_acct.user_unique_id, ag
 

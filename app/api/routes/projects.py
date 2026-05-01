@@ -1,4 +1,4 @@
-from typing import Annotated, List, Union
+from typing import Annotated, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, join
@@ -131,7 +131,7 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)],
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.get("/projects/{proj_id}", response_model=Union[None, ProjectWithLead])
+@router.get("/projects/{proj_id}", response_model=ProjectWithLead)
 def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], include_metadata: bool = False):
     '''
     Returns the project object for the provided ID, including the resolved project lead.
@@ -147,7 +147,7 @@ def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user
             query = query.options(selectinload(Project.resource))
         prop = session.exec(query).one_or_none()
         if prop is None:
-            return None
+            raise HTTPException(status_code=404, detail="Project not found")
         lead = session.exec(select(User).where(User.unique_id == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
         resource_md = prop.resource.scientific_metadata if prop.resource else None
         return ProjectWithLead(
@@ -167,7 +167,6 @@ def update_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_us
     If project_lead_orcid or project_lead_email is provided, it must correspond to an existing user.
     '''
     user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
     require_groups(ag_list, {'admin', proj_id})
 
     with Session(engine) as session:

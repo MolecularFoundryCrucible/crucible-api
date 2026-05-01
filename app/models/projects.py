@@ -35,6 +35,8 @@ class ProjectWithLead(ProjectRead):
     '''ProjectRead extended with the resolved project lead User, if requested.'''
     lead: Optional[UserRead] = None
     scientific_metadata: Optional[dict] = None
+    creation_time: Optional[str] = None
+    modification_time: Optional[str] = None
 
 
 class ProjectUpdate(SQLModel):

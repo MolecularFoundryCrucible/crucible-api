@@ -283,6 +283,8 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
                 **proj.model_dump(),
                 lead=lead,
                 scientific_metadata=sci_md,
+                creation_time=resource.creation_time,
+                modification_time=resource.modification_time,
             )
 
         else:

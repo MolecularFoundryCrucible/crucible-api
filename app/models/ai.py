@@ -12,3 +12,5 @@ class ImageInput(BaseModel):
 class ExtractMetadataRequest(BaseModel):
     images: List[ImageInput]
     context: Optional[str] = None
+    api_key: Optional[str] = None
+    api_url: Optional[str] = None

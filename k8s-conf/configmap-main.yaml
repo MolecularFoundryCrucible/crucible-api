@@ -13,6 +13,10 @@ data:
   orcid_client_id: "APP-AXDIPEVR6IMA0RL7"
   gcs_config_name: "mf-cloud-storage"
   
+  # ai
+  ANTHROPIC_BASE_URL: "https://api.cborg.lbl.gov"
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5"
+
   # database
   db_type: "postgresql"
   db_server: "172.31.16.10:5432"

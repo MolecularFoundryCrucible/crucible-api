@@ -42,8 +42,7 @@ def table_obj_to_dict(obj):
     
 def only_update(session, cls, where, **kwargs):
     statement = select(cls).where(where)
-    obj = session.exec(statement).one_or_none()
-    print(obj)
+    obj = session.exec(statement).first()
     if not obj:
         return None
     
@@ -55,8 +54,7 @@ def only_update(session, cls, where, **kwargs):
 
 def add_or_update(session, cls, where, **kwargs):
     statement = select(cls).where(where)
-    obj = session.exec(statement).one_or_none()
-    print(obj)
+    obj = session.exec(statement).first()
     if obj: 
         for key, value in kwargs.items():
             print(key,value)

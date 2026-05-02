@@ -26,8 +26,9 @@ def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
         query = select(Resource)\
                     .options(selectinload(Resource.scientific_metadata))\
                     .select_from(join(Resource, ResourceACL, ResourceACL.mfid == Resource.mfid, isouter=True))\
+                    .outerjoin(Dataset, Dataset.unique_id == Resource.mfid)\
                     .where(Resource.mfid == unique_id)\
-                    .filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Resource.public == True)).distinct()
+                    .filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
 
         resource = session.exec(query).one_or_none()
 

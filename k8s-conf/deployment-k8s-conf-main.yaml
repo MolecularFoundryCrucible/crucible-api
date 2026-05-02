@@ -66,6 +66,16 @@ spec:
             configMapKeyRef:
               key: db_auth
               name: crucible-api-config-main
+        - name: "ANTHROPIC_BASE_URL"
+          valueFrom:
+            configMapKeyRef:
+              key: ANTHROPIC_BASE_URL
+              name: crucible-api-config-main
+        - name: "ANTHROPIC_DEFAULT_HAIKU_MODEL"
+          valueFrom:
+            configMapKeyRef:
+              key: ANTHROPIC_DEFAULT_HAIKU_MODEL
+              name: crucible-api-config-main
         image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-main:latest"
         imagePullPolicy: Always
         name: "crucible-api-container"

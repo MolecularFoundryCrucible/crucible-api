@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.dependencies import get_api_config
-from app.api.routes import auth, datasets, metadata, samples, instruments, users, projects, access_groups, entities, misc, deletion
+from app.api.routes import auth, datasets, metadata, samples, instruments, users, projects, access_groups, entities, misc, deletion, ai
 
 app = FastAPI(root_path=f"/{get_api_config()['api_path']}")
 Instrumentator().instrument(app).expose(app)
@@ -24,3 +24,4 @@ app.include_router(access_groups.router)
 app.include_router(entities.router)
 app.include_router(misc.router)
 app.include_router(deletion.router)
+app.include_router(ai.router)

@@ -45,7 +45,12 @@ def extract_metadata(
         raise HTTPException(status_code=400, detail="At least one image is required.")
 
     try:
-        client = _get_client()
+        if body.api_key:
+            import anthropic
+            base_url = body.api_url or os.getenv("ANTHROPIC_BASE_URL", "https://api.cborg.lbl.gov")
+            client = anthropic.Anthropic(api_key=body.api_key, base_url=base_url)
+        else:
+            client = _get_client()
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Could not initialise AI client: {e}")
 

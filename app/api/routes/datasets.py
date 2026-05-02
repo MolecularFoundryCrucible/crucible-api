@@ -560,22 +560,32 @@ def unlink_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], d
 def generate_signed_url_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, bucket: str='mf-storage-prod'):
     from google.cloud import storage
     from datetime import timedelta
-
-    # TODO - instead of all this credential passing - should set up service specific service account and give correct permissions
     from google.oauth2 import service_account
-    sa_creds = get_secret("GCS_SA", "service-account-cred/versions/6")
-    service_account_info = json.loads(sa_creds)
-    credentials = service_account.Credentials.from_service_account_info(service_account_info)
 
-    storage_client = storage.Client(credentials = credentials)
-    bucket = storage_client.bucket(bucket)
-    ds_blobs = bucket.list_blobs(prefix = f'{dsid}/')
-    urls = {}
-    for blob in ds_blobs:
-        urls[blob.name] = blob.generate_signed_url(
-        version="v4",
-        expiration=timedelta(hours=1),
-        method="GET")
+    try:
+        sa_creds = get_secret("GCS_SA", "service-account-cred/versions/6")
+        service_account_info = json.loads(sa_creds)
+        credentials = service_account.Credentials.from_service_account_info(service_account_info)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Could not load storage credentials: {e}")
+
+    try:
+        storage_client = storage.Client(credentials=credentials)
+        bucket_obj = storage_client.bucket(bucket)
+        ds_blobs = list(bucket_obj.list_blobs(prefix=f'{dsid}/'))
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Could not access storage bucket '{bucket}': {e}")
+
+    if not ds_blobs:
+        raise HTTPException(status_code=404, detail=f"No files found for dataset '{dsid}' in bucket '{bucket}'")
+
+    try:
+        urls = {
+            blob.name: blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")
+            for blob in ds_blobs
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Could not generate signed URLs: {e}")
 
     return urls
 

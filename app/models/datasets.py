@@ -92,6 +92,7 @@ class AssociatedFileRead(SQLModel):
     filename: str
     size: int
     sha256_hash: str
+    
 
 class ScientificMetadataBinaryRead(SQLModel):
     #id: Optional[int] = None

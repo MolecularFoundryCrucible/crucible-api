@@ -11,7 +11,6 @@ def send_pika_message(message, exchange, routing_key, user = None, rmq_pw = ''):
         user = rmq_user
     credentials = pika.PlainCredentials(user, rmq_pw)
     parameters = pika.ConnectionParameters(rmq_host, rmq_port, '/', credentials)
-
     connection = pika.BlockingConnection(parameters)
     channel = connection.channel()
     # send the messsage based on input from CLI args

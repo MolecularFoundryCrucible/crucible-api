@@ -591,7 +591,7 @@ def generate_signed_url_download_link(auth_res: Annotated[tuple, Depends(authori
     return urls
 
 
-@router.post("/datasets/{dsid}/upload", response_model=AssociatedFileRead)
+@router.post("/datasets/{dsid}/upload")
 async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], File(description="List of files")],
                                           auth_res:  Annotated[tuple, Depends(authorize_user)],
                                           dsid: str):
@@ -610,18 +610,12 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
         with open(save_file_path, "wb") as f:
             f.write(await file.read())
 
-    # # create associated files record
-    # af = AssociatedFileCreate(
-    #     filename=os.path.join("api-uploads", file.filename),
-    #     size=os.path.getsize(save_file_path),
-    #     sha256_hash=checkhash(save_file_path),
-    # )
     save_file_path.replace('/mnt/gcs', 'crucible-uploads')
     return save_file_path
 
 
 
-@router.post("/datasets/{dsid}/associated_file/{af_id}/ingest", response_model=IngestionRequest)
+@router.post("/datasets/{dsid}/associated_file/{af_id}/ingest",  response_model=dict[AssociatedFileRead, IngestionRequest])
 def request_file_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
                               dsid: str,
                               af_id: str,
@@ -643,45 +637,6 @@ def request_file_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
     from app.utils.rmq_utils import request_ingestion
     return request_ingestion(af, dsid, ingestion_class)
 
-
-@router.get("/datasets/{dsid}/ingest/{reqid}", response_model=IngestionRequest)
-def get_ingestion_request(auth_res: Annotated[tuple, Depends(authorize_user)], reqid: int, dsid: str):
-    """
-    Get a specific ingestion request by dataset ID and request ID.
-
-    Args:
-        auth_res: Authorization result containing access group info
-        reqid: Ingestion request ID
-        dsid: Dataset ID
-
-    Returns:
-        IngestionRequest object if found and user has access
-
-    Raises:
-        HTTPException: If request not found or access denied
-    """
-    user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-
-    # Check dataset access first
-    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(
-        Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
-
-    with Session(engine) as session:
-        ds = session.exec(ds_cmd).one_or_none()
-
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
-
-        # Get the ingestion request
-        ing_req = session.exec(select(IngestionRequest).where(
-            (IngestionRequest.id == reqid) & (IngestionRequest.dataset_id == dsid)
-        )).one_or_none()
-
-        if ing_req is None:
-            raise HTTPException(status_code=404, detail="Ingestion request not found")
-
-        return ing_req
 
 
 @router.patch("/datasets/{dsid}/ingest/{reqid}", response_model=IngestionRequest)
@@ -929,9 +884,11 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
         return ds_files
 
 
-@router.post("/datasets/{dsid}/associated_files", response_model=dict[AssociatedFileRead, IngestionRequest])
-def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
-                        associated_file: AssociatedFileCreate, ingestion_class: Optional[str] = None):
+@router.post("/datasets/{dsid}/associated_files")
+def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
+                        dsid: str,
+                        associated_file: AssociatedFileCreate,
+                        ingestion_class: Optional[str] = None):
     '''
     Adds an associated file to a dataset.
     Creates the AF object if it doesn't already exist.
@@ -940,7 +897,6 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)], dsi
     Raises:
         HTTPException: If required associated file fields are missing or dataset not found
     '''
-    print("accepted args")
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
@@ -975,7 +931,7 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)], dsi
         # request ingestion
         from app.utils.rmq_utils import request_ingestion
         ingestion_request = request_ingestion(session, af_obj, dsid, ingestion_class) 
-
+        session.refresh(af_obj)
         return({'associated_file': af_obj, 'ingestion_request': ingestion_request})
 
 

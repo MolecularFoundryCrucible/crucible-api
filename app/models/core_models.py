@@ -116,7 +116,7 @@ class Dataset(SQLModel, table=True):
     unique_id: str = Field(default_factory = get_mfid_value, index=True, unique=True)
     public: bool = Field(default = False, index = True)
     dataset_name: Optional[str] = Field(default = "") 
-    file_to_upload: Optional[str] = Field(default = None)  
+   # file_to_upload: Optional[str] = Field(default = None)  
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     owner_orcid: Optional[str] = Field(default = None)
     project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")
@@ -129,9 +129,9 @@ class Dataset(SQLModel, table=True):
     measurement: Optional[str]
     data_type: Optional[str]
     session_name: Optional[str]
-    ingestion_githash: Optional[str] = None
-    ingestion_class: Optional[str] = None
-    sha256_hash_file_to_upload: Optional[str]
+    # ingestion_githash: Optional[str] = None
+    # ingestion_class: Optional[str] = None
+    # sha256_hash_file_to_upload: Optional[str]
     scientific_metadata: Optional["ScientificMetadata"] = Relationship(
         back_populates = 'dataset')
     samples: List[Sample] = Relationship(back_populates="datasets", link_model = DatasetSampleLink)
@@ -317,6 +317,8 @@ class IngestionRequest(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     dataset_id: str = Field(default=None, index=True)
     file_to_upload: str = None
+    ingestion_githash: Optional[str] = None
+    ingestion_class: Optional[str] = None
     time_created: Optional[str] = None
     time_completed: Optional[str] = None
     status: Optional[str] = None

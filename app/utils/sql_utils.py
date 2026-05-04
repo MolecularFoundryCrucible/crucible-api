@@ -108,3 +108,4 @@ def generate_kw_query(session, base_query, keyword_filter):
         ).filter(DatasetKeywordLink.keyword_id.in_(keyword_ids))
     )
     return query
+

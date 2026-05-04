@@ -613,11 +613,11 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
 
 
 
-@router.post("/datasets/{dsid}/associated_file/{af_id}/ingest",  response_model=dict[AssociatedFileRead, IngestionRequest])
+@router.post("/datasets/{dsid}/ingest",  response_model=dict[AssociatedFileRead, IngestionRequest])
 def request_file_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
-                              dsid: str,
-                              af_id: str,
-                              ingestion_class: Optional[str]=None):
+                           dsid: str,
+                           filename: str,
+                           ingestion_class: Optional[str]=None):
 
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -627,14 +627,37 @@ def request_file_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
-        af = session.exec(select(AssociatedFile).where(AssociatedFile.id == af_id, AssociatedFile.dataset_id == ds.id)).one_or_none()
 
-    if af is None:
-        raise HTTPException(status_code=404, detail="Associated file not found")
+    if ds is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
 
-    from app.utils.rmq_utils import request_ingestion
-    return request_ingestion(af, dsid, ingestion_class)
+    ingestion_request = IngestionRequest(dataset_id=dsid,
+                                         ingestion_class = ingestion_class,
+                                         time_created=get_tz_isoformat(),
+                                         file_to_upload=filename,
+                                         status="requested")
+    
+    session.add(ingestion_request)
+    session.commit()
+    session.refresh(ingestion_request)
 
+    msg = {
+        "filename": filename,
+        "reqid": ingestion_request.id,
+        "dsid": dsid,
+        "ingestion_class": ingestion_class
+    }
+
+    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
+    send_pika_message(
+        message=json.dumps(msg),
+        exchange="",
+        routing_key="ingest-newapi",
+        user="admin",
+        rmq_pw=rmq_pw
+    )
+
+    return ingestion_request
 
 
 @router.patch("/datasets/{dsid}/ingest/{reqid}", response_model=IngestionRequest)
@@ -663,6 +686,46 @@ def patch_ingestion_request(auth_res: Annotated[tuple, Depends(authorize_user)],
 
     return(updated_req)
 
+
+@router.get("/datasets/{dsid}/ingest/{reqid}", response_model=IngestionRequest)
+def get_ingestion_request(auth_res: Annotated[tuple, Depends(authorize_user)], reqid: int, dsid: str):
+    """
+    Get a specific ingestion request by dataset ID and request ID.
+
+    Args:
+        auth_res: Authorization result containing access group info
+        reqid: Ingestion request ID
+        dsid: Dataset ID
+
+    Returns:
+        IngestionRequest object if found and user has access
+
+    Raises:
+        HTTPException: If request not found or access denied
+    """
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    # Check dataset access first
+    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(
+        Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
+
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+
+        # Get the ingestion request
+        ing_req = session.exec(select(IngestionRequest).where(
+            (IngestionRequest.id == reqid) & (IngestionRequest.dataset_id == dsid)
+        )).one_or_none()
+
+        if ing_req is None:
+            raise HTTPException(status_code=404, detail="Ingestion request not found")
+
+        return ing_req
+    
 
 @router.get("/datasets/{dsid}/scientific_metadata")
 def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
@@ -927,8 +990,7 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
         session.refresh(af_obj)
 
         # request ingestion
-        from app.utils.rmq_utils import request_ingestion
-        ingestion_request = request_ingestion(session, af_obj, dsid, ingestion_class) 
+        ingestion_request = request_file_ingestion(dsid, af_obj.filename, ingestion_class) 
         session.refresh(af_obj)
         return({'associated_file': af_obj, 'ingestion_request': ingestion_request})
 

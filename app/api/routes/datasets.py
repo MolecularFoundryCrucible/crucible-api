@@ -990,7 +990,7 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
         session.refresh(af_obj)
 
         # request ingestion
-        ingestion_request = request_file_ingestion(dsid, af_obj.filename, ingestion_class) 
+        ingestion_request = request_file_ingestion(auth_res, dsid, af_obj.filename, ingestion_class) 
         session.refresh(af_obj)
         return({'associated_file': af_obj, 'ingestion_request': ingestion_request})
 

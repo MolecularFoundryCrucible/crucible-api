@@ -148,6 +148,7 @@ async def create_dataset(
         ri.modification_time = now
         ri.created_with_api_version = API_VERSION
         ri.api_version_githash = API_VERSION_GITHASH
+        ri.public = ds.public
         session.commit()
         session.refresh(ds)
 
@@ -216,6 +217,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
             ri.modification_time = get_tz_isoformat()
+            ri.public = upds.public
 
         if upds.owner_user_id is not None:
             user_orcid = session.exec(select(User.unique_id).where(User.id == upds.owner_user_id)).one_or_none()

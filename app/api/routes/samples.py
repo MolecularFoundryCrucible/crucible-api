@@ -96,18 +96,23 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
 
         require_write_access(session, ag_ids, [sample_id])
 
-        for key, value in updated_sample.model_dump(exclude_unset=True).items():
+        update_dict = updated_sample.model_dump(exclude_unset=True)
+        new_public = update_dict.pop('public', None)
+        for key, value in update_dict.items():
             setattr(sample, key, value)
 
         ri = session.exec(select(Resource).where(Resource.mfid == sample_id)).one_or_none()
         if ri:
             ri.modification_time = get_tz_isoformat()
+            if new_public is not None:
+                ri.public = new_public
 
         session.add(sample)
         session.commit()
         session.refresh(sample)
         return SampleResponse.model_validate({
             **sample.model_dump(),
+            "public": ri.public if ri else False,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
         })
@@ -136,6 +141,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             ri = session.exec(select(Resource).where(Resource.mfid == existing.unique_id)).one_or_none()
             return SampleResponse.model_validate({
                 **existing.model_dump(),
+                "public": ri.public if ri else False,
                 "creation_time": ri.creation_time if ri else None,
                 "modification_time": ri.modification_time if ri else None,
             })
@@ -163,6 +169,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                            api_version_githash = API_VERSION_GITHASH)
         ri.creation_time = now
         ri.modification_time = now
+        ri.public = S.public
         session.commit()
 
         print ('adding admin')
@@ -188,6 +195,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         session.refresh(sample)
         return SampleResponse.model_validate({
             **sample.model_dump(),
+            "public": ri.public if ri else False,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
         })
@@ -247,13 +255,13 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
 
         if include_metadata:
             samp_cmd = (
-                select(Sample, Resource.creation_time, Resource.modification_time, ScientificMetadataBinary.scientific_metadata)
+                select(Sample, Resource.creation_time, Resource.modification_time, Resource.public, ScientificMetadataBinary.scientific_metadata)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
                 .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Sample.unique_id, isouter=True)
             )
         else:
             samp_cmd = (
-                select(Sample, Resource.creation_time, Resource.modification_time)
+                select(Sample, Resource.creation_time, Resource.modification_time, Resource.public)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
             )
 
@@ -276,12 +284,13 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         items = []
         for row in rows:
             if include_metadata:
-                samp, creation_time, modification_time, sci_md = row
+                samp, creation_time, modification_time, public, sci_md = row
             else:
-                samp, creation_time, modification_time = row
+                samp, creation_time, modification_time, public = row
                 sci_md = None
             items.append(SampleResponse.model_validate({
                 **samp.model_dump(),
+                "public": public if public is not None else False,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
                 "scientific_metadata": sci_md,
@@ -339,6 +348,7 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
         resource_md = samp.resource.scientific_metadata if samp.resource else None
         return SampleResponse.model_validate({
             **samp.model_dump(),
+            "public": samp.resource.public if samp.resource else False,
             "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
             "creation_time": samp.resource.creation_time if samp.resource else None,
             "modification_time": samp.resource.modification_time if samp.resource else None,

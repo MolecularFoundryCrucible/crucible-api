@@ -41,8 +41,6 @@ class AssociatedFile(SQLModel, table=True):
     filename: str
     size: int = Field(sa_column=Column(BigInteger())) 
     sha256_hash: str
-    ingestion_githash: Optional[str] = None
-    ingestion_class: Optional[str] = None
     dataset_id: int = Field(foreign_key = "dataset.id")
     dataset: "Dataset" = Relationship(back_populates = 'associated_files')
 
@@ -131,8 +129,8 @@ class Dataset(SQLModel, table=True):
     measurement: Optional[str]
     data_type: Optional[str]
     session_name: Optional[str]
-    ingestion_githash: Optional[str] = None
-    ingestion_class: Optional[str] = None
+    # ingestion_githash: Optional[str] = None
+    # ingestion_class: Optional[str] = None
     # sha256_hash_file_to_upload: Optional[str]
     scientific_metadata: Optional["ScientificMetadata"] = Relationship(
         back_populates = 'dataset')
@@ -318,6 +316,8 @@ class IngestionRequest(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     dataset_id: str = Field(default=None, index=True)
     file_to_upload: str = None
+    ingestion_githash: Optional[str] = None
+    ingestion_class: Optional[str] = None
     time_created: Optional[str] = None
     time_completed: Optional[str] = None
     status: Optional[str] = None

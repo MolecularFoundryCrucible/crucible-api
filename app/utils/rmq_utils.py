@@ -28,6 +28,7 @@ def request_ingestion(session, associated_file, dsid, ingestion_class = None):
 
     file_to_upload = associated_file.filename
     ingestion_request = IngestionRequest(dataset_id=dsid,
+                                         ingestion_class = ingestion_class,
                                          time_created=get_tz_isoformat(),
                                          file_to_upload=file_to_upload,
                                          status="requested")

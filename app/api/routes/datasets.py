@@ -600,23 +600,24 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
     '''
 
     user_unique_id, ag_list = auth_res
-   # ag_ids = [ag.id for ag in ag_list]
+
     # upload the file
     for file in files:
-        dest_dir = f"/mnt/gcs/api-uploads/{os.path.dirname(file.filename)}"
+        dest_dir = f"/mnt/gcs/api-uploads/{user_unique_id}/{os.path.dirname(file.filename)}"
 
         Path(dest_dir).mkdir(parents=True, exist_ok=True)
-        save_file_path = f"/mnt/gcs/api-uploads/{file.filename}"
+        save_file_path = f"/mnt/gcs/api-uploads/{user_unique_id}/{file.filename}"
         with open(save_file_path, "wb") as f:
             f.write(await file.read())
 
-    # create associated files record
-    af = AssociatedFileCreate(
-        filename=os.path.join("api-uploads", file.filename),
-        size=os.path.getsize(save_file_path),
-        sha256_hash=checkhash(save_file_path),
-    )
-    return add_associated_file(auth_res, dsid, af)
+    # # create associated files record
+    # af = AssociatedFileCreate(
+    #     filename=os.path.join("api-uploads", file.filename),
+    #     size=os.path.getsize(save_file_path),
+    #     sha256_hash=checkhash(save_file_path),
+    # )
+    save_file_path.replace('/mnt/gcs', 'crucible-uploads')
+    return save_file_path
 
 
 
@@ -952,11 +953,11 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)], dsi
             raise HTTPException(status_code=404, detail="Dataset not found")
 
         # add associated file
-        af_obj = add_or_update(session, AssociatedFile, where=(AssociatedFile.sha256_hash == associated_file.sha256_hash),
-                                       filename = associated_file.filename,
-                                       size = associated_file.size,
-                                       sha256_hash = associated_file.sha256_hash,
-                                       dataset_id = ds.id)
+        af_obj = add_or_update(session, 
+                               AssociatedFile, 
+                               where=(AssociatedFile.sha256_hash == associated_file.sha256_hash),
+                               **associated_file.model_dump(),
+                               dataset_id = ds.id)
         
         # link to dataset
         if not (af_obj in ds.associated_files):

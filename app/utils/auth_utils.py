@@ -148,6 +148,51 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
         return api_acct.user_unique_id, ag
 
 
+def require_read_access(session, mfid: str, ag_ids: list):
+    """Raise 403 if the user has no read access to the given MFID.
+
+    Access is granted if Resource.public is True OR the user has an ACL entry.
+    Call after a 404 check so the caller can distinguish not-found from forbidden.
+    """
+    from sqlalchemy import exists, select
+    from app.models.core_models import Resource, ResourceACL
+
+    acl_ok = session.exec(
+        select(Resource).where(Resource.mfid == mfid).where(
+            (Resource.public == True) |
+            exists().where(
+                ResourceACL.mfid == mfid,
+                ResourceACL.accessgroup_id.in_(ag_ids)
+            )
+        )
+    ).first()
+    if not acl_ok:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+
+def read_access_filter_list(resource_model, ag_ids: list):
+    """
+    Returns (auth_filter, deletion_filter) for list queries on a resource model.
+
+    Requires the query to join Resource on Resource.mfid == resource_model.unique_id.
+    auth_filter: visible if Resource.public is True OR user has an ACL entry.
+    deletion_filter: excludes resources with a pending or approved deletion request.
+    """
+    from sqlalchemy import exists
+    from app.models.core_models import Resource, ResourceACL, DeletionRequest
+
+    acl_subquery = exists().where(
+        ResourceACL.mfid == resource_model.unique_id,
+        ResourceACL.accessgroup_id.in_(ag_ids)
+    )
+    auth_filter = (Resource.public == True) | acl_subquery
+    deletion_filter = ~exists().where(
+        DeletionRequest.resource_id == resource_model.unique_id,
+        DeletionRequest.status.in_(["pending", "approved"])
+    )
+    return auth_filter, deletion_filter
+
+
 def require_write_access(session, ag_ids: list, mfids: list):
     """Raise 403 if the user has no write ACL on any of the given MFIDs."""
     from app.models.core_models import ResourceACL

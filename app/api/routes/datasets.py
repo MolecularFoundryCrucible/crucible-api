@@ -44,7 +44,7 @@ from app.models.access_groups import AccessGroupRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
-from app.utils.auth_utils import authorize_user, require_groups, require_write_access
+from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
 from app.utils.rmq_utils import send_pika_message
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl
 from app.api.routes.metadata import (
@@ -54,6 +54,17 @@ from app.api.routes.metadata import (
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
+
+_gcs_credentials = None
+
+def _get_gcs_credentials():
+    global _gcs_credentials
+    if _gcs_credentials is None:
+        from google.oauth2 import service_account
+        sa_creds = get_secret("GCS_SA", "service-account-cred/versions/6")
+        service_account_info = json.loads(sa_creds)
+        _gcs_credentials = service_account.Credentials.from_service_account_info(service_account_info)
+    return _gcs_credentials
 
 # eventually could switch to pushing + using github tags
 with open('pyproject.toml', 'r') as f:
@@ -109,13 +120,13 @@ def request_insitu_aggregation(dsid, auth_res: Annotated[tuple, Depends(authoriz
     return
 
 @router.post("/datasets", response_model=DatasetResponse)
-async def create_dataset(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
-    dataset: DatasetCreate
-):
+async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
+                         dataset: DatasetCreate):
+    
     print(f"received {dataset}")
     dataset_details = dataset.model_dump()
     user_unique_id, ag_list = auth_res
+    
     with Session(engine) as session:
         if not dataset.owner_orcid:
             dataset_details['owner_orcid'] = user_unique_id
@@ -135,22 +146,23 @@ async def create_dataset(
             **dataset_details
         )
 
-        session.commit()
-        session.refresh(ds)
+        session.flush()
 
+        # get time
         now = get_tz_isoformat()
-        ri = add_or_update(session,
-                    Resource,
-                    where=(Resource.mfid == ds.unique_id),
-                    mfid = ds.unique_id,
-                    resource_type = "dataset")
+        
+        # fetch resource
+        ri = add_or_update(session, Resource, where=(Resource.mfid == ds.unique_id),
+                           mfid = ds.unique_id, resource_type = "dataset")
+        
+        # populate resource table
         ri.creation_time = now
         ri.modification_time = now
         ri.created_with_api_version = API_VERSION
         ri.api_version_githash = API_VERSION_GITHASH
         ri.public = ds.public
-        session.commit()
-        session.refresh(ds)
+        
+        session.flush()
 
         print(f'added dataset {ds}')
         # set appropriate access controls
@@ -189,12 +201,12 @@ async def create_dataset(
 
         session.commit()
         session.refresh(ds)
-        ri = session.exec(select(Resource).where(Resource.mfid == ds.unique_id)).one_or_none()
+        
         return DatasetResponse.model_validate({
             **ds.model_dump(),
-            "public": ri.public if ri else ds.public,
-            "creation_time": ri.creation_time if ri else None,
-            "modification_time": ri.modification_time if ri else None,
+            "public": ri.public,
+            "creation_time": ri.creation_time,
+            "modification_time": ri.modification_time,
         })
 
 
@@ -220,9 +232,11 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
             ri.modification_time = get_tz_isoformat()
             ri.public = upds.public
 
-        if upds.owner_user_id is not None:
-            user_orcid = session.exec(select(User.unique_id).where(User.id == upds.owner_user_id)).one_or_none()
-            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_orcid)).one_or_none()
+        if upds.owner_orcid is not None:
+            new_owner = session.exec(select(User).where(User.unique_id == upds.owner_orcid)).one_or_none()
+            if new_owner:
+                upds.owner_user_id = new_owner.id
+            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == upds.owner_orcid)).one_or_none()
             sql_create_resource_acl(user_ag, upds.unique_id, read=True, write=True, session=session)
 
         if upds.project_id is not None:
@@ -260,21 +274,14 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     ag_ids = [ag.id for ag in ag_list]
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
-
+    
+    # extract parameters from filters
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
               'modification_time_lte', 'include_metadata', 'limit', 'offset'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
-        acl_subquery = exists().where(
-            ResourceACL.mfid == Dataset.unique_id,
-            ResourceACL.accessgroup_id.in_(ag_ids)
-        )
-        auth_filter = (Dataset.public == True) | acl_subquery
-        deletion_filter = ~exists().where(
-            DeletionRequest.resource_id == Dataset.unique_id,
-            DeletionRequest.status.in_(["pending", "approved"])
-        )
+        auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
 
         # Base filters shared between count and data queries
         def apply_filters(q):
@@ -302,7 +309,8 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
 
         if include_metadata:
             query = (
-                select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public, ScientificMetadataBinary.scientific_metadata)
+                select(Dataset, Resource.creation_time, Resource.modification_time,
+                       Resource.public, ScientificMetadataBinary.scientific_metadata)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
                 .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Dataset.unique_id, isouter=True)
             )
@@ -336,7 +344,8 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
 
 
 @router.get("/datasets/{dsid}", response_model=DatasetResponse)
-def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, include_metadata: bool = False, include_links: bool = False):
+def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
+                 include_metadata: bool = False, include_links: bool = False):
     '''
     Returns a dataset found with the provided unique ID.
     Pass include_links=true to include parent, child, and associated resources.
@@ -345,60 +354,48 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        acl_subquery = exists().where(
-            Dataset.unique_id == dsid,
-            ResourceACL.mfid == Dataset.unique_id,
-            ResourceACL.accessgroup_id.in_(ag_ids)
+        
+        # get with metadata or not
+        resource_opts = (
+            selectinload(Dataset.resource).selectinload(Resource.scientific_metadata)
+            if include_metadata else selectinload(Dataset.resource)
         )
-        
-        auth_filter = (Dataset.public == True) | acl_subquery
+        link_opts = (
+            [selectinload(Dataset.parents), selectinload(Dataset.children), selectinload(Dataset.samples)]
+            if include_links else []
+        )
 
-        if include_metadata:
-            query = (
-                select(Dataset)
-                .options(selectinload(Dataset.resource).selectinload(Resource.scientific_metadata))
-                .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
-                .where(Dataset.unique_id == dsid)
-                .where(auth_filter)
-            )
-        else:
-            query = (
-                select(Dataset)
-                .options(selectinload(Dataset.resource))
-                .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
-                .where(Dataset.unique_id == dsid)
-                .where(auth_filter)
-            )
+        # fetch resource
+        ds = session.exec(
+            select(Dataset)
+            .options(resource_opts, *link_opts)
+            .where(Dataset.unique_id == dsid)
+        ).one_or_none()
 
-        ds = session.exec(query).one_or_none()
-
+        # if not existing, return error
         if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
-        
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        # check that requester has read access
+        require_read_access(session, dsid, ag_ids)
+
+        # check deletion request
         deletion_req = session.exec(
             select(DeletionRequest)
             .where(DeletionRequest.resource_id == dsid)
             .where(DeletionRequest.status.in_(["pending", "approved"]))
         ).first()
 
+        # fetch all linked resources
         links = None
         if include_links:
-            parents = session.exec(
-                select(Dataset).join(DatasetLink, DatasetLink.parent_dataset_id == Dataset.id)
-                .where(DatasetLink.child_dataset_id == ds.id)
-            ).all()
-            children = session.exec(
-                select(Dataset).join(DatasetLink, DatasetLink.child_dataset_id == Dataset.id)
-                .where(DatasetLink.parent_dataset_id == ds.id)
-            ).all()
-            samples = session.exec(
-                select(Sample).join(DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)
-                .where(DatasetSampleLink.dataset_id == ds.id)
-            ).all()
             links = (
-                [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="parent") for d in parents] +
-                [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="child") for d in children] +
-                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="associated") for s in samples]
+                [LinkedResource(unique_id=d.unique_id, resource_type="dataset",
+                                name=d.dataset_name, relationship="parent") for d in ds.parents] +
+                [LinkedResource(unique_id=d.unique_id, resource_type="dataset",
+                                name=d.dataset_name, relationship="child") for d in ds.children] +
+                [LinkedResource(unique_id=s.unique_id, resource_type="sample",
+                                name=s.sample_name, relationship="associated") for s in ds.samples]
             )
 
         resource_md = ds.resource.scientific_metadata if ds.resource else None
@@ -419,14 +416,14 @@ def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Ann
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        require_write_access(session, ag_ids, [parent_dataset_id, child_dataset_id])
-
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).first()
         if not parent:
             raise HTTPException(status_code=404, detail="Parent dataset not found")
         child = session.exec(select(Dataset).where(Dataset.unique_id == child_dataset_id)).first()
         if not child:
             raise HTTPException(status_code=404, detail="Child dataset not found")
+
+        require_write_access(session, ag_ids, [parent_dataset_id, child_dataset_id])
 
         link = add_or_update(session,
                      DatasetLink,
@@ -445,14 +442,14 @@ def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, a
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        require_write_access(session, ag_ids, [parent_dataset_id, child_dataset_id])
-
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
         if not parent:
             raise HTTPException(status_code=404, detail="Parent dataset not found")
         child = session.exec(select(Dataset).where(Dataset.unique_id == child_dataset_id)).one_or_none()
         if not child:
             raise HTTPException(status_code=404, detail="Child dataset not found")
+
+        require_write_access(session, ag_ids, [parent_dataset_id, child_dataset_id])
 
         link = session.exec(
             select(DatasetLink).where(
@@ -477,21 +474,18 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depen
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
-        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
-        child = session.exec(
-            select(Dataset)
-            .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
-            .where(Dataset.unique_id == child_dataset_id)
-            .filter(auth_filter).distinct()
-        ).one_or_none()
+        child = session.exec(select(Dataset).where(Dataset.unique_id == child_dataset_id)).one_or_none()
         if child is None:
             raise HTTPException(status_code=404, detail="Child dataset not found")
+        require_read_access(session, child_dataset_id, ag_ids)
 
+        auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
         query = (
             select(Dataset)
-            .select_from(join(Dataset, DatasetLink, DatasetLink.parent_dataset_id == Dataset.id))
+            .join(DatasetLink, DatasetLink.parent_dataset_id == Dataset.id)
+            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
             .where(DatasetLink.child_dataset_id == child.id)
-            .where(~exists().where(DeletionRequest.resource_id == Dataset.unique_id, DeletionRequest.status.in_(["pending", "approved"])))
+            .where(auth_filter).where(deletion_filter)
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         parents = session.exec(query.offset(offset).limit(limit)).all()
@@ -508,21 +502,18 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depen
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
-        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
-        parent = session.exec(
-            select(Dataset)
-            .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
-            .where(Dataset.unique_id == parent_dataset_id)
-            .filter(auth_filter).distinct()
-        ).one_or_none()
+        parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
         if parent is None:
             raise HTTPException(status_code=404, detail="Parent dataset not found")
+        require_read_access(session, parent_dataset_id, ag_ids)
 
+        auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
         query = (
             select(Dataset)
-            .select_from(join(Dataset, DatasetLink, DatasetLink.child_dataset_id == Dataset.id))
+            .join(DatasetLink, DatasetLink.child_dataset_id == Dataset.id)
+            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
             .where(DatasetLink.parent_dataset_id == parent.id)
-            .where(~exists().where(DeletionRequest.resource_id == Dataset.unique_id, DeletionRequest.status.in_(["pending", "approved"])))
+            .where(auth_filter).where(deletion_filter)
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         children = session.exec(query.offset(offset).limit(limit)).all()
@@ -540,14 +531,14 @@ def unlink_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], d
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        require_write_access(session, ag_ids, [dsid, sample_id])
-
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         samp = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
         if samp is None:
             raise HTTPException(status_code=404, detail="Sample not found")
+
+        require_write_access(session, ag_ids, [dsid, sample_id])
 
         link = session.exec(
             select(DatasetSampleLink).where(
@@ -566,16 +557,18 @@ def unlink_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], d
 def generate_signed_url_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, bucket: str='mf-storage-prod'):
     from google.cloud import storage
     from datetime import timedelta
-    from google.oauth2 import service_account
+
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    with Session(engine) as session:
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        require_read_access(session, dsid, ag_ids)
 
     try:
-        sa_creds = get_secret("GCS_SA", "service-account-cred/versions/6")
-        service_account_info = json.loads(sa_creds)
-        credentials = service_account.Credentials.from_service_account_info(service_account_info)
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not load storage credentials: {e}")
-
-    try:
+        credentials = _get_gcs_credentials()
         storage_client = storage.Client(credentials=credentials)
         bucket_obj = storage_client.bucket(bucket)
         ds_blobs = list(bucket_obj.list_blobs(prefix=f'{dsid}/'))

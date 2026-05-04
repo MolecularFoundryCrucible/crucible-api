@@ -18,7 +18,7 @@ from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
-from app.utils.auth_utils import authorize_user, require_groups, require_write_access
+from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
 from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl
 
 router = APIRouter(tags=["samples"])
@@ -224,17 +224,10 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         params_dict.pop(k, None)
 
     with Session(engine) as session:
-        acl_subquery = exists().where(
-            ResourceACL.mfid == Sample.unique_id,
-            ResourceACL.accessgroup_id.in_(ag_ids)
-        )
-        deletion_filter = ~exists().where(
-            DeletionRequest.resource_id == Sample.unique_id,
-            DeletionRequest.status.in_(["pending", "approved"])
-        )
+        auth_filter, deletion_filter = read_access_filter_list(Sample, ag_ids)
 
         def apply_filters(q):
-            q = q.where(deletion_filter).where(acl_subquery)
+            q = q.where(auth_filter).where(deletion_filter)
             if creation_time_gte:
                 q = q.where(Resource.creation_time >= creation_time_gte)
             if creation_time_lte:
@@ -308,40 +301,43 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
+        # get with metadata or not
         resource_opts = (
             selectinload(Sample.resource).selectinload(Resource.scientific_metadata)
             if include_metadata else selectinload(Sample.resource)
         )
-        query = select(Sample).options(selectinload(Sample.datasets), resource_opts).where(Sample.unique_id == sample_id)
-        samp = session.exec(query).first()
+        link_opts = (
+            [selectinload(Sample.parents), selectinload(Sample.children)]
+            if include_links else []
+        )
+
+        # fetch resource
+        samp = session.exec(
+            select(Sample)
+            .options(selectinload(Sample.datasets), resource_opts, *link_opts)
+            .where(Sample.unique_id == sample_id)
+        ).first()
+
+        # if not existing, return error
         if samp is None:
             raise HTTPException(status_code=404, detail="Sample not found")
-        acl_ok = session.exec(
-            select(ResourceACL)
-            .where(ResourceACL.mfid == sample_id)
-            .where(ResourceACL.accessgroup_id.in_(ag_ids))
-        ).first()
-        if acl_ok is None:
-            raise HTTPException(status_code=403, detail="Access denied")
+
+        # check that requester has read access
+        require_read_access(session, sample_id, ag_ids)
+
+        # check deletion request
         deletion_req = session.exec(
             select(DeletionRequest)
             .where(DeletionRequest.resource_id == sample_id)
             .where(DeletionRequest.status.in_(["pending", "approved"]))
         ).first()
 
+        # fetch all linked resources (datasets reuse already-loaded relationship)
         links = None
         if include_links:
-            parents = session.exec(
-                select(Sample).join(SampleLink, SampleLink.parent_sample_id == Sample.id)
-                .where(SampleLink.sample_id == samp.id)
-            ).all()
-            children = session.exec(
-                select(Sample).join(SampleLink, SampleLink.sample_id == Sample.id)
-                .where(SampleLink.parent_sample_id == samp.id)
-            ).all()
             links = (
-                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="parent") for s in parents] +
-                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="child") for s in children] +
+                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="parent") for s in samp.parents] +
+                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="child") for s in samp.children] +
                 [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="associated") for d in samp.datasets]
             )
 

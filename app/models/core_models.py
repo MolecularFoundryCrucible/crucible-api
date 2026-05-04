@@ -263,6 +263,7 @@ class Resource(SQLModel, table=True):
     resource_type: str = Field(default=None, alias="object_type")
     creation_time: Optional[str] = Field(default_factory=get_tz_isoformat)
     modification_time: Optional[str] = Field(default_factory=get_tz_isoformat)
+    public: bool = Field(default=False)
     created_with_api_version: Optional[str] = Field(default=None)
     api_version_githash: Optional[str] = Field(default=None)
    # last_modified_by_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.unique_id")

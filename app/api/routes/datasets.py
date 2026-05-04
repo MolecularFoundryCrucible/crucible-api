@@ -192,6 +192,7 @@ async def create_dataset(
         ri = session.exec(select(Resource).where(Resource.mfid == ds.unique_id)).one_or_none()
         return DatasetResponse.model_validate({
             **ds.model_dump(),
+            "public": ri.public if ri else ds.public,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
         })
@@ -237,6 +238,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
         session.refresh(upds)
         return DatasetResponse.model_validate({
             **upds.model_dump(),
+            "public": ri.public if ri else upds.public,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
         })
@@ -300,13 +302,13 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
 
         if include_metadata:
             query = (
-                select(Dataset, Resource.creation_time, Resource.modification_time, ScientificMetadataBinary.scientific_metadata)
+                select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public, ScientificMetadataBinary.scientific_metadata)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
                 .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Dataset.unique_id, isouter=True)
             )
         else:
             query = (
-                select(Dataset, Resource.creation_time, Resource.modification_time)
+                select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
             )
 
@@ -319,12 +321,13 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         items = []
         for row in results:
             if include_metadata:
-                dataset, creation_time, modification_time, sci_md = row
+                dataset, creation_time, modification_time, public, sci_md = row
             else:
-                dataset, creation_time, modification_time = row
+                dataset, creation_time, modification_time, public = row
                 sci_md = None
             items.append(DatasetResponse.model_validate({
                 **dataset.model_dump(),
+                "public": public if public is not None else False,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
                 "scientific_metadata": sci_md,
@@ -401,6 +404,7 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
         resource_md = ds.resource.scientific_metadata if ds.resource else None
         return DatasetResponse.model_validate({
             **ds.model_dump(),
+            "public": ds.resource.public if ds.resource else ds.public,
             "creation_time": ds.resource.creation_time if ds.resource else None,
             "modification_time": ds.resource.modification_time if ds.resource else None,
             "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,

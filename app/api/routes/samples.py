@@ -18,7 +18,7 @@ from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
-from app.utils.auth_utils import authorize_user, require_groups, require_write_access
+from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
 from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl
 
 router = APIRouter(tags=["samples"])
@@ -96,18 +96,23 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
 
         require_write_access(session, ag_ids, [sample_id])
 
-        for key, value in updated_sample.model_dump(exclude_unset=True).items():
+        update_dict = updated_sample.model_dump(exclude_unset=True)
+        new_public = update_dict.pop('public', None)
+        for key, value in update_dict.items():
             setattr(sample, key, value)
 
         ri = session.exec(select(Resource).where(Resource.mfid == sample_id)).one_or_none()
         if ri:
             ri.modification_time = get_tz_isoformat()
+            if new_public is not None:
+                ri.public = new_public
 
         session.add(sample)
         session.commit()
         session.refresh(sample)
         return SampleResponse.model_validate({
             **sample.model_dump(),
+            "public": ri.public if ri else False,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
         })
@@ -136,6 +141,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             ri = session.exec(select(Resource).where(Resource.mfid == existing.unique_id)).one_or_none()
             return SampleResponse.model_validate({
                 **existing.model_dump(),
+                "public": ri.public if ri else False,
                 "creation_time": ri.creation_time if ri else None,
                 "modification_time": ri.modification_time if ri else None,
             })
@@ -163,6 +169,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                            api_version_githash = API_VERSION_GITHASH)
         ri.creation_time = now
         ri.modification_time = now
+        ri.public = S.public
         session.commit()
 
         print ('adding admin')
@@ -188,6 +195,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         session.refresh(sample)
         return SampleResponse.model_validate({
             **sample.model_dump(),
+            "public": ri.public if ri else False,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
         })
@@ -216,17 +224,10 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         params_dict.pop(k, None)
 
     with Session(engine) as session:
-        acl_subquery = exists().where(
-            ResourceACL.mfid == Sample.unique_id,
-            ResourceACL.accessgroup_id.in_(ag_ids)
-        )
-        deletion_filter = ~exists().where(
-            DeletionRequest.resource_id == Sample.unique_id,
-            DeletionRequest.status.in_(["pending", "approved"])
-        )
+        auth_filter, deletion_filter = read_access_filter_list(Sample, ag_ids)
 
         def apply_filters(q):
-            q = q.where(deletion_filter).where(acl_subquery)
+            q = q.where(auth_filter).where(deletion_filter)
             if creation_time_gte:
                 q = q.where(Resource.creation_time >= creation_time_gte)
             if creation_time_lte:
@@ -247,13 +248,13 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
 
         if include_metadata:
             samp_cmd = (
-                select(Sample, Resource.creation_time, Resource.modification_time, ScientificMetadataBinary.scientific_metadata)
+                select(Sample, Resource.creation_time, Resource.modification_time, Resource.public, ScientificMetadataBinary.scientific_metadata)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
                 .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Sample.unique_id, isouter=True)
             )
         else:
             samp_cmd = (
-                select(Sample, Resource.creation_time, Resource.modification_time)
+                select(Sample, Resource.creation_time, Resource.modification_time, Resource.public)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
             )
 
@@ -276,12 +277,13 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         items = []
         for row in rows:
             if include_metadata:
-                samp, creation_time, modification_time, sci_md = row
+                samp, creation_time, modification_time, public, sci_md = row
             else:
-                samp, creation_time, modification_time = row
+                samp, creation_time, modification_time, public = row
                 sci_md = None
             items.append(SampleResponse.model_validate({
                 **samp.model_dump(),
+                "public": public if public is not None else False,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
                 "scientific_metadata": sci_md,
@@ -299,46 +301,50 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
+        # get with metadata or not
         resource_opts = (
             selectinload(Sample.resource).selectinload(Resource.scientific_metadata)
             if include_metadata else selectinload(Sample.resource)
         )
-        query = select(Sample).options(selectinload(Sample.datasets), resource_opts).where(Sample.unique_id == sample_id)
-        samp = session.exec(query).first()
+        link_opts = (
+            [selectinload(Sample.parents), selectinload(Sample.children)]
+            if include_links else []
+        )
+
+        # fetch resource
+        samp = session.exec(
+            select(Sample)
+            .options(selectinload(Sample.datasets), resource_opts, *link_opts)
+            .where(Sample.unique_id == sample_id)
+        ).first()
+
+        # if not existing, return error
         if samp is None:
             raise HTTPException(status_code=404, detail="Sample not found")
-        acl_ok = session.exec(
-            select(ResourceACL)
-            .where(ResourceACL.mfid == sample_id)
-            .where(ResourceACL.accessgroup_id.in_(ag_ids))
-        ).first()
-        if acl_ok is None:
-            raise HTTPException(status_code=403, detail="Access denied")
+
+        # check that requester has read access
+        require_read_access(session, sample_id, ag_ids)
+
+        # check deletion request
         deletion_req = session.exec(
             select(DeletionRequest)
             .where(DeletionRequest.resource_id == sample_id)
             .where(DeletionRequest.status.in_(["pending", "approved"]))
         ).first()
 
+        # fetch all linked resources (datasets reuse already-loaded relationship)
         links = None
         if include_links:
-            parents = session.exec(
-                select(Sample).join(SampleLink, SampleLink.parent_sample_id == Sample.id)
-                .where(SampleLink.sample_id == samp.id)
-            ).all()
-            children = session.exec(
-                select(Sample).join(SampleLink, SampleLink.sample_id == Sample.id)
-                .where(SampleLink.parent_sample_id == samp.id)
-            ).all()
             links = (
-                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="parent") for s in parents] +
-                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="child") for s in children] +
+                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="parent") for s in samp.parents] +
+                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="child") for s in samp.children] +
                 [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="associated") for d in samp.datasets]
             )
 
         resource_md = samp.resource.scientific_metadata if samp.resource else None
         return SampleResponse.model_validate({
             **samp.model_dump(),
+            "public": samp.resource.public if samp.resource else False,
             "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
             "creation_time": samp.resource.creation_time if samp.resource else None,
             "modification_time": samp.resource.modification_time if samp.resource else None,

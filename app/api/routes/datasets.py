@@ -3,7 +3,6 @@ import os
 from pathlib import Path
 from typing import Annotated, List, Optional
 
-import pytz
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
@@ -12,7 +11,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_secret, get_tz_isoformat, checkhash
+from app.general_utils import get_secret, get_tz_isoformat
 from app.models.core_models import (
     AccessGroup,
     AssociatedFile,
@@ -69,17 +68,8 @@ with open('pyproject.toml', 'r') as f:
     version = version_line.split('=')[1].strip().strip('"')
     API_VERSION = f'v{version}'
 
-#API_VERSION = os.getenv('API_VERSION', None)
-
-# if API_VERSION is None and BRANCH_NAME == 'v1':
-#     API_VERSION = 'v1.0.0'
-# elif API_VERSION is None:
-#     API_VERSION = 'dev'
-# else:
-#     API_VERSION = API_VERSION
-
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
-
+RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
 
 @router.post("/datasets/{dsid}/carrier_segmentation")
 def request_carrier_segmentation(dsid, auth_res: Annotated[tuple, Depends(authorize_user)]):
@@ -595,14 +585,14 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
 
     # upload the file
     for file in files:
-        dest_dir = f"/mnt/gcs/api-uploads/{user_unique_id}/{os.path.dirname(file.filename)}"
+        dest_dir = f"./mnt/gcs/api-uploads/{user_unique_id}/{os.path.dirname(file.filename)}"
 
         Path(dest_dir).mkdir(parents=True, exist_ok=True)
-        save_file_path = f"/mnt/gcs/api-uploads/{user_unique_id}/{file.filename}"
+        save_file_path = f"./mnt/gcs/api-uploads/{user_unique_id}/{file.filename}"
         with open(save_file_path, "wb") as f:
             f.write(await file.read())
 
-    save_file_path.replace('/mnt/gcs', 'crucible-uploads')
+    save_file_path.replace('./mnt/gcs', 'crucible-uploads')
     return save_file_path
 
 
@@ -641,12 +631,13 @@ def request_file_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
         "dsid": dsid,
         "ingestion_class": ingestion_class
     }
-
+    routing_key=f'ingestion-{RMQ_ROUTING_SUFFIX}'
+    print(routing_key)
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
     send_pika_message(
         message=json.dumps(msg),
         exchange="",
-        routing_key="ingest-newapi",
+        routing_key=f'ingestion-{RMQ_ROUTING_SUFFIX}',
         user="admin",
         rmq_pw=rmq_pw
     )
@@ -679,6 +670,27 @@ def patch_ingestion_request(auth_res: Annotated[tuple, Depends(authorize_user)],
         session.refresh(updated_req)
 
     return(updated_req)
+
+@router.get("/datasets/{dsid}/ingest")
+def list_ingestion_requests(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
+    _,ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    # Check dataset access first
+    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(
+        Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
+
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd).one_or_none()
+
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+
+        # Get the ingestion request
+        ing_reqs = session.exec(select(IngestionRequest).where(IngestionRequest.dataset_id == dsid)).all()
+
+        return ing_reqs
+
 
 
 @router.get("/datasets/{dsid}/ingest/{reqid}", response_model=IngestionRequest)

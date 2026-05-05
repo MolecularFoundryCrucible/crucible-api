@@ -6,12 +6,11 @@ metadata:
   labels:
     app: "crucible-api-main"
 data:
-  # api - currently only API_CONF_FILE is used
+  # api
   API_CONF_FILE: "app/conf/api_conf.yaml"
-  hostname: "crucible.lbl.gov"
-  api_path: "api/v1"
-  orcid_client_id: "APP-AXDIPEVR6IMA0RL7"
-  gcs_config_name: "mf-cloud-storage"
+
+  # rmq
+  RMQ_ROUTING_SUFFIX: "main"
   
   # ai
   ANTHROPIC_BASE_URL: "https://api.cborg.lbl.gov"

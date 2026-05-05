@@ -1,8 +1,7 @@
 
 import pika
-import json
 from app.utils.constants import rmq_host, rmq_port, rmq_user
-from app.general_utils import get_secret, get_tz_isoformat
+from app.general_utils import get_secret
 
 rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
 

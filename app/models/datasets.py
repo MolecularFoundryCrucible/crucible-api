@@ -69,7 +69,7 @@ class ThumbnailCreate(SQLModel):
 
 class ThumbnailRead(SQLModel):
     '''Response model for Thumbnail.'''
-    # id: int
+    id: int
     dataset_id: int
     thumbnail_name: str
     thumbnail_b64str: str

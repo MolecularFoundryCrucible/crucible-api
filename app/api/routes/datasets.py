@@ -1,14 +1,14 @@
 import json
 import os
 from pathlib import Path
-from typing import Annotated, List, Optional, Union
+from typing import Annotated, List, Optional
 
 import pytz
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy import exists, func, join, text
-from sqlalchemy.orm import joinedload, selectinload, attributes
+from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine
@@ -28,9 +28,7 @@ from app.models.core_models import (
     Project,
     Resource,
     Sample,
-    ScientificMetadata,
     ScientificMetadataBinary,
-    #NewScientificMetadata,
     Thumbnail,
     User,
 )
@@ -47,10 +45,6 @@ from app.models.samples import SampleRead
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
 from app.utils.rmq_utils import send_pika_message
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl
-from app.api.routes.metadata import (
-    add_scientific_metadata as _metadata_post,
-    update_scientific_metadata as _metadata_patch,
-)
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
@@ -664,71 +658,6 @@ def patch_ingestion_request(auth_res: Annotated[tuple, Depends(authorize_user)],
     return(updated_req)
 
 
-@router.get("/datasets/{dsid}/scientific_metadata")
-def read_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
-    user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-    with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
-        ds = session.exec(ds_cmd).one_or_none()
-
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
-
-        ds_md = session.exec(select(ScientificMetadataBinary).where(ScientificMetadataBinary.unique_id == ds.unique_id)).one_or_none()
-        return ds_md
-
-
-@router.post("/datasets/{dsid}/scientific_metadata", response_model=Union[ScientificMetadata, ScientificMetadataBinary])
-def add_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md: dict):
-    _, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-    ds_cmd = select(Dataset).select_from(join(Dataset,
-                                              ResourceACL,
-                                              ResourceACL.mfid == Dataset.unique_id)).where(
-                                                  Dataset.unique_id == dsid).filter(
-                                                        ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
-
-    with Session(engine) as session:
-        ds = session.exec(ds_cmd).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        md_obj = add_or_update(
-            session,
-            ScientificMetadata,
-            where=(ScientificMetadata.dataset_unique_id == dsid),
-            dataset_unique_id=dsid,
-            scientific_metadata=scientific_md)
-        attributes.flag_modified(md_obj, 'scientific_metadata')
-        session.commit()
-
-    return _metadata_post(auth_res=auth_res, unique_id=dsid, scientific_md=scientific_md)
-
-
-@router.patch("/datasets/{dsid}/scientific_metadata", response_model=Union[ScientificMetadata, ScientificMetadataBinary])
-def update_scientific_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, scientific_md_updates: dict):
-    _, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
-
-    with Session(engine) as session:
-        ds = session.exec(ds_cmd).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
-    result = _metadata_patch(auth_res=auth_res, unique_id=dsid, scientific_md_updates=scientific_md_updates)
-
-    with Session(engine) as session:
-        md_obj = add_or_update(
-            session,
-            ScientificMetadata,
-            where=(ScientificMetadata.dataset_unique_id == dsid),
-            dataset_unique_id=dsid,
-            scientific_metadata=result.scientific_metadata)
-        attributes.flag_modified(md_obj, 'scientific_metadata')
-        session.commit()
-
-    return result
 
 
 @router.get("/datasets/{dsid}/thumbnails", response_model=List[ThumbnailRead])

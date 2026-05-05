@@ -61,6 +61,11 @@ spec:
             configMapKeyRef:
               key: db_database
               name: crucible-api-config-staging
+        - name: "RMQ_ROUTING_SUFFIX"
+          valueFrom:
+            configMapKeyRef:
+              key: db_database
+              name: crucible-api-config-staging
         # DB_PASSWORD is fetched from Google Secret Manager by the application
         # Create the secret with: gcloud secrets create crucible-db-staging-password --data-file=-
         # Secret path: projects/776258882599/secrets/crucible-db-staging-password/versions/latest

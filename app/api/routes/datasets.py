@@ -592,7 +592,7 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
         with open(save_file_path, "wb") as f:
             f.write(await file.read())
 
-    save_file_path.replace('/mnt/gcs', 'crucible-uploads')
+    save_file_path = save_file_path.replace('/mnt/gcs', 'crucible-uploads')
     return save_file_path
 
 

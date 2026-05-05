@@ -227,6 +227,7 @@ class Project(SQLModel, table=True):
 
 
 class ScientificMetadata(SQLModel, table = True):
+    __tablename__ = "scientificmetadata"
     id: Optional[int] = Field(default=None, primary_key=True)
     dataset_unique_id: str = Field(foreign_key="dataset.unique_id", index=True)
     scientific_metadata: dict = Field(sa_column=Column(JSON), default={})

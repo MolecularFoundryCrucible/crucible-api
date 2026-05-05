@@ -818,6 +818,19 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
             detail=f"Missing required thumbnail information: {', '.join(missing_fields)}. Please provide all required fields: thumbnail_name and thumbnail_b64str."
         )
 
+    # Resize to max 512px on longest side, re-encode as JPEG preserving aspect ratio
+    try:
+        import base64, io
+        from PIL import Image
+        raw = base64.b64decode(thumbnail.thumbnail_b64str)
+        img = Image.open(io.BytesIO(raw)).convert("RGB")
+        img.thumbnail((512, 512), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        thumbnail_b64str = base64.b64encode(buf.getvalue()).decode("utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image data: {e}")
+
     ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
     with Session(engine) as session:
@@ -826,9 +839,9 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        tn_obj = add_or_update(session, Thumbnail, where=(Thumbnail.thumbnail_b64str == thumbnail.thumbnail_b64str),
+        tn_obj = add_or_update(session, Thumbnail, where=(Thumbnail.thumbnail_b64str == thumbnail_b64str),
                                 thumbnail_name = thumbnail.thumbnail_name,
-                                thumbnail_b64str = thumbnail.thumbnail_b64str,
+                                thumbnail_b64str = thumbnail_b64str,
                                 dataset_id = ds.id)
         print('added tnobj')
         if not (tn_obj in ds.thumbnails):
@@ -846,6 +859,30 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
         session.refresh(tn_obj)
 
     return(tn_obj)
+
+
+@router.delete("/datasets/{dsid}/thumbnails/{thumbnail_id}")
+def delete_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, thumbnail_id: int):
+    '''Removes a thumbnail from a dataset and deletes it.'''
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    with Session(engine) as session:
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        require_write_access(session, ag_ids, [dsid])
+
+        tn = session.exec(
+            select(Thumbnail).where(Thumbnail.id == thumbnail_id, Thumbnail.dataset_id == ds.id)
+        ).one_or_none()
+        if tn is None:
+            raise HTTPException(status_code=404, detail="Thumbnail not found")
+
+        session.delete(tn)
+        session.commit()
+        return {"message": f"Thumbnail {thumbnail_id} deleted from dataset {dsid}"}
 
 
 @router.get("/datasets/{dsid}/associated_files", response_model=List[AssociatedFileRead])

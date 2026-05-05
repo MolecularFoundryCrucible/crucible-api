@@ -585,14 +585,14 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
 
     # upload the file
     for file in files:
-        dest_dir = f"./mnt/gcs/api-uploads/{user_unique_id}/{os.path.dirname(file.filename)}"
+        dest_dir = f"/mnt/gcs/api-uploads/{user_unique_id}/{os.path.dirname(file.filename)}"
 
         Path(dest_dir).mkdir(parents=True, exist_ok=True)
-        save_file_path = f"./mnt/gcs/api-uploads/{user_unique_id}/{file.filename}"
+        save_file_path = f"/mnt/gcs/api-uploads/{user_unique_id}/{file.filename}"
         with open(save_file_path, "wb") as f:
             f.write(await file.read())
 
-    save_file_path.replace('./mnt/gcs', 'crucible-uploads')
+    save_file_path.replace('/mnt/gcs', 'crucible-uploads')
     return save_file_path
 
 

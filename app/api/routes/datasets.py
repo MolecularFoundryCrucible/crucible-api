@@ -71,6 +71,17 @@ with open('pyproject.toml', 'r') as f:
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
 
+_INGESTION_SMALL_MAX = int(1.5 * 1024**3)  # 1.5 GB in bytes
+_INGESTION_MEDIUM_MAX = 5 * 1024**3        # 5 GB in bytes
+
+
+def _get_ingestion_tier(file_size: int) -> str:
+    if file_size < _INGESTION_SMALL_MAX:
+        return "small"
+    elif file_size < _INGESTION_MEDIUM_MAX:
+        return "medium"
+    return "large"
+
 @router.post("/datasets/{dsid}/carrier_segmentation")
 def request_carrier_segmentation(dsid, auth_res: Annotated[tuple, Depends(authorize_user)]):
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
@@ -601,7 +612,8 @@ async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], Fil
 def request_file_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
                            dsid: str,
                            filename: str,
-                           ingestion_class: Optional[str]=None):
+                           ingestion_class: Optional[str]=None,
+                           file_size: Optional[int]=None):
 
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -612,32 +624,43 @@ def request_file_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
 
-    if ds is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
 
-    ingestion_request = IngestionRequest(dataset_id=dsid,
-                                         ingestion_class = ingestion_class,
-                                         time_created=get_tz_isoformat(),
-                                         file_to_upload=filename,
-                                         status="requested")
-    
-    session.add(ingestion_request)
-    session.commit()
-    session.refresh(ingestion_request)
+        if file_size is None:
+            af = session.exec(
+                select(AssociatedFile).where(
+                    (AssociatedFile.dataset_id == ds.id) & (AssociatedFile.filename == filename)
+                )
+            ).one_or_none()
+            if af is None:
+                raise HTTPException(status_code=404, detail="Associated file not found")
+            file_size = af.size
 
+        ingestion_request = IngestionRequest(dataset_id=dsid,
+                                             ingestion_class = ingestion_class,
+                                             time_created=get_tz_isoformat(),
+                                             file_to_upload=filename,
+                                             status="requested")
+
+        session.add(ingestion_request)
+        session.commit()
+        session.refresh(ingestion_request)
+
+    tier = _get_ingestion_tier(file_size)
+    routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
+    print(routing_key)
     msg = {
         "filename": filename,
         "reqid": ingestion_request.id,
         "dsid": dsid,
         "ingestion_class": ingestion_class
     }
-    routing_key=f'ingestion-{RMQ_ROUTING_SUFFIX}'
-    print(routing_key)
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
     send_pika_message(
         message=json.dumps(msg),
         exchange="",
-        routing_key=f'ingestion-{RMQ_ROUTING_SUFFIX}',
+        routing_key=routing_key,
         user="admin",
         rmq_pw=rmq_pw
     )
@@ -949,7 +972,7 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
         session.refresh(af_obj)
 
         # request ingestion
-        ingestion_request = request_file_ingestion(auth_res, dsid, af_obj.filename, ingestion_class) 
+        ingestion_request = request_file_ingestion(auth_res, dsid, af_obj.filename, ingestion_class, file_size=af_obj.size)
         session.refresh(af_obj)
         return({'associated_file': af_obj, 'ingestion_request': ingestion_request})
 

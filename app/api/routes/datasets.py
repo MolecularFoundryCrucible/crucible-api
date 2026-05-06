@@ -245,6 +245,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 @router.get("/datasets", response_model=PaginatedResponse[DatasetResponse])
 def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
                   include_metadata: bool = False,
+                  include_links: bool = False,
                   limit: int = Query(default=100, ge=1, le=1000),
                   offset: int = Query(default=0, ge=0),
                   creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
@@ -253,6 +254,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     Returns a paginated list of datasets the requesting user is authorized to view.
     Default limit is 100, max is 1000. Use offset for pagination.
     Response includes total count to support parallel fetching.
+    Pass include_links=true to include parent, child, and associated resources for each dataset.
     '''
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -261,7 +263,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     
     # extract parameters from filters
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
-              'modification_time_lte', 'include_metadata', 'limit', 'offset'):
+              'modification_time_lte', 'include_metadata', 'include_links', 'limit', 'offset'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -310,6 +312,38 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         query = query.order_by(Resource.creation_time.desc()).offset(offset).limit(limit)
 
         results = session.exec(query).all()
+
+        if include_links:
+            dataset_ids = [row[0].id for row in results]
+            parents_by_dataset: dict = {}
+            children_by_dataset: dict = {}
+            samples_by_dataset: dict = {}
+            if dataset_ids:
+                for child_id, parent in session.exec(
+                    select(DatasetLink.child_dataset_id, Dataset)
+                    .join(Dataset, Dataset.id == DatasetLink.parent_dataset_id)
+                    .where(DatasetLink.child_dataset_id.in_(dataset_ids))
+                ).all():
+                    parents_by_dataset.setdefault(child_id, []).append(
+                        LinkedResource(unique_id=parent.unique_id, resource_type="dataset", name=parent.dataset_name, relationship="parent")
+                    )
+                for parent_id, child in session.exec(
+                    select(DatasetLink.parent_dataset_id, Dataset)
+                    .join(Dataset, Dataset.id == DatasetLink.child_dataset_id)
+                    .where(DatasetLink.parent_dataset_id.in_(dataset_ids))
+                ).all():
+                    children_by_dataset.setdefault(parent_id, []).append(
+                        LinkedResource(unique_id=child.unique_id, resource_type="dataset", name=child.dataset_name, relationship="child")
+                    )
+                for ds_id, samp in session.exec(
+                    select(DatasetSampleLink.dataset_id, Sample)
+                    .join(Sample, Sample.id == DatasetSampleLink.sample_id)
+                    .where(DatasetSampleLink.dataset_id.in_(dataset_ids))
+                ).all():
+                    samples_by_dataset.setdefault(ds_id, []).append(
+                        LinkedResource(unique_id=samp.unique_id, resource_type="sample", name=samp.sample_name, relationship="associated")
+                    )
+
         items = []
         for row in results:
             if include_metadata:
@@ -317,12 +351,20 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             else:
                 dataset, creation_time, modification_time, public = row
                 sci_md = None
+            links = None
+            if include_links:
+                links = (
+                    parents_by_dataset.get(dataset.id, []) +
+                    children_by_dataset.get(dataset.id, []) +
+                    samples_by_dataset.get(dataset.id, [])
+                )
             items.append(DatasetResponse.model_validate({
                 **dataset.model_dump(),
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
                 "scientific_metadata": sci_md,
+                "links": links,
             }))
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 

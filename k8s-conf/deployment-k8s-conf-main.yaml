@@ -61,6 +61,11 @@ spec:
             configMapKeyRef:
               key: db_database
               name: crucible-api-config-main
+        - name: "RMQ_ROUTING_SUFFIX"
+          valueFrom:
+            configMapKeyRef:
+              key: RMQ_ROUTING_SUFFIX
+              name: crucible-api-config-main
         - name: "DB_AUTH"
           valueFrom:
             configMapKeyRef:

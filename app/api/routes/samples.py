@@ -204,6 +204,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
 @router.get("/samples", response_model=PaginatedResponse[SampleResponse])
 def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
                  include_metadata: bool = False,
+                 include_links: bool = False,
                  include_datasets: bool = False,
                  limit: int = Query(default=100, ge=1, le=1000),
                  offset: int = Query(default=0, ge=0),
@@ -213,14 +214,20 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
     Returns a paginated list of samples the requesting user is authorized to view.
     Default limit is 100, max is 1000. Use offset for pagination.
     Response includes total count to support parallel fetching.
-    Pass include_datasets=true to include associated datasets (adds a query).
+    Pass include_links=true to include parent, child, and associated resources for each sample.
+    include_datasets is deprecated — use include_links instead.
     '''
+    import warnings
+    if include_datasets:
+        warnings.warn("include_datasets is deprecated, use include_links=true instead", DeprecationWarning)
+        include_links = True
+
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
     params_dict = dict(request.query_params)
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
-              'modification_time_lte', 'include_metadata', 'include_datasets', 'limit', 'offset'):
+              'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets', 'limit', 'offset'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -262,17 +269,38 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         samp_cmd = samp_cmd.order_by(Resource.creation_time.desc()).offset(offset).limit(limit)
         rows = session.exec(samp_cmd).all()
 
-        if include_datasets:
+        if include_links:
             sample_ids = [row[0].id for row in rows]
+            parents_by_sample: dict = {}
+            children_by_sample: dict = {}
             datasets_by_sample: dict = {}
+            dataset_reads_by_sample: dict = {}
             if sample_ids:
-                ds_rows = session.exec(
-                    select(Dataset, DatasetSampleLink.sample_id)
-                    .join(DatasetSampleLink, DatasetSampleLink.dataset_id == Dataset.id)
+                for child_id, parent in session.exec(
+                    select(SampleLink.sample_id, Sample)
+                    .join(Sample, Sample.id == SampleLink.parent_sample_id)
+                    .where(SampleLink.sample_id.in_(sample_ids))
+                ).all():
+                    parents_by_sample.setdefault(child_id, []).append(
+                        LinkedResource(unique_id=parent.unique_id, resource_type="sample", name=parent.sample_name, relationship="parent")
+                    )
+                for parent_id, child in session.exec(
+                    select(SampleLink.parent_sample_id, Sample)
+                    .join(Sample, Sample.id == SampleLink.sample_id)
+                    .where(SampleLink.parent_sample_id.in_(sample_ids))
+                ).all():
+                    children_by_sample.setdefault(parent_id, []).append(
+                        LinkedResource(unique_id=child.unique_id, resource_type="sample", name=child.sample_name, relationship="child")
+                    )
+                for sid, ds in session.exec(
+                    select(DatasetSampleLink.sample_id, Dataset)
+                    .join(Dataset, Dataset.id == DatasetSampleLink.dataset_id)
                     .where(DatasetSampleLink.sample_id.in_(sample_ids))
-                ).all()
-                for ds, sid in ds_rows:
-                    datasets_by_sample.setdefault(sid, []).append(DatasetRead.model_validate(ds))
+                ).all():
+                    datasets_by_sample.setdefault(sid, []).append(
+                        LinkedResource(unique_id=ds.unique_id, resource_type="dataset", name=ds.dataset_name, relationship="associated")
+                    )
+                    dataset_reads_by_sample.setdefault(sid, []).append(DatasetRead.model_validate(ds))
 
         items = []
         for row in rows:
@@ -281,13 +309,24 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
             else:
                 samp, creation_time, modification_time, public = row
                 sci_md = None
+            links = None
+            compat_datasets = None
+            if include_links:
+                links = (
+                    parents_by_sample.get(samp.id, []) +
+                    children_by_sample.get(samp.id, []) +
+                    datasets_by_sample.get(samp.id, [])
+                )
+                if include_datasets:
+                    compat_datasets = dataset_reads_by_sample.get(samp.id, [])
             items.append(SampleResponse.model_validate({
                 **samp.model_dump(),
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
                 "scientific_metadata": sci_md,
-                "datasets": datasets_by_sample.get(samp.id, []) if include_datasets else None,
+                "datasets": compat_datasets,
+                "links": links,
             }))
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 

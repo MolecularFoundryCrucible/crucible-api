@@ -11,7 +11,7 @@ class DatasetCreate(SQLModel):
     '''
     unique_id: Optional[str] = None
     dataset_name: Optional[str] = None
-    file_to_upload: Optional[str] = None
+   # file_to_upload: Optional[str] = None
     project_id: Optional[str] = None
     # instrument_id: Optional[int] = None
     source_folder: Optional[str] = None
@@ -20,8 +20,6 @@ class DatasetCreate(SQLModel):
     measurement: Optional[str] = None
     data_type: Optional[str] = None
     session_name: Optional[str] = None
-    ingestion_githash: Optional[str] = None
-    ingestion_class: Optional[str] = None
     timestamp: Optional[str] = None
     public: bool = False
     owner_orcid: Optional[str] = None     # falls back to the authenticated user if not provided
@@ -39,8 +37,6 @@ class DatasetUpdate(SQLModel):
     measurement: Optional[str] = None
     data_type: Optional[str] = None
     session_name: Optional[str] = None
-    ingestion_githash: Optional[str] = None
-    ingestion_class: Optional[str] = None
     timestamp: Optional[str] = None
     public: Optional[bool] = None
     owner_orcid: Optional[str] = None
@@ -51,7 +47,7 @@ class DatasetRead(SQLModel):
     unique_id: str
     public: bool
     dataset_name: Optional[str] = None
-    file_to_upload: Optional[str] = None
+   # file_to_upload: Optional[str] = None
     owner_orcid: Optional[str] = None
     project_id: Optional[str] = None
     source_folder: Optional[str] = None
@@ -62,9 +58,7 @@ class DatasetRead(SQLModel):
     measurement: Optional[str] = None
     data_type: Optional[str] = None
     session_name: Optional[str] = None
-    ingestion_githash: Optional[str] = None
-    ingestion_class: Optional[str] = None
-    sha256_hash_file_to_upload: Optional[str] = None
+   # sha256_hash_file_to_upload: Optional[str] = None
 
 
 class ThumbnailCreate(SQLModel):
@@ -75,14 +69,17 @@ class ThumbnailCreate(SQLModel):
 
 class ThumbnailRead(SQLModel):
     '''Response model for Thumbnail.'''
-    # id: int
+    id: int
     dataset_id: int
     thumbnail_name: str
     thumbnail_b64str: str
 
 
 class AssociatedFileCreate(SQLModel):
-    '''Fields required to attach an associated file to a dataset.'''
+    '''Fields required to attach an associated file to a dataset.
+    filename should be in the format {cloud-bucket}/{path-to-file}
+    Ingestion is currently only supported for files in the crucible-uploads cloud-bucket. 
+    '''
     filename: str
     size: int
     sha256_hash: str
@@ -95,6 +92,7 @@ class AssociatedFileRead(SQLModel):
     filename: str
     size: int
     sha256_hash: str
+    
 
 class ScientificMetadataBinaryRead(SQLModel):
     #id: Optional[int] = None

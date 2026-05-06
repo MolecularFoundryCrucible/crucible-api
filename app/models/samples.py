@@ -12,6 +12,7 @@ class SampleCreate(SQLModel):
     project_id: Optional[str] = None
     description: Optional[str] = None
     timestamp: Optional[str] = None
+    public: bool = False
     owner_orcid: Optional[str] = None  # falls back to the authenticated user if not provided
 
 
@@ -22,6 +23,7 @@ class SampleUpdate(SQLModel):
     project_id: Optional[str] = None
     description: Optional[str] = None
     timestamp: Optional[str] = None
+    public: Optional[bool] = None
 
 
 class SampleRead(SQLModel):
@@ -34,6 +36,7 @@ class SampleRead(SQLModel):
     project_id: Optional[str] = None
     description: Optional[str] = None
     timestamp: Optional[str] = None
+    public: bool = False
 
 
 class SampleResponse(SampleRead):

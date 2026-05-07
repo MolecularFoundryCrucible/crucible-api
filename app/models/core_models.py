@@ -324,3 +324,14 @@ class IngestionRequest(SQLModel, table=True):
     time_completed: Optional[str] = None
     status: Optional[str] = None
 
+
+class UploadSession(SQLModel, table=True):
+    __tablename__ = "upload_sessions"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    upload_id: str = Field(index=True, unique=True)
+    dataset_mfid: str
+    gcs_path: str           # blob path within bucket: "api-uploads/{user_id}/{filename}"
+    associated_file_name: str   # AssociatedFile.filename format: "crucible-uploads/{gcs_path}"
+    owner_user_id: str
+    expires_at: str         # ISO 8601, matches GCS resumable session expiry (7 days)
+

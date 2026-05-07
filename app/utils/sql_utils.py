@@ -75,7 +75,7 @@ def sql_create_resource_acl(ag, mfid, read, write, session):
     from app.models.core_models import ResourceACL
     from sqlmodel import select
     if ag is None:
-        return None
+        raise ValueError(f"Access group not found: cannot create ACL for resource '{mfid}'")
     acl = session.exec(
         select(ResourceACL)
         .where(ResourceACL.accessgroup_id == ag.id)
@@ -84,9 +84,39 @@ def sql_create_resource_acl(ag, mfid, read, write, session):
     if not acl:
         acl = ResourceACL(accessgroup_id=ag.id, mfid=mfid, read=read, write=write)
         session.add(acl)
-        session.commit()
-        session.refresh(acl)
+        session.flush()
     return acl
+
+
+def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None):
+    '''
+    Create the standard set of ResourceACL entries for a newly created resource.
+    - admin and read_only groups always get access
+    - owner gets read+write (if provided)
+    - requestor gets read+write if different from owner (e.g. service account acting on behalf)
+    - project group gets read+write (if provided)
+    Extra resource-specific ACLs (e.g. instrument group for datasets) should be added by the caller.
+    '''
+    from app.models.core_models import AccessGroup
+    from sqlmodel import select
+
+    admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
+    sql_create_resource_acl(admin, mfid, read=True, write=True, session=session)
+
+    ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
+    sql_create_resource_acl(ro, mfid, read=True, write=False, session=session)
+
+    if owner_id:
+        owner_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == owner_id)).one_or_none()
+        sql_create_resource_acl(owner_ag, mfid, read=True, write=True, session=session)
+
+    if requestor_id and requestor_id != owner_id:
+        requestor_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == requestor_id)).one_or_none()
+        sql_create_resource_acl(requestor_ag, mfid, read=True, write=True, session=session)
+
+    if project_id:
+        proj_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == project_id)).one_or_none()
+        sql_create_resource_acl(proj_ag, mfid, read=True, write=True, session=session)
 
 
 def generate_kw_query(session, base_query, keyword_filter):

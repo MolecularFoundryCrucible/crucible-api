@@ -1,14 +1,13 @@
 import json
 import logging
 import os
-from pathlib import Path
 from typing import Annotated, List, Optional
 
 logger = logging.getLogger(__name__)
 
 import networkx as nx
 from networkx.readwrite import json_graph
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from sqlalchemy import exists, func, join, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
@@ -46,21 +45,10 @@ from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
 from app.utils.rmq_utils import send_pika_message
-from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl
+from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
-
-_gcs_credentials = None
-
-def _get_gcs_credentials():
-    global _gcs_credentials
-    if _gcs_credentials is None:
-        from google.oauth2 import service_account
-        sa_creds = get_secret("GCS_SA", "service-account-cred/versions/6")
-        service_account_info = json.loads(sa_creds)
-        _gcs_credentials = service_account.Credentials.from_service_account_info(service_account_info)
-    return _gcs_credentials
 
 # eventually could switch to pushing + using github tags
 with open('pyproject.toml', 'r') as f:
@@ -162,24 +150,10 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
         
         session.flush()
 
-        # set appropriate access controls
-        admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
-        sql_create_resource_acl(admin, ds.unique_id, read=True, write=True, session=session)
-
-        ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
-        sql_create_resource_acl(ro, ds.unique_id, read=True, write=False, session=session)
-
-        if dataset_details.get('owner_orcid', None) is not None:
-            user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset_details['owner_orcid'])).one_or_none()
-            sql_create_resource_acl(user_ag, ds.unique_id, read=True, write=True, session=session)
-
-        if user_unique_id != dataset_details.get('owner_orcid', None):
-            requestor_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_unique_id)).one_or_none()
-            sql_create_resource_acl(requestor_ag, ds.unique_id, read=True, write=True, session=session)
-
-        if dataset_details.get('project_id', None) is not None:
-            prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset_details['project_id'])).one_or_none()
-            sql_create_resource_acl(prop_ag, ds.unique_id, read=True, write=True, session=session)
+        create_standard_acls(session, ds.unique_id,
+                             owner_id=dataset_details.get('owner_orcid'),
+                             requestor_id=user_unique_id,
+                             project_id=dataset_details.get('project_id'))
 
         if dataset_details.get('instrument_name', None) is not None:
             ag_query = select(AccessGroup).where(AccessGroup.group_name == dataset_details['instrument_name'].lower())
@@ -585,65 +559,6 @@ def unlink_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], d
         session.delete(link)
         session.commit()
         return {"message": f"Successfully unlinked dataset {dsid} and sample {sample_id}"}
-
-
-@router.get('/datasets/{dsid}/download_links')
-def generate_signed_url_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, bucket: str='mf-storage-prod'):
-    from google.cloud import storage
-    from datetime import timedelta
-
-    _, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-
-    with Session(engine) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        require_read_access(session, dsid, ag_ids)
-
-    try:
-        credentials = _get_gcs_credentials()
-        storage_client = storage.Client(credentials=credentials)
-        bucket_obj = storage_client.bucket(bucket)
-        ds_blobs = list(bucket_obj.list_blobs(prefix=f'{dsid}/'))
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not access storage bucket '{bucket}': {e}")
-
-    if not ds_blobs:
-        raise HTTPException(status_code=404, detail=f"No files found for dataset '{dsid}' in bucket '{bucket}'")
-
-    try:
-        urls = {
-            blob.name: blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")
-            for blob in ds_blobs
-        }
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not generate signed URLs: {e}")
-
-    return urls
-
-
-@router.post("/datasets/{dsid}/upload")
-async def create_dataset_from_file_upload(files: Annotated[List[UploadFile], File(description="List of files")],
-                                          auth_res:  Annotated[tuple, Depends(authorize_user)],
-                                          dsid: str):
-    '''
-    Upload files to cloud bucket and add to associated files list for dataset.
-    '''
-
-    user_unique_id, ag_list = auth_res
-
-    # upload the file
-    for file in files:
-        dest_dir = f"/mnt/gcs/api-uploads/{user_unique_id}/{os.path.dirname(file.filename)}"
-
-        Path(dest_dir).mkdir(parents=True, exist_ok=True)
-        save_file_path = f"/mnt/gcs/api-uploads/{user_unique_id}/{file.filename}"
-        with open(save_file_path, "wb") as f:
-            f.write(await file.read())
-
-    save_file_path = save_file_path.replace('/mnt/gcs', 'crucible-uploads')
-    return save_file_path
 
 
 

@@ -1,4 +1,7 @@
 from typing import Annotated, List, Optional, Union
+import logging
+
+logger = logging.getLogger(__name__)
 
 import os
 import networkx as nx
@@ -185,6 +188,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                              requestor_id=user_unique_id,
                              project_id=sample.project_id)
 
+        session.add(sample)
         session.commit()
         session.refresh(sample)
         return SampleResponse.model_validate({
@@ -406,7 +410,6 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
             raise HTTPException(status_code=404, detail="Sample not found")
 
         auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
-        print(f'{include_metadata=}')
         if include_metadata:
             query = (
                     select(Dataset)

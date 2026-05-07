@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 #DB_DATABASE
 
 def setup_engine(env_file = '.env'):
-    print(load_dotenv(env_file))
+    load_dotenv(env_file)
     password = get_secret('PGDB_PW', 'pgcloud_pw/versions/2')
     if password is None:
         return
@@ -47,7 +47,6 @@ def only_update(session, cls, where, **kwargs):
         return None
     
     for key, value in kwargs.items():
-        print(key)
         setattr(obj, key, value)
     session.add(obj)
     return obj
@@ -55,9 +54,8 @@ def only_update(session, cls, where, **kwargs):
 def add_or_update(session, cls, where, **kwargs):
     statement = select(cls).where(where)
     obj = session.exec(statement).first()
-    if obj: 
+    if obj:
         for key, value in kwargs.items():
-            print(key,value)
             setattr(obj, key, value)
     else:
         obj = cls(**kwargs)

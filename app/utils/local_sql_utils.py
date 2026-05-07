@@ -1,9 +1,12 @@
 
+import logging
 import yaml
 import os
 from dotenv import load_dotenv
 from sqlmodel import create_engine, select
 from app.general_utils import  get_secret
+
+logger = logging.getLogger(__name__)
 # Need a .env file with the following variables
 #DB_PASSWORD
 #DB_USERNAME
@@ -11,10 +14,10 @@ from app.general_utils import  get_secret
 #DB_DATABASE
 
 def setup_engine(env_file = '.env'):
-    print(load_dotenv(env_file))
+    load_dotenv(env_file)
     password = get_secret('PGDB_PW', 'pgcloud_pw/versions/2')
     if password is None:
-        print('no password')
+        logger.warning("No database password found")
         return
     db_url = f'postgresql://{os.environ.get("DB_USERNAME")}:{password}@{os.environ.get("DB_SERVER")}/{os.environ.get("DB_DATABASE")}'
     engine = create_engine(db_url, echo=False)
@@ -40,12 +43,10 @@ def table_obj_to_dict(obj):
 def only_update(session, cls, where, **kwargs):
     statement = select(cls).where(where)
     obj = session.exec(statement).one_or_none()
-    print(obj)
     if not obj:
         return None
-    
+
     for key, value in kwargs.items():
-        print(key)
         setattr(obj, key, value)
     session.add(obj)
     return obj
@@ -53,10 +54,8 @@ def only_update(session, cls, where, **kwargs):
 def add_or_update(session, cls, where, **kwargs):
     statement = select(cls).where(where)
     obj = session.exec(statement).one_or_none()
-    print(obj)
-    if obj: 
+    if obj:
         for key, value in kwargs.items():
-            print(key,value)
             setattr(obj, key, value)
     else:
         obj = cls(**kwargs)

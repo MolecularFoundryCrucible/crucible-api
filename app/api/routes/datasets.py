@@ -1,6 +1,9 @@
 import json
+import logging
 import os
 from typing import Annotated, List, Optional
+
+logger = logging.getLogger(__name__)
 
 import networkx as nx
 from networkx.readwrite import json_graph
@@ -59,6 +62,17 @@ with open('pyproject.toml', 'r') as f:
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
 
+_INGESTION_SMALL_MAX = int(1.5 * 1024**3)  # 1.5 GB in bytes
+_INGESTION_MEDIUM_MAX = 5 * 1024**3        # 5 GB in bytes
+
+
+def _get_ingestion_tier(file_size: int) -> str:
+    if file_size < _INGESTION_SMALL_MAX:
+        return "small"
+    elif file_size < _INGESTION_MEDIUM_MAX:
+        return "medium"
+    return "large"
+
 @router.post("/datasets/{dsid}/carrier_segmentation")
 def request_carrier_segmentation(dsid, auth_res: Annotated[tuple, Depends(authorize_user)]):
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
@@ -95,7 +109,7 @@ def request_insitu_aggregation(dsid, auth_res: Annotated[tuple, Depends(authoriz
 async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
                          dataset: DatasetCreate):
     
-    print(f"received {dataset}")
+    logger.info(f"Creating dataset: {dataset.unique_id}")
     dataset_details = dataset.model_dump()
     user_unique_id, ag_list = auth_res
     
@@ -136,7 +150,6 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
         
         session.flush()
 
-        print(f'added dataset {ds}')
         create_standard_acls(session, ds.unique_id,
                              owner_id=dataset_details.get('owner_orcid'),
                              requestor_id=user_unique_id,
@@ -151,7 +164,6 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
                                         AccessGroup.group_name == dataset_details['instrument_name'].lower(),
                                         group_name=dataset_details['instrument_name'].lower())
             sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True, session=session)
-            print(f'added instrument group access to {ds.unique_id}')
 
         session.commit()
         session.refresh(ds)
@@ -554,7 +566,8 @@ def unlink_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], d
 def request_file_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
                            dsid: str,
                            filename: str,
-                           ingestion_class: Optional[str]=None):
+                           ingestion_class: Optional[str]=None,
+                           file_size: Optional[int]=None):
 
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -565,32 +578,43 @@ def request_file_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
 
-    if ds is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
 
-    ingestion_request = IngestionRequest(dataset_id=dsid,
-                                         ingestion_class = ingestion_class,
-                                         time_created=get_tz_isoformat(),
-                                         file_to_upload=filename,
-                                         status="requested")
-    
-    session.add(ingestion_request)
-    session.commit()
-    session.refresh(ingestion_request)
+        if file_size is None:
+            af = session.exec(
+                select(AssociatedFile).where(
+                    (AssociatedFile.dataset_id == ds.id) & (AssociatedFile.filename == filename)
+                )
+            ).one_or_none()
+            if af is None:
+                raise HTTPException(status_code=404, detail="Associated file not found")
+            file_size = af.size
 
+        ingestion_request = IngestionRequest(dataset_id=dsid,
+                                             ingestion_class = ingestion_class,
+                                             time_created=get_tz_isoformat(),
+                                             file_to_upload=filename,
+                                             status="requested")
+
+        session.add(ingestion_request)
+        session.commit()
+        session.refresh(ingestion_request)
+
+    tier = _get_ingestion_tier(file_size)
+    routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
+    logger.info(f"Ingestion routing key: {routing_key}")
     msg = {
         "filename": filename,
         "reqid": ingestion_request.id,
         "dsid": dsid,
         "ingestion_class": ingestion_class
     }
-    routing_key=f'ingestion-{RMQ_ROUTING_SUFFIX}'
-    print(routing_key)
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
     send_pika_message(
         message=json.dumps(msg),
         exchange="",
-        routing_key=f'ingestion-{RMQ_ROUTING_SUFFIX}',
+        routing_key=routing_key,
         user="admin",
         rmq_pw=rmq_pw
     )
@@ -603,8 +627,6 @@ def patch_ingestion_request(auth_res: Annotated[tuple, Depends(authorize_user)],
     _, ag_list = auth_res
     require_groups(ag_list)
     if ing_req.id:
-        print(f"{reqid=}")
-        print(f"{ing_req.id=}")
         assert reqid == ing_req.id
 
     with Session(engine) as session:
@@ -796,19 +818,15 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
                                 thumbnail_name = thumbnail.thumbnail_name,
                                 thumbnail_b64str = thumbnail_b64str,
                                 dataset_id = ds.id)
-        print('added tnobj')
         if not (tn_obj in ds.thumbnails):
-            print("adding tnobj to ds")
             ds.thumbnails.append(tn_obj)
             session.add(ds)
-            print("added tnobj to ds")
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
             ri.modification_time = get_tz_isoformat()
 
         session.commit()
-        print("committed session")
         session.refresh(tn_obj)
 
     return(tn_obj)
@@ -902,7 +920,7 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
         session.refresh(af_obj)
 
         # request ingestion
-        ingestion_request = request_file_ingestion(auth_res, dsid, af_obj.filename, ingestion_class) 
+        ingestion_request = request_file_ingestion(auth_res, dsid, af_obj.filename, ingestion_class, file_size=af_obj.size)
         session.refresh(af_obj)
         return({'associated_file': af_obj, 'ingestion_request': ingestion_request})
 
@@ -982,7 +1000,6 @@ def create_dataset_acl(group_name: str, dsid: str, read: bool, write: bool, auth
     _, ag_list = auth_res
     require_groups(ag_list)
     with Session(engine) as session:
-        print(f"{dsid=}")
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")

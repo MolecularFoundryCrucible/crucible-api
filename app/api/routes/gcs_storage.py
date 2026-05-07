@@ -221,7 +221,8 @@ def complete_resumable_upload(
             raise HTTPException(status_code=404, detail="Upload session not found or already completed")
         if us.owner_user_id != user_unique_id:
             raise HTTPException(status_code=403, detail="Not the owner of this upload session")
-        if datetime.fromisoformat(us.expires_at) < datetime.now(timezone.utc):
+        expires_at = us.expires_at if isinstance(us.expires_at, datetime) else datetime.fromisoformat(us.expires_at)
+        if expires_at < datetime.now(timezone.utc):
             session.delete(us)
             session.commit()
             raise HTTPException(status_code=410, detail="Upload session has expired")

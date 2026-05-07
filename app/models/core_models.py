@@ -333,5 +333,5 @@ class UploadSession(SQLModel, table=True):
     gcs_path: str           # blob path within bucket: "api-uploads/{user_id}/{filename}"
     associated_file_name: str   # AssociatedFile.filename format: "crucible-uploads/{gcs_path}"
     owner_user_id: str
-    expires_at: str         # ISO 8601, matches GCS resumable session expiry (7 days)
+    expires_at: str         # written as ISO 8601 string; DB returns datetime, handle both
 

@@ -1,4 +1,7 @@
 from typing import Annotated, List, Optional, Union
+import logging
+
+logger = logging.getLogger(__name__)
 
 import os
 import networkx as nx
@@ -172,21 +175,17 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         ri.public = S.public
         session.commit()
 
-        print ('adding admin')
         admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
         sql_create_resource_acl(admin, sample.unique_id, read=True, write=True, session=session)
 
-        print('adding read only')
         ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
         sql_create_resource_acl(ro, sample.unique_id, read=True, write=False, session=session)
 
         if sample.owner_orcid:
-            print('adding owner')
             owner_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.owner_orcid)).one_or_none()
             sql_create_resource_acl(owner_ag, sample.unique_id, read=True, write=True, session=session)
 
         if sample.project_id:
-            print('adding project')
             proj_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.project_id)).one_or_none()
             sql_create_resource_acl(proj_ag, sample.unique_id, read=True, write=True, session=session)
 
@@ -412,7 +411,6 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
             raise HTTPException(status_code=404, detail="Sample not found")
 
         auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
-        print(f'{include_metadata=}')
         if include_metadata:
             query = (
                     select(Dataset)

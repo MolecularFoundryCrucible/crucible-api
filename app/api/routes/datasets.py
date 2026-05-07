@@ -1,7 +1,10 @@
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Annotated, List, Optional
+
+logger = logging.getLogger(__name__)
 
 import networkx as nx
 from networkx.readwrite import json_graph
@@ -118,7 +121,7 @@ def request_insitu_aggregation(dsid, auth_res: Annotated[tuple, Depends(authoriz
 async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
                          dataset: DatasetCreate):
     
-    print(f"received {dataset}")
+    logger.info(f"Creating dataset: {dataset.unique_id}")
     dataset_details = dataset.model_dump()
     user_unique_id, ag_list = auth_res
     
@@ -159,29 +162,24 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
         
         session.flush()
 
-        print(f'added dataset {ds}')
         # set appropriate access controls
         admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
         sql_create_resource_acl(admin, ds.unique_id, read=True, write=True, session=session)
 
         ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
         sql_create_resource_acl(ro, ds.unique_id, read=True, write=False, session=session)
-        print(f"add ro access to {ds.unique_id}")
 
         if dataset_details.get('owner_orcid', None) is not None:
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset_details['owner_orcid'])).one_or_none()
             sql_create_resource_acl(user_ag, ds.unique_id, read=True, write=True, session=session)
-            print(f'added owner orcid access to {ds.unique_id}')
 
         if user_unique_id != dataset_details.get('owner_orcid', None):
             requestor_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == user_unique_id)).one_or_none()
             sql_create_resource_acl(requestor_ag, ds.unique_id, read=True, write=True, session=session)
-            print(f'added requestor orcid access to {ds.unique_id}')
 
         if dataset_details.get('project_id', None) is not None:
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == dataset_details['project_id'])).one_or_none()
             sql_create_resource_acl(prop_ag, ds.unique_id, read=True, write=True, session=session)
-            print(f'added proposal access to {ds.unique_id}')
 
         if dataset_details.get('instrument_name', None) is not None:
             ag_query = select(AccessGroup).where(AccessGroup.group_name == dataset_details['instrument_name'].lower())
@@ -192,7 +190,6 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
                                         AccessGroup.group_name == dataset_details['instrument_name'].lower(),
                                         group_name=dataset_details['instrument_name'].lower())
             sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True, session=session)
-            print(f'added instrument group access to {ds.unique_id}')
 
         session.commit()
         session.refresh(ds)
@@ -691,7 +688,7 @@ def request_file_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
 
     tier = _get_ingestion_tier(file_size)
     routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
-    print(routing_key)
+    logger.info(f"Ingestion routing key: {routing_key}")
     msg = {
         "filename": filename,
         "reqid": ingestion_request.id,
@@ -715,8 +712,6 @@ def patch_ingestion_request(auth_res: Annotated[tuple, Depends(authorize_user)],
     _, ag_list = auth_res
     require_groups(ag_list)
     if ing_req.id:
-        print(f"{reqid=}")
-        print(f"{ing_req.id=}")
         assert reqid == ing_req.id
 
     with Session(engine) as session:
@@ -908,19 +903,15 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
                                 thumbnail_name = thumbnail.thumbnail_name,
                                 thumbnail_b64str = thumbnail_b64str,
                                 dataset_id = ds.id)
-        print('added tnobj')
         if not (tn_obj in ds.thumbnails):
-            print("adding tnobj to ds")
             ds.thumbnails.append(tn_obj)
             session.add(ds)
-            print("added tnobj to ds")
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
             ri.modification_time = get_tz_isoformat()
 
         session.commit()
-        print("committed session")
         session.refresh(tn_obj)
 
     return(tn_obj)
@@ -1094,7 +1085,6 @@ def create_dataset_acl(group_name: str, dsid: str, read: bool, write: bool, auth
     _, ag_list = auth_res
     require_groups(ag_list)
     with Session(engine) as session:
-        print(f"{dsid=}")
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")

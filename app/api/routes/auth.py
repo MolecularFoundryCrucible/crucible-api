@@ -1,5 +1,8 @@
 import datetime
+import logging
 from typing import Annotated
+
+logger = logging.getLogger(__name__)
 
 import requests
 from fastapi import APIRouter, Depends, Request
@@ -62,13 +65,12 @@ def redirect_exchange(request: Request, code: str, state: str = None):
     )
     try:
         user_info_payload = user_from_orcid.json()
-        #print(f'{user_info_payload=}')
         exp_time = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=1)
         user_info_payload['orcid'] = user_info_payload['sub']
         user_info_payload['exp'] = exp_time
         user_info_jwt = jwt.encode(user_info_payload, SECRET_KEY, algorithm=ALGORITHM)
     except Exception as err:
-        print(err)
+        logger.error(f"Error encoding ORCID user info: {err}")
         user_info_jwt = None
 
     next_page = request.cookies.get("after_login_return_to_page")
@@ -106,7 +108,7 @@ def get_apikey(request: Request):
         return response
 
     user_info = decode_token(user_info_jwt)
-    print(f'Orcid User Profile: {user_info=}')
+    logger.debug(f"Orcid user profile: {user_info}")
     orcid = user_info["orcid"]
     crucible_token = find_or_add_api_access(orcid, engine, regenerate=False)
 

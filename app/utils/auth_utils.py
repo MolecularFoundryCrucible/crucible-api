@@ -1,9 +1,12 @@
 from typing import Annotated
+import logging
 import re
 import requests
 import secrets
 import datetime
 from jose import jwt, JWTError
+
+logger = logging.getLogger(__name__)
 
 from fastapi import Depends,  HTTPException
 from fastapi.responses import RedirectResponse
@@ -114,7 +117,7 @@ def find_key(credentials, engine):
             if expired_api_acct is None:
                 raise HTTPException(status_code=400, detail="No account found for this API key.")
             else:
-                print(f"Expired API account found: {expired_api_acct}")
+                logger.warning(f"Expired API account found: {expired_api_acct}")
                 created_date = datetime.datetime.strptime(expired_api_acct.token_created, '%Y-%m-%d')
                 expiration_date = (created_date + timedelta(365)).isoformat()
                 raise HTTPException(status_code=400, detail=f"This API key expired on {expiration_date}")

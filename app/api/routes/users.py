@@ -1,4 +1,7 @@
 from typing import Annotated, Dict, List, Optional, Union
+import logging
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from sqlalchemy import func, join
@@ -105,7 +108,7 @@ def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: 
         for pname in project_ids:
             props = session.exec(select(Project).where(Project.project_id == pname)).all()
             if len(props) != 1:
-                print(f"Projects found for {pname}: {props} --- skipping.  Please ensure a project exists with a unique name.")
+                logger.warning(f"Projects found for {pname}: {props} — skipping. Please ensure a project exists with a unique name.")
                 continue
 
             prop = props[-1]

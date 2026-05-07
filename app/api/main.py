@@ -1,16 +1,31 @@
 import datetime
 import json
+import logging
 import os
 import urllib.parse
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.dependencies import get_api_config
 from app.api.routes import auth, datasets, resources, samples, instruments, users, projects, access_groups, entities, misc, deletion, ai
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:%(name)s:%(message)s",
+)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(root_path=f"/{get_api_config()['api_path']}")
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"{request.method} {request.url.path}")
+    return await call_next(request)
+
+
 Instrumentator().instrument(app).expose(app)
 
 app.include_router(auth.router)

@@ -19,7 +19,7 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
-from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl
+from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl, create_standard_acls
 
 router = APIRouter(tags=["samples"])
 engine = get_engine()
@@ -107,6 +107,14 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
             if new_public is not None:
                 ri.public = new_public
 
+        if 'owner_orcid' in update_dict:
+            owner_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.owner_orcid)).one_or_none()
+            sql_create_resource_acl(owner_ag, sample_id, read=True, write=True, session=session)
+
+        if 'project_id' in update_dict:
+            proj_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.project_id)).one_or_none()
+            sql_create_resource_acl(proj_ag, sample_id, read=True, write=True, session=session)
+
         session.add(sample)
         session.commit()
         session.refresh(sample)
@@ -172,25 +180,11 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         ri.public = S.public
         session.commit()
 
-        print ('adding admin')
-        admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
-        sql_create_resource_acl(admin, sample.unique_id, read=True, write=True, session=session)
+        create_standard_acls(session, sample.unique_id,
+                             owner_id=sample.owner_orcid,
+                             requestor_id=user_unique_id,
+                             project_id=sample.project_id)
 
-        print('adding read only')
-        ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
-        sql_create_resource_acl(ro, sample.unique_id, read=True, write=False, session=session)
-
-        if sample.owner_orcid:
-            print('adding owner')
-            owner_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.owner_orcid)).one_or_none()
-            sql_create_resource_acl(owner_ag, sample.unique_id, read=True, write=True, session=session)
-
-        if sample.project_id:
-            print('adding project')
-            proj_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.project_id)).one_or_none()
-            sql_create_resource_acl(proj_ag, sample.unique_id, read=True, write=True, session=session)
-
-        session.add(sample)
         session.commit()
         session.refresh(sample)
         return SampleResponse.model_validate({

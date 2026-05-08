@@ -562,7 +562,7 @@ def unlink_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], d
 
 
 
-@router.post("/datasets/{dsid}/ingest",  response_model=dict[AssociatedFileRead, IngestionRequest])
+@router.post("/datasets/{dsid}/ingest", response_model=IngestionRequest)
 def request_file_ingestion(auth_res: Annotated[tuple, Depends(authorize_user)],
                            dsid: str,
                            filename: str,

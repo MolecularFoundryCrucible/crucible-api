@@ -25,8 +25,8 @@ engine = get_engine()
 
 
 def _get_af_with_read_access(session: Session, file_id: str, ag_ids: list) -> tuple[AssociatedFile, Dataset]:
-    """Fetch an AssociatedFile by unique_id and verify the caller has read access to its parent dataset."""
-    af = session.exec(select(AssociatedFile).where(AssociatedFile.unique_id == file_id)).one_or_none()
+    """Fetch an AssociatedFile by mfid and verify the caller has read access to its parent dataset."""
+    af = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == file_id)).one_or_none()
     if af is None:
         raise HTTPException(status_code=404, detail="File not found")
 

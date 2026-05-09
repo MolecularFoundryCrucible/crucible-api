@@ -42,7 +42,7 @@ def _get_ingestion_tier(file_size: int) -> str:
 
 def _get_af_with_read_access(session: Session, mfid: str, ag_ids: list) -> tuple[AssociatedFile, Dataset]:
     """Fetch an AssociatedFile by unique_id and verify the caller has read access to its parent dataset."""
-    af = session.exec(select(AssociatedFile).where(AssociatedFile.unique_id == mfid)).one_or_none()
+    af = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == mfid)).one_or_none()
     if af is None:
         raise HTTPException(status_code=404, detail="Associated file not found")
 
@@ -235,7 +235,7 @@ def patch_ingestion_request(
         raise HTTPException(status_code=400, detail="Request body ID does not match URL")
 
     with Session(engine) as session:
-        af = session.exec(select(AssociatedFile).where(AssociatedFile.unique_id == mfid)).one_or_none()
+        af = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == mfid)).one_or_none()
         if af is None:
             raise HTTPException(status_code=404, detail="Associated file not found")
 

@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.dependencies import get_api_config
-from app.api.routes import auth, datasets, gcs_storage, resources, samples, instruments, users, projects, access_groups, entities, misc, deletion, ai
+from app.api.routes import auth, files, datasets, gcs_storage, resources, samples, instruments, users, projects, access_groups, entities, misc, deletion, ingestion_requests, ai
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,6 +29,8 @@ async def log_requests(request: Request, call_next):
 Instrumentator().instrument(app).expose(app)
 
 app.include_router(auth.router)
+app.include_router(files.router)
+app.include_router(ingestion_requests.router)
 app.include_router(datasets.router)
 app.include_router(gcs_storage.router)
 app.include_router(resources.router)

@@ -57,7 +57,7 @@ def list_ingestion_requests(
     with Session(engine) as session:
         if file_id is not None:
             af = session.exec(
-                select(AssociatedFile).where(AssociatedFile.unique_id == file_id)
+                select(AssociatedFile).where(AssociatedFile.mfid == file_id)
             ).one_or_none()
             if af is None:
                 raise HTTPException(status_code=404, detail="File not found")

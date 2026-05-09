@@ -798,7 +798,7 @@ def create_file_ingestion_request(
         require_write_access(session, ag_ids, [dsid])
 
         af = session.exec(
-            select(AssociatedFile).where(AssociatedFile.unique_id == file_id)
+            select(AssociatedFile).where(AssociatedFile.mfid == file_id)
         ).one_or_none()
         if af is None:
             raise HTTPException(status_code=404, detail="File not found")

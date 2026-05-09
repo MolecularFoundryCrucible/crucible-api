@@ -87,7 +87,7 @@ class AssociatedFileCreate(SQLModel):
 
 class AssociatedFileRead(SQLModel):
     '''Response model for AssociatedFile.'''
-    unique_id: str
+    mfid: str
     dataset_id: int
     filename: str
     size: int

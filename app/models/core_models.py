@@ -38,7 +38,7 @@ class Thumbnail(SQLModel, table=True):
 
 class AssociatedFile(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    unique_id: str = Field(default_factory=get_mfid_value, unique=True, index=True)
+    mfid: str = Field(default_factory=get_mfid_value, unique=True, index=True)
     filename: str
     size: int = Field(sa_column=Column(BigInteger()))
     sha256_hash: str

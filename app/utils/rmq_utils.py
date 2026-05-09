@@ -1,5 +1,16 @@
 
 import pika
+
+_INGESTION_SMALL_MAX = int(1.5 * 1024**3)
+_INGESTION_MEDIUM_MAX = 5 * 1024**3
+
+
+def get_ingestion_tier(file_size: int) -> str:
+    if file_size < _INGESTION_SMALL_MAX:
+        return "small"
+    elif file_size < _INGESTION_MEDIUM_MAX:
+        return "medium"
+    return "large"
 from app.utils.constants import rmq_host, rmq_port, rmq_user
 from app.general_utils import get_secret
 

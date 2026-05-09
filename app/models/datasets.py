@@ -87,11 +87,18 @@ class AssociatedFileCreate(SQLModel):
 
 class AssociatedFileRead(SQLModel):
     '''Response model for AssociatedFile.'''
-    # id: int
+    unique_id: str
     dataset_id: int
     filename: str
     size: int
     sha256_hash: str
+
+
+class AssociatedFileUpdate(SQLModel):
+    '''Partial update schema for AssociatedFile. Only provided fields are modified.'''
+    filename: Optional[str] = None
+    size: Optional[int] = None
+    sha256_hash: Optional[str] = None
     
 
 class ScientificMetadataBinaryRead(SQLModel):

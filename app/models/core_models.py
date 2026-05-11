@@ -91,6 +91,7 @@ class Sample(SQLModel, table = True):
         sa_relationship_kwargs={
             "primaryjoin": "foreign(Resource.mfid)==Sample.unique_id",
             "lazy": "noload",
+            "viewonly": True,
         }
     )
     parents: List["Sample"] = Relationship(
@@ -140,7 +141,7 @@ class Dataset(SQLModel, table=True):
     keywords: List[Keyword] = Relationship(back_populates="datasets", link_model=DatasetKeywordLink)
     thumbnails: List[Thumbnail] = Relationship(back_populates = "dataset")
     associated_files: List[AssociatedFile] = Relationship(back_populates = "dataset")
-    resource: Optional["Resource"] = Relationship(sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Dataset.unique_id", "lazy": "noload",})
+    resource: Optional["Resource"] = Relationship(sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Dataset.unique_id", "lazy": "noload", "viewonly": True})
     parents: List["Dataset"] = Relationship(
         back_populates="children",
         link_model=DatasetLink,

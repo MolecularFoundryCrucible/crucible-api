@@ -14,6 +14,7 @@ from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
 from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead
 from app.utils.auth_utils import authorize_user, require_read_access, require_write_access
+from app.utils.sql_utils import add_or_update
 
 router = APIRouter(tags=["storage"])
 engine = get_engine()
@@ -149,6 +150,16 @@ def initiate_resumable_upload(
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         require_write_access(session, ag_ids, [dsid])
+
+        if body.sha256_hash:
+            existing = session.exec(
+                select(AssociatedFile).where(
+                    AssociatedFile.dataset_id == ds.id,
+                    AssociatedFile.sha256_hash == body.sha256_hash,
+                )
+            ).one_or_none()
+            if existing is not None:
+                return UploadInitiateRead(existing_file=AssociatedFileRead.model_validate(existing))
 
     # Strip absolute markers, current-dir dots, and traversal components.
     from pathlib import PurePosixPath

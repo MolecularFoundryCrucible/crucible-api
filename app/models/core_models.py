@@ -38,11 +38,13 @@ class Thumbnail(SQLModel, table=True):
 
 class AssociatedFile(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    mfid: str = Field(default_factory=get_mfid_value, unique=True, index=True)
     filename: str
-    size: int = Field(sa_column=Column(BigInteger())) 
+    size: int = Field(sa_column=Column(BigInteger()))
     sha256_hash: str
-    dataset_id: int = Field(foreign_key = "dataset.id")
-    dataset: "Dataset" = Relationship(back_populates = 'associated_files')
+    dataset_id: int = Field(foreign_key="dataset.id")
+    dataset: "Dataset" = Relationship(back_populates='associated_files')
+    ingestion_requests: List["IngestionRequest"] = Relationship(back_populates="associated_file")
 
 
 class DatasetLink(SQLModel, table = True):
@@ -89,6 +91,7 @@ class Sample(SQLModel, table = True):
         sa_relationship_kwargs={
             "primaryjoin": "foreign(Resource.mfid)==Sample.unique_id",
             "lazy": "noload",
+            "viewonly": True,
         }
     )
     parents: List["Sample"] = Relationship(
@@ -138,7 +141,7 @@ class Dataset(SQLModel, table=True):
     keywords: List[Keyword] = Relationship(back_populates="datasets", link_model=DatasetKeywordLink)
     thumbnails: List[Thumbnail] = Relationship(back_populates = "dataset")
     associated_files: List[AssociatedFile] = Relationship(back_populates = "dataset")
-    resource: Optional["Resource"] = Relationship(sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Dataset.unique_id", "lazy": "noload",})
+    resource: Optional["Resource"] = Relationship(sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Dataset.unique_id", "lazy": "noload", "viewonly": True})
     parents: List["Dataset"] = Relationship(
         back_populates="children",
         link_model=DatasetLink,
@@ -316,13 +319,15 @@ class Instrument(SQLModel, table=True):
 # --- Task tracking ---
 class IngestionRequest(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    dataset_id: str = Field(default=None, index=True)
-    file_to_upload: str = None
+    dataset_mfid: Optional[str] = Field(default=None, foreign_key="dataset.unique_id", index=True, alias="dataset_id")
+    file_mfid: Optional[str] = Field(default=None, foreign_key="associatedfile.mfid", index=True)
+    file_to_upload: Optional[str] = None
     ingestion_githash: Optional[str] = None
     ingestion_class: Optional[str] = None
     time_created: Optional[str] = None
     time_completed: Optional[str] = None
     status: Optional[str] = None
+    associated_file: Optional["AssociatedFile"] = Relationship(back_populates="ingestion_requests")
 
 
 class UploadSession(SQLModel, table=True):

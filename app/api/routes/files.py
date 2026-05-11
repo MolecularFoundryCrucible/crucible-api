@@ -112,7 +112,7 @@ def delete_file(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: st
         require_write_access(session, ag_ids, [ds.unique_id])
 
         for ir in session.exec(
-            select(IngestionRequest).where(IngestionRequest.associated_file_id == af.id)
+            select(IngestionRequest).where(IngestionRequest.file_mfid == af.mfid)
         ).all():
             session.delete(ir)
 

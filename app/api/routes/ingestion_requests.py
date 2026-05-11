@@ -29,7 +29,7 @@ def _get_ir_with_read_access(session: Session, reqid: int, ag_ids: list) -> Inge
     ds = session.exec(
         select(Dataset)
         .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
-        .where(Dataset.id == ir.dataset_id)
+        .where(Dataset.unique_id == ir.dataset_mfid)
         .filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True))
         .distinct()
     ).one_or_none()
@@ -73,7 +73,7 @@ def list_ingestion_requests(
                 raise HTTPException(status_code=403, detail="Access denied")
 
             return session.exec(
-                select(IngestionRequest).where(IngestionRequest.associated_file_id == af.id)
+                select(IngestionRequest).where(IngestionRequest.file_mfid == af.mfid)
             ).all()
 
         else:
@@ -88,7 +88,7 @@ def list_ingestion_requests(
                 raise HTTPException(status_code=404, detail="Dataset not found or access denied")
 
             return session.exec(
-                select(IngestionRequest).where(IngestionRequest.dataset_id == ds.id)
+                select(IngestionRequest).where(IngestionRequest.dataset_mfid == ds.unique_id)
             ).all()
 
 

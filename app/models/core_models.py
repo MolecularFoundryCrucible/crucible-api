@@ -318,8 +318,8 @@ class Instrument(SQLModel, table=True):
 # --- Task tracking ---
 class IngestionRequest(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    dataset_id: Optional[int] = Field(default=None, foreign_key="dataset.id", index=True)
-    associated_file_id: Optional[int] = Field(default=None, foreign_key="associatedfile.id", index=True)
+    dataset_mfid: Optional[str] = Field(default=None, foreign_key="dataset.unique_id", index=True)
+    file_mfid: Optional[str] = Field(default=None, foreign_key="associatedfile.mfid", index=True)
     file_to_upload: Optional[str] = None
     ingestion_githash: Optional[str] = None
     ingestion_class: Optional[str] = None

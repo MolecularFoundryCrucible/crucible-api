@@ -807,8 +807,8 @@ def create_file_ingestion_request(
             raise HTTPException(status_code=409, detail="File does not belong to this dataset")
 
         ingestion_request = IngestionRequest(
-            dataset_id=ds.id,
-            associated_file_id=af.id,
+            dataset_mfid=ds.unique_id,
+            file_mfid=af.mfid,
             file_to_upload=af.filename,
             ingestion_class=ingestion_class,
             time_created=get_tz_isoformat(),

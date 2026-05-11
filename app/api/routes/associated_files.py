@@ -128,7 +128,7 @@ def delete_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)], 
         require_write_access(session, ag_ids, [ds.unique_id])
 
         for ir in session.exec(
-            select(IngestionRequest).where(IngestionRequest.associated_file_id == af.id)
+            select(IngestionRequest).where(IngestionRequest.file_mfid == af.mfid)
         ).all():
             session.delete(ir)
 
@@ -152,8 +152,8 @@ def create_ingestion_request(
         require_write_access(session, ag_ids, [ds.unique_id])
 
         ingestion_request = IngestionRequest(
-            dataset_id=ds.id,
-            associated_file_id=af.id,
+            dataset_mfid=ds.unique_id,
+            file_mfid=af.mfid,
             file_to_upload=af.filename,
             ingestion_class=ingestion_class,
             time_created=get_tz_isoformat(),
@@ -194,7 +194,7 @@ def list_ingestion_requests(auth_res: Annotated[tuple, Depends(authorize_user)],
     with Session(engine) as session:
         af, _ = _get_af_with_read_access(session, mfid, ag_ids)
         return session.exec(
-            select(IngestionRequest).where(IngestionRequest.associated_file_id == af.id)
+            select(IngestionRequest).where(IngestionRequest.file_mfid == af.mfid)
         ).all()
 
 
@@ -212,7 +212,7 @@ def get_ingestion_request(
         af, _ = _get_af_with_read_access(session, mfid, ag_ids)
         ir = session.exec(
             select(IngestionRequest).where(
-                (IngestionRequest.id == reqid) & (IngestionRequest.associated_file_id == af.id)
+                (IngestionRequest.id == reqid) & (IngestionRequest.file_mfid == af.mfid)
             )
         ).one_or_none()
         if ir is None:
@@ -242,7 +242,7 @@ def patch_ingestion_request(
         updated = only_update(
             session,
             IngestionRequest,
-            (IngestionRequest.id == reqid) & (IngestionRequest.associated_file_id == af.id),
+            (IngestionRequest.id == reqid) & (IngestionRequest.file_mfid == af.mfid),
             **ing_req.model_dump(exclude_unset=True),
         )
         if updated is None:

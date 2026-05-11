@@ -14,6 +14,7 @@ from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
 from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead
 from app.utils.auth_utils import authorize_user, require_read_access, require_write_access
+from app.utils.sql_utils import add_or_update
 
 router = APIRouter(tags=["storage"])
 engine = get_engine()

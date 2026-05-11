@@ -6,8 +6,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_tz_isoformat
-from app.models.core_models import Dataset, DeletionRequest, Resource, Sample
+from app.models.core_models import DeletionRequest
 from app.models.deletion import DeletionRequestRead
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_groups
@@ -22,69 +21,6 @@ def _to_read(req: DeletionRequest) -> DeletionRequestRead:
         **req.model_dump(),
         resource_type=req.resource.resource_type if req.resource else None,
     )
-
-
-# ---------------------------------------------------------------------------
-# POST /deletion_requests
-# Any authenticated user can request deletion of a resource they have access to.
-# ---------------------------------------------------------------------------
-@router.post("/deletion_requests", response_model=DeletionRequestRead)
-def create_deletion_request(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
-    resource_id: str,
-    reason: Optional[str] = None,
-):
-    # authorize_user returns (user_unique_id, list_of_AccessGroup_objects)
-    requester_id, _ = auth_res
-
-    with Session(engine) as session:
-
-        # 1. Verify the resource exists in the idtype table.
-        #    Every Dataset and Sample gets a row there on creation.
-        resource = session.exec(
-            select(Resource).where(Resource.mfid == resource_id)
-        ).one_or_none()
-
-        if resource is None:
-            raise HTTPException(status_code=404, detail=f"Resource {resource_id} not found.")
-
-        # 2. Reject if there is already an active request for this resource.
-        #    We don't want duplicate pending requests piling up.
-        existing = session.exec(
-            select(DeletionRequest)
-            .where(DeletionRequest.resource_id == resource_id)
-            .where(DeletionRequest.status.in_(["pending", "approved"]))
-        ).one_or_none()
-
-        if existing:
-            raise HTTPException(
-                status_code=409,
-                detail=f"A deletion request for {resource_id} already exists (status: {existing.status}).",
-            )
-
-        # 3. Look up the human-readable name so admins don't have to fetch the resource separately.
-        resource_name = None
-        if resource.resource_type == "dataset":
-            ds = session.exec(select(Dataset).where(Dataset.unique_id == resource_id)).one_or_none()
-            resource_name = ds.dataset_name if ds else None
-        elif resource.resource_type == "sample":
-            samp = session.exec(select(Sample).where(Sample.unique_id == resource_id)).one_or_none()
-            resource_name = samp.sample_name if samp else None
-
-        # 4. Create the DeletionRequest row.
-        # resource_type is accessed via the Resource relationship
-        deletion_req = DeletionRequest(
-            resource_id=resource_id,
-            resource_name=resource_name,
-            requester_id=requester_id,
-            reason=reason,
-            status="pending",
-        )
-        session.add(deletion_req)
-
-        session.commit()
-        session.refresh(deletion_req)
-        return _to_read(deletion_req)
 
 
 # ---------------------------------------------------------------------------

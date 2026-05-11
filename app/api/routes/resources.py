@@ -1,4 +1,4 @@
-from typing import Annotated, List, Union
+from typing import Annotated, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, func, text, Text
@@ -10,11 +10,13 @@ from app.api.dependencies import get_engine
 from app.general_utils import get_tz_isoformat
 from app.models.core_models import (
     Dataset, DatasetLink, DatasetSampleLink,
+    DeletionRequest,
     Instrument, Project, Resource,
     ResourceACL, Sample, SampleLink,
     ScientificMetadata, ScientificMetadataBinary, User,
 )
 from app.models.datasets import DatasetRead, DatasetResponse, ScientificMetadataBinaryRead
+from app.models.deletion import DeletionRequestRead
 from app.models.instrument import InstrumentResponse
 from app.models.links import LinkedResource
 from app.models.projects import ProjectWithLead
@@ -341,3 +343,57 @@ def search_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
     with Session(engine) as session:
         results = session.exec(stmt).all()
         return [row[0] for row in results]
+
+
+@router.post("/resources/{resource_id}/delete", response_model=DeletionRequestRead)
+def create_deletion_request(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    resource_id: str,
+    reason: Optional[str] = None,
+):
+    '''
+    Request deletion of a resource. Any authenticated user with access to the resource may submit.
+    Returns 409 if an active deletion request already exists for this resource.
+    '''
+    requester_id, _ = auth_res
+
+    with Session(engine) as session:
+        resource = session.exec(
+            select(Resource).where(Resource.mfid == resource_id)
+        ).one_or_none()
+        if resource is None:
+            raise HTTPException(status_code=404, detail=f"Resource {resource_id} not found.")
+
+        existing = session.exec(
+            select(DeletionRequest)
+            .where(DeletionRequest.resource_id == resource_id)
+            .where(DeletionRequest.status.in_(["pending", "approved"]))
+        ).one_or_none()
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"A deletion request for {resource_id} already exists (status: {existing.status}).",
+            )
+
+        resource_name = None
+        if resource.resource_type == "dataset":
+            ds = session.exec(select(Dataset).where(Dataset.unique_id == resource_id)).one_or_none()
+            resource_name = ds.dataset_name if ds else None
+        elif resource.resource_type == "sample":
+            samp = session.exec(select(Sample).where(Sample.unique_id == resource_id)).one_or_none()
+            resource_name = samp.sample_name if samp else None
+
+        deletion_req = DeletionRequest(
+            resource_id=resource_id,
+            resource_name=resource_name,
+            requester_id=requester_id,
+            reason=reason,
+            status="pending",
+        )
+        session.add(deletion_req)
+        session.commit()
+        session.refresh(deletion_req)
+        return DeletionRequestRead(
+            **deletion_req.model_dump(),
+            resource_type=deletion_req.resource.resource_type if deletion_req.resource else None,
+        )

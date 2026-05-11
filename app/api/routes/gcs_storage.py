@@ -151,6 +151,16 @@ def initiate_resumable_upload(
             raise HTTPException(status_code=404, detail="Dataset not found")
         require_write_access(session, ag_ids, [dsid])
 
+        if body.sha256_hash:
+            existing = session.exec(
+                select(AssociatedFile).where(
+                    AssociatedFile.dataset_id == ds.id,
+                    AssociatedFile.sha256_hash == body.sha256_hash,
+                )
+            ).one_or_none()
+            if existing is not None:
+                return UploadInitiateRead(existing_file=AssociatedFileRead.model_validate(existing))
+
     # Strip absolute markers, current-dir dots, and traversal components.
     from pathlib import PurePosixPath
     parts = [p for p in PurePosixPath(body.filename).parts if p not in ("", "/", ".", "..")]

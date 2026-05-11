@@ -1,11 +1,11 @@
 import json
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Annotated, List
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -20,8 +20,10 @@ router = APIRouter(tags=["storage"])
 engine = get_engine()
 
 _UPLOAD_BUCKET = "crucible-uploads"
+_DOWNLOAD_BUCKET = "mf-storage-prod"
 _GCS_UPLOAD_API = "https://storage.googleapis.com/upload/storage/v1/b"
 _CHUNK_SIZE_HINT = 8 * 1024 * 1024  # 8 MiB — GCS recommended chunk multiple
+_MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 500 * 1024 ** 3))  # default 500 GiB
 
 _gcs_credentials = None
 _gcs_authed_session = None
@@ -32,7 +34,7 @@ def _get_gcs_credentials():
     global _gcs_credentials
     if _gcs_credentials is None:
         from google.oauth2 import service_account
-        sa_creds = get_secret("GCS_SA", "service-account-cred/versions/6")
+        sa_creds = get_secret("GCS_SA", "service-account-cred/versions/latest")
         service_account_info = json.loads(sa_creds)
         _gcs_credentials = service_account.Credentials.from_service_account_info(service_account_info)
     return _gcs_credentials
@@ -57,11 +59,11 @@ def _get_gcs_storage_client():
     return _gcs_storage_client
 
 
+
 @router.get('/datasets/{dsid}/download_links')
 def generate_signed_url_download_link(
     auth_res: Annotated[tuple, Depends(authorize_user)],
     dsid: str,
-    bucket: str = 'mf-storage-prod',
 ):
     '''
     Returns signed GCS download URLs (1-hour expiry) for all files belonging to the dataset.
@@ -77,57 +79,24 @@ def generate_signed_url_download_link(
 
     try:
         storage_client = _get_gcs_storage_client()
-        bucket_obj = storage_client.bucket(bucket)
+        bucket_obj = storage_client.bucket(_DOWNLOAD_BUCKET)
         ds_blobs = list(bucket_obj.list_blobs(prefix=f'{dsid}/'))
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not access storage bucket '{bucket}': {e}")
+        raise HTTPException(status_code=503, detail=f"Could not access storage bucket: {e}")
 
     if not ds_blobs:
-        raise HTTPException(status_code=404, detail=f"No files found for dataset '{dsid}' in bucket '{bucket}'")
+        raise HTTPException(status_code=404, detail=f"No files found for dataset '{dsid}'")
 
     try:
-        urls = {
-            blob.name: blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")
-            for blob in ds_blobs
-        }
+        def _sign(blob):
+            return blob.name, blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")
+
+        with ThreadPoolExecutor() as executor:
+            urls = dict(executor.map(_sign, ds_blobs))
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Could not generate signed URLs: {e}")
 
     return urls
-
-
-@router.post("/datasets/{dsid}/upload")
-async def create_dataset_from_file_upload(
-    files: Annotated[List[UploadFile], File(description="List of files")],
-    auth_res: Annotated[tuple, Depends(authorize_user)],
-    dsid: str,
-):
-    '''
-    Upload small files directly through the API to the GCS bucket.
-    For large files use POST /datasets/{dsid}/upload/initiate instead.
-    '''
-    user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-
-    if not files:
-        raise HTTPException(status_code=400, detail="No files provided")
-
-    with Session(engine) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        require_write_access(session, ag_ids, [dsid])
-
-    saved_paths = []
-    for file in files:
-        dest_dir = f"/mnt/gcs/api-uploads/{user_unique_id}/{os.path.dirname(file.filename)}"
-        Path(dest_dir).mkdir(parents=True, exist_ok=True)
-        save_file_path = f"/mnt/gcs/api-uploads/{user_unique_id}/{file.filename}"
-        with open(save_file_path, "wb") as f:
-            f.write(await file.read())
-        saved_paths.append(save_file_path.replace('/mnt/gcs', 'crucible-uploads'))
-
-    return saved_paths
 
 
 @router.post("/datasets/{dsid}/upload/initiate", response_model=UploadInitiateRead)
@@ -144,6 +113,14 @@ def initiate_resumable_upload(
     '''
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
+
+    if body.size <= 0:
+        raise HTTPException(status_code=400, detail="File size must be greater than 0")
+    if body.size > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File size {body.size} exceeds the maximum allowed upload size of {_MAX_UPLOAD_BYTES} bytes",
+        )
 
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
@@ -200,6 +177,7 @@ def initiate_resumable_upload(
             associated_file_name=associated_file_name,
             owner_user_id=user_unique_id,
             expires_at=expires_at,
+            size=body.size,
         ))
         session.commit()
 
@@ -250,6 +228,12 @@ def complete_resumable_upload(
             blob.reload()
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Could not verify upload in GCS: {e}")
+
+        if us.size is not None and blob.size != us.size:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Upload size mismatch: declared {us.size} bytes, GCS reports {blob.size} bytes",
+            )
 
         assoc = AssociatedFile(
             dataset_id=ds.id,

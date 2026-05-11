@@ -339,4 +339,5 @@ class UploadSession(SQLModel, table=True):
     associated_file_name: str   # AssociatedFile.filename format: "crucible-uploads/{gcs_path}"
     owner_user_id: str
     expires_at: str         # written as ISO 8601 string; DB returns datetime, handle both
+    size: Optional[int] = Field(default=None, sa_column=Column(BigInteger()))
 

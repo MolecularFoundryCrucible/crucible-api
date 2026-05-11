@@ -1,15 +1,12 @@
-import datetime
-import json
 import logging
-import os
-import urllib.parse
-from pathlib import Path
-
 from fastapi import FastAPI, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.dependencies import get_api_config
-from app.api.routes import auth, files, datasets, gcs_storage, resources, samples, instruments, users, projects, access_groups, entities, misc, deletion, ingestion_requests, ai
+from app.api.routes import (auth, files, datasets, gcs_storage, resources,
+                            samples, instruments, users, projects, 
+                            access_groups, entities, misc, deletion, 
+                            ingestion_requests, ai)
 
 logging.basicConfig(
     level=logging.INFO,

@@ -798,8 +798,7 @@ def create_file_ingestion_request(
         require_write_access(session, ag_ids, [dsid])
 
         af = session.exec(
-            select(AssociatedFile).where(AssociatedFile.mfid == file_id)
-        ).one_or_none()
+            select(AssociatedFile).where(AssociatedFile.mfid == file_id)).one_or_none()
         if af is None:
             raise HTTPException(status_code=404, detail="File not found")
 
@@ -818,13 +817,15 @@ def create_file_ingestion_request(
         session.commit()
         session.refresh(ingestion_request)
         ir_id = ingestion_request.id
+        af_size = af.size
+        af_filename = af.filename
 
-    tier = get_ingestion_tier(af.size)
+    tier = get_ingestion_tier(af_size)
     routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
     send_pika_message(
         message=json.dumps({
-            "filename": af.filename,
+            "filename": af_filename,
             "reqid": ir_id,
             "dsid": dsid,
             "ingestion_class": ingestion_class,

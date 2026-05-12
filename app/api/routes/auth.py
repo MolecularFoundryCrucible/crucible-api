@@ -99,20 +99,23 @@ def get_apikey(request: Request):
     """
     from app.utils.auth_utils import decode_token, find_or_add_api_access
 
+    # if the user is already logged in; get the api key from cookies
     api_path = get_api_path()
     user_info_jwt = request.cookies.get("crucible_user_token")
 
+    # otherwise direct to login
     if user_info_jwt is None:
         response = RedirectResponse(f"/{api_path}/login")
         response.set_cookie("after_login_return_to_page", value=f"/{api_path}/user_apikey", httponly=True, secure=True)
         return response
 
+    # get the user info
     user_info = decode_token(user_info_jwt)
     logger.debug(f"Orcid user profile: {user_info}")
     orcid = user_info["orcid"]
 
     with Session(engine) as session:
-        # confirm access group exists:
+        # confirm access group for the user's orcid exists
         add_or_update(
             session,
             AccessGroup,
@@ -120,7 +123,13 @@ def get_apikey(request: Request):
             group_name=orcid
         )
         # add the user
-        user_updates = {('unique_id' if key == 'orcid' else key): user_info[key] for key in ['orcid', 'given_name', 'family_name'] if user_info.get(key) is not None}
+        update_fields = {'unique_id': 'orcid',
+                         'first_name': 'given_name', 
+                         'last_name': 'family_name'}
+        
+        user_updates = {k:user_info.get(v) for k,v in update_fields.items() if user_info.get(v) is not None}
+        print(f'{user_updates=}')
+        
         user = add_or_update(
             session,
             User,

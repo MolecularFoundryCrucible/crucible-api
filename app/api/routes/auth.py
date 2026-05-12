@@ -162,11 +162,7 @@ def _email_prompt_html(api_path: str, orcid: str, crucible_token: str) -> str:
 <title>Crucible - Account Setup</title>
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f5f7; min-height: 100vh; display: flex; flex-direction: column; }}
-  header {{ background: #fff; border-bottom: 1px solid #e1e4e8; padding: 0.875rem 2rem; display: flex; align-items: center; gap: 0.75rem; }}
-  header span {{ font-size: 1.1rem; font-weight: 600; color: #24292f; letter-spacing: -0.01em; }}
-  header .orcid-badge {{ font-size: 0.75rem; color: #57606a; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 4px; padding: 0.2rem 0.5rem; }}
-  main {{ flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 3rem 1rem; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f5f7; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1rem; }}
   .card {{ background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 2rem; max-width: 460px; width: 100%; }}
   .card-title {{ font-size: 1.15rem; font-weight: 600; color: #24292f; margin-bottom: 0.5rem; }}
   .card-body {{ color: #57606a; font-size: 0.9rem; line-height: 1.6; margin-bottom: 1.5rem; }}
@@ -184,17 +180,12 @@ def _email_prompt_html(api_path: str, orcid: str, crucible_token: str) -> str:
 </style>
 </head>
 <body>
-<header>
-  <span>Crucible</span>
-  <span class="orcid-badge">ORCID: {orcid}</span>
-</header>
-<main>
 <div class="card">
   <div id="form-view">
-    <div class="card-title">Contact email required</div>
-    <p class="card-body">Your ORCID profile does not include a public email address. Crucible uses your email to notify you about dataset status and facility communications. Your address will not be shared externally.</p>
+    <div class="card-title">Crucible — complete your profile</div>
+    <p class="card-body">Add your email to your Crucible profile:</p>
     <label for="email">Email address</label>
-    <input type="email" id="email" placeholder="you@institution.edu" required autofocus>
+    <input type="email" id="email" placeholder="you@example.com" required autofocus>
     <div class="actions">
       <button id="submit-btn" onclick="submitEmail()">Save and get API key</button>
     </div>
@@ -206,7 +197,6 @@ def _email_prompt_html(api_path: str, orcid: str, crucible_token: str) -> str:
     <div id="apikey-box"></div>
   </div>
 </div>
-</main>
 <script>
 async function submitEmail() {{
   var email = document.getElementById('email').value.trim();

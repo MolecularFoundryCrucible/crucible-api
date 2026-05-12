@@ -90,6 +90,7 @@ class AssociatedFileRead(SQLModel):
     mfid: str
     dataset_id: int
     filename: str
+    storage_path: Optional[str] = None
     size: int
     sha256_hash: str
 
@@ -97,6 +98,7 @@ class AssociatedFileRead(SQLModel):
 class AssociatedFileUpdate(SQLModel):
     '''Partial update schema for AssociatedFile. Only provided fields are modified.'''
     filename: Optional[str] = None
+    storage_path: Optional[str] = None
     size: Optional[int] = None
     sha256_hash: Optional[str] = None
     

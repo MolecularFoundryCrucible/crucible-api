@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 import requests
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from jose import jwt
 from sqlmodel import Session, select
 
@@ -99,21 +99,23 @@ def get_apikey(request: Request):
     """
     from app.utils.auth_utils import decode_token, find_or_add_api_access
 
+    # if the user is already logged in; get the api key from cookies
     api_path = get_api_path()
     user_info_jwt = request.cookies.get("crucible_user_token")
 
+    # otherwise direct to login
     if user_info_jwt is None:
         response = RedirectResponse(f"/{api_path}/login")
         response.set_cookie("after_login_return_to_page", value=f"/{api_path}/user_apikey", httponly=True, secure=True)
         return response
 
+    # get the user info
     user_info = decode_token(user_info_jwt)
     logger.debug(f"Orcid user profile: {user_info}")
     orcid = user_info["orcid"]
-    crucible_token = find_or_add_api_access(orcid, engine, regenerate=False)
 
     with Session(engine) as session:
-        # confirm access group exists:
+        # confirm access group for the user's orcid exists
         add_or_update(
             session,
             AccessGroup,
@@ -121,18 +123,131 @@ def get_apikey(request: Request):
             group_name=orcid
         )
         # add the user
-        user_updates = {('unique_id' if key == 'orcid' else key): user_info[key] for key in ['orcid', 'given_name', 'family_name'] if user_info.get(key) is not None}
-        add_or_update(
+        key_map = {'orcid': 'unique_id', 'given_name': 'first_name', 'family_name': 'last_name'}
+        user_updates = {key_map[k]: user_info[k] for k in key_map if user_info.get(k) is not None}
+
+        existing_user = session.exec(select(User).where(User.unique_id == orcid)).first()
+        if existing_user:
+            user_updates = {k: v for k, v in user_updates.items() if not getattr(existing_user, k, None)}
+        else:
+            user_updates.setdefault('first_name', '')
+            user_updates.setdefault('last_name', '')
+
+        user = add_or_update(
             session,
             User,
             User.unique_id == orcid,
             **user_updates
         )
 
-        # add the user to their orcid access group  
+        # add the user to their orcid access group
         sql_add_user_to_access_group(orcid, orcid, session)
 
+        user_email = user.email
+
+    crucible_token = find_or_add_api_access(orcid, engine, regenerate=False)
+
+    if not user_email:
+        return HTMLResponse(content=_email_prompt_html(api_path, orcid, crucible_token))
+
     return {'crucible_apikey': crucible_token}
+
+
+def _email_prompt_html(api_path: str, orcid: str, crucible_token: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crucible - Account Setup</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f5f7; min-height: 100vh; display: flex; flex-direction: column; }}
+  header {{ background: #fff; border-bottom: 1px solid #e1e4e8; padding: 0.875rem 2rem; display: flex; align-items: center; gap: 0.75rem; }}
+  header span {{ font-size: 1.1rem; font-weight: 600; color: #24292f; letter-spacing: -0.01em; }}
+  header .orcid-badge {{ font-size: 0.75rem; color: #57606a; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 4px; padding: 0.2rem 0.5rem; }}
+  main {{ flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 3rem 1rem; }}
+  .card {{ background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 2rem; max-width: 460px; width: 100%; }}
+  .card-title {{ font-size: 1.15rem; font-weight: 600; color: #24292f; margin-bottom: 0.5rem; }}
+  .card-body {{ color: #57606a; font-size: 0.9rem; line-height: 1.6; margin-bottom: 1.5rem; }}
+  label {{ display: block; font-size: 0.875rem; font-weight: 600; color: #24292f; margin-bottom: 0.35rem; }}
+  input[type="email"] {{ width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #d0d7de; border-radius: 6px; font-size: 0.95rem; color: #24292f; outline: none; transition: border-color 0.15s, box-shadow 0.15s; }}
+  input[type="email"]:focus {{ border-color: #0969da; box-shadow: 0 0 0 3px rgba(9,105,218,0.12); }}
+  .actions {{ display: flex; gap: 0.75rem; margin-top: 1.25rem; }}
+  button {{ padding: 0.5rem 1.25rem; background: #0969da; color: #fff; border: none; border-radius: 6px; font-size: 0.9rem; font-weight: 500; cursor: pointer; transition: background 0.15s; }}
+  button:hover {{ background: #0860ca; }}
+  button:disabled {{ background: #6cb6ff; cursor: not-allowed; }}
+  #error {{ color: #cf222e; font-size: 0.85rem; margin-top: 0.75rem; display: none; }}
+  .result-title {{ font-size: 1.1rem; font-weight: 600; color: #24292f; margin-bottom: 0.4rem; }}
+  .result-body {{ color: #57606a; font-size: 0.9rem; margin-bottom: 1rem; }}
+  #apikey-box {{ background: #f6f8fa; border: 1px solid #d0d7de; padding: 0.75rem; border-radius: 6px; word-break: break-all; font-family: ui-monospace, monospace; font-size: 0.85rem; color: #24292f; }}
+</style>
+</head>
+<body>
+<header>
+  <span>Crucible</span>
+  <span class="orcid-badge">ORCID: {orcid}</span>
+</header>
+<main>
+<div class="card">
+  <div id="form-view">
+    <div class="card-title">Contact email required</div>
+    <p class="card-body">Your ORCID profile does not include a public email address. Crucible uses your email to notify you about dataset status and facility communications. Your address will not be shared externally.</p>
+    <label for="email">Email address</label>
+    <input type="email" id="email" placeholder="you@institution.edu" required autofocus>
+    <div class="actions">
+      <button id="submit-btn" onclick="submitEmail()">Save and get API key</button>
+    </div>
+    <div id="error"></div>
+  </div>
+  <div id="result-view" style="display:none">
+    <div class="result-title">Your Crucible API key</div>
+    <p class="result-body">Copy this key and store it somewhere safe — it grants access to your Crucible account.</p>
+    <div id="apikey-box"></div>
+  </div>
+</div>
+</main>
+<script>
+async function submitEmail() {{
+  var email = document.getElementById('email').value.trim();
+  var btn = document.getElementById('submit-btn');
+  var errorEl = document.getElementById('error');
+  errorEl.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  try {{
+    var response = await fetch('/{api_path}/users/{orcid}', {{
+      method: 'PATCH',
+      headers: {{
+        'Authorization': 'Bearer {crucible_token}',
+        'Content-Type': 'application/json'
+      }},
+      body: JSON.stringify({{email: email}})
+    }});
+    if (response.ok) {{
+      document.getElementById('form-view').style.display = 'none';
+      document.getElementById('apikey-box').textContent = '{crucible_token}';
+      document.getElementById('result-view').style.display = 'block';
+    }} else {{
+      var err = await response.json();
+      errorEl.textContent = err.detail || 'Something went wrong. Please try again.';
+      errorEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Continue to API key';
+    }}
+  }} catch (e) {{
+    errorEl.textContent = 'Network error. Please try again.';
+    errorEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Continue to API key';
+  }}
+}}
+document.getElementById('email').addEventListener('keydown', function(e) {{
+  if (e.key === 'Enter') submitEmail();
+}});
+</script>
+</body>
+</html>"""
 
 
 @router.get("/regenerate_apikey")

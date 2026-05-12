@@ -110,7 +110,6 @@ def get_apikey(request: Request):
     user_info = decode_token(user_info_jwt)
     logger.debug(f"Orcid user profile: {user_info}")
     orcid = user_info["orcid"]
-    crucible_token = find_or_add_api_access(orcid, engine, regenerate=False)
 
     with Session(engine) as session:
         # confirm access group exists:
@@ -133,6 +132,8 @@ def get_apikey(request: Request):
         sql_add_user_to_access_group(orcid, orcid, session)
 
         user_email = user.email
+
+    crucible_token = find_or_add_api_access(orcid, engine, regenerate=False)
 
     if not user_email:
         return HTMLResponse(content=_email_prompt_html(api_path, orcid, crucible_token))

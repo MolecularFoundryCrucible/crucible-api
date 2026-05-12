@@ -144,69 +144,76 @@ def get_apikey(request: Request):
         sql_add_user_to_access_group(orcid, orcid, session)
 
         user_email = user.email
+        user_first_name = user.first_name
+        user_last_name = user.last_name
 
     crucible_token = find_or_add_api_access(orcid, engine, regenerate=False)
 
     if not user_email:
-        return HTMLResponse(content=_email_prompt_html(api_path, orcid, crucible_token))
+        return HTMLResponse(content=_email_prompt_html(api_path, orcid, crucible_token, user_first_name, user_last_name))
 
     return {'crucible_apikey': crucible_token}
 
 
-def _email_prompt_html(api_path: str, orcid: str, crucible_token: str) -> str:
+def _email_prompt_html(api_path: str, orcid: str, crucible_token: str, first_name: str = '', last_name: str = '') -> str:
     return f"""<!DOCTYPE html>
-<html lang="en">
+<html data-bs-theme="light" lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Crucible - Account Setup</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
+<title>Complete Your Profile - Crucible Data Platform</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Montserrat:400,600,700&display=swap">
 <style>
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f5f7; min-height: 100vh; display: flex; flex-direction: column; }}
-  header {{ background: #fff; border-bottom: 1px solid #e1e4e8; padding: 0.875rem 2rem; display: flex; align-items: center; gap: 0.75rem; }}
-  header span {{ font-size: 1.1rem; font-weight: 600; color: #24292f; letter-spacing: -0.01em; }}
-  header .orcid-badge {{ font-size: 0.75rem; color: #57606a; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 4px; padding: 0.2rem 0.5rem; }}
-  main {{ flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 3rem 1rem; }}
-  .card {{ background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 2rem; max-width: 460px; width: 100%; }}
-  .card-title {{ font-size: 1.15rem; font-weight: 600; color: #24292f; margin-bottom: 0.5rem; }}
-  .card-body {{ color: #57606a; font-size: 0.9rem; line-height: 1.6; margin-bottom: 1.5rem; }}
-  label {{ display: block; font-size: 0.875rem; font-weight: 600; color: #24292f; margin-bottom: 0.35rem; }}
-  input[type="email"] {{ width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #d0d7de; border-radius: 6px; font-size: 0.95rem; color: #24292f; outline: none; transition: border-color 0.15s, box-shadow 0.15s; }}
-  input[type="email"]:focus {{ border-color: #0969da; box-shadow: 0 0 0 3px rgba(9,105,218,0.12); }}
-  .actions {{ display: flex; gap: 0.75rem; margin-top: 1.25rem; }}
-  button {{ padding: 0.5rem 1.25rem; background: #0969da; color: #fff; border: none; border-radius: 6px; font-size: 0.9rem; font-weight: 500; cursor: pointer; transition: background 0.15s; }}
-  button:hover {{ background: #0860ca; }}
-  button:disabled {{ background: #6cb6ff; cursor: not-allowed; }}
-  #error {{ color: #cf222e; font-size: 0.85rem; margin-top: 0.75rem; display: none; }}
-  .result-title {{ font-size: 1.1rem; font-weight: 600; color: #24292f; margin-bottom: 0.4rem; }}
-  .result-body {{ color: #57606a; font-size: 0.9rem; margin-bottom: 1rem; }}
-  #apikey-box {{ background: #f6f8fa; border: 1px solid #d0d7de; padding: 0.75rem; border-radius: 6px; word-break: break-all; font-family: ui-monospace, monospace; font-size: 0.85rem; color: #24292f; }}
+  body {{ font-family: Montserrat, sans-serif; }}
+  .navbar-brand {{ font-weight: 700; }}
+  #apikey-box {{ font-family: ui-monospace, monospace; font-size: 0.875rem; word-break: break-all; }}
 </style>
 </head>
 <body>
-<header>
-  <span>Crucible</span>
-  <span class="orcid-badge">ORCID: {orcid}</span>
-</header>
-<main>
-<div class="card">
-  <div id="form-view">
-    <div class="card-title">Contact email required</div>
-    <p class="card-body">Your ORCID profile does not include a public email address. Crucible uses your email to notify you about dataset status and facility communications. Your address will not be shared externally.</p>
-    <label for="email">Email address</label>
-    <input type="email" id="email" placeholder="you@institution.edu" required autofocus>
-    <div class="actions">
-      <button id="submit-btn" onclick="submitEmail()">Save and get API key</button>
+<nav class="navbar navbar-expand-lg fixed-top bg-body clean-navbar navbar-light border-bottom">
+  <div class="container">
+    <a class="navbar-brand" href="#">Crucible Data Platform</a>
+  </div>
+</nav>
+<main class="page" style="padding-top: 80px;">
+  <section class="clean-block clean-form dark py-5">
+    <div class="container">
+      <div class="block-heading mb-4">
+        <h2 class="text-info">Complete Your Profile</h2>
+        <p class="text-muted">Add your email to your Crucible profile:</p>
+      </div>
+      <div id="form-view" style="max-width: 520px;">
+        <div class="mb-3">
+          <label class="form-label" for="first_name">First name</label>
+          <input class="form-control" type="text" id="first_name" value="{first_name}" readonly disabled>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="last_name">Last name</label>
+          <input class="form-control" type="text" id="last_name" value="{last_name}" readonly disabled>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="orcid">ORCID</label>
+          <input class="form-control" type="text" id="orcid" value="{orcid}" readonly disabled>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="email">Email address</label>
+          <input class="form-control" type="email" id="email" placeholder="you@example.com" required autofocus>
+        </div>
+        <div id="error" class="text-danger mb-2" style="display:none;"></div>
+        <div class="mb-3">
+          <button class="btn btn-primary" id="submit-btn" onclick="submitEmail()">Save and get API key</button>
+        </div>
+      </div>
+      <div id="result-view" style="display:none; max-width: 520px;">
+        <h4>Your Crucible API Key</h4>
+        <p class="text-muted">Copy this key and store it somewhere safe.</p>
+        <div id="apikey-box" class="form-control bg-light"></div>
+      </div>
     </div>
-    <div id="error"></div>
-  </div>
-  <div id="result-view" style="display:none">
-    <div class="result-title">Your Crucible API key</div>
-    <p class="result-body">Copy this key and store it somewhere safe — it grants access to your Crucible account.</p>
-    <div id="apikey-box"></div>
-  </div>
-</div>
+  </section>
 </main>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 async function submitEmail() {{
   var email = document.getElementById('email').value.trim();
@@ -233,13 +240,13 @@ async function submitEmail() {{
       errorEl.textContent = err.detail || 'Something went wrong. Please try again.';
       errorEl.style.display = 'block';
       btn.disabled = false;
-      btn.textContent = 'Continue to API key';
+      btn.textContent = 'Save and get API key';
     }}
   }} catch (e) {{
     errorEl.textContent = 'Network error. Please try again.';
     errorEl.style.display = 'block';
     btn.disabled = false;
-    btn.textContent = 'Continue to API key';
+    btn.textContent = 'Save and get API key';
   }}
 }}
 document.getElementById('email').addEventListener('keydown', function(e) {{

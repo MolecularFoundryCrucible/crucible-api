@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 import requests
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from jose import jwt
 from sqlmodel import Session, select
 
@@ -122,17 +122,104 @@ def get_apikey(request: Request):
         )
         # add the user
         user_updates = {('unique_id' if key == 'orcid' else key): user_info[key] for key in ['orcid', 'given_name', 'family_name'] if user_info.get(key) is not None}
-        add_or_update(
+        user = add_or_update(
             session,
             User,
             User.unique_id == orcid,
             **user_updates
         )
 
-        # add the user to their orcid access group  
+        # add the user to their orcid access group
         sql_add_user_to_access_group(orcid, orcid, session)
 
+        user_email = user.email
+
+    if not user_email:
+        return HTMLResponse(content=_email_prompt_html(api_path, orcid, crucible_token))
+
     return {'crucible_apikey': crucible_token}
+
+
+def _email_prompt_html(api_path: str, orcid: str, crucible_token: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crucible - Email Required</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; min-height: 100vh; display: flex; align-items: center; justify-content: center; }}
+  .card {{ background: #fff; border-radius: 12px; padding: 2rem; max-width: 420px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }}
+  h1 {{ font-size: 1.4rem; color: #1a1a2e; margin-bottom: 0.5rem; }}
+  p {{ color: #555; font-size: 0.95rem; line-height: 1.5; margin-bottom: 1.5rem; }}
+  label {{ display: block; font-size: 0.875rem; font-weight: 600; color: #333; margin-bottom: 0.4rem; }}
+  input[type="email"] {{ width: 100%; padding: 0.65rem 0.9rem; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem; outline: none; transition: border-color 0.2s; }}
+  input[type="email"]:focus {{ border-color: #4a6cf7; box-shadow: 0 0 0 3px rgba(74,108,247,0.15); }}
+  button {{ width: 100%; margin-top: 1rem; padding: 0.75rem; background: #4a6cf7; color: #fff; border: none; border-radius: 6px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }}
+  button:hover {{ background: #3a5ce5; }}
+  button:disabled {{ background: #9aaaf7; cursor: not-allowed; }}
+  #error {{ color: #c0392b; font-size: 0.875rem; margin-top: 0.75rem; display: none; }}
+  #apikey-box {{ background: #f5f5f5; padding: 0.75rem; border-radius: 6px; word-break: break-all; font-family: monospace; font-size: 0.9rem; margin-top: 1rem; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div id="form-view">
+    <h1>One more step</h1>
+    <p>Your ORCID profile does not include an email address. Please provide one so we can contact you about your data.</p>
+    <label for="email">Email address</label>
+    <input type="email" id="email" placeholder="you@example.com" required autofocus>
+    <button id="submit-btn" onclick="submitEmail()">Continue to API key</button>
+    <div id="error"></div>
+  </div>
+  <div id="result-view" style="display:none">
+    <h1>Your API Key</h1>
+    <p>Save this key — it won't be shown again here.</p>
+    <div id="apikey-box"></div>
+  </div>
+</div>
+<script>
+async function submitEmail() {{
+  var email = document.getElementById('email').value.trim();
+  var btn = document.getElementById('submit-btn');
+  var errorEl = document.getElementById('error');
+  errorEl.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  try {{
+    var response = await fetch('/{api_path}/users/{orcid}', {{
+      method: 'PATCH',
+      headers: {{
+        'Authorization': 'Bearer {crucible_token}',
+        'Content-Type': 'application/json'
+      }},
+      body: JSON.stringify({{email: email}})
+    }});
+    if (response.ok) {{
+      document.getElementById('form-view').style.display = 'none';
+      document.getElementById('apikey-box').textContent = '{crucible_token}';
+      document.getElementById('result-view').style.display = 'block';
+    }} else {{
+      var err = await response.json();
+      errorEl.textContent = err.detail || 'Something went wrong. Please try again.';
+      errorEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Continue to API key';
+    }}
+  }} catch (e) {{
+    errorEl.textContent = 'Network error. Please try again.';
+    errorEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Continue to API key';
+  }}
+}}
+document.getElementById('email').addEventListener('keydown', function(e) {{
+  if (e.key === 'Enter') submitEmail();
+}});
+</script>
+</body>
+</html>"""
 
 
 @router.get("/regenerate_apikey")

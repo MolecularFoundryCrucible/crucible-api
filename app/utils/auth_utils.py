@@ -56,6 +56,7 @@ def generate_apikey(orcid: str, session):
     new_token = secrets.token_hex(32)
     # add to database
     new_api_acct = ApiToken(user_unique_id = orcid,
+                            access_group_id = orcid,
                             token = new_token,
                             token_created = date.today().isoformat())
     session.add(new_api_acct)

@@ -11,6 +11,7 @@ from app.models.core_models import (
     IngestionRequest,
     ResourceACL,
 )
+from app.api.routes.gcs_storage import _DOWNLOAD_BUCKET, _get_gcs_storage_client
 from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.sql_utils import only_update
 
@@ -127,6 +128,21 @@ def patch_ingestion_request(
         )
         if updated is None:
             raise HTTPException(status_code=404, detail="Ingestion request not found")
+
+        if ing_req.status == "complete" and updated.file_mfid:
+            af = session.exec(
+                select(AssociatedFile).where(AssociatedFile.mfid == updated.file_mfid)
+            ).one_or_none()
+            if af is not None and af.storage_path is None:
+                basename = af.filename.split("/")[-1]
+                blob_name = f"{updated.dataset_mfid}/{basename}"
+                try:
+                    blob = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).blob(blob_name)
+                    if blob.exists():
+                        af.storage_path = f"{_DOWNLOAD_BUCKET}/{blob_name}"
+                        session.add(af)
+                except Exception:
+                    pass  # non-fatal: lazy probe in download_link handles it
 
         session.commit()
         session.refresh(updated)

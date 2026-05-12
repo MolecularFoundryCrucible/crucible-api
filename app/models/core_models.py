@@ -39,7 +39,8 @@ class Thumbnail(SQLModel, table=True):
 class AssociatedFile(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     mfid: str = Field(default_factory=get_mfid_value, unique=True, index=True)
-    filename: str
+    filename: str                        # staging path: "crucible-uploads/api-uploads/{user_id}/{name}"
+    storage_path: Optional[str] = None  # production path: "mf-storage-prod/{dsid}/{name}", set by ingestion worker
     size: int = Field(sa_column=Column(BigInteger()))
     sha256_hash: str
     dataset_id: int = Field(foreign_key="dataset.id")

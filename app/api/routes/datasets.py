@@ -725,14 +725,14 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
-        ds = session.exec(ds_cmd).one_or_none()
-
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        require_read_access(session, dsid, ag_ids)
 
-        ds_files = session.exec(select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)).all()
-        return ds_files
+        return session.exec(
+            select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)
+        ).all()
 
 
 @router.post("/datasets/{dsid}/files", response_model=AssociatedFileRead)
@@ -747,13 +747,11 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
-    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
-
     with Session(engine) as session:
-        ds = session.exec(ds_cmd).one_or_none()
-
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
+        require_write_access(session, ag_ids, [dsid])
 
         af_obj = add_or_update(session,
                                AssociatedFile,

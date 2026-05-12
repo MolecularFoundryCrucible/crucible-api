@@ -66,7 +66,8 @@ def generate_signed_url_download_link(
     dsid: str,
 ):
     '''
-    Returns signed GCS download URLs (1-hour expiry) for all files belonging to the dataset.
+    Returns signed GCS download URLs (1-hour expiry) for all ingested files in the dataset.
+    Keys are AssociatedFile MFIDs where a match is found, falling back to the GCS blob path.
     '''
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -76,6 +77,19 @@ def generate_signed_url_download_link(
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         require_read_access(session, dsid, ag_ids)
+
+        # Build blob_name → mfid map from AssociatedFile records
+        af_records = session.exec(
+            select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)
+        ).all()
+
+    blob_to_mfid = {}
+    for af in af_records:
+        if af.storage_path:
+            blob_name = af.storage_path.partition("/")[2]
+        else:
+            blob_name = f"{dsid}/{af.filename.split('/')[-1]}"
+        blob_to_mfid[blob_name] = af.mfid
 
     try:
         storage_client = _get_gcs_storage_client()
@@ -89,7 +103,8 @@ def generate_signed_url_download_link(
 
     try:
         def _sign(blob):
-            return blob.name, blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")
+            key = blob_to_mfid.get(blob.name, blob.name)
+            return key, blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")
 
         with ThreadPoolExecutor() as executor:
             urls = dict(executor.map(_sign, ds_blobs))

@@ -14,7 +14,7 @@ from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, Project, User,
     UserAccessGroupLink, UserProjectLink,
 )
-from app.utils.auth_utils import authorize_user, require_groups
+from app.utils.auth_utils import authorize_user, require_admin, require_groups
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
@@ -72,7 +72,7 @@ def read_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
 @router.post("/users", response_model=UserRead)
 def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: UserCreate, project_ids: List[str] = Body(...)):
     _, ag_list = auth_res
-    require_groups(ag_list)
+    require_admin(ag_list)
 
     # Validate required fields
     missing_fields = []

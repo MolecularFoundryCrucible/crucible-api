@@ -19,7 +19,7 @@ class UserRead(SQLModel):
     last_name: str
     email: Optional[str] = None
     unique_id: str
-    is_service_account: bool = False
+    is_service_account: Optional[bool] = False
 
 
 class UserUpdate(SQLModel):

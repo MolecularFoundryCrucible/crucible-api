@@ -62,11 +62,7 @@ def read_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns the User object associated with the provided ORCID if found. Otherwise returns None.
     '''
-    user_unique_id, ag_list = auth_res
-
-    # you can get yourself
-    if user_unique_id != orcid:
-        require_groups(ag_list)
+    _, ag_list = auth_res
 
     with Session(engine) as session:
         users = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
@@ -205,7 +201,9 @@ def add_user_to_access_group(auth_res: Annotated[tuple, Depends(authorize_user)]
     require_groups(ag_list)
     with Session(engine) as session:
         ag = sql_add_user_to_access_group(orcid, group_name, session)
-    return(ag)
+        session.commit()
+        session.refresh(ag)
+    return ag
 
 
 @router.get("/users/{orcid}/access_groups", response_model=List[str])

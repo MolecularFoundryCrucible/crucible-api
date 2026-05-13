@@ -259,15 +259,15 @@ def add_users_to_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, De
             raise HTTPException(status_code=404, detail = f'Project {proj_id} not found')
 
         # add link between user and project
-        link = add_or_update(session,
-                                UserProjectLink,
-                                where=(and_(UserProjectLink.user_id == user.id, UserProjectLink.project_id == proj_id)),
-                                user_id=user.id,
-                                project_id=proj_id)
-        session.commit()
+        add_or_update(session,
+                      UserProjectLink,
+                      where=(and_(UserProjectLink.user_id == user.id, UserProjectLink.project_id == proj_id)),
+                      user_id=user.id,
+                      project_id=proj_id)
 
-        # add user to access group
+        # add user to access group — committed atomically with the project link
         sql_add_user_to_access_group(orcid, proj_id, session)
+        session.commit()
 
         return _get_project_users(proj_id, session)
 

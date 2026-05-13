@@ -18,6 +18,4 @@ def sql_add_user_to_access_group(orcid, group_name, session):
     if user and not (user in ag.users):
         ag.users.append(user)
 
-    session.commit()
-    session.refresh(ag)
     return ag

@@ -142,6 +142,7 @@ def get_apikey(request: Request):
 
         # add the user to their orcid access group
         sql_add_user_to_access_group(orcid, orcid, session)
+        session.commit()
 
         user_email = user.email
         user_first_name = user.first_name

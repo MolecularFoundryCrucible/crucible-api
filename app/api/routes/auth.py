@@ -16,7 +16,7 @@ from app.api.dependencies import (
 )
 from app.models.core_models import AccessGroup, User
 from app.models.response_schemas import AccountInfo
-from app.utils.auth_utils import authorize_user
+from app.utils.auth_utils import authorize_user, find_or_add_api_access
 from app.utils.sql_utils import add_or_update
 from app.utils.user_utils import sql_add_user_to_access_group
 
@@ -300,3 +300,10 @@ def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
         access_group_ids=ag_ids,
         user_info=user_info
     )
+
+
+@router.get("/account/apikey")
+def get_own_apikey(auth_res: Annotated[tuple, Depends(authorize_user)]):
+    """Returns the caller's own crucible API key."""
+    user_unique_id, _ = auth_res
+    return {"api_key": find_or_add_api_access(user_unique_id, engine)}

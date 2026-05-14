@@ -217,6 +217,10 @@ def require_groups(ag_list, allowed_groups={'admin'}):
         raise HTTPException(status_code=403, detail="Not authorized")
 
 
+def require_admin(ag_list):
+    require_groups(ag_list, {'admin'})
+
+
 def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     """
     Check if a user is an admin based on their API credentials.

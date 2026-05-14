@@ -237,7 +237,8 @@ def read_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], 
 
 
 @router.post("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
-def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md: dict):
+def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md: dict,
+                             overwrite: bool = False):
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
@@ -250,6 +251,16 @@ def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
             raise HTTPException(status_code=404, detail="Resource not found")
 
         require_write_access(session, ag_ids, [unique_id])
+
+        if not overwrite:
+            existing = session.exec(
+                select(ScientificMetadataBinary).where(ScientificMetadataBinary.unique_id == unique_id)
+            ).one_or_none()
+            if existing and existing.scientific_metadata:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Metadata already exists. Use overwrite=true to replace it, or PATCH to merge."
+                )
 
         new_md_obj = add_or_update(
             session,

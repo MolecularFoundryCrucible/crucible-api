@@ -1,4 +1,4 @@
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, join
@@ -243,15 +243,25 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(autho
 
 
 @router.post("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
-def add_users_to_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def add_users_to_project(
+    proj_id: str,
+    orcid: str,
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    email: Optional[str] = None,
+):
     _, ag_list = auth_res
     require_groups(ag_list, {'admin', proj_id})
-    
+
     with Session(engine) as session:
-        # get user details
-        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail = f'User {orcid} not found')
+        # resolve by email if provided, ignoring the orcid path param
+        if email:
+            user = session.exec(select(User).where(User.email == email)).one_or_none()
+            if user is None:
+                raise HTTPException(status_code=404, detail=f'No user found with email {email}')
+        else:
+            user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
+            if user is None:
+                raise HTTPException(status_code=404, detail=f'User {orcid} not found')
         
         # get project details
         proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()

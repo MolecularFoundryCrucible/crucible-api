@@ -62,7 +62,9 @@ def read_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''
     Returns the User object associated with the provided ORCID if found. Otherwise returns None.
     '''
-    _, ag_list = auth_res
+    user_unique_id, ag_list = auth_res
+    if user_unique_id != orcid:
+        require_admin(ag_list)
 
     with Session(engine) as session:
         users = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()

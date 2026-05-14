@@ -14,7 +14,7 @@ from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, Project, User,
     UserAccessGroupLink, UserProjectLink,
 )
-from app.utils.auth_utils import authorize_user, require_admin, require_groups
+from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_admin, require_groups
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
@@ -33,7 +33,7 @@ def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Req
                limit: int = Query(default=100, ge=1, le=1000),
                offset: int = Query(default=0, ge=0)):
     _, ag_list = auth_res
-    require_groups(ag_list)
+    require_admin(ag_list)
 
     params_dict = dict(request.query_params)
     for k in ('permissive', 'limit', 'offset'):
@@ -69,6 +69,20 @@ def read_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
         return users
 
 
+@router.get("/users/{orcid}/apikey")
+def get_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''Returns the crucible API key for the given user. Admin only.'''
+    _, ag_list = auth_res
+    require_admin(ag_list)
+
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+    return {"api_key": find_or_add_api_access(orcid, engine)}
+
+
 @router.post("/users", response_model=UserRead)
 def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: UserCreate, project_ids: List[str] = Body(...)):
     _, ag_list = auth_res
@@ -93,7 +107,6 @@ def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: 
         # add user to user table
         user_dict = table_obj_to_dict(user_info)
         user = add_or_update(session, User, User.unique_id == user_info.unique_id, **user_dict)
-        session.commit()
 
         sql_add_user_to_access_group(user.unique_id, user.unique_id, session)
 
@@ -124,11 +137,9 @@ def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: 
 
 @router.patch("/users/{orcid}", response_model=UserRead)
 def update_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)], user_update: UserUpdate):
+    '''Partially update a user record. Only fields provided in the request body are modified.'''
     _, ag_list = auth_res
     require_groups(ag_list, {'admin', orcid})
-    '''
-    Partially update a user record. Only fields provided in the request body are modified.
-    '''
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
 
@@ -198,7 +209,7 @@ def read_user_access_to_dataset(dsid: str, orcid: str, auth_res: Annotated[tuple
 @router.post("/users/{orcid}/access_groups/{group_name}", response_model=AccessGroupRead)
 def add_user_to_access_group(auth_res: Annotated[tuple, Depends(authorize_user)], orcid: str, group_name: str):
     _, ag_list = auth_res
-    require_groups(ag_list)
+    require_admin(ag_list)
     with Session(engine) as session:
         ag = sql_add_user_to_access_group(orcid, group_name, session)
         session.commit()
@@ -226,11 +237,9 @@ def list_user_access_groups(auth_res: Annotated[tuple, Depends(authorize_user)],
 
 @router.delete("/users/{orcid}/access_groups/{group_name}")
 def remove_user_from_access_group(auth_res: Annotated[tuple, Depends(authorize_user)], orcid: str, group_name: str):
-    '''
-    Remove a user from an access group.
-    '''
+    '''Remove a user from an access group.'''
     _, ag_list = auth_res
-    require_groups(ag_list)
+    require_admin(ag_list)
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
         if user is None:

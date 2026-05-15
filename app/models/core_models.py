@@ -47,6 +47,10 @@ class AssociatedFile(SQLModel, table=True):
     dataset: "Dataset" = Relationship(back_populates='associated_files')
     ingestion_requests: List["IngestionRequest"] = Relationship(back_populates="associated_file")
 
+    @property
+    def dataset_mfid(self) -> str:
+        return self.dataset.unique_id
+
 
 class DatasetLink(SQLModel, table = True):
     child_dataset_id: Optional[int] = Field(

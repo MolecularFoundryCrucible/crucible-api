@@ -6,6 +6,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, join
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -60,6 +61,7 @@ def list_files(
             .join(Dataset, Dataset.id == AssociatedFile.dataset_id)
             .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
             .filter(auth_filter)
+            .options(selectinload(AssociatedFile.dataset))
             .distinct()
         )
         if sha256_hash is not None:
@@ -79,6 +81,7 @@ def get_file(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: str):
 
     with Session(engine) as session:
         af, _ = _get_af_with_read_access(session, file_id, ag_ids)
+        af.dataset  # populate relationship while session is open
         return af
 
 
@@ -139,6 +142,7 @@ def update_file(
         session.add(af)
         session.commit()
         session.refresh(af)
+        af.dataset  # populate relationship while session is open
         return af
 
 

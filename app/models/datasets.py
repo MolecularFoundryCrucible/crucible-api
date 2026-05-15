@@ -89,6 +89,7 @@ class AssociatedFileRead(SQLModel):
     '''Response model for AssociatedFile.'''
     mfid: str
     dataset_id: int
+    dataset_mfid: str
     filename: str
     storage_path: Optional[str] = None
     size: int

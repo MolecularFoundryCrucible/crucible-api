@@ -260,5 +260,6 @@ def complete_resumable_upload(
         session.delete(us)
         session.commit()
         session.refresh(assoc)
+        assoc.dataset  # populate relationship while session is open
 
     return AssociatedFileRead.model_validate(assoc)

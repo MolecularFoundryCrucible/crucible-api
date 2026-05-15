@@ -731,7 +731,9 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
         require_read_access(session, dsid, ag_ids)
 
         return session.exec(
-            select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)
+            select(AssociatedFile)
+            .where(AssociatedFile.dataset_id == ds.id)
+            .options(selectinload(AssociatedFile.dataset))
         ).all()
 
 
@@ -770,6 +772,7 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
 
         session.commit()
         session.refresh(af_obj)
+        af_obj.dataset  # populate relationship while session is open
         return af_obj
 
 

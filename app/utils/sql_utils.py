@@ -2,10 +2,9 @@
 import yaml
 import os
 import urllib.parse
-from app.general_utils import get_secret
+from app.general_utils import get_secret, is_orcid
 from sqlalchemy import join
 from sqlmodel import create_engine, select
-from app.general_utils import  get_secret
 from dotenv import load_dotenv
 # Need a .env file with the following variables
 #DB_PASSWORD
@@ -110,7 +109,7 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None)
         owner_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == owner_id)).one_or_none()
         sql_create_resource_acl(owner_ag, mfid, read=True, write=True, session=session)
 
-    if requestor_id and requestor_id != owner_id:
+    if requestor_id and is_orcid(requestor_id) and requestor_id != owner_id:
         requestor_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == requestor_id)).one_or_none()
         sql_create_resource_acl(requestor_ag, mfid, read=True, write=True, session=session)
 

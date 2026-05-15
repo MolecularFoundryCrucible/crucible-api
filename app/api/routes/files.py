@@ -47,6 +47,7 @@ def list_files(
     auth_res: Annotated[tuple, Depends(authorize_user)],
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    sha256_hash: Optional[str] = Query(default=None),
 ):
     '''Returns a paginated list of files the requesting user is authorized to view.'''
     _, ag_list = auth_res
@@ -61,6 +62,8 @@ def list_files(
             .filter(auth_filter)
             .distinct()
         )
+        if sha256_hash is not None:
+            base_query = base_query.where(AssociatedFile.sha256_hash == sha256_hash)
         total = session.exec(
             select(func.count()).select_from(base_query.subquery())
         ).one()

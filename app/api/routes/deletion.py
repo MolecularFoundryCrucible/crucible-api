@@ -10,6 +10,7 @@ from app.models.core_models import DeletionRequest
 from app.models.deletion import DeletionRequestRead
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_groups
+from app.general_utils import get_tz_isoformat
 
 router = APIRouter(tags=["deletion"])
 engine = get_engine()

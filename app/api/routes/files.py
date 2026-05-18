@@ -70,7 +70,8 @@ def list_files(
             select(func.count()).select_from(base_query.subquery())
         ).one()
         results = session.exec(base_query.offset(offset).limit(limit)).all()
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=results)
+        items = [AssociatedFileRead.model_validate(af, update={"dataset_mfid": af.dataset.unique_id}) for af in results]
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
 @router.get("/files/{file_id}", response_model=AssociatedFileRead)
@@ -81,8 +82,7 @@ def get_file(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: str):
 
     with Session(engine) as session:
         af, _ = _get_af_with_read_access(session, file_id, ag_ids)
-        af.dataset  # populate relationship while session is open
-        return af
+        return AssociatedFileRead.model_validate(af, update={"dataset_mfid": af.dataset.unique_id})
 
 
 @router.get("/files/{file_id}/download_link")
@@ -142,8 +142,7 @@ def update_file(
         session.add(af)
         session.commit()
         session.refresh(af)
-        af.dataset  # populate relationship while session is open
-        return af
+        return AssociatedFileRead.model_validate(af, update={"dataset_mfid": af.dataset.unique_id})
 
 
 @router.delete("/files/{file_id}")

@@ -151,7 +151,7 @@ def initiate_resumable_upload(
                 )
             ).one_or_none()
             if existing is not None:
-                return UploadInitiateRead(existing_file=AssociatedFileRead.model_validate(existing))
+                return UploadInitiateRead(existing_file=AssociatedFileRead.model_validate(existing, update={"dataset_mfid": existing.dataset.unique_id}))
 
     # Strip absolute markers, current-dir dots, and traversal components.
     from pathlib import PurePosixPath
@@ -260,6 +260,4 @@ def complete_resumable_upload(
         session.delete(us)
         session.commit()
         session.refresh(assoc)
-        assoc.dataset  # populate relationship while session is open
-
-    return AssociatedFileRead.model_validate(assoc)
+        return AssociatedFileRead.model_validate(assoc, update={"dataset_mfid": assoc.dataset.unique_id})

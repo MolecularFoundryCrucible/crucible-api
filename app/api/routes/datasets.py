@@ -730,11 +730,12 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
             raise HTTPException(status_code=404, detail="Dataset not found")
         require_read_access(session, dsid, ag_ids)
 
-        return session.exec(
+        files = session.exec(
             select(AssociatedFile)
             .where(AssociatedFile.dataset_id == ds.id)
             .options(selectinload(AssociatedFile.dataset))
         ).all()
+        return [AssociatedFileRead.model_validate(f, update={"dataset_mfid": f.dataset.unique_id}) for f in files]
 
 
 @router.post("/datasets/{dsid}/files", response_model=AssociatedFileRead)
@@ -772,8 +773,7 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
 
         session.commit()
         session.refresh(af_obj)
-        af_obj.dataset  # populate relationship while session is open
-        return af_obj
+        return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": af_obj.dataset.unique_id})
 
 
 @router.post("/datasets/{dsid}/files/{file_id}/ingest", response_model=IngestionRequest)

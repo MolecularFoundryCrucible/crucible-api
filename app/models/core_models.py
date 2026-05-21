@@ -82,9 +82,7 @@ class Sample(SQLModel, table = True):
     sample_type: Optional[str] = Field(index = True, default = None)
     owner_orcid: Optional[str]
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
-    timestamp: Optional[str] = Field(default_factory=get_tz_isoformat,
-                                     sa_column=Column("timestamp", String, nullable=True),
-                                     alias="date_created")
+    timestamp: Optional[str] = Field(default_factory=get_tz_isoformat, alias="date_created")
     project_id: Optional[str] = None
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
@@ -119,23 +117,19 @@ class Dataset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     unique_id: str = Field(default_factory = get_mfid_value, index=True, unique=True)
     public: bool = Field(default = False, index = True)
-    dataset_name: Optional[str] = Field(default = "") 
-   # file_to_upload: Optional[str] = Field(default = None)  
+    dataset_name: Optional[str] = Field(default = "")   
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     owner_orcid: Optional[str] = Field(default = None)
     project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")
     instrument_id: Optional[int]  = Field(default = None, index = True, foreign_key = "instrument.id")
     source_folder: Optional[str] 
     instrument_name: Optional[str]
-    timestamp: Optional[str] = Field(default_factory=get_tz_isoformat, sa_column=Column("timestamp", String, nullable=True))
+    timestamp: Optional[str] = Field(default_factory=get_tz_isoformat)
     size: Optional[int] = Field(sa_column=Column(BigInteger())) 
     data_format: Optional[str]
     measurement: Optional[str]
     data_type: Optional[str]
     session_name: Optional[str]
-    # ingestion_githash: Optional[str] = None
-    # ingestion_class: Optional[str] = None
-    # sha256_hash_file_to_upload: Optional[str]
     scientific_metadata: Optional["ScientificMetadata"] = Relationship(
         back_populates = 'dataset')
     samples: List[Sample] = Relationship(back_populates="datasets", link_model = DatasetSampleLink)

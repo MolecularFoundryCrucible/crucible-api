@@ -11,9 +11,7 @@ class DatasetCreate(SQLModel):
     '''
     unique_id: Optional[str] = None
     dataset_name: Optional[str] = None
-   # file_to_upload: Optional[str] = None
     project_id: Optional[str] = None
-    # instrument_id: Optional[int] = None
     source_folder: Optional[str] = None
     instrument_name: Optional[str] = None
     data_format: Optional[str] = None
@@ -28,10 +26,7 @@ class DatasetCreate(SQLModel):
 class DatasetUpdate(SQLModel):
     '''Partial update schema for Dataset. Only provided fields are modified.'''
     dataset_name: Optional[str] = None
-    # file_to_upload: Optional[str] = None
     project_id: Optional[str] = None
-    # instrument_id: Optional[int] = None
-    # source_folder: Optional[str] = None
     instrument_name: Optional[str] = None
     data_format: Optional[str] = None
     measurement: Optional[str] = None

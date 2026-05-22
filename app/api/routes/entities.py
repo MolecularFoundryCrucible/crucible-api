@@ -9,10 +9,10 @@ from sqlmodel import or_, Session, select
 
 from app.api.dependencies import get_engine
 from app.models.core_models import (
-    AccessGroup, Dataset, ResourceACL, DatasetLink, DatasetSampleLink,
-    Sample, SampleLink,
+    AccessGroup, Dataset, DeletionRequest, Resource, ResourceACL,
+    DatasetLink, DatasetSampleLink, Sample, SampleLink,
 )
-from app.utils.auth_utils import authorize_user
+from app.utils.auth_utils import authorize_user, read_access_filter_list
 
 router = APIRouter(tags=["entities"])
 engine = get_engine()
@@ -34,46 +34,45 @@ def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_us
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
+        ds_auth, ds_del = read_access_filter_list(Dataset, ag_ids)
+        s_auth, s_del = read_access_filter_list(Sample, ag_ids)
+
         # Identify root entity type, enforce auth, and determine project scope
         sample_target = session.exec(
-            select(Sample).where(Sample.unique_id == entity_id)
-        ).one_or_none()
+            select(Sample)
+            .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+            .where(s_auth).where(s_del)
+            .where(Sample.unique_id == entity_id)
+        ).first()
 
         if sample_target is not None:
-            acl_ok = session.exec(
-                select(ResourceACL)
-                .where(ResourceACL.mfid == entity_id)
-                .where(ResourceACL.accessgroup_id.in_(ag_ids))
-            ).first()
-            if acl_ok is None:
-                raise HTTPException(status_code=403, detail="Access denied")
             project_id = sample_target.project_id
         else:
-            auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
             dataset_target = session.exec(
                 select(Dataset)
-                .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
-                .filter(auth_filter)
+                .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+                .where(ds_auth).where(ds_del)
                 .where(Dataset.unique_id == entity_id)
             ).first()
             if dataset_target is None:
                 raise HTTPException(status_code=404, detail="Entity not found")
             project_id = dataset_target.project_id
 
-        # Load all samples in the project with parent relationships
+        # Load all authorized samples in the project with parent relationships
         samp_list = session.exec(
             select(Sample)
             .options(joinedload(Sample.parents))
+            .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+            .where(s_auth).where(s_del)
             .where(Sample.project_id == project_id)
         ).unique().all()
 
         # Load all authorized datasets in the project with parent relationships
-        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
         ds_list = session.exec(
             select(Dataset)
             .options(joinedload(Dataset.parents))
-            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
-            .filter(auth_filter)
+            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+            .where(ds_auth).where(ds_del)
             .where(Dataset.project_id == project_id)
         ).unique().all()
 
@@ -168,25 +167,22 @@ def entity_graph_bfs(entity_id: str, auth_res: Annotated[tuple, Depends(authoriz
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
+        ds_auth, ds_del = read_access_filter_list(Dataset, ag_ids)
+        s_auth, s_del = read_access_filter_list(Sample, ag_ids)
+
         # Identify root entity type and enforce auth before traversal
         sample_target = session.exec(
-            select(Sample).where(Sample.unique_id == entity_id)
-        ).one_or_none()
+            select(Sample)
+            .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+            .where(s_auth).where(s_del)
+            .where(Sample.unique_id == entity_id)
+        ).first()
 
-        if sample_target is not None:
-            acl_ok = session.exec(
-                select(ResourceACL)
-                .where(ResourceACL.mfid == entity_id)
-                .where(ResourceACL.accessgroup_id.in_(ag_ids))
-            ).first()
-            if acl_ok is None:
-                raise HTTPException(status_code=403, detail="Access denied")
-        else:
-            auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        if sample_target is None:
             dataset_target = session.exec(
                 select(Dataset)
-                .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
-                .filter(auth_filter)
+                .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+                .where(ds_auth).where(ds_del)
                 .where(Dataset.unique_id == entity_id)
             ).first()
             if dataset_target is None:
@@ -275,16 +271,24 @@ def entity_graph_bfs(entity_id: str, auth_res: Annotated[tuple, Depends(authoriz
 
         dataset_ids = walk_up_datasets(seed_ds) | walk_down_datasets(seed_ds) if seed_ds else set()
 
-        # Fetch node data
+        # The walks return raw IDs without ACL/deletion checks. Restrict node
+        # fetches to authorized, non-deleted resources and trim the ID sets so
+        # edges referencing dropped nodes are excluded below.
         sample_rows = session.exec(
             select(Sample.id, Sample.unique_id, Sample.sample_name)
+            .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+            .where(s_auth).where(s_del)
             .where(Sample.id.in_(sample_ids))
         ).all() if sample_ids else []
+        sample_ids = {r[0] for r in sample_rows}
 
         dataset_rows = session.exec(
             select(Dataset.id, Dataset.unique_id, Dataset.dataset_name)
+            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+            .where(ds_auth).where(ds_del)
             .where(Dataset.id.in_(dataset_ids))
         ).all() if dataset_ids else []
+        dataset_ids = {r[0] for r in dataset_rows}
 
         id_to_uid: dict = {}
         for r in sample_rows:

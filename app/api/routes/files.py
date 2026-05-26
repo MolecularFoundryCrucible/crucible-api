@@ -99,16 +99,17 @@ def get_file_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], 
 
         if not af.storage_path:
             basename = af.filename.split("/")[-1]
-            blob_name = f"{ds.unique_id}/{basename}"
-            blob = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).blob(blob_name)
-            try:
-                blob.reload()
-            except Exception:
+            ds_blobs = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).list_blobs(prefix = f'{ds.unique_id}/')
+            for blob in ds_blobs:
+                if blob.name.endswith(basename):
+                    break
+            else:
                 raise HTTPException(
                     status_code=404,
                     detail="File not found in production storage — not yet ingested",
                 )
-            af.storage_path = f"{_DOWNLOAD_BUCKET}/{blob_name}"
+
+            af.storage_path = f"{_DOWNLOAD_BUCKET}/{blob.name}"
             session.add(af)
             session.commit()
         else:

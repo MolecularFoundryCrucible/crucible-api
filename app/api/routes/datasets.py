@@ -991,12 +991,12 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
 
         target = session.exec(
             select(Dataset)
-            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
-            .filter(auth_filter)
+            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+            .where(auth_filter).where(deletion_filter)
             .where(Dataset.unique_id == dataset_id)
         ).first()
 
@@ -1006,8 +1006,8 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_
         ds_list = session.exec(
             select(Dataset)
             .options(joinedload(Dataset.parents))
-            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
-            .filter(auth_filter)
+            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+            .where(auth_filter).where(deletion_filter)
             .where(Dataset.project_id == target.project_id)
         ).unique().all()
 
@@ -1043,12 +1043,12 @@ def dataset_graph_cte(dataset_id: str, auth_res: Annotated[tuple, Depends(author
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
 
         target = session.exec(
             select(Dataset)
-            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
-            .filter(auth_filter)
+            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+            .where(auth_filter).where(deletion_filter)
             .where(Dataset.unique_id == dataset_id)
         ).first()
 
@@ -1081,6 +1081,17 @@ def dataset_graph_cte(dataset_id: str, auth_res: Annotated[tuple, Depends(author
         """)
         rows = session.execute(cte_sql, {"dataset_uid": dataset_id}).all()
 
+        # Restrict CTE results to datasets the user is authorized to read and
+        # that don't have a pending/approved deletion request.
+        all_uids = [r.unique_id for r in rows]
+        visible_uids = set(session.exec(
+            select(Dataset.unique_id)
+            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+            .where(auth_filter).where(deletion_filter)
+            .where(Dataset.unique_id.in_(all_uids))
+        ).all()) if all_uids else set()
+
+        rows = [r for r in rows if r.unique_id in visible_uids]
         id_to_uid = {r.id: r.unique_id for r in rows}
         node_ids = list(id_to_uid.keys())
 

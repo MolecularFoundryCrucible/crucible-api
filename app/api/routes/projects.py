@@ -283,17 +283,24 @@ def add_users_to_project(
 
 
 @router.delete("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
-def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+                             email: Optional[str] = None):
     '''
     Remove a user from a project and its associated access group.
     Only admins or the project lead can remove users.
+    Provide ?email= to look up the user by email instead of the orcid path parameter.
     '''
     _, ag_list = auth_res
     require_groups(ag_list, {'admin', proj_id})
     with Session(engine) as session:
-        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail=f"User {orcid} not found")
+        if email:
+            user = session.exec(select(User).where(User.email == email)).one_or_none()
+            if user is None:
+                raise HTTPException(status_code=404, detail=f"No user found with email {email}")
+        else:
+            user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
+            if user is None:
+                raise HTTPException(status_code=404, detail=f"User {orcid} not found")
 
         proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if proj is None:
@@ -307,7 +314,7 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
             )
         ).one_or_none()
         if link is None:
-            raise HTTPException(status_code=404, detail=f"User {orcid} is not a member of project {proj_id}")
+            raise HTTPException(status_code=404, detail=f"User {user.unique_id} is not a member of project {proj_id}")
         session.delete(link)
 
         # Remove user from the project's access group

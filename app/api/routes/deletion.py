@@ -1,6 +1,9 @@
+import logging
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+logger = logging.getLogger(__name__)
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
@@ -114,6 +117,24 @@ def review_deletion_request(
         req.review_time = get_tz_isoformat()
         session.add(req)
 
+        # Snapshot fields before hard delete removes the rows
+        snapshot = DeletionRequestRead(
+            id=req.id,
+            resource_id=req.resource_id,
+            resource_type=req.resource.resource_type if req.resource else None,
+            resource_name=req.resource_name,
+            requester_id=req.requester_id,
+            reason=req.reason,
+            status=req.status,
+            request_time=req.request_time,
+            review_time=req.review_time,
+            reviewer_id=req.reviewer_id,
+            reviewer_notes=req.reviewer_notes,
+        )
+
+        if status == "approved":
+            from app.utils.deletion_utils import hard_delete_resource
+            hard_delete_resource(req.resource_id, session)
+
         session.commit()
-        session.refresh(req)
-        return _to_read(req)
+        return snapshot

@@ -21,7 +21,7 @@ from app.models.instrument import InstrumentResponse
 from app.models.links import LinkedResource
 from app.models.projects import ProjectWithLead
 from app.models.samples import SampleResponse
-from app.utils.auth_utils import authorize_user, require_read_access, require_write_access
+from app.utils.auth_utils import authorize_user, require_admin, require_read_access, require_write_access
 from app.utils.sql_utils import add_or_update
 
 
@@ -408,3 +408,40 @@ def create_deletion_request(
             **deletion_req.model_dump(),
             resource_type=deletion_req.resource.resource_type if deletion_req.resource else None,
         )
+
+
+@router.delete("/resources/{resource_id}")
+def hard_delete_resource_route(
+    resource_id: str,
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    force: bool = False,
+):
+    """
+    Hard-delete a resource and all related data. Admin only.
+    Requires an approved deletion request unless ?force=true.
+    """
+    _, ag_list = auth_res
+    require_admin(ag_list)
+
+    with Session(engine) as session:
+        resource = session.exec(select(Resource).where(Resource.mfid == resource_id)).one_or_none()
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+
+        if not force:
+            approved = session.exec(
+                select(DeletionRequest)
+                .where(DeletionRequest.resource_id == resource_id)
+                .where(DeletionRequest.status == "approved")
+            ).one_or_none()
+            if approved is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="No approved deletion request found for this resource. Submit one via POST /resources/{id}/delete and have it approved, or use ?force=true to bypass.",
+                )
+
+        from app.utils.deletion_utils import hard_delete_resource
+        hard_delete_resource(resource_id, session)
+        session.commit()
+
+    return {"detail": f"Resource {resource_id} permanently deleted"}

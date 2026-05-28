@@ -1,5 +1,5 @@
 import logging
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from sqlmodel import Session, select
 
 from app.models.core_models import (
@@ -90,6 +90,9 @@ def _hard_delete_dataset(dataset_unique_id: str, session: Session) -> None:
         select(ResourceACL).where(ResourceACL.mfid == dataset_unique_id)
     ).all():
         session.delete(acl)
+
+    # Legacy table not in ORM — delete by dataset integer id if rows exist
+    session.execute(text("DELETE FROM datasetacl WHERE dataset_id = :did").bindparams(did=dataset.id))
 
     for dr in session.exec(
         select(DeletionRequest).where(DeletionRequest.resource_id == dataset_unique_id)

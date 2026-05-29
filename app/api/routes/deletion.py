@@ -186,7 +186,7 @@ def hard_delete_resource_route(
     Hard-delete a resource and all related data. Admin only.
     Requires an approved deletion request unless ?force=true.
     """
-    _, ag_list = auth_res
+    user_unique_id, ag_list = auth_res
     require_admin(ag_list)
 
     with Session(engine) as session:
@@ -205,6 +205,31 @@ def hard_delete_resource_route(
                     status_code=409,
                     detail="No approved deletion request found for this resource. Submit one via POST /resources/{id}/delete and have it approved, or use ?force=true to bypass.",
                 )
+
+        # Resolve resource name from the entity before destroying rows
+        resource_name = None
+        if resource.resource_type == "dataset":
+            ds = session.exec(select(Dataset).where(Dataset.unique_id == resource_id)).one_or_none()
+            resource_name = ds.dataset_name if ds else None
+        elif resource.resource_type == "sample":
+            samp = session.exec(select(Sample).where(Sample.unique_id == resource_id)).one_or_none()
+            resource_name = samp.sample_name if samp else None
+
+        audit = DeletionAuditLog(
+            resource_id=resource_id,
+            resource_type=resource.resource_type,
+            resource_name=resource_name,
+            project_id=_resolve_project_id(resource_id, resource.resource_type, session),
+            requester_id=user_unique_id,
+            reason="direct hard delete",
+            request_time=None,
+            reviewer_id=user_unique_id,
+            reviewer_notes="force=True" if force else "approved request exists",
+            review_time=get_tz_isoformat(),
+            deleted_at=get_tz_isoformat(),
+        )
+        session.add(audit)
+        session.commit()  # persist audit log before destroying rows
 
         from app.utils.deletion_utils import hard_delete_resource
         hard_delete_resource(resource_id, session)

@@ -22,7 +22,7 @@ from app.models.links import LinkedResource
 from app.models.projects import ProjectWithLead
 from app.models.samples import SampleResponse
 from app.utils.auth_utils import authorize_user, require_read_access, require_write_access
-from app.utils.sql_utils import add_or_update
+from app.utils.sql_utils import add_or_update, get_active_deletion_request
 
 
 router = APIRouter(tags=["resources"])
@@ -109,11 +109,7 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
 
         require_read_access(session, resource_id, ag_ids)
 
-        deletion_req = session.exec(
-            select(DeletionRequest)
-            .where(DeletionRequest.resource_id == resource_id)
-            .where(DeletionRequest.status.in_(["pending", "approved"]))
-        ).first()
+        deletion_req = get_active_deletion_request(session, resource_id)
 
         sci_md = None
         if include_metadata:

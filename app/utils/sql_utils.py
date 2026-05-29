@@ -118,6 +118,16 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None)
         sql_create_resource_acl(proj_ag, mfid, read=True, write=True, session=session)
 
 
+def get_active_deletion_request(session, resource_id: str):
+    """Return the active (pending or approved) DeletionRequest for a resource, or None."""
+    from app.models.core_models import DeletionRequest
+    return session.exec(
+        select(DeletionRequest)
+        .where(DeletionRequest.resource_id == resource_id)
+        .where(DeletionRequest.status.in_(["pending", "approved"]))
+    ).first()
+
+
 def generate_kw_query(session, base_query, keyword_filter):
     from app.models.core_models import Dataset, DatasetKeywordLink, Keyword
 
@@ -135,4 +145,5 @@ def generate_kw_query(session, base_query, keyword_filter):
         ).filter(DatasetKeywordLink.keyword_id.in_(keyword_ids))
     )
     return query
+
 

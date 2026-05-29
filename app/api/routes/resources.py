@@ -379,6 +379,12 @@ def create_deletion_request(
         if resource is None:
             raise HTTPException(status_code=404, detail=f"Resource {resource_id} not found.")
 
+        if resource.resource_type not in ("dataset", "sample"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Deletion requests are not supported for resource type '{resource.resource_type}'."
+            )
+
         existing = session.exec(
             select(DeletionRequest)
             .where(DeletionRequest.resource_id == resource_id)

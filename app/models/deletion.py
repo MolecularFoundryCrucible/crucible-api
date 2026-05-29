@@ -3,11 +3,12 @@ from sqlmodel import SQLModel
 
 
 class DeletionRequestRead(SQLModel):
-    """Response model for DeletionRequest that includes resource_type from Resource."""
+    """Response model for DeletionRequest that includes resource_type and project_id."""
     id: int
     resource_id: str
     resource_type: Optional[str] = None
     resource_name: Optional[str] = None
+    project_id: Optional[str] = None
     requester_id: str
     reason: Optional[str] = None
     status: str
@@ -23,6 +24,7 @@ class DeletionAuditLogRead(SQLModel):
     resource_id: str
     resource_type: Optional[str] = None
     resource_name: Optional[str] = None
+    project_id: Optional[str] = None
     requester_id: str
     reason: Optional[str] = None
     request_time: Optional[str] = None

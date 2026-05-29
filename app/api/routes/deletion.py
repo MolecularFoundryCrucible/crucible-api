@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import DeletionAuditLog, DeletionRequest, Resource
+from app.models.core_models import Dataset, DeletionAuditLog, DeletionRequest, Resource, Sample
 from app.models.deletion import DeletionAuditLogRead, DeletionRequestRead
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_admin, require_groups
@@ -19,11 +19,23 @@ router = APIRouter(tags=["deletion"])
 engine = get_engine()
 
 
-def _to_read(req: DeletionRequest) -> DeletionRequestRead:
+def _resolve_project_id(resource_id: str, resource_type: Optional[str], session: Session) -> Optional[str]:
+    if resource_type == "dataset":
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == resource_id)).one_or_none()
+        return ds.project_id if ds else None
+    elif resource_type == "sample":
+        samp = session.exec(select(Sample).where(Sample.unique_id == resource_id)).one_or_none()
+        return samp.project_id if samp else None
+    return None
+
+
+def _to_read(req: DeletionRequest, session: Session) -> DeletionRequestRead:
     """Convert a DeletionRequest (with resource loaded) to its response model."""
+    resource_type = req.resource.resource_type if req.resource else None
     return DeletionRequestRead(
         **req.model_dump(),
-        resource_type=req.resource.resource_type if req.resource else None,
+        resource_type=resource_type,
+        project_id=_resolve_project_id(req.resource_id, resource_type, session),
     )
 
 
@@ -47,7 +59,7 @@ def list_deletion_requests(
             count_query = count_query.where(DeletionRequest.status == status)
             data_query = data_query.where(DeletionRequest.status == status)
         total = session.exec(count_query).one()
-        items = [_to_read(req) for req in session.exec(
+        items = [_to_read(req, session) for req in session.exec(
             data_query.order_by(DeletionRequest.request_time.desc()).offset(offset).limit(limit)
         ).all()]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
@@ -72,7 +84,7 @@ def get_deletion_request(
         ).one_or_none()
         if req is None:
             raise HTTPException(status_code=404, detail="Deletion request not found.")
-        return _to_read(req)
+        return _to_read(req, session)
 
 
 # ---------------------------------------------------------------------------
@@ -133,11 +145,13 @@ def review_deletion_request(
         )
 
         if status == "approved":
+            resource_type = req.resource.resource_type if req.resource else None
             # Write a durable audit record before destroying any rows.
             audit = DeletionAuditLog(
                 resource_id=req.resource_id,
-                resource_type=req.resource.resource_type if req.resource else None,
+                resource_type=resource_type,
                 resource_name=req.resource_name,
+                project_id=_resolve_project_id(req.resource_id, resource_type, session),
                 requester_id=req.requester_id,
                 reason=req.reason,
                 request_time=req.request_time,
@@ -197,3 +211,57 @@ def hard_delete_resource_route(
         session.commit()
 
     return {"detail": f"Resource {resource_id} permanently deleted"}
+
+
+# ---------------------------------------------------------------------------
+# GET /deletion_audit
+# Admin-only. Paginated audit log with optional filters.
+# ---------------------------------------------------------------------------
+@router.get("/deletion_audit", response_model=PaginatedResponse[DeletionAuditLogRead])
+def list_deletion_audit(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    resource_id: Optional[str] = None,
+    requester_id: Optional[str] = None,
+    reviewer_id: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    _, ag_list = auth_res
+    require_admin(ag_list)
+    with Session(engine) as session:
+        count_query = select(func.count(DeletionAuditLog.id))
+        data_query = select(DeletionAuditLog)
+        if resource_id is not None:
+            count_query = count_query.where(DeletionAuditLog.resource_id == resource_id)
+            data_query = data_query.where(DeletionAuditLog.resource_id == resource_id)
+        if requester_id is not None:
+            count_query = count_query.where(DeletionAuditLog.requester_id == requester_id)
+            data_query = data_query.where(DeletionAuditLog.requester_id == requester_id)
+        if reviewer_id is not None:
+            count_query = count_query.where(DeletionAuditLog.reviewer_id == reviewer_id)
+            data_query = data_query.where(DeletionAuditLog.reviewer_id == reviewer_id)
+        total = session.exec(count_query).one()
+        items = session.exec(
+            data_query.order_by(DeletionAuditLog.deleted_at.desc()).offset(offset).limit(limit)
+        ).all()
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+
+
+# ---------------------------------------------------------------------------
+# GET /deletion_audit/{audit_id}
+# Admin-only. Fetch a single audit record by its integer ID.
+# ---------------------------------------------------------------------------
+@router.get("/deletion_audit/{audit_id}", response_model=DeletionAuditLogRead)
+def get_deletion_audit(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    audit_id: int,
+):
+    _, ag_list = auth_res
+    require_admin(ag_list)
+    with Session(engine) as session:
+        entry = session.exec(
+            select(DeletionAuditLog).where(DeletionAuditLog.id == audit_id)
+        ).one_or_none()
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Audit log entry not found.")
+        return entry

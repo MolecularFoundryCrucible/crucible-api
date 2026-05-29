@@ -513,9 +513,6 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depen
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=children)
 
 
-@router.delete("/datasets/{dsid}")
-def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
-    raise HTTPException(status_code=501, detail="Hard deletion not implemented. Use the deletion request system.")
 
 
 @router.delete('/datasets/{dsid}/samples/{sample_id}')

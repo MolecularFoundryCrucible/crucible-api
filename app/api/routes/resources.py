@@ -109,6 +109,12 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
 
         require_read_access(session, resource_id, ag_ids)
 
+        deletion_req = session.exec(
+            select(DeletionRequest)
+            .where(DeletionRequest.resource_id == resource_id)
+            .where(DeletionRequest.status.in_(["pending", "approved"]))
+        ).first()
+
         sci_md = None
         if include_metadata:
             smb = session.exec(
@@ -128,6 +134,7 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
                 "creation_time": resource.creation_time,
                 "modification_time": resource.modification_time,
                 "scientific_metadata": sci_md,
+                "deletion_request": deletion_req.model_dump() if deletion_req else None,
                 "links": _fetch_links(session, "dataset", ds) if include_links else None,
             })
 
@@ -146,6 +153,7 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
                 "creation_time": resource.creation_time,
                 "modification_time": resource.modification_time,
                 "scientific_metadata": sci_md,
+                "deletion_request": deletion_req.model_dump() if deletion_req else None,
                 "links": _fetch_links(session, "sample", samp) if include_links else None,
             })
 

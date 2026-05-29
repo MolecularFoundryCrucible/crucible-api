@@ -87,10 +87,7 @@ def get_file(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: str):
 
 @router.get("/files/{file_id}/download_link")
 def get_file_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: str):
-    '''Returns a signed GCS download URL (1-hour expiry) for a single file.
-    If storage_path is not set, attempts to locate the file in production storage
-    by basename and persists the path for future calls.
-    '''
+    '''Returns a signed GCS download URL (1-hour expiry) for a single file.'''
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
@@ -98,23 +95,13 @@ def get_file_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], 
         af, ds = _get_af_with_read_access(session, file_id, ag_ids)
 
         if not af.storage_path:
-            basename = af.filename.split("/")[-1]
-            ds_blobs = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).list_blobs(prefix = f'{ds.unique_id}/')
-            for blob in ds_blobs:
-                if blob.name.endswith(basename):
-                    break
-            else:
-                raise HTTPException(
-                    status_code=404,
-                    detail="File not found in production storage — not yet ingested",
-                )
+            raise HTTPException(
+                status_code=404,
+                detail="File not found in production storage — not yet uploaded",
+            )
 
-            af.storage_path = f"{_DOWNLOAD_BUCKET}/{blob.name}"
-            session.add(af)
-            session.commit()
-        else:
-            bucket_name, _, blob_name = af.storage_path.partition("/")
-            blob = _get_gcs_storage_client().bucket(bucket_name).blob(blob_name)
+        bucket_name, _, blob_name = af.storage_path.partition("/")
+        blob = _get_gcs_storage_client().bucket(bucket_name).blob(blob_name)
 
     try:
         url = blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")

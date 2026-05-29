@@ -197,3 +197,57 @@ def hard_delete_resource_route(
         session.commit()
 
     return {"detail": f"Resource {resource_id} permanently deleted"}
+
+
+# ---------------------------------------------------------------------------
+# GET /deletion_audit
+# Admin-only. Paginated audit log with optional filters.
+# ---------------------------------------------------------------------------
+@router.get("/deletion_audit", response_model=PaginatedResponse[DeletionAuditLogRead])
+def list_deletion_audit(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    resource_id: Optional[str] = None,
+    requester_id: Optional[str] = None,
+    reviewer_id: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    _, ag_list = auth_res
+    require_admin(ag_list)
+    with Session(engine) as session:
+        count_query = select(func.count(DeletionAuditLog.id))
+        data_query = select(DeletionAuditLog)
+        if resource_id is not None:
+            count_query = count_query.where(DeletionAuditLog.resource_id == resource_id)
+            data_query = data_query.where(DeletionAuditLog.resource_id == resource_id)
+        if requester_id is not None:
+            count_query = count_query.where(DeletionAuditLog.requester_id == requester_id)
+            data_query = data_query.where(DeletionAuditLog.requester_id == requester_id)
+        if reviewer_id is not None:
+            count_query = count_query.where(DeletionAuditLog.reviewer_id == reviewer_id)
+            data_query = data_query.where(DeletionAuditLog.reviewer_id == reviewer_id)
+        total = session.exec(count_query).one()
+        items = session.exec(
+            data_query.order_by(DeletionAuditLog.deleted_at.desc()).offset(offset).limit(limit)
+        ).all()
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+
+
+# ---------------------------------------------------------------------------
+# GET /deletion_audit/{audit_id}
+# Admin-only. Fetch a single audit record by its integer ID.
+# ---------------------------------------------------------------------------
+@router.get("/deletion_audit/{audit_id}", response_model=DeletionAuditLogRead)
+def get_deletion_audit(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    audit_id: int,
+):
+    _, ag_list = auth_res
+    require_admin(ag_list)
+    with Session(engine) as session:
+        entry = session.exec(
+            select(DeletionAuditLog).where(DeletionAuditLog.id == audit_id)
+        ).one_or_none()
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Audit log entry not found.")
+        return entry

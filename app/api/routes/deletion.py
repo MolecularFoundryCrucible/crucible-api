@@ -1,15 +1,18 @@
+import logging
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+logger = logging.getLogger(__name__)
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import DeletionRequest
-from app.models.deletion import DeletionRequestRead
+from app.models.core_models import DeletionAuditLog, DeletionRequest, Resource
+from app.models.deletion import DeletionAuditLogRead, DeletionRequestRead
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, require_groups
+from app.utils.auth_utils import authorize_user, require_admin, require_groups
 from app.general_utils import get_tz_isoformat
 
 router = APIRouter(tags=["deletion"])
@@ -114,6 +117,83 @@ def review_deletion_request(
         req.review_time = get_tz_isoformat()
         session.add(req)
 
+        # Snapshot fields before hard delete removes the rows
+        snapshot = DeletionRequestRead(
+            id=req.id,
+            resource_id=req.resource_id,
+            resource_type=req.resource.resource_type if req.resource else None,
+            resource_name=req.resource_name,
+            requester_id=req.requester_id,
+            reason=req.reason,
+            status=req.status,
+            request_time=req.request_time,
+            review_time=req.review_time,
+            reviewer_id=req.reviewer_id,
+            reviewer_notes=req.reviewer_notes,
+        )
+
+        if status == "approved":
+            # Write a durable audit record before destroying any rows.
+            audit = DeletionAuditLog(
+                resource_id=req.resource_id,
+                resource_type=req.resource.resource_type if req.resource else None,
+                resource_name=req.resource_name,
+                requester_id=req.requester_id,
+                reason=req.reason,
+                request_time=req.request_time,
+                reviewer_id=user_unique_id,
+                reviewer_notes=reviewer_notes,
+                review_time=req.review_time,
+                deleted_at=get_tz_isoformat(),
+            )
+            session.add(audit)
+            session.commit()  # persists both the status update and the audit row
+
+            from app.utils.deletion_utils import hard_delete_resource
+            hard_delete_resource(req.resource_id, session)
+            session.commit()
+        else:
+            session.commit()
+
+        return snapshot
+
+
+# ---------------------------------------------------------------------------
+# DELETE /resources/{resource_id}
+# Admin-only. Hard-delete immediately; requires approved request unless ?force=true.
+# ---------------------------------------------------------------------------
+@router.delete("/resources/{resource_id}")
+def hard_delete_resource_route(
+    resource_id: str,
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    force: bool = False,
+):
+    """
+    Hard-delete a resource and all related data. Admin only.
+    Requires an approved deletion request unless ?force=true.
+    """
+    _, ag_list = auth_res
+    require_admin(ag_list)
+
+    with Session(engine) as session:
+        resource = session.exec(select(Resource).where(Resource.mfid == resource_id)).one_or_none()
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+
+        if not force:
+            approved = session.exec(
+                select(DeletionRequest)
+                .where(DeletionRequest.resource_id == resource_id)
+                .where(DeletionRequest.status == "approved")
+            ).one_or_none()
+            if approved is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="No approved deletion request found for this resource. Submit one via POST /resources/{id}/delete and have it approved, or use ?force=true to bypass.",
+                )
+
+        from app.utils.deletion_utils import hard_delete_resource
+        hard_delete_resource(resource_id, session)
         session.commit()
-        session.refresh(req)
-        return _to_read(req)
+
+    return {"detail": f"Resource {resource_id} permanently deleted"}

@@ -9,8 +9,8 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import DeletionRequest, Resource
-from app.models.deletion import DeletionRequestRead
+from app.models.core_models import DeletionAuditLog, DeletionRequest, Resource
+from app.models.deletion import DeletionAuditLogRead, DeletionRequestRead
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_admin, require_groups
 from app.general_utils import get_tz_isoformat
@@ -133,10 +133,28 @@ def review_deletion_request(
         )
 
         if status == "approved":
+            # Write a durable audit record before destroying any rows.
+            audit = DeletionAuditLog(
+                resource_id=req.resource_id,
+                resource_type=req.resource.resource_type if req.resource else None,
+                resource_name=req.resource_name,
+                requester_id=req.requester_id,
+                reason=req.reason,
+                request_time=req.request_time,
+                reviewer_id=user_unique_id,
+                reviewer_notes=reviewer_notes,
+                review_time=req.review_time,
+                deleted_at=get_tz_isoformat(),
+            )
+            session.add(audit)
+            session.commit()  # persists both the status update and the audit row
+
             from app.utils.deletion_utils import hard_delete_resource
             hard_delete_resource(req.resource_id, session)
+            session.commit()
+        else:
+            session.commit()
 
-        session.commit()
         return snapshot
 
 

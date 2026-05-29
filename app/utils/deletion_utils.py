@@ -11,7 +11,7 @@ from app.models.core_models import (
 
 logger = logging.getLogger(__name__)
 
-_DOWNLOAD_BUCKET = "mf-storage-prod"
+from app.api.routes.gcs_storage import _DOWNLOAD_BUCKET
 
 
 def _delete_gcs_blobs_for_dataset(dataset_unique_id: str, associated_files: list) -> None:
@@ -20,21 +20,30 @@ def _delete_gcs_blobs_for_dataset(dataset_unique_id: str, associated_files: list
         from app.api.routes.gcs_storage import _get_gcs_storage_client
         client = _get_gcs_storage_client()
         bucket = client.bucket(_DOWNLOAD_BUCKET)
-        for af in associated_files:
-            if af.storage_path:
-                blob_name = af.storage_path.removeprefix(f"{_DOWNLOAD_BUCKET}/")
-                blob = bucket.blob(blob_name)
-                if blob.exists():
-                    blob.delete()
-                    logger.info("Deleted GCS blob %s", blob_name)
     except Exception:
         logger.exception(
-            "GCS blob deletion failed for dataset %s — DB deletion will still proceed",
+            "GCS client init failed for dataset %s — DB deletion will still proceed",
             dataset_unique_id,
         )
+        return
+
+    for af in associated_files:
+        if not af.storage_path:
+            continue
+        try:
+            blob_name = af.storage_path.partition("/")[2]
+            blob = bucket.blob(blob_name)
+            if blob.exists():
+                blob.delete()
+                logger.info("Deleted GCS blob %s", blob_name)
+        except Exception:
+            logger.exception(
+                "Failed to delete GCS blob for file %s (dataset %s) — continuing",
+                af.storage_path, dataset_unique_id,
+            )
 
 
-def _hard_delete_dataset(dataset_unique_id: str, session: Session) -> None:
+def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Resource) -> None:
     dataset = session.exec(select(Dataset).where(Dataset.unique_id == dataset_unique_id)).one_or_none()
     if dataset is None:
         return
@@ -99,14 +108,11 @@ def _hard_delete_dataset(dataset_unique_id: str, session: Session) -> None:
     ).all():
         session.delete(dr)
 
-    resource = session.exec(select(Resource).where(Resource.mfid == dataset_unique_id)).one_or_none()
-    if resource:
-        session.delete(resource)
-
+    session.delete(resource)
     session.delete(dataset)
 
 
-def _hard_delete_sample(sample_unique_id: str, session: Session) -> None:
+def _hard_delete_sample(sample_unique_id: str, session: Session, resource: Resource) -> None:
     sample = session.exec(select(Sample).where(Sample.unique_id == sample_unique_id)).one_or_none()
     if sample is None:
         return
@@ -139,10 +145,7 @@ def _hard_delete_sample(sample_unique_id: str, session: Session) -> None:
     ).all():
         session.delete(dr)
 
-    resource = session.exec(select(Resource).where(Resource.mfid == sample_unique_id)).one_or_none()
-    if resource:
-        session.delete(resource)
-
+    session.delete(resource)
     session.delete(sample)
 
 
@@ -152,9 +155,9 @@ def hard_delete_resource(resource_id: str, session: Session) -> None:
     if resource is None:
         return
     if resource.resource_type == "dataset":
-        _hard_delete_dataset(resource_id, session)
+        _hard_delete_dataset(resource_id, session, resource)
     elif resource.resource_type == "sample":
-        _hard_delete_sample(resource_id, session)
+        _hard_delete_sample(resource_id, session, resource)
     else:
         logger.warning(
             "hard_delete_resource called on unsupported resource_type %r for %s — skipping",

@@ -159,7 +159,7 @@ def initiate_resumable_upload(
     safe_filename = str(PurePosixPath(*parts))
 
     gcs_path = f"{dsid}/{safe_filename}"
-    associated_file_name = f"{_DOWNLOAD_BUCKET}/{gcs_path}"
+    associated_file_name = safe_filename
 
     try:
         authed = _get_gcs_authed_session()
@@ -251,7 +251,7 @@ def complete_resumable_upload(
         assoc = AssociatedFile(
             dataset_id=ds.id,
             filename=us.associated_file_name,
-            storage_path=us.associated_file_name,  # already in prod — set immediately
+            storage_path=f"{_DOWNLOAD_BUCKET}/{us.gcs_path}",
             size=blob.size,
             sha256_hash=body.sha256_hash,
         )

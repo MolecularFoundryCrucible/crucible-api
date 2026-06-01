@@ -39,8 +39,8 @@ class Thumbnail(SQLModel, table=True):
 class AssociatedFile(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     mfid: str = Field(default_factory=get_mfid_value, unique=True, index=True)
-    filename: str                        # staging path: "crucible-uploads/api-uploads/{user_id}/{name}"
-    storage_path: Optional[str] = None  # production path: "mf-storage-prod/{dsid}/{name}", set by ingestion worker
+    filename: str                        # relative path within the dataset: "{safe_filename}"
+    storage_path: Optional[str] = None  # full GCS path: "mf-storage-prod/{dsid}/{safe_filename}"
     size: int = Field(sa_column=Column(BigInteger()))
     sha256_hash: str
     dataset_id: int = Field(foreign_key="dataset.id")
@@ -331,8 +331,8 @@ class UploadSession(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     upload_id: str = Field(index=True, unique=True)
     dataset_mfid: str
-    gcs_path: str           # blob path within bucket: "api-uploads/{user_id}/{filename}"
-    associated_file_name: str   # AssociatedFile.filename format: "crucible-uploads/{gcs_path}"
+    gcs_path: str           # full blob path in prod bucket: "{dsid}/{filename}"
+    associated_file_name: str   # relative filename within the dataset: "{safe_filename}"
     owner_user_id: str
     expires_at: str         # written as ISO 8601 string; DB returns datetime, handle both
     size: Optional[int] = Field(default=None, sa_column=Column(BigInteger()))

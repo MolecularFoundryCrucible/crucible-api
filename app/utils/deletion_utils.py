@@ -51,7 +51,6 @@ def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Res
     associated_files = session.exec(
         select(AssociatedFile).where(AssociatedFile.dataset_id == dataset.id)
     ).all()
-    _delete_gcs_blobs_for_dataset(dataset_unique_id, associated_files)
 
     for ing in session.exec(
         select(IngestionRequest).where(IngestionRequest.dataset_mfid == dataset_unique_id)

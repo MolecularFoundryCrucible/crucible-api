@@ -19,7 +19,6 @@ from app.utils.sql_utils import add_or_update
 router = APIRouter(tags=["storage"])
 engine = get_engine()
 
-_UPLOAD_BUCKET = "crucible-uploads"
 _DOWNLOAD_BUCKET = "mf-storage-prod"
 _GCS_UPLOAD_API = "https://storage.googleapis.com/upload/storage/v1/b"
 _CHUNK_SIZE_HINT = 8 * 1024 * 1024  # 8 MiB — GCS recommended chunk multiple
@@ -87,9 +86,7 @@ def generate_signed_url_download_link(
     for af in af_records:
         if af.storage_path:
             blob_name = af.storage_path.partition("/")[2]
-        else:
-            blob_name = f"{dsid}/{af.filename.split('/')[-1]}"
-        blob_to_mfid[blob_name] = af.mfid
+            blob_to_mfid[blob_name] = af.mfid
 
     try:
         storage_client = _get_gcs_storage_client()
@@ -160,13 +157,13 @@ def initiate_resumable_upload(
         raise HTTPException(status_code=400, detail="Invalid filename")
     safe_filename = str(PurePosixPath(*parts))
 
-    gcs_path = f"api-uploads/{user_unique_id}/{safe_filename}"
-    associated_file_name = f"{_UPLOAD_BUCKET}/{gcs_path}"
+    gcs_path = f"{dsid}/{safe_filename}"
+    associated_file_name = safe_filename
 
     try:
         authed = _get_gcs_authed_session()
         resp = authed.post(
-            f"{_GCS_UPLOAD_API}/{_UPLOAD_BUCKET}/o?uploadType=resumable",
+            f"{_GCS_UPLOAD_API}/{_DOWNLOAD_BUCKET}/o?uploadType=resumable",
             headers={
                 "X-Upload-Content-Type": "application/octet-stream",
                 "X-Upload-Content-Length": str(body.size),
@@ -239,7 +236,7 @@ def complete_resumable_upload(
         require_write_access(session, ag_ids, [dsid])
 
         try:
-            blob = _get_gcs_storage_client().bucket(_UPLOAD_BUCKET).blob(us.gcs_path)
+            blob = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).blob(us.gcs_path)
             blob.reload()
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Could not verify upload in GCS: {e}")
@@ -253,6 +250,7 @@ def complete_resumable_upload(
         assoc = AssociatedFile(
             dataset_id=ds.id,
             filename=us.associated_file_name,
+            storage_path=f"{_DOWNLOAD_BUCKET}/{us.gcs_path}",
             size=blob.size,
             sha256_hash=body.sha256_hash,
         )

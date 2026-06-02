@@ -321,8 +321,7 @@ def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
 
         session.commit()
         session.refresh(new_md_obj)
-        if background_tasks:
-            background_tasks.add_task(write_metadata, unique_id, scientific_md)
+        background_tasks.add_task(write_metadata, unique_id, scientific_md)
         return new_md_obj
 
 
@@ -361,8 +360,7 @@ def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
 
         session.commit()
         session.refresh(new_md_obj)
-        if background_tasks:
-            background_tasks.add_task(write_metadata, unique_id, md_dict)
+        background_tasks.add_task(write_metadata, unique_id, md_dict)
         return new_md_obj
 
 

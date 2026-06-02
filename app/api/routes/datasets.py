@@ -802,7 +802,7 @@ def create_file_ingestion_request(
         ingestion_request = IngestionRequest(
             dataset_mfid=ds.unique_id,
             file_mfid=af.mfid,
-            file_to_upload=af.filename,
+            file_to_upload=af.storage_path,
             ingestion_class=ingestion_class,
             time_created=get_tz_isoformat(),
             status="requested",
@@ -812,14 +812,14 @@ def create_file_ingestion_request(
         session.refresh(ingestion_request)
         ir_id = ingestion_request.id
         af_size = af.size
-        af_filename = af.filename
+        af_storage_path = af.storage_path
 
     tier = get_ingestion_tier(af_size)
     routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
     send_pika_message(
         message=json.dumps({
-            "filename": af_filename,
+            "filename": af_storage_path,
             "reqid": ir_id,
             "dsid": dsid,
             "ingestion_class": ingestion_class,

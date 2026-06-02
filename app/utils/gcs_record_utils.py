@@ -11,6 +11,46 @@ def _get_client():
     return _get_gcs_storage_client()
 
 
+def dataset_record(ds, ri) -> dict:
+    return {
+        "unique_id": ds.unique_id, "dataset_name": ds.dataset_name,
+        "owner_orcid": ds.owner_orcid, "project_id": ds.project_id,
+        "instrument_name": ds.instrument_name, "measurement": ds.measurement,
+        "data_type": ds.data_type, "data_format": ds.data_format,
+        "session_name": ds.session_name, "source_folder": ds.source_folder,
+        "timestamp": ds.timestamp, "size": ds.size,
+        "public": ri.public if ri else ds.public,
+        "resource_type": "dataset",
+        "creation_time": ri.creation_time if ri else None,
+        "modification_time": ri.modification_time if ri else None,
+    }
+
+
+def sample_record(samp, ri) -> dict:
+    return {
+        "unique_id": samp.unique_id, "sample_name": samp.sample_name,
+        "sample_type": samp.sample_type, "owner_orcid": samp.owner_orcid,
+        "project_id": samp.project_id, "description": samp.description,
+        "timestamp": samp.timestamp,
+        "public": ri.public if ri else False,
+        "resource_type": "sample",
+        "creation_time": ri.creation_time if ri else None,
+        "modification_time": ri.modification_time if ri else None,
+    }
+
+
+def instrument_record(inst, ri) -> dict:
+    return {
+        "unique_id": inst.unique_id, "instrument_name": inst.instrument_name,
+        "manufacturer": inst.manufacturer, "model": inst.model,
+        "owner": inst.owner, "other_id": inst.other_id,
+        "other_id_source": inst.other_id_source,
+        "resource_type": "instrument",
+        "creation_time": ri.creation_time if ri else None,
+        "modification_time": ri.modification_time if ri else None,
+    }
+
+
 def write_record(mfid: str, record: dict) -> None:
     """Upload record.json for a resource. Best-effort — logs and returns on failure."""
     try:

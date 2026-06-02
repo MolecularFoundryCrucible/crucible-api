@@ -19,7 +19,6 @@ from app.utils.sql_utils import add_or_update
 router = APIRouter(tags=["storage"])
 engine = get_engine()
 
-_UPLOAD_BUCKET = "crucible-uploads"
 _DOWNLOAD_BUCKET = "mf-storage-prod"
 _GCS_UPLOAD_API = "https://storage.googleapis.com/upload/storage/v1/b"
 _CHUNK_SIZE_HINT = 8 * 1024 * 1024  # 8 MiB — GCS recommended chunk multiple

@@ -45,7 +45,7 @@ from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
-from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls
+from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
@@ -377,11 +377,7 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
         require_read_access(session, dsid, ag_ids)
 
         # check deletion request
-        deletion_req = session.exec(
-            select(DeletionRequest)
-            .where(DeletionRequest.resource_id == dsid)
-            .where(DeletionRequest.status.in_(["pending", "approved"]))
-        ).first()
+        deletion_req = get_active_deletion_request(session, dsid)
 
         # fetch all linked resources
         links = None
@@ -517,9 +513,6 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depen
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=children)
 
 
-@router.delete("/datasets/{dsid}")
-def delete_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
-    raise HTTPException(status_code=501, detail="Hard deletion not implemented. Use the deletion request system.")
 
 
 @router.delete('/datasets/{dsid}/samples/{sample_id}')

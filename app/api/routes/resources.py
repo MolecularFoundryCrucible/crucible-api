@@ -22,7 +22,7 @@ from app.models.links import LinkedResource
 from app.models.projects import ProjectWithLead
 from app.models.samples import SampleResponse
 from app.utils.auth_utils import authorize_user, require_read_access, require_write_access
-from app.utils.sql_utils import add_or_update
+from app.utils.sql_utils import add_or_update, get_active_deletion_request
 
 
 router = APIRouter(tags=["resources"])
@@ -88,6 +88,46 @@ def _dual_write_old_table(session, unique_id: str, scientific_md: dict):
         attributes.flag_modified(md_obj, 'scientific_metadata')
 
 
+@router.get("/resources/metadata/search", response_model=List[ScientificMetadataBinaryRead])
+def search_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str,
+                             limit: int = Query(default=50, ge=1, le=200)):
+    """
+    Ranked full-text search on scientific metadata using PostgreSQL tsvector/tsquery.
+    Returns results the user has read access to, ordered by relevance.
+    """
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    search_query = func.plainto_tsquery('english', q)
+    metadata_vector = func.to_tsvector(
+        'english',
+        func.jsonb_path_query_array(ScientificMetadataBinary.scientific_metadata, text("'$[*]'")).cast(Text)
+    )
+    rank_expr = func.ts_rank_cd(metadata_vector, search_query)
+
+    acl_subquery = exists().where(
+        ResourceACL.mfid == ScientificMetadataBinary.unique_id,
+        ResourceACL.accessgroup_id.in_(ag_ids)
+    )
+
+    stmt = (
+        select(ScientificMetadataBinary, rank_expr.label("rank"))
+        .join(Resource, Resource.mfid == ScientificMetadataBinary.unique_id)
+        .where(
+            and_(
+                or_(Resource.public == True, acl_subquery),
+                metadata_vector.op('@@')(search_query)
+            )
+        )
+        .order_by(desc("rank"))
+        .distinct()
+        .limit(limit)
+    )
+    with Session(engine) as session:
+        results = session.exec(stmt).all()
+        return [row[0] for row in results]
+
+
 @router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse, InstrumentResponse, ProjectWithLead])
 def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_id: str,
                  include_metadata: bool = False, include_links: bool = False):
@@ -109,6 +149,8 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
 
         require_read_access(session, resource_id, ag_ids)
 
+        deletion_req = get_active_deletion_request(session, resource_id)
+
         sci_md = None
         if include_metadata:
             smb = session.exec(
@@ -128,6 +170,7 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
                 "creation_time": resource.creation_time,
                 "modification_time": resource.modification_time,
                 "scientific_metadata": sci_md,
+                "deletion_request": deletion_req.model_dump() if deletion_req else None,
                 "links": _fetch_links(session, "dataset", ds) if include_links else None,
             })
 
@@ -146,6 +189,7 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
                 "creation_time": resource.creation_time,
                 "modification_time": resource.modification_time,
                 "scientific_metadata": sci_md,
+                "deletion_request": deletion_req.model_dump() if deletion_req else None,
                 "links": _fetch_links(session, "sample", samp) if include_links else None,
             })
 
@@ -316,46 +360,6 @@ def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
         return new_md_obj
 
 
-@router.get("/resources/metadata/search", response_model=List[ScientificMetadataBinaryRead])
-def search_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str,
-                             limit: int = Query(default=50, ge=1, le=200)):
-    """
-    Ranked full-text search on scientific metadata using PostgreSQL tsvector/tsquery.
-    Returns results the user has read access to, ordered by relevance.
-    """
-    _, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-
-    search_query = func.plainto_tsquery('english', q)
-    metadata_vector = func.to_tsvector(
-        'english',
-        func.jsonb_path_query_array(ScientificMetadataBinary.scientific_metadata, text("'$[*]'")).cast(Text)
-    )
-    rank_expr = func.ts_rank_cd(metadata_vector, search_query)
-
-    acl_subquery = exists().where(
-        ResourceACL.mfid == ScientificMetadataBinary.unique_id,
-        ResourceACL.accessgroup_id.in_(ag_ids)
-    )
-
-    stmt = (
-        select(ScientificMetadataBinary, rank_expr.label("rank"))
-        .join(Resource, Resource.mfid == ScientificMetadataBinary.unique_id)
-        .where(
-            and_(
-                or_(Resource.public == True, acl_subquery),
-                metadata_vector.op('@@')(search_query)
-            )
-        )
-        .order_by(desc("rank"))
-        .distinct()
-        .limit(limit)
-    )
-    with Session(engine) as session:
-        results = session.exec(stmt).all()
-        return [row[0] for row in results]
-
-
 @router.post("/resources/{resource_id}/delete", response_model=DeletionRequestRead)
 def create_deletion_request(
     auth_res: Annotated[tuple, Depends(authorize_user)],
@@ -374,6 +378,12 @@ def create_deletion_request(
         ).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail=f"Resource {resource_id} not found.")
+
+        if resource.resource_type not in ("dataset", "sample"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Deletion requests are not supported for resource type '{resource.resource_type}'."
+            )
 
         existing = session.exec(
             select(DeletionRequest)

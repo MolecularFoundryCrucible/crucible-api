@@ -22,7 +22,7 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
-from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl, create_standard_acls
+from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
 
 router = APIRouter(tags=["samples"])
 engine = get_engine()
@@ -363,11 +363,7 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
         require_read_access(session, sample_id, ag_ids)
 
         # check deletion request
-        deletion_req = session.exec(
-            select(DeletionRequest)
-            .where(DeletionRequest.resource_id == sample_id)
-            .where(DeletionRequest.status.in_(["pending", "approved"]))
-        ).first()
+        deletion_req = get_active_deletion_request(session, sample_id)
 
         # fetch all linked resources (datasets reuse already-loaded relationship)
         links = None

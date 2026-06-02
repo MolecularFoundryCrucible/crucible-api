@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 import os
 import networkx as nx
 from networkx.readwrite import json_graph
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from sqlalchemy import exists, func, join, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, Session, select
@@ -23,6 +23,7 @@ from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
 from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
+from app.utils.gcs_record_utils import write_record, sample_record
 
 router = APIRouter(tags=["samples"])
 engine = get_engine()
@@ -85,7 +86,8 @@ def unlink_sample_parent_child(parent_sample_id: str, child_sample_id: str, auth
 
 
 @router.patch('/samples/{sample_id}', response_model=SampleResponse)
-def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id: str, updated_sample: SampleUpdate):
+def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id: str, updated_sample: SampleUpdate,
+                  background_tasks: BackgroundTasks):
     '''
     Partially update a sample record. Only provided fields are modified.
     '''
@@ -121,6 +123,7 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
         session.add(sample)
         session.commit()
         session.refresh(sample)
+        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri))
         return SampleResponse.model_validate({
             **sample.model_dump(),
             "public": ri.public if ri else False,
@@ -130,7 +133,8 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
 
 
 @router.post("/samples", response_model=SampleResponse)
-def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: SampleCreate):
+def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: SampleCreate,
+                  background_tasks: BackgroundTasks):
     '''
     Create a new sample. If a sample with the same project_id and sample_name already
     exists, the existing record is returned without modification.
@@ -191,6 +195,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         session.add(sample)
         session.commit()
         session.refresh(sample)
+        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri))
         return SampleResponse.model_validate({
             **sample.model_dump(),
             "public": ri.public if ri else False,

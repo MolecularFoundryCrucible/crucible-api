@@ -1,14 +1,56 @@
+import hashlib
 import json
 import logging
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
 _RECORD_BUCKET = "mf-record-prod"
+_SCHEMA_VERSION = 1
 
 
 def _get_client():
     from app.api.routes.gcs_storage import _get_gcs_storage_client
     return _get_gcs_storage_client()
+
+
+def _canonical_hash(payload: dict) -> str:
+    """SHA-256 of payload excluding _audit, over canonical JSON (sorted keys)."""
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+
+def _build_audit(blob, payload: dict, actor: str, operation: str) -> dict | None:
+    """
+    Read previous revision from GCS, check if payload changed, build _audit block.
+    Returns None if payload is unchanged (skip write).
+    """
+    revision = 1
+    prev_hash = None
+
+    try:
+        if blob.exists():
+            prev = json.loads(blob.download_as_text())
+            prev_audit = prev.get("_audit", {})
+            revision = prev_audit.get("revision", 0) + 1
+            prev_hash = prev_audit.get("content_sha256")
+    except Exception:
+        logger.warning("Could not read previous revision for %s — starting at 1", blob.name)
+
+    content_sha256 = _canonical_hash(payload)
+    if prev_hash == content_sha256:
+        logger.info("No change in %s — skipping write", blob.name)
+        return None
+
+    return {
+        "revision": revision,
+        "operation": operation,
+        "actor": actor,
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
+        "content_sha256": content_sha256,
+        "_schema_version": _SCHEMA_VERSION,
+    }
 
 
 def dataset_record(ds, ri) -> dict:
@@ -51,27 +93,33 @@ def instrument_record(inst, ri) -> dict:
     }
 
 
-def write_record(mfid: str, record: dict) -> None:
+def write_record(mfid: str, record: dict, actor: str, operation: str) -> None:
     """Upload record.json for a resource. Best-effort — logs and returns on failure."""
     try:
         blob = _get_client().bucket(_RECORD_BUCKET).blob(f"{mfid}/record.json")
+        audit = _build_audit(blob, record, actor, operation)
+        if audit is None:
+            return
         blob.upload_from_string(
-            json.dumps(record, default=str, indent=2),
+            json.dumps({"_audit": audit, **record}, default=str, indent=2),
             content_type="application/json",
         )
-        logger.info("Wrote record.json for %s", mfid)
+        logger.info("Wrote record.json for %s (revision %d)", mfid, audit["revision"])
     except Exception:
         logger.exception("Failed to write record.json for %s", mfid)
 
 
-def write_metadata(mfid: str, metadata: dict) -> None:
+def write_metadata(mfid: str, metadata: dict, actor: str, operation: str) -> None:
     """Upload metadata.json for a resource. Best-effort — logs and returns on failure."""
     try:
         blob = _get_client().bucket(_RECORD_BUCKET).blob(f"{mfid}/metadata.json")
+        audit = _build_audit(blob, metadata, actor, operation)
+        if audit is None:
+            return
         blob.upload_from_string(
-            json.dumps(metadata, default=str, indent=2),
+            json.dumps({"_audit": audit, **metadata}, default=str, indent=2),
             content_type="application/json",
         )
-        logger.info("Wrote metadata.json for %s", mfid)
+        logger.info("Wrote metadata.json for %s (revision %d)", mfid, audit["revision"])
     except Exception:
         logger.exception("Failed to write metadata.json for %s", mfid)

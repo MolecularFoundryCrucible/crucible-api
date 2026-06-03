@@ -91,7 +91,7 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
     '''
     Partially update a sample record. Only provided fields are modified.
     '''
-    _, ag_list = auth_res
+    user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -123,7 +123,7 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
         session.add(sample)
         session.commit()
         session.refresh(sample)
-        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri))
+        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri), user_unique_id, "update")
         return SampleResponse.model_validate({
             **sample.model_dump(),
             "public": ri.public if ri else False,
@@ -195,7 +195,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         session.add(sample)
         session.commit()
         session.refresh(sample)
-        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri))
+        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri), user_unique_id, "create")
         return SampleResponse.model_validate({
             **sample.model_dump(),
             "public": ri.public if ri else False,

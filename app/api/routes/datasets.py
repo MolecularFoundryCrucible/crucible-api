@@ -13,7 +13,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_secret, get_tz_isoformat
+from app.general_utils import get_secret, get_utc_isoformat
 from app.models.core_models import (
     AccessGroup,
     AssociatedFile,
@@ -126,7 +126,7 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
         session.flush()
 
         # get time
-        now = get_tz_isoformat()
+        now = get_utc_isoformat()
         
         # fetch resource
         ri = add_or_update(session, Resource, where=(Resource.mfid == ds.unique_id),
@@ -187,7 +187,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
-            ri.modification_time = get_tz_isoformat()
+            ri.modification_time = get_utc_isoformat()
             ri.public = upds.public
 
         if upds.owner_orcid is not None:
@@ -681,7 +681,7 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
-            ri.modification_time = get_tz_isoformat()
+            ri.modification_time = get_utc_isoformat()
 
         session.commit()
         session.refresh(tn_obj)
@@ -766,7 +766,7 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
-            ri.modification_time = get_tz_isoformat()
+            ri.modification_time = get_utc_isoformat()
 
         session.commit()
         session.refresh(af_obj)
@@ -808,7 +808,7 @@ def create_file_ingestion_request(
             file_mfid=af.mfid,
             file_to_upload=af.storage_path,
             ingestion_class=ingestion_class,
-            time_created=get_tz_isoformat(),
+            time_created=get_utc_isoformat(),
             status="requested",
         )
         session.add(ingestion_request)

@@ -12,7 +12,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_tz_isoformat, is_orcid
+from app.general_utils import get_utc_isoformat, is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, DatasetSampleLink,
     DeletionRequest, Resource, Sample, SampleLink, ScientificMetadataBinary, User,
@@ -108,7 +108,7 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
 
         ri = session.exec(select(Resource).where(Resource.mfid == sample_id)).one_or_none()
         if ri:
-            ri.modification_time = get_tz_isoformat()
+            ri.modification_time = get_utc_isoformat()
             if new_public is not None:
                 ri.public = new_public
 
@@ -174,7 +174,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                 select(User.id).where(User.unique_id == sample.owner_orcid)
             ).one_or_none()
 
-        now = get_tz_isoformat()
+        now = get_utc_isoformat()
         ri = add_or_update(session,
                            Resource,
                            where=(Resource.mfid == sample.unique_id),

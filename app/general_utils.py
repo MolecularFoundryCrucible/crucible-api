@@ -2,8 +2,7 @@ import os
 import subprocess as sp
 import json
 import re
-import pytz
-from datetime import datetime
+from datetime import datetime, timezone
 from app.utils.constants import secret_store, gcs_client_id
 import hashlib
 
@@ -118,10 +117,8 @@ def run_rclone_command(source_path= "", destination_path= "", cmd="copy", client
     run_shell_out = run_shell(rclone_cmd, background = background, checkflag=checkflag)
     return(run_shell_out)
 
-def get_tz_isoformat(timezone = "America/Los_Angeles"):
-    pst= pytz.timezone(timezone)
-    curr_pct_time = datetime.now(pst).isoformat()
-    return(curr_pct_time)
+def get_utc_isoformat():
+    return datetime.now(timezone.utc).isoformat()
 
 def checkhash(file):
     """Calculate SHA256 hash of a file.

@@ -7,7 +7,7 @@ from sqlalchemy.sql import and_, exists, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_tz_isoformat
+from app.general_utils import get_utc_isoformat
 from app.models.core_models import (
     Dataset, DatasetLink, DatasetSampleLink,
     DeletionRequest,
@@ -315,7 +315,7 @@ def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
             scientific_metadata=scientific_md,
         )
         attributes.flag_modified(new_md_obj, 'scientific_metadata')
-        resource.modification_time = get_tz_isoformat()
+        resource.modification_time = get_utc_isoformat()
 
         _dual_write_old_table(session, unique_id, scientific_md)
 
@@ -354,7 +354,7 @@ def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
             scientific_metadata=md_dict,
         )
         attributes.flag_modified(new_md_obj, 'scientific_metadata')
-        resource.modification_time = get_tz_isoformat()
+        resource.modification_time = get_utc_isoformat()
 
         _dual_write_old_table(session, unique_id, md_dict)
 

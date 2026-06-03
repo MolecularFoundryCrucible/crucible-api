@@ -6,7 +6,7 @@ from sqlalchemy import func, join
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_tz_isoformat
+from app.general_utils import get_utc_isoformat
 from app.models.core_models import Instrument, Resource, ScientificMetadataBinary
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
@@ -126,7 +126,7 @@ def create_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instr
         db_instrument = Instrument(**instrument.model_dump())
         db_instrument.instrument_name = db_instrument.instrument_name.lower()
         session.add(db_instrument)
-        now = get_tz_isoformat()
+        now = get_utc_isoformat()
         ri = add_or_update(session, Resource,
                            where=(Resource.mfid == db_instrument.unique_id),
                            mfid=db_instrument.unique_id,
@@ -173,7 +173,7 @@ def update_instrument(
 
         ri = session.exec(select(Resource).where(Resource.mfid == instrument_unique_id)).one_or_none()
         if ri:
-            ri.modification_time = get_tz_isoformat()
+            ri.modification_time = get_utc_isoformat()
 
         session.add(instrument)
         session.commit()

@@ -4,7 +4,7 @@ from sqlalchemy import JSON, Column, BigInteger, func, Index, text, Text, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel,Relationship, Column
 from mfid import mfid
-from app.general_utils import get_tz_isoformat
+from app.general_utils import get_utc_isoformat
 
 
 def get_mfid_value():
@@ -82,7 +82,7 @@ class Sample(SQLModel, table = True):
     sample_type: Optional[str] = Field(index = True, default = None)
     owner_orcid: Optional[str]
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
-    timestamp: Optional[str] = Field(default_factory=get_tz_isoformat, alias="date_created")
+    timestamp: Optional[str] = Field(default_factory=get_utc_isoformat, alias="date_created")
     project_id: Optional[str] = None
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
@@ -124,7 +124,7 @@ class Dataset(SQLModel, table=True):
     instrument_id: Optional[int]  = Field(default = None, index = True, foreign_key = "instrument.id")
     source_folder: Optional[str] 
     instrument_name: Optional[str]
-    timestamp: Optional[str] = Field(default_factory=get_tz_isoformat)
+    timestamp: Optional[str] = Field(default_factory=get_utc_isoformat)
     size: Optional[int] = Field(sa_column=Column(BigInteger())) 
     data_format: Optional[str]
     measurement: Optional[str]
@@ -208,7 +208,7 @@ class ApiToken(SQLModel, table = True):
     access_group_id: str= Field(default = None)
     user_unique_id: str = Field(default = None, foreign_key = "user.orcid", index = True)
     token: str = Field(default = None, primary_key = True, index = True)
-    token_created: str = Field(default_factory=get_tz_isoformat)
+    token_created: str = Field(default_factory=get_utc_isoformat)
 
 
 class Project(SQLModel, table=True):
@@ -261,8 +261,8 @@ class Resource(SQLModel, table=True):
     __tablename__ = "idtype"
     mfid: str = Field(default=None, primary_key=True, index=True, alias="unique_id")
     resource_type: str = Field(default=None, alias="object_type")
-    creation_time: Optional[str] = Field(default_factory=get_tz_isoformat)
-    modification_time: Optional[str] = Field(default_factory=get_tz_isoformat)
+    creation_time: Optional[str] = Field(default_factory=get_utc_isoformat)
+    modification_time: Optional[str] = Field(default_factory=get_utc_isoformat)
     public: bool = Field(default=False)
     created_with_api_version: Optional[str] = Field(default=None)
     api_version_githash: Optional[str] = Field(default=None)
@@ -290,7 +290,7 @@ class DeletionRequest(SQLModel, table=True):
     requester_id: str = Field(index=True)
     reason: Optional[str] = Field(default=None)
     status: str = Field(default="pending", index=True)
-    request_time: Optional[str] = Field(default_factory=get_tz_isoformat)
+    request_time: Optional[str] = Field(default_factory=get_utc_isoformat)
     review_time: Optional[str] = Field(default=None)
     reviewer_id: Optional[str] = Field(default=None)
     reviewer_notes: Optional[str] = Field(default=None)

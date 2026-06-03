@@ -13,7 +13,7 @@ from app.models.core_models import Dataset, DeletionAuditLog, DeletionRequest, R
 from app.models.deletion import DeletionAuditLogRead, DeletionRequestRead
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_admin, require_groups
-from app.general_utils import get_tz_isoformat
+from app.general_utils import get_utc_isoformat
 
 router = APIRouter(tags=["deletion"])
 engine = get_engine()
@@ -126,7 +126,7 @@ def review_deletion_request(
         req.status = status
         req.reviewer_id = user_unique_id
         req.reviewer_notes = reviewer_notes
-        req.review_time = get_tz_isoformat()
+        req.review_time = get_utc_isoformat()
         session.add(req)
 
         # Snapshot fields before hard delete removes the rows
@@ -158,7 +158,7 @@ def review_deletion_request(
                 reviewer_id=user_unique_id,
                 reviewer_notes=reviewer_notes,
                 review_time=req.review_time,
-                deleted_at=get_tz_isoformat(),
+                deleted_at=get_utc_isoformat(),
             )
             session.add(audit)
             session.commit()  # persists both the status update and the audit row
@@ -225,8 +225,8 @@ def hard_delete_resource_route(
             request_time=None,
             reviewer_id=user_unique_id,
             reviewer_notes="force=True" if force else "approved request exists",
-            review_time=get_tz_isoformat(),
-            deleted_at=get_tz_isoformat(),
+            review_time=get_utc_isoformat(),
+            deleted_at=get_utc_isoformat(),
         )
         session.add(audit)
         session.commit()  # persist audit log before destroying rows

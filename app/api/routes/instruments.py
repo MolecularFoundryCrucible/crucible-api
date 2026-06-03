@@ -6,7 +6,7 @@ from sqlalchemy import func, join
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_tz_isoformat
+from app.general_utils import get_utc_isoformat
 from app.models.core_models import Instrument, Resource, ScientificMetadataBinary
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
@@ -121,11 +121,12 @@ def create_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instr
     '''
     Register a new instrument in the database.
     '''
+    user_unique_id, _ = auth_res
     with Session(engine) as session:
         db_instrument = Instrument(**instrument.model_dump())
         db_instrument.instrument_name = db_instrument.instrument_name.lower()
         session.add(db_instrument)
-        now = get_tz_isoformat()
+        now = get_utc_isoformat()
         ri = add_or_update(session, Resource,
                            where=(Resource.mfid == db_instrument.unique_id),
                            mfid=db_instrument.unique_id,
@@ -136,7 +137,7 @@ def create_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instr
         ri.modification_time = now
         session.commit()
         session.refresh(db_instrument)
-        background_tasks.add_task(write_record, db_instrument.unique_id, instrument_record(db_instrument, ri))
+        background_tasks.add_task(write_record, db_instrument.unique_id, instrument_record(db_instrument, ri), user_unique_id, "create")
         return InstrumentResponse.model_validate({
             **db_instrument.model_dump(),
             "creation_time": ri.creation_time,
@@ -154,6 +155,7 @@ def update_instrument(
     '''
     Partially update an instrument record. Only provided fields are modified.
     '''
+    user_unique_id, _ = auth_res
     with Session(engine) as session:
         instrument = session.exec(
             select(Instrument).where(Instrument.unique_id == instrument_unique_id)
@@ -171,12 +173,12 @@ def update_instrument(
 
         ri = session.exec(select(Resource).where(Resource.mfid == instrument_unique_id)).one_or_none()
         if ri:
-            ri.modification_time = get_tz_isoformat()
+            ri.modification_time = get_utc_isoformat()
 
         session.add(instrument)
         session.commit()
         session.refresh(instrument)
-        background_tasks.add_task(write_record, instrument.unique_id, instrument_record(instrument, ri))
+        background_tasks.add_task(write_record, instrument.unique_id, instrument_record(instrument, ri), user_unique_id, "update")
         return InstrumentResponse.model_validate({
             **instrument.model_dump(),
             "creation_time": ri.creation_time if ri else None,

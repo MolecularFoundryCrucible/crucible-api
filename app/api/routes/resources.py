@@ -7,7 +7,7 @@ from sqlalchemy.sql import and_, exists, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_tz_isoformat
+from app.general_utils import get_utc_isoformat
 from app.models.core_models import (
     Dataset, DatasetLink, DatasetSampleLink,
     DeletionRequest,
@@ -284,7 +284,7 @@ def read_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], 
 @router.post("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
 def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md: dict,
                              background_tasks: BackgroundTasks, overwrite: bool = False):
-    _, ag_list = auth_res
+    user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -315,20 +315,20 @@ def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
             scientific_metadata=scientific_md,
         )
         attributes.flag_modified(new_md_obj, 'scientific_metadata')
-        resource.modification_time = get_tz_isoformat()
+        resource.modification_time = get_utc_isoformat()
 
         _dual_write_old_table(session, unique_id, scientific_md)
 
         session.commit()
         session.refresh(new_md_obj)
-        background_tasks.add_task(write_metadata, unique_id, scientific_md)
+        background_tasks.add_task(write_metadata, unique_id, scientific_md, user_unique_id, "create")
         return new_md_obj
 
 
 @router.patch("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
 def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md_updates: dict,
                              background_tasks: BackgroundTasks):
-    _, ag_list = auth_res
+    user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -354,13 +354,13 @@ def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
             scientific_metadata=md_dict,
         )
         attributes.flag_modified(new_md_obj, 'scientific_metadata')
-        resource.modification_time = get_tz_isoformat()
+        resource.modification_time = get_utc_isoformat()
 
         _dual_write_old_table(session, unique_id, md_dict)
 
         session.commit()
         session.refresh(new_md_obj)
-        background_tasks.add_task(write_metadata, unique_id, md_dict)
+        background_tasks.add_task(write_metadata, unique_id, md_dict, user_unique_id, "update")
         return new_md_obj
 
 

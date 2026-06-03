@@ -158,7 +158,7 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
 
         session.commit()
         session.refresh(ds)
-        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri))
+        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri), user_unique_id, "create")
         return DatasetResponse.model_validate({
             **ds.model_dump(),
             "public": ri.public,
@@ -173,7 +173,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
     '''
     Partially update a dataset record. Only provided fields are modified.
     '''
-    _, ag_list = auth_res
+    user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -208,7 +208,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
         session.commit()
         session.refresh(upds)
-        background_tasks.add_task(write_record, upds.unique_id, dataset_record(upds, ri))
+        background_tasks.add_task(write_record, upds.unique_id, dataset_record(upds, ri), user_unique_id, "update")
         return DatasetResponse.model_validate({
             **upds.model_dump(),
             "public": ri.public if ri else upds.public,

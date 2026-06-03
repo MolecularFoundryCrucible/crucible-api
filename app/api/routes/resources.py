@@ -284,7 +284,7 @@ def read_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], 
 @router.post("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
 def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md: dict,
                              background_tasks: BackgroundTasks, overwrite: bool = False):
-    _, ag_list = auth_res
+    user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -321,14 +321,14 @@ def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
 
         session.commit()
         session.refresh(new_md_obj)
-        background_tasks.add_task(write_metadata, unique_id, scientific_md)
+        background_tasks.add_task(write_metadata, unique_id, scientific_md, user_unique_id, "create")
         return new_md_obj
 
 
 @router.patch("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
 def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md_updates: dict,
                              background_tasks: BackgroundTasks):
-    _, ag_list = auth_res
+    user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -360,7 +360,7 @@ def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
 
         session.commit()
         session.refresh(new_md_obj)
-        background_tasks.add_task(write_metadata, unique_id, md_dict)
+        background_tasks.add_task(write_metadata, unique_id, md_dict, user_unique_id, "update")
         return new_md_obj
 
 

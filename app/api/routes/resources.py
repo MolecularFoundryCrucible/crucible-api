@@ -283,7 +283,7 @@ def read_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], 
 
 @router.post("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
 def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md: dict,
-                             overwrite: bool = False, background_tasks: BackgroundTasks = None):
+                             background_tasks: BackgroundTasks, overwrite: bool = False):
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
@@ -327,7 +327,7 @@ def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
 
 @router.patch("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
 def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md_updates: dict,
-                             background_tasks: BackgroundTasks = None):
+                             background_tasks: BackgroundTasks):
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 

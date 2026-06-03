@@ -1,7 +1,8 @@
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+
+from app.general_utils import get_utc_isoformat
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ def _build_audit(blob, payload: dict, actor: str, operation: str) -> dict | None
         "revision": revision,
         "operation": operation,
         "actor": actor,
-        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
+        "timestamp": get_utc_isoformat(),
         "content_sha256": content_sha256,
         "_schema_version": _SCHEMA_VERSION,
     }

@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 import networkx as nx
 from networkx.readwrite import json_graph
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request
 from sqlalchemy import exists, func, join, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
@@ -46,6 +46,7 @@ from app.models.samples import SampleRead
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
+from app.utils.gcs_record_utils import write_record, dataset_record
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
@@ -96,7 +97,8 @@ def request_insitu_aggregation(dsid, auth_res: Annotated[tuple, Depends(authoriz
 
 @router.post("/datasets", response_model=DatasetResponse)
 async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
-                         dataset: DatasetCreate):
+                         dataset: DatasetCreate,
+                         background_tasks: BackgroundTasks):
     
     logger.info(f"Creating dataset: {dataset.unique_id}")
     dataset_details = dataset.model_dump()
@@ -156,7 +158,7 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
 
         session.commit()
         session.refresh(ds)
-        
+        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri))
         return DatasetResponse.model_validate({
             **ds.model_dump(),
             "public": ri.public,
@@ -166,7 +168,8 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
 
 
 @router.patch("/datasets/{dsid}", response_model=DatasetResponse)
-def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, updated_dataset: DatasetUpdate):
+def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, updated_dataset: DatasetUpdate,
+                   background_tasks: BackgroundTasks):
     '''
     Partially update a dataset record. Only provided fields are modified.
     '''
@@ -205,6 +208,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
         session.commit()
         session.refresh(upds)
+        background_tasks.add_task(write_record, upds.unique_id, dataset_record(upds, ri))
         return DatasetResponse.model_validate({
             **upds.model_dump(),
             "public": ri.public if ri else upds.public,

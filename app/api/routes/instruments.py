@@ -1,7 +1,7 @@
 from typing import Annotated, List, Optional, Union
 
 import os
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from sqlalchemy import func, join
 from sqlmodel import Session, select
 
@@ -12,6 +12,7 @@ from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentRe
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user
 from app.utils.sql_utils import add_or_update
+from app.utils.gcs_record_utils import write_record, instrument_record
 
 router = APIRouter(tags=["instruments"])
 engine = get_engine()
@@ -115,7 +116,8 @@ def read_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instrum
 
 
 @router.post("/instruments", response_model=InstrumentResponse)
-def create_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instrument: InstrumentCreate):
+def create_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instrument: InstrumentCreate,
+                      background_tasks: BackgroundTasks):
     '''
     Register a new instrument in the database.
     '''
@@ -134,6 +136,7 @@ def create_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instr
         ri.modification_time = now
         session.commit()
         session.refresh(db_instrument)
+        background_tasks.add_task(write_record, db_instrument.unique_id, instrument_record(db_instrument, ri))
         return InstrumentResponse.model_validate({
             **db_instrument.model_dump(),
             "creation_time": ri.creation_time,
@@ -146,6 +149,7 @@ def update_instrument(
     auth_res: Annotated[tuple, Depends(authorize_user)],
     instrument_unique_id: str,
     instrument_update: InstrumentUpdate,
+    background_tasks: BackgroundTasks,
 ):
     '''
     Partially update an instrument record. Only provided fields are modified.
@@ -172,6 +176,7 @@ def update_instrument(
         session.add(instrument)
         session.commit()
         session.refresh(instrument)
+        background_tasks.add_task(write_record, instrument.unique_id, instrument_record(instrument, ri))
         return InstrumentResponse.model_validate({
             **instrument.model_dump(),
             "creation_time": ri.creation_time if ri else None,

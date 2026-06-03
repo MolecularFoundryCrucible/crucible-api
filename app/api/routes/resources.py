@@ -1,6 +1,6 @@
 from typing import Annotated, List, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import desc, func, text, Text
 from sqlalchemy.orm import attributes, selectinload
 from sqlalchemy.sql import and_, exists, or_
@@ -23,6 +23,7 @@ from app.models.projects import ProjectWithLead
 from app.models.samples import SampleResponse
 from app.utils.auth_utils import authorize_user, require_read_access, require_write_access
 from app.utils.sql_utils import add_or_update, get_active_deletion_request
+from app.utils.gcs_record_utils import write_metadata
 
 
 router = APIRouter(tags=["resources"])
@@ -282,7 +283,7 @@ def read_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], 
 
 @router.post("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
 def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md: dict,
-                             overwrite: bool = False):
+                             background_tasks: BackgroundTasks, overwrite: bool = False):
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
@@ -320,11 +321,13 @@ def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
 
         session.commit()
         session.refresh(new_md_obj)
+        background_tasks.add_task(write_metadata, unique_id, scientific_md)
         return new_md_obj
 
 
 @router.patch("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
-def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md_updates: dict):
+def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md_updates: dict,
+                             background_tasks: BackgroundTasks):
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
@@ -357,6 +360,7 @@ def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
 
         session.commit()
         session.refresh(new_md_obj)
+        background_tasks.add_task(write_metadata, unique_id, md_dict)
         return new_md_obj
 
 

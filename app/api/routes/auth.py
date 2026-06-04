@@ -15,31 +15,28 @@ from app.api.dependencies import (
     get_orcid_client_id, get_orcid_client_secret, get_redirect_uri,
 )
 from app.models.core_models import AccessGroup, User
-from app.models.response_schemas import AccountInfo
-from app.utils.auth_utils import authorize_user, find_or_add_api_access
+from app.utils.auth_utils import find_or_add_api_access
 from app.utils.sql_utils import add_or_update
 from app.utils.user_utils import sql_add_user_to_access_group
+
+# Note: /account/* routes live in account.py
 
 router = APIRouter(tags=["auth"])
 engine = get_engine()
 
 
-@router.get("/login")
-def orcid_login() -> RedirectResponse:
-    """
-    Redirect the user to the ORCID login page for authentication.
+# ── Canonical routes ─────────────────────────────────────────────────────────
 
-    Returns:
-        RedirectResponse to the ORCID login page
-    """
+@router.get("/auth/login")
+def orcid_login() -> RedirectResponse:
+    """Redirect the user to the ORCID login page to begin authentication."""
     redirect_uri = get_redirect_uri()
     orcid_client_id = get_orcid_client_id()
     orcid_auth_url = f"https://orcid.org/oauth/authorize?response_type=code&redirect_uri={redirect_uri}&client_id={orcid_client_id}&scope=openid&nonce=whatever"
-    response = RedirectResponse(orcid_auth_url)
-    return response
+    return RedirectResponse(orcid_auth_url)
 
 
-@router.get("/auth")
+@router.get("/auth/callback")
 def redirect_exchange(request: Request, code: str, state: str = None):
     """
     Exchange the ORCID authorization code for an access token and user information.
@@ -58,7 +55,7 @@ def redirect_exchange(request: Request, code: str, state: str = None):
     orcid_client_id = get_orcid_client_id()
     orcid_client_secret = get_orcid_client_secret()
 
-    token = code_for_token_exchange(code, orcid_client_id, orcid_client_secret, f"{api_url}/auth")
+    token = code_for_token_exchange(code, orcid_client_id, orcid_client_secret, f"{api_url}/auth/callback")
     user_from_orcid = requests.get(
         url="https://orcid.org/oauth/userinfo",
         headers={"Authorization": f"Bearer {token}"}
@@ -86,20 +83,11 @@ def redirect_exchange(request: Request, code: str, state: str = None):
     return response
 
 
-@router.get("/user_apikey")
+@router.get("/auth/apikey")
 def get_apikey(request: Request):
-    """
-    Get the user's API key based on their authentication token.
-
-    Args:
-        request: Request object containing the HTTP request
-
-    Returns:
-        API key if the user is authenticated, redirects to login page otherwise
-    """
+    """Exchange a valid ORCID browser session cookie for a Crucible API key."""
     from app.utils.auth_utils import decode_token, find_or_add_api_access
 
-    # if the user is already logged in; get the api key from cookies
     api_path = get_api_path()
     user_info_jwt = request.cookies.get("crucible_user_token")
 
@@ -258,52 +246,46 @@ document.getElementById('email').addEventListener('keydown', function(e) {{
 </html>"""
 
 
-@router.get("/regenerate_apikey")
+@router.post("/auth/apikey/regenerate")
 def regenerate_apikey(request: Request):
-    """
-    Regenerate the user's API key based on their authentication token.
-
-    Args:
-        request: Request object containing the HTTP request
-
-    Returns:
-        New API key if the user is authenticated, redirects to login page otherwise
-    """
-    from app.utils.auth_utils import decode_token, find_or_add_api_access
+    """Regenerate the caller's API key via browser ORCID session. Requires cookie auth."""
+    from app.utils.auth_utils import decode_token
 
     api_path = get_api_path()
     user_info_jwt = request.cookies.get("crucible_user_token")
 
     if user_info_jwt is None:
-        response = RedirectResponse(f"/{api_path}/login")
-        response.set_cookie("after_login_return_to_page", value=f"/{api_path}/regenerate_apikey", httponly=True, secure=True)
+        response = RedirectResponse(f"/{api_path}/auth/login")
+        response.set_cookie("after_login_return_to_page", value=f"/{api_path}/auth/apikey", httponly=True, secure=True)
         return response
 
     user_info = decode_token(user_info_jwt)
     orcid = user_info["orcid"]
     crucible_token = find_or_add_api_access(orcid, engine, regenerate=True)
-
-    return f"Your New Crucible APIkey is: {crucible_token}"
-
-
-@router.get("/account", response_model=AccountInfo)
-def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
-    """Use API key to get basic info about your access in Crucible"""
-    user_unique_id, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-    with Session(engine) as session:
-        is_user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-        user_info = is_user.model_dump(exclude={"projects", "accessgroups"}) if is_user else {}
-
-    return AccountInfo(
-        user_unique_id=user_unique_id,
-        access_group_ids=ag_ids,
-        user_info=user_info
-    )
+    return {"api_key": crucible_token}
 
 
-@router.get("/account/apikey")
-def get_own_apikey(auth_res: Annotated[tuple, Depends(authorize_user)]):
-    """Returns the caller's own crucible API key."""
-    user_unique_id, _ = auth_res
-    return {"api_key": find_or_add_api_access(user_unique_id, engine)}
+# ── Deprecated aliases (kept for backward compatibility) ─────────────────────
+
+@router.get("/login", deprecated=True, include_in_schema=True)
+def orcid_login_deprecated() -> RedirectResponse:
+    """Deprecated: use GET /auth/login."""
+    return orcid_login()
+
+
+@router.get("/auth", deprecated=True, include_in_schema=True)
+def redirect_exchange_deprecated(request: Request, code: str, state: str = None):
+    """Deprecated: use GET /auth/callback."""
+    return redirect_exchange(request, code, state)
+
+
+@router.get("/user_apikey", deprecated=True, include_in_schema=True)
+def get_apikey_deprecated(request: Request):
+    """Deprecated: use GET /auth/apikey."""
+    return get_apikey(request)
+
+
+@router.get("/regenerate_apikey", deprecated=True, include_in_schema=True)
+def regenerate_apikey_deprecated(request: Request):
+    """Deprecated: use POST /auth/apikey/regenerate."""
+    return regenerate_apikey(request)

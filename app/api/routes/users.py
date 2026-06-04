@@ -94,9 +94,9 @@ def resolve_users(
         return results
 
 
-@router.get("/users/me", response_model=UserRead)
+@router.get("/users/me", response_model=UserRead, deprecated=True, include_in_schema=True)
 def get_current_user(auth_res: Annotated[tuple, Depends(authorize_user)]):
-    '''Returns the authenticated user's profile.'''
+    '''Deprecated: use GET /account/profile.'''
     user_unique_id, _ = auth_res
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
@@ -105,9 +105,9 @@ def get_current_user(auth_res: Annotated[tuple, Depends(authorize_user)]):
         return user
 
 
-@router.patch("/users/me", response_model=UserRead)
+@router.patch("/users/me", response_model=UserRead, deprecated=True, include_in_schema=True)
 def update_current_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_update: UserUpdate):
-    '''Partially update the authenticated user's own profile.'''
+    '''Deprecated: use PATCH /account/profile.'''
     user_unique_id, _ = auth_res
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()

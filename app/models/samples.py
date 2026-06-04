@@ -6,7 +6,12 @@ from app.models.links import LinkedResource
 
 
 class SampleCreate(SQLModel):
-    '''Fields accepted when registering a new sample.'''
+    '''Fields accepted when registering a new sample.
+
+    Provide unique_id to register a sample under a pre-assigned ID; omit it to
+    create a new one with an auto-generated MFID.
+    '''
+    unique_id: Optional[str] = None
     sample_name: str
     sample_type: Optional[str] = None
     project_id: Optional[str] = None

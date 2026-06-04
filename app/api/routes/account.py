@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.models.core_models import ApiToken, User
-from app.models.response_schemas import AccountInfo
+from app.models.response_schemas import AccountInfo, ApiKeyRead, ApiKeyVerify
 from app.models.users import AccountProfileUpdate, UserRead
 from app.utils.auth_utils import authorize_user
 
@@ -21,7 +21,7 @@ def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-        user_info = UserRead.model_validate(user).model_dump() if user else {}
+        user_info = UserRead.model_validate(user) if user else None
     return AccountInfo(user_unique_id=user_unique_id, access_group_ids=ag_ids, user_info=user_info)
 
 
@@ -52,7 +52,7 @@ def update_account_profile(auth_res: Annotated[tuple, Depends(authorize_user)], 
         return user
 
 
-@router.get("/account/apikey")
+@router.get("/account/apikey", response_model=ApiKeyRead)
 def get_account_apikey(auth_res: Annotated[tuple, Depends(authorize_user)]):
     """Return the authenticated caller's current API key."""
     user_unique_id, _ = auth_res
@@ -63,10 +63,10 @@ def get_account_apikey(auth_res: Annotated[tuple, Depends(authorize_user)]):
         ).first()
         if token is None:
             raise HTTPException(status_code=404, detail="No API key found")
-        return {"api_key": token.token}
+        return ApiKeyRead(api_key=token.token)
 
 
-@router.get("/account/verify")
+@router.get("/account/verify", response_model=ApiKeyVerify)
 def verify_account_apikey(auth_res: Annotated[tuple, Depends(authorize_user)]):
     """
     Verify the caller's API key and return its validity and expiry date.
@@ -88,8 +88,8 @@ def verify_account_apikey(auth_res: Annotated[tuple, Depends(authorize_user)]):
             created_dt = created_at
 
         expires_dt = created_dt + timedelta(days=365)
-        return {
-            "valid": True,
-            "created_at": created_dt.date().isoformat(),
-            "expires_at": expires_dt.date().isoformat(),
-        }
+        return ApiKeyVerify(
+            valid=True,
+            created_at=created_dt.date().isoformat(),
+            expires_at=expires_dt.date().isoformat(),
+        )

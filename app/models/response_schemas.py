@@ -1,6 +1,8 @@
 from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional
 
+from app.models.users import UserRead
+
 class DatasetResponse(BaseModel):
     id: int
     unique_id: str
@@ -39,4 +41,14 @@ class DatasetSampleLinkResponse(BaseModel):
 class AccountInfo(BaseModel):
     user_unique_id: str
     access_group_ids: List[int]
-    user_info: dict
+    user_info: Optional[UserRead] = None
+
+
+class ApiKeyRead(BaseModel):
+    api_key: str
+
+
+class ApiKeyVerify(BaseModel):
+    valid: bool
+    created_at: str
+    expires_at: str

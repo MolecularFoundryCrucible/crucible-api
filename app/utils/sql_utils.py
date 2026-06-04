@@ -128,6 +128,19 @@ def get_active_deletion_request(session, resource_id: str):
     ).first()
 
 
+def deletion_filter_for(resource_model):
+    """
+    Returns a SQLAlchemy filter expression that excludes resources with an active
+    (pending or approved) deletion request. Apply with .where(deletion_filter_for(Model)).
+    """
+    from sqlalchemy import exists
+    from app.models.core_models import DeletionRequest
+    return ~exists().where(
+        DeletionRequest.resource_id == resource_model.unique_id,
+        DeletionRequest.status.in_(["pending", "approved"])
+    )
+
+
 def generate_kw_query(session, base_query, keyword_filter):
     from app.models.core_models import Dataset, DatasetKeywordLink, Keyword
 

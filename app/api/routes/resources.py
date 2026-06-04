@@ -22,7 +22,7 @@ from app.models.links import LinkedResource
 from app.models.projects import ProjectWithLead
 from app.models.samples import SampleResponse
 from app.utils.auth_utils import authorize_user, require_read_access, require_write_access
-from app.utils.sql_utils import add_or_update, get_active_deletion_request
+from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request
 from app.utils.gcs_record_utils import write_metadata
 
 
@@ -32,22 +32,28 @@ engine = get_engine()
 
 def _fetch_links(session, resource_type: str, entity) -> List[LinkedResource]:
     results: List[LinkedResource] = []
+    ds_del = deletion_filter_for(Dataset)
+    s_del = deletion_filter_for(Sample)
+
     if resource_type == "dataset":
         parents = session.exec(
             select(Dataset).join(DatasetLink, DatasetLink.parent_dataset_id == Dataset.id)
             .where(DatasetLink.child_dataset_id == entity.id)
+            .where(ds_del)
         ).all()
         results += [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="parent") for d in parents]
 
         children = session.exec(
             select(Dataset).join(DatasetLink, DatasetLink.child_dataset_id == Dataset.id)
             .where(DatasetLink.parent_dataset_id == entity.id)
+            .where(ds_del)
         ).all()
         results += [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="child") for d in children]
 
         samples = session.exec(
             select(Sample).join(DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)
             .where(DatasetSampleLink.dataset_id == entity.id)
+            .where(s_del)
         ).all()
         results += [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="associated") for s in samples]
 
@@ -55,18 +61,21 @@ def _fetch_links(session, resource_type: str, entity) -> List[LinkedResource]:
         parents = session.exec(
             select(Sample).join(SampleLink, SampleLink.parent_sample_id == Sample.id)
             .where(SampleLink.sample_id == entity.id)
+            .where(s_del)
         ).all()
         results += [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="parent") for s in parents]
 
         children = session.exec(
             select(Sample).join(SampleLink, SampleLink.sample_id == Sample.id)
             .where(SampleLink.parent_sample_id == entity.id)
+            .where(s_del)
         ).all()
         results += [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="child") for s in children]
 
         datasets = session.exec(
             select(Dataset).join(DatasetSampleLink, DatasetSampleLink.dataset_id == Dataset.id)
             .where(DatasetSampleLink.sample_id == entity.id)
+            .where(ds_del)
         ).all()
         results += [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="associated") for d in datasets]
 

@@ -57,6 +57,22 @@ def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Req
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
+@router.get("/users/by-username/{username}", response_model=UserRead)
+def get_user_by_username(username: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''Look up a user by username. Admin or the matched user themselves.'''
+    user_unique_id, ag_list = auth_res
+
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.username == username)).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if user_unique_id != user.unique_id:
+            require_admin(ag_list)
+
+        return user
+
+
 @router.get("/users/{orcid}", response_model=Union[None, UserRead])
 def read_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
     '''

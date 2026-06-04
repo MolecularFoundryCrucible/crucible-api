@@ -14,12 +14,14 @@ from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, Project, Sample, User,
     UserAccessGroupLink, UserProjectLink,
 )
-from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_admin, require_groups
+from app.utils.auth_utils import authorize_user, require_admin, require_groups
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.models.users import AccountProfileUpdate, UserCreate, UserRead, UserUpdate
+from app.models.response_schemas import ApiKeyRead
+from app.models.core_models import ApiToken
 from app.models.projects import ProjectWithLead
 from app.models.access_groups import AccessGroupRead
 
@@ -154,9 +156,9 @@ def read_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
         return users
 
 
-@router.get("/users/{orcid}/apikey")
+@router.get("/users/{orcid}/apikey", response_model=ApiKeyRead)
 def get_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    '''Returns the crucible API key for the given user. Admin only.'''
+    '''Returns the current API key for the given user. Admin only. Returns 404 if no key exists.'''
     _, ag_list = auth_res
     require_admin(ag_list)
 
@@ -165,7 +167,14 @@ def get_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_use
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-    return {"api_key": find_or_add_api_access(orcid, engine)}
+        token = session.exec(
+            select(ApiToken).where(ApiToken.user_unique_id == orcid)
+            .order_by(ApiToken.token_created.desc())
+        ).first()
+        if token is None:
+            raise HTTPException(status_code=404, detail="No API key found for this user")
+
+        return ApiKeyRead(api_key=token.token)
 
 
 @router.post("/users", response_model=UserRead)

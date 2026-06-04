@@ -1,6 +1,7 @@
-from typing import Any, Optional
-from pydantic import Field, model_validator
+from typing import Optional
+from pydantic import Field, field_validator
 from sqlmodel import SQLModel
+from app.utils.user_utils import validate_username_format
 
 
 class UserCreate(SQLModel):
@@ -11,7 +12,15 @@ class UserCreate(SQLModel):
     last_name: str
     unique_id: str = Field(validation_alias="orcid")
     email: Optional[str] = None
+    username: Optional[str] = None
     is_service_account: Optional[bool] = False
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def check_username(cls, v):
+        if v is None:
+            return v
+        return validate_username_format(str(v))
 
 
 class UserRead(SQLModel):
@@ -19,6 +28,7 @@ class UserRead(SQLModel):
     last_name: str
     email: Optional[str] = None
     unique_id: str
+    username: Optional[str] = None
     is_service_account: Optional[bool] = False
 
 
@@ -27,4 +37,12 @@ class UserUpdate(SQLModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: Optional[str] = None
+    username: Optional[str] = None
     is_service_account: Optional[bool] = None
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def check_username(cls, v):
+        if v is None:
+            return v
+        return validate_username_format(str(v))

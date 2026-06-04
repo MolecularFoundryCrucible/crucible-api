@@ -11,7 +11,7 @@ from sqlmodel import Session, select, col
 from app.api.dependencies import get_engine
 from app.general_utils import is_orcid
 from app.models.core_models import (
-    AccessGroup, Dataset, ResourceACL, Project, User,
+    AccessGroup, Dataset, ResourceACL, Project, Sample, User,
     UserAccessGroupLink, UserProjectLink,
 )
 from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_admin, require_groups
@@ -55,6 +55,89 @@ def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Req
             search_cmd.order_by(User.last_name, User.first_name).offset(offset).limit(limit)
         ).all()
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+
+
+@router.post("/users/resolve", response_model=Dict[str, UserRead])
+def resolve_users(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    orcids: Optional[List[str]] = Body(default=None),
+    usernames: Optional[List[str]] = Body(default=None),
+    emails: Optional[List[str]] = Body(default=None),
+):
+    '''
+    Batch-resolve users by any mix of ORCIDs, usernames, or emails.
+    Returns a dict keyed by ORCID: {orcid: UserRead}.
+    '''
+    _, ag_list = auth_res
+    require_admin(ag_list)
+
+    if not orcids and not usernames and not emails:
+        return {}
+
+    with Session(engine) as session:
+        results: Dict[str, UserRead] = {}
+
+        if orcids:
+            for user in session.exec(select(User).where(User.unique_id.in_(orcids))).all():
+                results[user.unique_id] = user
+
+        if usernames:
+            for user in session.exec(select(User).where(User.username.in_(usernames))).all():
+                if user.unique_id not in results:
+                    results[user.unique_id] = user
+
+        if emails:
+            for user in session.exec(select(User).where(User.email.in_(emails))).all():
+                if user.unique_id not in results:
+                    results[user.unique_id] = user
+
+        return results
+
+
+@router.get("/users/me", response_model=UserRead)
+def get_current_user(auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''Returns the authenticated user's profile.'''
+    user_unique_id, _ = auth_res
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
+
+
+@router.patch("/users/me", response_model=UserRead)
+def update_current_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_update: UserUpdate):
+    '''Partially update the authenticated user's own profile.'''
+    user_unique_id, _ = auth_res
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        update_data = user_update.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(user, key, value)
+
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user
+
+
+@router.get("/users/by-username/{username}", response_model=UserRead)
+def get_user_by_username(username: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''Look up a user by username. Admin or the matched user themselves.'''
+    user_unique_id, ag_list = auth_res
+
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.username == username)).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if user_unique_id != user.unique_id:
+            require_admin(ag_list)
+
+        return user
 
 
 @router.get("/users/{orcid}", response_model=Union[None, UserRead])
@@ -181,6 +264,30 @@ def read_user_datasets(orcid: str, auth_res: Annotated[tuple, Depends(authorize_
         ).all()
 
         return [ds.unique_id for ds in ds_list]
+
+
+@router.get("/users/{orcid}/samples", response_model=List[str])
+def read_user_samples(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''Returns a list of sample MFIDs the user has access to via their access groups.'''
+    _, ag_list = auth_res
+    require_groups(ag_list, {'admin', orcid})
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        ag = session.exec(
+            select(UserAccessGroupLink)
+            .select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id))
+            .where(User.unique_id == orcid)
+        ).all()
+        ag_ids = [x.accessgroup_id for x in ag]
+        samples = session.exec(
+            select(Sample)
+            .select_from(join(ResourceACL, Sample, ResourceACL.mfid == Sample.unique_id))
+            .where(ResourceACL.accessgroup_id.in_(ag_ids))
+        ).all()
+        return [s.unique_id for s in samples]
 
 
 @router.get("/users/{orcid}/datasets/{dsid}", response_model=Dict)

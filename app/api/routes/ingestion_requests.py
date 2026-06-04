@@ -1,7 +1,7 @@
 from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import join
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, join
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -11,7 +11,8 @@ from app.models.core_models import (
     IngestionRequest,
     ResourceACL,
 )
-from app.utils.auth_utils import authorize_user, require_groups
+from app.models.pagination import PaginatedResponse
+from app.utils.auth_utils import authorize_user, require_admin, require_groups
 from app.utils.sql_utils import only_update
 
 router = APIRouter(tags=["ingestion_requests"])
@@ -38,21 +39,24 @@ def _get_ir_with_read_access(session: Session, reqid: int, ag_ids: list) -> Inge
     return ir
 
 
-@router.get("/ingestion_requests", response_model=List[IngestionRequest])
+@router.get("/ingestion_requests", response_model=PaginatedResponse[IngestionRequest])
 def list_ingestion_requests(
     auth_res: Annotated[tuple, Depends(authorize_user)],
     file_id: Optional[str] = None,
     dataset_id: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
 ):
     '''
-    List ingestion requests. Either file_id or dataset_id must be provided.
-    Requires read access to the parent dataset.
+    List ingestion requests, paginated. Requires file_id or dataset_id for non-admins.
+    Admins may omit both filters to list all ingestion requests.
     '''
-    if file_id is None and dataset_id is None:
-        raise HTTPException(status_code=400, detail="Either file_id or dataset_id must be provided")
-
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
+    is_admin = any(ag.group_name == "admin" for ag in ag_list)
+
+    if file_id is None and dataset_id is None and not is_admin:
+        raise HTTPException(status_code=400, detail="Either file_id or dataset_id must be provided")
 
     with Session(engine) as session:
         if file_id is not None:
@@ -72,11 +76,9 @@ def list_ingestion_requests(
             if ds is None:
                 raise HTTPException(status_code=403, detail="Access denied")
 
-            return session.exec(
-                select(IngestionRequest).where(IngestionRequest.file_mfid == af.mfid)
-            ).all()
+            query = select(IngestionRequest).where(IngestionRequest.file_mfid == af.mfid)
 
-        else:
+        elif dataset_id is not None:
             ds = session.exec(
                 select(Dataset)
                 .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
@@ -87,9 +89,16 @@ def list_ingestion_requests(
             if ds is None:
                 raise HTTPException(status_code=404, detail="Dataset not found or access denied")
 
-            return session.exec(
-                select(IngestionRequest).where(IngestionRequest.dataset_mfid == ds.unique_id)
-            ).all()
+            query = select(IngestionRequest).where(IngestionRequest.dataset_mfid == ds.unique_id)
+
+        else:
+            query = select(IngestionRequest)
+
+        total = session.exec(select(func.count()).select_from(query.subquery())).one()
+        items = session.exec(
+            query.order_by(IngestionRequest.id.desc()).offset(offset).limit(limit)
+        ).all()
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
 @router.get("/ingestion_requests/{reqid}", response_model=IngestionRequest)

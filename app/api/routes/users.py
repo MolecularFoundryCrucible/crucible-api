@@ -11,7 +11,7 @@ from sqlmodel import Session, select, col
 from app.api.dependencies import get_engine
 from app.general_utils import is_orcid
 from app.models.core_models import (
-    AccessGroup, Dataset, ResourceACL, Project, User,
+    AccessGroup, Dataset, ResourceACL, Project, Sample, User,
     UserAccessGroupLink, UserProjectLink,
 )
 from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_admin, require_groups
@@ -264,6 +264,30 @@ def read_user_datasets(orcid: str, auth_res: Annotated[tuple, Depends(authorize_
         ).all()
 
         return [ds.unique_id for ds in ds_list]
+
+
+@router.get("/users/{orcid}/samples", response_model=List[str])
+def read_user_samples(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''Returns a list of sample MFIDs the user has access to via their access groups.'''
+    _, ag_list = auth_res
+    require_groups(ag_list, {'admin', orcid})
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        ag = session.exec(
+            select(UserAccessGroupLink)
+            .select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id))
+            .where(User.unique_id == orcid)
+        ).all()
+        ag_ids = [x.accessgroup_id for x in ag]
+        samples = session.exec(
+            select(Sample)
+            .select_from(join(ResourceACL, Sample, ResourceACL.mfid == Sample.unique_id))
+            .where(ResourceACL.accessgroup_id.in_(ag_ids))
+        ).all()
+        return [s.unique_id for s in samples]
 
 
 @router.get("/users/{orcid}/datasets/{dsid}", response_model=Dict)

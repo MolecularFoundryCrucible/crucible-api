@@ -1,3 +1,4 @@
+from datetime import datetime, date, timedelta
 from typing import Annotated, Dict, List, Optional, Union
 import logging
 
@@ -20,7 +21,7 @@ from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.models.users import AccountProfileUpdate, UserCreate, UserRead, UserUpdate
-from app.models.response_schemas import ApiKeyRead
+from app.models.response_schemas import ApiKeyRead, ApiKeyVerify
 from app.models.core_models import ApiToken
 from app.models.projects import ProjectWithLead
 from app.models.access_groups import AccessGroupRead
@@ -175,6 +176,40 @@ def get_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_use
             raise HTTPException(status_code=404, detail="No API key found for this user")
 
         return ApiKeyRead(api_key=token.token)
+
+
+@router.get("/users/{orcid}/apikey/verify", response_model=ApiKeyVerify)
+def verify_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''Returns validity and expiry info for the given user's API key. Admin only.'''
+    _, ag_list = auth_res
+    require_admin(ag_list)
+
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        one_year_ago = date.today() - timedelta(days=365)
+        token = session.exec(
+            select(ApiToken).where(ApiToken.user_unique_id == orcid)
+            .order_by(ApiToken.token_created.desc())
+        ).first()
+        if token is None:
+            raise HTTPException(status_code=404, detail="No API key found for this user")
+
+        created_at = token.token_created
+        if isinstance(created_at, str):
+            created_dt = datetime.strptime(created_at, "%Y-%m-%d")
+        else:
+            created_dt = created_at
+
+        expires_dt = created_dt + timedelta(days=365)
+        valid = created_dt.date() >= one_year_ago
+        return ApiKeyVerify(
+            valid=valid,
+            created_at=created_dt.date().isoformat(),
+            expires_at=expires_dt.date().isoformat(),
+        )
 
 
 @router.post("/users", response_model=UserRead)

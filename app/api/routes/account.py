@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.api.dependencies import get_engine
 from app.models.core_models import ApiToken, User
 from app.models.response_schemas import AccountInfo
-from app.models.users import UserRead, UserUpdate
+from app.models.users import AccountProfileUpdate, UserRead
 from app.utils.auth_utils import authorize_user
 
 router = APIRouter(tags=["account"])
@@ -37,7 +37,7 @@ def get_account_profile(auth_res: Annotated[tuple, Depends(authorize_user)]):
 
 
 @router.patch("/account/profile", response_model=UserRead)
-def update_account_profile(auth_res: Annotated[tuple, Depends(authorize_user)], user_update: UserUpdate):
+def update_account_profile(auth_res: Annotated[tuple, Depends(authorize_user)], user_update: AccountProfileUpdate):
     """Partially update the authenticated caller's own profile."""
     user_unique_id, _ = auth_res
     with Session(engine) as session:

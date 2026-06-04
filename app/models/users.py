@@ -32,8 +32,23 @@ class UserRead(SQLModel):
     is_service_account: Optional[bool] = False
 
 
+class AccountProfileUpdate(SQLModel):
+    '''Self-service profile update. Does not allow changing is_service_account.'''
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
+    username: Optional[str] = None
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def check_username(cls, v):
+        if v is None:
+            return v
+        return validate_username_format(str(v))
+
+
 class UserUpdate(SQLModel):
-    '''Partial update schema for User. Only provided fields are modified.'''
+    '''Admin partial update schema for User. All fields may be modified.'''
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: Optional[str] = None

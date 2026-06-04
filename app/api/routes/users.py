@@ -19,7 +19,7 @@ from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
-from app.models.users import UserCreate, UserRead, UserUpdate
+from app.models.users import AccountProfileUpdate, UserCreate, UserRead, UserUpdate
 from app.models.projects import ProjectWithLead
 from app.models.access_groups import AccessGroupRead
 
@@ -106,7 +106,7 @@ def get_current_user(auth_res: Annotated[tuple, Depends(authorize_user)]):
 
 
 @router.patch("/users/me", response_model=UserRead, deprecated=True, include_in_schema=True)
-def update_current_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_update: UserUpdate):
+def update_current_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_update: AccountProfileUpdate):
     '''Deprecated: use PATCH /account/profile.'''
     user_unique_id, _ = auth_res
     with Session(engine) as session:

@@ -713,12 +713,10 @@ def delete_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: 
         return {"message": f"Thumbnail {thumbnail_id} deleted from dataset {dsid}"}
 
 
-@router.get("/datasets/{dsid}/files", response_model=PaginatedResponse[AssociatedFileRead])
-def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
-                          limit: int = Query(default=100, ge=1, le=1000),
-                          offset: int = Query(default=0, ge=0)):
+@router.get("/datasets/{dsid}/files", response_model=List[AssociatedFileRead])
+def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
     '''
-    Returns a paginated list of the files associated with the dataset ID provided.
+    Returns a list of the files associated with the dataset ID provided.
     '''
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -729,15 +727,12 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
             raise HTTPException(status_code=404, detail="Dataset not found")
         require_read_access(session, dsid, ag_ids)
 
-        query = (
+        files = session.exec(
             select(AssociatedFile)
             .where(AssociatedFile.dataset_id == ds.id)
             .options(selectinload(AssociatedFile.dataset))
-        )
-        total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        files = session.exec(query.offset(offset).limit(limit)).all()
-        items = [AssociatedFileRead.model_validate(f, update={"dataset_mfid": f.dataset.unique_id}) for f in files]
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+        ).all()
+        return [AssociatedFileRead.model_validate(f, update={"dataset_mfid": f.dataset.unique_id}) for f in files]
 
 
 @router.post("/datasets/{dsid}/files", response_model=AssociatedFileRead)

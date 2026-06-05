@@ -183,18 +183,15 @@ def read_access_filter_list(resource_model, ag_ids: list):
     deletion_filter: excludes resources with a pending or approved deletion request.
     """
     from sqlalchemy import exists
-    from app.models.core_models import Resource, ResourceACL, DeletionRequest
+    from app.models.core_models import Resource, ResourceACL
+    from app.utils.sql_utils import deletion_filter_for
 
     acl_subquery = exists().where(
         ResourceACL.mfid == resource_model.unique_id,
         ResourceACL.accessgroup_id.in_(ag_ids)
     )
     auth_filter = (Resource.public == True) | acl_subquery
-    deletion_filter = ~exists().where(
-        DeletionRequest.resource_id == resource_model.unique_id,
-        DeletionRequest.status.in_(["pending", "approved"])
-    )
-    return auth_filter, deletion_filter
+    return auth_filter, deletion_filter_for(resource_model)
 
 
 def require_write_access(session, ag_ids: list, mfids: list):

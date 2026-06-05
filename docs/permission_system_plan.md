@@ -146,10 +146,13 @@ A user can only manage ACL entries at or below their own effective role:
 
 ## Resource Creation
 
-At creation, two ACL entries are added:
+At creation:
 
-1. Owner's ORCID group with `owner` role
-2. Project group(s) — members get access at their project role. If no project is specified, the resource goes to the creator's personal project.
+1. Owner's ORCID group is added to `resourceacl` with `owner` role
+2. The creator's personal project is always added to `resource_project_link`
+3. Any additional projects specified at creation are also added to `resource_project_link`, and their project group gets an ACL entry
+
+This means your personal workspace always reflects everything you created, regardless of which formal projects the resource also belongs to.
 
 ---
 

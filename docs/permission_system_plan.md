@@ -144,21 +144,35 @@ A user can only manage ACL entries at or below their own effective role:
 
 ---
 
-## Resource Creation
+## Resources
 
-At creation:
+In Crucible, datasets, samples, instruments, and projects are all resources — each has an MFID, an owner, and ACL entries. The same permission system applies to all of them.
 
-1. Owner's ORCID group is added to `resourceacl` with `owner` role
-2. The creator's personal project is always added to `resource_project_link`
-3. Any additional projects specified at creation are also added to `resource_project_link`, and their project group gets an ACL entry
+Every resource has:
+- An **owner**: the user whose ORCID group has an ACL entry with `owner` role
+- **ACL entries** in `resourceacl`: groups that can access the resource and at what role
+- A **project membership**: which project(s) the resource belongs to (see below)
 
-This means your personal workspace always reflects everything you created, regardless of which formal projects the resource also belongs to.
+Projects and instruments are resources in their own right — they have owners, ACL entries, and go through the same permission checks as datasets and samples.
 
 ---
 
-## Multi-Project Resources
+## Projects as a Resource
 
-A resource can belong to more than one project. The single `project_id` field on `Dataset` and `Sample` is replaced by a relationship table:
+A project has an MFID (its `project_id`) and lives in the `resource` table like any other resource. It has an owner (the project lead), and its own ACL entries controlling who can view or edit the project's metadata.
+
+Separately, each project has a **project group** (named after the `project_id`) that controls access to resources *within* the project. These are distinct:
+
+- ACL entry on the project resource → who can view/edit the project itself
+- Project group membership → who has access to the project's datasets and samples
+
+---
+
+## Multi-Project Resources and `resource_project_link`
+
+> **To be implemented** — `resource_project_link` does not exist yet. Currently `Dataset` and `Sample` each have a plain `project_id` string column.
+
+A resource can belong to more than one project. The `project_id` column on `Dataset` and `Sample` is replaced by a relationship table:
 
 ```sql
 CREATE TABLE resource_project_link (
@@ -174,16 +188,26 @@ Filtering by project becomes a join. ACL entries are added for each linked proje
 
 ## Personal Projects
 
-Every user gets a personal project created at registration. Resources with no project specified go there.
+Every user gets a personal project created at registration. Resources created by that user are automatically linked to it via `resource_project_link`.
 
 - `Project.is_personal = True` distinguishes personal from formal projects
 - Not shown in `GET /projects` for other users
 - Access group is the user's ORCID group — no extra setup needed
-- `project_id` is the user's ORCID — stable, never shown to users directly
+- `project_id` is the user's ORCID — stable, never shown directly to users
 - `title` (e.g. "Fabrice's workspace") is what the UI displays
 - Cannot be deleted
 
-This makes `project_id` always set, enabling a non-null FK constraint.
+---
+
+## Resource Creation
+
+At creation:
+
+1. Owner's ORCID group is added to `resourceacl` with `owner` role
+2. The creator's personal project is always added to `resource_project_link`
+3. Any additional projects specified at creation are also linked, and their project group gets an ACL entry
+
+Your personal workspace always reflects everything you created, regardless of which formal projects the resource also belongs to.
 
 ---
 
@@ -213,7 +237,7 @@ The API always operates on ORCIDs internally. Usernames and emails are resolved 
 
 Primary mechanism: project groups. Adding a user to a project gives them access to all project resources at their role level.
 
-Per-resource sharing is available as an escape hatch: an owner or project admin can share a single resource with someone outside the project. This adds one ACL entry pointing to the recipient's ORCID group.
+Per-resource sharing will also be available: an owner or project admin can share a single resource with someone outside the project. This adds one ACL entry pointing to the recipient's ORCID group.
 
 ```
 POST /resources/{id}/share
@@ -245,19 +269,6 @@ Routes:
 
 ---
 
-## Ownership Transfer
-
-> **Deferred.**
-
-When an owner leaves, their resources remain under their ORCID group. Only the owner can modify that ACL entry; platform admins have no route to reassign it.
-
-Open questions:
-- Who can initiate a transfer — platform admins only, or also project admins?
-- Does the previous owner retain a lower role after transfer?
-- Can ownership transfer to a project group rather than an individual?
-
----
-
 ## Service Accounts
 
 A service account is a `User` record with `is_service_account=True`. This flag drives two behaviors:
@@ -277,9 +288,11 @@ The `service_accounts` group exists as an organizational container. Adding a use
 
 > **Draft — to be revisited at implementation.**
 
-### Instrument group
+### Instrument as a resource
 
-Each instrument has a group named after its MFID. The instrument resource has that group in its ACL. Three membership tiers:
+An instrument is a first-class resource: it has an MFID, an owner (the person who registered it in Crucible), and ACL entries controlling who can view and manage it. It goes through the same permission system as datasets and samples.
+
+Each instrument also has its own **instrument group** (named after the instrument MFID) with its own ACL entry on the instrument resource. This group controls who can manage the instrument:
 
 | Role | Who | Rights |
 |---|---|---|
@@ -287,7 +300,16 @@ Each instrument has a group named after its MFID. The instrument resource has th
 | `admin` | Beamline scientists, facility staff | Edit metadata, change status, manage project associations |
 | `admin` | Instrument service account | Update instrument metadata programmatically |
 
-The service account holds `admin`, not `owner`. It cannot decommission the instrument or manage group membership — these are enforced via the `is_service_account` restriction described above.
+The service account holds `admin`, not `owner` — it cannot decommission the instrument or manage the instrument group membership.
+
+### Instrument service account
+
+An instrument service account is a separate concept from the instrument resource itself. It is a `User` record (`is_service_account=True`) that represents the software running on the physical instrument. It is an **actor**, not the instrument.
+
+At instrument registration:
+- A service account user is created with `is_service_account=True`
+- Added to the `service_accounts` group (grants read bypass and route allowlist)
+- Added to the instrument group with `admin` role (grants instrument metadata management)
 
 ### Status lifecycle
 
@@ -299,18 +321,7 @@ Instruments are not deleted. A `status` column tracks their lifecycle:
 | `maintenance` | Yes, maintenance is temporary |
 | `decommissioned` | No, all project associations auto-revoked |
 
-`GET /instruments` defaults to `status=active`. Only instrument `owner`, `admin`, or platform admins can change status. On decommissioning, all project associations are removed; group membership is kept for audit.
-
-### Instrument service accounts
-
-> The intersection of the two concepts above.
-
-Each instrument has an associated service account. At instrument creation:
-- A service account user is created with `is_service_account=True`
-- Added to the `service_accounts` group
-- Added to the instrument group with `admin` role
-
-This gives the service account read access to all data and management rights over the instrument's own metadata.
+`GET /instruments` defaults to `status=active`. Only instrument `owner`, `admin`, or platform admins can change status. On decommissioning, all project associations are removed; instrument group membership is kept for audit.
 
 ### Project associations
 
@@ -325,7 +336,20 @@ An instrument can be associated with multiple projects simultaneously.
 
 ### Dataset ownership
 
-Datasets created by an instrument service account belong to the researcher, not the instrument. The `owner_orcid` in the creation payload names the researcher; the ORCID group ACL entry is created for them. The instrument is the technical creator, the researcher retains ownership.
+Datasets created by an instrument service account belong to the researcher, not the instrument. The `owner_orcid` in the creation payload names the researcher; the ORCID group ACL entry is created for them. The instrument is the technical actor, the researcher retains ownership.
+
+---
+
+## Ownership Transfer
+
+> **Deferred.**
+
+When an owner leaves, their resources remain under their ORCID group. Only the owner can modify that ACL entry; platform admins have no route to reassign it.
+
+Open questions:
+- Who can initiate a transfer — platform admins only, or also project admins?
+- Does the previous owner retain a lower role after transfer?
+- Can ownership transfer to a project group rather than an individual?
 
 ---
 

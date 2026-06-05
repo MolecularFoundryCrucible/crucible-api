@@ -33,26 +33,35 @@ Role hierarchy: `platform_admin > owner > admin > editor > contributor > viewer`
 
 ### Platform Admins
 
-Platform admins (developers, system operators) are members of a designated **`admin` group**. They bypass resource-level permission checks entirely — no ACL rows needed per resource:
+Platform admins (developers, system operators) bypass resource-level permission checks entirely — no ACL rows needed per resource. Rather than checking by group name (fragile, breaks on rename), two boolean flags on `AccessGroup` drive the bypass:
+
+| Flag | Meaning |
+|---|---|
+| `is_platform_admin` | Members bypass all permission checks |
+| `is_service_account_group` | Members get read-only bypass + elevated route allowlist |
 
 ```python
 def require_permission(...):
-    if any(g.group_name == 'admin' for g in user_groups):
-        return True   # platform admin bypass
+    if any(g.is_platform_admin for g in user_groups):
+        return True   # platform admin — full bypass
+    if permission == 'read' and any(g.is_service_account_group for g in user_groups):
+        return True   # service account — read-only bypass
     # normal ACL + role check...
 ```
 
-This avoids the operational complexity of maintaining an ACL entry on every resource. Platform admin access is universal by design and does not go through the ACL system.
+The `admin` and `service_accounts` groups have these flags set at creation. Additional groups can be granted the same bypass in future without code changes.
 
 ### Groups
 
-Three types of groups participate in the ACL system:
+Four types of groups participate in the ACL system:
 
-| Group | Named after | Who is in it | Role in it |
-|---|---|---|---|
-| Project group | `project_id` | Project members | their project role |
-| ORCID group | user's ORCID | The user themselves | `owner` |
-| `admin` group | `admin` | Platform admins | `admin` (+ bypass) |
+| Group | Named after | Who is in it | Role in it | Flag |
+|---|---|---|---|---|
+| Project group | `project_id` | Project members | their project role | — |
+| ORCID group | user's ORCID | The user themselves | `owner` | — |
+| `admin` group | `admin` | Platform admins | `admin` | `is_platform_admin=True` |
+| `service_accounts` group | `service_accounts` | Instrument service accounts | `admin` | `is_service_account_group=True` |
+| Instrument group | instrument MFID | Service account (`admin`), human admins (`admin`/`owner`) | see above | — |
 
 #### ORCID groups as ownership
 Every user has a personal group named after their ORCID. At resource creation, this group is added to the resource's ACL with the `owner` role. This is what makes you the owner of your resource — no separate ownership field needed in the permission check.
@@ -247,6 +256,10 @@ The instrument group membership is retained after decommissioning for audit purp
 
 ### Schema
 - [ ] Add `role VARCHAR DEFAULT 'editor'` to `useraccessgrouplink`
+- [ ] Add `is_platform_admin BOOLEAN DEFAULT FALSE` to `accessgroup`
+- [ ] Add `is_service_account_group BOOLEAN DEFAULT FALSE` to `accessgroup`
+- [ ] Set `is_platform_admin=True` on the `admin` group
+- [ ] Set `is_service_account_group=True` on the `service_accounts` group (create if missing)
 - [ ] Migration: set ORCID-named group memberships to `owner`
 - [ ] Migration: set project lead memberships to `admin`
 - [ ] Migration: set `admin` group memberships to `admin`

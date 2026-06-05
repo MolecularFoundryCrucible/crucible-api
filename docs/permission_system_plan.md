@@ -2,10 +2,14 @@
 
 ## Goals
 
-- Unified role-based access control (RBAC) at the group level
-- Project leads and resource owners can manage their own resources without global admin
-- One generic permission check replaces scattered `require_read/write/admin` calls
-- Auditable, extensible, consistent across all resource types
+The current permission model is a flat binary: a user either has read or write access to a group's resources. This is too coarse for a multi-user platform where different users have different levels of responsibility and trust.
+
+This redesign introduces **structured, granular permissions** through a role hierarchy applied at the group level:
+
+- **Granularity**: five distinct roles (`viewer`, `contributor`, `editor`, `admin`, `owner`) replace the single read/write boolean. This allows control over who can read, create, edit, delete, and manage access in Crucible.
+- **Structure**: permissions are scoped by context: your role in a project group governs what you can do to project resources; your role in your ORCID group governs your own resources; platform-level bypass (e.g. for Crucible developers) is explicit and separate from the ACL system.
+- **Self-service**: project leads, instrument managers, and resource owners can manage access within their scope without involving platform admins for every change. This will be beneficial as the platform grows.
+- **Extensibility**: new roles or bypass groups can be added in the future if needed.
 
 ---
 
@@ -13,23 +17,30 @@
 
 ### Roles
 
-Five roles, ordered by privilege:
+Specific access to a resource is determined by roles. To determine a user's access on a resource, we follow this logic:
 
-| Role | Read | Upload own | Edit others | Delete | Manage ACL |
+- find all access groups the user belongs to that also have an ACL entry on that resource
+- check the user's role in each of those groups
+- the highest role across all matching groups is their effective role.
+
+
+For now, there are five access-related roles (see below for platform roles):
+
+| Role | Read | Write | Edit | Delete | Manage ACL |
 |---|---|---|---|---|---|
-| `viewer` | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `contributor` | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `editor` | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `admin` | ✅ | ✅ | ✅ | ✅ | ✅ (below owner) |
-| `owner` | ✅ | ✅ | ✅ | ✅ | ✅ (below platform admin) |
+| `viewer` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `contributor` | ✓ | ✓ | ✗ | ✗ | ✗ |
+| `editor` | ✓ | ✓ | ✓ | ✗ | ✗ |
+| `admin` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `owner` | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-Role hierarchy: `platform_admin > owner > admin > editor > contributor > viewer`
+Role hierarchy: `owner > admin > editor > contributor > viewer`
 
-- **viewer** — read-only access to group resources
-- **contributor** — can create and fully manage their own resources, cannot edit resources created by others
-- **editor** — can read and write all resources in the group regardless of ownership
-- **admin** — full control within the group: read, write, delete, manage ACL entries at or below admin level
-- **owner** — structural role, tied to the resource creator. Can manage all ACL entries on their resource except the platform admin bypass. Cannot be demoted by project admins.
+- **viewer**: read-only access to group resources
+- **contributor**: can create and fully manage their own resources, cannot edit resources created by others
+- **editor**: can read and write all resources in the group regardless of ownership
+- **admin**: full control within the group: read, write, delete, manage ACL entries at or below admin level
+- **owner**: the highest non-platform role. Automatically assigned in a user's personal ORCID group at resource creation — it is not granted manually. Because the ORCID group is added to every resource the user creates, this role is what makes a user the "owner" of their resource. The permission check treats it identically to any other role: if your ORCID group has an ACL entry on this resource and your role in that group is `owner`, you get owner-level rights.
 
 ### Platform Admins
 
@@ -64,7 +75,9 @@ Five types of groups participate in the ACL system:
 | Instrument group | instrument MFID | Service account (`admin`), human admins (`admin`/`owner`) | see above | — |
 
 #### ORCID groups as ownership
-Every user has a personal group named after their ORCID. At resource creation, this group is added to the resource's ACL with the `owner` role. This is what makes you the owner of your resource — no separate ownership field needed in the permission check.
+Every user has a personal group named after their ORCID. At resource creation, this group is added to the resource's ACL. The user's role in their own ORCID group is always `owner`.
+
+There is no separate ownership concept in the permission check — ownership is simply a consequence of having `owner` role in a group (`useraccessgrouplink`) that has an ACL entry on the resource (`resourceacl`). The same check that resolves a project member's `editor` rights resolves a creator's `owner` rights.
 
 ### Table Changes
 

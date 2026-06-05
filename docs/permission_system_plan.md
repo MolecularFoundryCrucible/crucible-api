@@ -32,13 +32,13 @@ Hierarchy: `owner > admin > editor > contributor > viewer`
 
 - **viewer**: read-only
 - **contributor**: can create and manage their own resources; cannot edit resources created by others
-- **editor**: can read and write all resources in the group regardless of who created them
+- **editor**: can read and write/edit all resources in the group regardless of who created them
 - **admin**: full control within the group; can manage ACL entries at or below admin level
-- **owner**: the highest non-platform role. Automatically assigned in a user's ORCID group at resource creation — never granted manually. The permission check treats it the same as any other role: if your ORCID group has an ACL entry on this resource and your role in that group is `owner`, you have owner-level rights.
+- **owner**: the highest non-platform role. Automatically assigned in a user's ORCID group at resource creation. The permission check treats it the same as any other role: if your ORCID group has an ACL entry on this resource and your role in that group is `owner`, you have owner-level rights.
 
 ### Platform Admins and Service Accounts
 
-System-level roles are properties of the `User` record, not group relationships. This is the standard approach (Django's `is_superuser`, Laravel's role model) and keeps a clear separation: groups control resource-level access, user flags control system-level bypass.
+System-level roles are properties of the `User` record, not group relationships. This keeps a clear separation: groups control resource-level access, user flags control system-level bypass.
 
 Two flags on `User`:
 
@@ -55,7 +55,7 @@ def authorize_user(credentials) -> tuple[User, list[AccessGroup]]:
     return user, ag_list
 ```
 
-The permission check then reads directly from the user object — no extra query, since `authorize_user` already fetches the `User` row to load groups:
+The permission check then reads directly from the user object (no extra query, since `authorize_user` already fetches the `User` row to load groups):
 
 ```python
 def require_permission(user, resource_id, user_groups, permission='read'):
@@ -112,19 +112,12 @@ There is no separate ownership concept in the permission check. Ownership is a c
 
 ### Table Changes
 
-**`useraccessgrouplink`** — add `role` column:
-
 ```sql
 ALTER TABLE useraccessgrouplink ADD COLUMN role VARCHAR DEFAULT 'contributor';
+ALTER TABLE "user" ADD COLUMN is_platform_admin BOOLEAN DEFAULT FALSE;
 ```
 
-| user_id | accessgroup_id | role |
-|---|---|---|
-| 42 | 7 (project group) | contributor |
-| 42 | 65 (own ORCID group) | owner |
-| 1 | 1 (`admin` group) | admin |
-
-**`resourceacl`** — the `read`/`write` booleans will be dropped. Presence of an ACL entry plus the user's role in the matching group is sufficient.
+The `read`/`write` booleans on `resourceacl` will be dropped. Presence of an ACL entry plus the user's role in the matching group is sufficient.
 
 ### Access Check
 

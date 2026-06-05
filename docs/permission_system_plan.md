@@ -189,7 +189,15 @@ Write operations (dataset creation, ingestion requests) are NOT bypassed — the
 
 ### Instrument group
 
-Each instrument gets its own group (named after instrument MFID). The instrument's service account is a member with `owner` role in that group. The instrument resource itself has that group in its ACL, giving the service account management rights over the instrument's own metadata.
+Each instrument gets its own group (named after instrument MFID). The instrument resource has that group in its ACL. Group membership tiers:
+
+| Role in instrument group | Who | Can do |
+|---|---|---|
+| `owner` | Instrument creator / registrar | Full management, decommission, transfer ownership |
+| `admin` | Beamline scientists, facility staff | Edit metadata, change status, manage service accounts, manage project associations |
+| `admin` | Instrument service account | Update instrument metadata programmatically (not status, not group membership) |
+
+The service account holds `admin` (not `owner`) in the instrument group. This is intentional — service accounts should not be able to decommission themselves or manage human membership in the group.
 
 ### Instrument-project association
 
@@ -217,9 +225,21 @@ Datasets created by an instrument service account are owned by the **researcher*
 | Manage instrument metadata | `owner` role in instrument group |
 | Resolve users / elevated lookups | `service_accounts` group allowlist |
 
-### Decommissioning
+### Instrument status
 
-When an instrument is decommissioned, remove all instrument-project associations (revoking write access) and submit a deletion request for the instrument resource. Historical datasets the instrument created are unaffected — the researcher remains owner.
+Instruments have a `status` column rather than being deleted. Statuses:
+
+| Status | Meaning | Service account write access |
+|---|---|---|
+| `active` | Operational | Yes (via project associations) |
+| `maintenance` | Temporarily offline | Yes (kept active, maintenance is transient) |
+| `decommissioned` | Permanently retired | No — all project associations auto-revoked |
+
+`GET /instruments` defaults to `status=active`. Pass `?status=decommissioned` to include retired instruments.
+
+Only instrument `owner`, instrument `admin`, or platform admins can change status. Decommissioning automatically removes all instrument-project associations (revoking the service account's `contributor` role in project groups). The instrument resource, its metadata, and all datasets it produced are fully preserved.
+
+The instrument group membership is retained after decommissioning for audit purposes — the service account remains in the group but loses project write access.
 
 ---
 
@@ -258,6 +278,15 @@ When an instrument is decommissioned, remove all instrument-project associations
 ### Deletion
 - [ ] Replace global-admin-only deletion with `require_permission(..., 'delete')`
 - [ ] Resource owners and project admins can delete resources within their scope
+
+### Instruments
+- [ ] Add `status VARCHAR DEFAULT 'active'` to `instrument` table (`active`, `maintenance`, `decommissioned`)
+- [ ] `GET /instruments` — filter by `status=active` by default, expose `?status=` param
+- [ ] `PATCH /instruments/{id}` — status change requires instrument `admin`/`owner` or platform admin
+- [ ] `POST /instruments/{id}/projects/{proj_id}` — associate instrument with project, auto-grant `contributor` to service account
+- [ ] `DELETE /instruments/{id}/projects/{proj_id}` — disassociate, auto-revoke `contributor`
+- [ ] Decommissioning auto-revokes all instrument-project associations
+- [ ] At instrument creation, create instrument group and add creator as `owner`, service account as `admin`
 
 ### Access Group Routes
 - [ ] Expose role when listing group members (`GET /access_groups/{name}/users`)

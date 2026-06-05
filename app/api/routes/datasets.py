@@ -129,11 +129,13 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
         now = get_utc_isoformat()
         
         # fetch resource
+        existing_ri = session.exec(select(Resource).where(Resource.mfid == ds.unique_id)).one_or_none()
         ri = add_or_update(session, Resource, where=(Resource.mfid == ds.unique_id),
                            mfid = ds.unique_id, resource_type = "dataset")
-        
+
         # populate resource table
-        ri.creation_time = now
+        if existing_ri is None:
+            ri.creation_time = now
         ri.modification_time = now
         ri.created_with_api_version = API_VERSION
         ri.api_version_githash = API_VERSION_GITHASH

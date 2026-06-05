@@ -53,7 +53,7 @@ The `admin` and `service_accounts` groups have these flags set at creation. Addi
 
 ### Groups
 
-Four types of groups participate in the ACL system:
+Five types of groups participate in the ACL system:
 
 | Group | Named after | Who is in it | Role in it | Flag |
 |---|---|---|---|---|
@@ -71,7 +71,7 @@ Every user has a personal group named after their ORCID. At resource creation, t
 **`useraccessgrouplink`** — add `role` column:
 
 ```sql
-ALTER TABLE useraccessgrouplink ADD COLUMN role VARCHAR DEFAULT 'editor';
+ALTER TABLE useraccessgrouplink ADD COLUMN role VARCHAR DEFAULT 'contributor';
 ```
 
 | user_id | accessgroup_id | role |
@@ -93,7 +93,7 @@ require_permission(session, resource_id, user_groups, permission='read')
 ```
 
 Logic:
-1. Platform admin bypass — if caller is in the `admin` group, grant immediately
+1. Platform admin bypass — if any of the caller's groups has `is_platform_admin=True`, grant immediately
 2. Find all `ResourceACL` entries for the resource where `accessgroup_id` is in the user's groups
 3. For each matching group, get the user's role in that group from `useraccessgrouplink`
 4. Grant access if any group's role satisfies the required permission level
@@ -187,9 +187,9 @@ A dedicated `service_accounts` group (analogous to the `admin` group) grants two
 
 ```python
 def require_permission(..., permission='read'):
-    if any(g.group_name == 'admin' for g in user_groups):
+    if any(g.is_platform_admin for g in user_groups):
         return True  # full bypass
-    if permission == 'read' and any(g.group_name == 'service_accounts' for g in user_groups):
+    if permission == 'read' and any(g.is_service_account_group for g in user_groups):
         return True  # read-only bypass for service accounts
     # normal ACL + role check...
 ```
@@ -231,7 +231,7 @@ Datasets created by an instrument service account are owned by the **researcher*
 | Create datasets in project | `contributor` role via instrument-project association |
 | Assign researcher as owner | `owner_orcid` in creation payload |
 | Request ingestion | `contributor` role via instrument-project association |
-| Manage instrument metadata | `owner` role in instrument group |
+| Manage instrument metadata | `admin` role in instrument group |
 | Resolve users / elevated lookups | `service_accounts` group allowlist |
 
 ### Instrument status
@@ -255,7 +255,7 @@ The instrument group membership is retained after decommissioning for audit purp
 ## What Needs to Change
 
 ### Schema
-- [ ] Add `role VARCHAR DEFAULT 'editor'` to `useraccessgrouplink`
+- [ ] Add `role VARCHAR DEFAULT 'contributor'` to `useraccessgrouplink`
 - [ ] Add `is_platform_admin BOOLEAN DEFAULT FALSE` to `accessgroup`
 - [ ] Add `is_service_account_group BOOLEAN DEFAULT FALSE` to `accessgroup`
 - [ ] Set `is_platform_admin=True` on the `admin` group
@@ -266,7 +266,7 @@ The instrument group membership is retained after decommissioning for audit purp
 - [ ] Drop `read`/`write` booleans from `resourceacl` (after all checks are role-driven)
 
 ### Models
-- [ ] `UserAccessGroupLink` ORM — add `role: str = 'editor'`
+- [ ] `UserAccessGroupLink` ORM — add `role: str = 'contributor'`
 - [ ] `RoleEnum`: `viewer`, `contributor`, `editor`, `admin`, `owner`
 
 ### Auth Utils (`app/utils/auth_utils.py`)

@@ -205,7 +205,7 @@ A resource cannot be created without a registered owner or assigned to a non-exi
 
 The API always operates on ORCIDs internally. Usernames and emails are resolved at the client/UI layer before making API calls.
 
-`POST /users/resolve` and `GET /users/by-username/{username}` are the resolution endpoints. The API never accepts a username as a resource or project identifier.
+`POST /users/resolve` and `GET /users/by-username/{username}` are the resolution endpoints.
 
 ---
 
@@ -226,7 +226,7 @@ DELETE /resources/{id}/share/{orcid}
 
 ## Project Membership
 
-`POST /projects/{proj_id}/users/{orcid}?role=contributor` — defaults to `contributor`.
+`POST /projects/{proj_id}/users/{orcid}?role=contributor` (defaults to `contributor`).
 
 Project lead gets `admin` role in the project group at creation.
 
@@ -234,7 +234,7 @@ Project lead gets `admin` role in the project group at creation.
 |---|---|
 | `viewer` | Read project resources |
 | `contributor` | Create and manage their own resources |
-| `editor` | Read and write all project resources |
+| `editor` | Read, write and edit all project resources |
 | `admin` | Full control, manage membership and ACLs |
 
 Routes:
@@ -258,35 +258,63 @@ Open questions:
 
 ---
 
-## Instrument Service Accounts
+## Service Accounts
+
+A service account is a `User` record with `is_service_account=True`. This flag drives two behaviors:
+
+1. **Read-only bypass** — the account can read all resources without an ACL entry, so it does not need to be added to every project just to observe data
+2. **Elevated route allowlist** — access to routes normally restricted to admins but needed for automation (e.g. `POST /users/resolve`)
+
+Write access is never bypassed. It requires explicit membership in a project group.
+
+Service accounts cannot manage ACL entries regardless of their group role. This is enforced in code — `is_service_account` users are blocked from ACL management operations.
+
+The `service_accounts` group exists as an organizational container. Adding a user to this group is how `is_service_account` is conventionally set, but the bypass itself comes from the flag on `User`, not from group membership.
+
+---
+
+## Instruments
 
 > **Draft — to be revisited at implementation.**
 
-Instrument service accounts are `User` records with `is_service_account=True`. They need broad read access and write access to associated projects, without platform admin rights.
-
-### `service_accounts` group
-
-Members get:
-1. Read-only bypass — can read all resources without an ACL entry
-2. Access to allowlisted routes normally restricted to admins (e.g. `POST /users/resolve`)
-
-Write operations require explicit project association.
-
 ### Instrument group
 
-Each instrument has a group named after its MFID. The instrument resource has that group in its ACL.
+Each instrument has a group named after its MFID. The instrument resource has that group in its ACL. Three membership tiers:
 
-| Role | Who | Can do |
+| Role | Who | Rights |
 |---|---|---|
-| `owner` | Instrument creator | Full management, decommission |
+| `owner` | Instrument creator / registrar | Full management, decommission, transfer ownership |
 | `admin` | Beamline scientists, facility staff | Edit metadata, change status, manage project associations |
-| `admin` | Instrument service account | Update instrument metadata (not status, not group membership) |
+| `admin` | Instrument service account | Update instrument metadata programmatically |
 
-The service account holds `admin`, not `owner` — it cannot decommission itself or manage group membership.
+The service account holds `admin`, not `owner`. It cannot decommission the instrument or manage group membership — these are enforced via the `is_service_account` restriction described above.
 
-### Instrument-project association
+### Status lifecycle
 
-A project admin associates an instrument with a project. This auto-grants the service account `contributor` role in that project group. Removing the association revokes it.
+Instruments are not deleted. A `status` column tracks their lifecycle:
+
+| Status | Service account write access |
+|---|---|
+| `active` | Yes, via project associations |
+| `maintenance` | Yes, maintenance is temporary |
+| `decommissioned` | No, all project associations auto-revoked |
+
+`GET /instruments` defaults to `status=active`. Only instrument `owner`, `admin`, or platform admins can change status. On decommissioning, all project associations are removed; group membership is kept for audit.
+
+### Instrument service accounts
+
+> The intersection of the two concepts above.
+
+Each instrument has an associated service account. At instrument creation:
+- A service account user is created with `is_service_account=True`
+- Added to the `service_accounts` group
+- Added to the instrument group with `admin` role
+
+This gives the service account read access to all data and management rights over the instrument's own metadata.
+
+### Project associations
+
+A project admin explicitly associates an instrument with a project. This auto-grants the service account `contributor` role in that project group, allowing it to create datasets and request ingestion. Removing the association revokes that role.
 
 ```
 POST   /instruments/{id}/projects/{proj_id}
@@ -297,17 +325,7 @@ An instrument can be associated with multiple projects simultaneously.
 
 ### Dataset ownership
 
-Datasets created by an instrument service account are owned by the researcher. The `owner_orcid` in the creation payload specifies the owner; the ORCID group ACL entry is created for that researcher, not the instrument.
-
-### Instrument status
-
-| Status | Write access |
-|---|---|
-| `active` | Yes, via project associations |
-| `maintenance` | Yes, maintenance is temporary |
-| `decommissioned` | No, all project associations auto-revoked |
-
-`GET /instruments` defaults to `status=active`. Only instrument `owner`, `admin`, or platform admins can change status. On decommissioning, all project associations are removed and the instrument group membership is kept for audit.
+Datasets created by an instrument service account belong to the researcher, not the instrument. The `owner_orcid` in the creation payload names the researcher; the ORCID group ACL entry is created for them. The instrument is the technical creator, the researcher retains ownership.
 
 ---
 

@@ -8,14 +8,24 @@ The redesign adds five roles (`viewer`, `contributor`, `editor`, `admin`, `owner
 
 ---
 
-## Architecture
+## Core Concepts
+
+### Resources
+
+In Crucible, a resource is anything with an MFID: datasets, samples, instruments, and projects. All resource types share the same permission system.
+
+Every resource has:
+- An **owner**: the user whose ORCID group has an ACL entry with `owner` role
+- **ACL entries** in `resourceacl`: which groups can access the resource and at what role
+
+Projects and instruments are resources in their own right — they have owners and ACL entries, and go through the same permission checks as datasets and samples.
 
 ### Roles
 
-To determine a user's access on a resource:
+To determine a user's effective role on a resource:
 
 1. Find all access groups the user belongs to that also have an ACL entry on that resource
-2. Check the user's role in each of those groups
+2. Check the user's role in each of those groups (`useraccessgrouplink`)
 3. The highest role wins
 
 Five roles, in order:
@@ -32,30 +42,48 @@ Hierarchy: `owner > admin > editor > contributor > viewer`
 
 - **viewer**: read-only
 - **contributor**: can create and manage their own resources; cannot edit resources created by others
-- **editor**: can read and write/edit all resources in the group regardless of who created them
+- **editor**: can read and write all resources in the group regardless of who created them
 - **admin**: full control within the group; can manage ACL entries at or below admin level
-- **owner**: the highest non-platform role. Automatically assigned in a user's ORCID group at resource creation. The permission check treats it the same as any other role: if your ORCID group has an ACL entry on this resource and your role in that group is `owner`, you have owner-level rights.
+- **owner**: the highest non-platform role. Automatically assigned in a user's ORCID group at resource creation. The permission check treats it identically to any other role — if your ORCID group has an ACL entry on this resource and your role in that group is `owner`, you have owner-level rights.
 
-### Platform Admins and Service Accounts
+ACL management follows the same hierarchy: a user can only manage entries at or below their own effective role. `owner` can manage any entry except the platform admin bypass (immutable). `admin` can manage entries for `editor`, `contributor`, `viewer` but cannot touch the owner's ORCID group entry. `editor` and below cannot manage ACL entries.
 
-System-level roles are properties of the `User` record, not group relationships. This keeps a clear separation: groups control resource-level access, user flags control system-level bypass.
+### Groups
 
-Two flags on `User`:
+Roles are assigned via group membership. Five types of groups participate in the system:
 
-| Flag | Effect |
-|---|---|
-| `is_platform_admin` | Bypasses all permission checks |
-| `is_service_account` | Read-only bypass + elevated route allowlist (already exists) |
+| Group | Named after | Members | Role in group |
+|---|---|---|---|
+| Project group | `project_id` | Project members | their project role |
+| ORCID group | user's ORCID | The user | `owner` |
+| `admin` group | `admin` | Platform admins | `admin` |
+| `service_accounts` group | `service_accounts` | Instrument service accounts | `admin` |
+| Instrument group | instrument MFID | Service account (`admin`), human admins (`admin`/`owner`) | see Instruments |
+
+#### ORCID groups and ownership
+
+Every user has a personal group named after their ORCID. At resource creation, this group is added to the resource's ACL with the `owner` role. There is no separate ownership concept — ownership is a consequence of having `owner` role in a group that has an ACL entry on the resource.
+
+---
+
+## Platform Access
+
+### Platform admins
+
+Platform admins bypass all resource-level permission checks. This is stored as a flag on `User`, not as group membership — groups control resource-level access, user flags control system-level bypass.
+
+```sql
+ALTER TABLE "user" ADD COLUMN is_platform_admin BOOLEAN DEFAULT FALSE;
+```
 
 `authorize_user` is updated to return the `User` object alongside the group list:
 
 ```python
 def authorize_user(credentials) -> tuple[User, list[AccessGroup]]:
-    ...
     return user, ag_list
 ```
 
-The permission check then reads directly from the user object (no extra query, since `authorize_user` already fetches the `User` row to load groups):
+The permission check reads directly from the user object (no extra query):
 
 ```python
 def require_permission(user, resource_id, user_groups, permission='read'):
@@ -90,89 +118,51 @@ user_id | accessgroup_id | role
 42      | 3              | editor
 ```
 
-When this user makes a request, `authorize_user` fetches the `User` row and their groups. `require_permission` checks `user.is_platform_admin = True` and returns immediately. `resourceacl` is never consulted.
+When this user makes a request, `require_permission` checks `user.is_platform_admin = True` and returns immediately. `resourceacl` is never consulted.
 
-### Groups
+The `admin` group still exists as an organizational container and for route-level checks (e.g. `require_admin`), but it no longer drives the permission bypass.
 
-| Group | Named after | Members | Role in group |
-|---|---|---|---|
-| Project group | `project_id` | Project members | their project role |
-| ORCID group | user's ORCID | The user | `owner` |
-| `admin` group | `admin` | Platform admins | `admin` |
-| `service_accounts` group | `service_accounts` | Instrument service accounts | `admin` |
-| Instrument group | instrument MFID | Service account (`admin`), human admins (`admin`/`owner`) | see Instruments section |
+### Service accounts
 
-The `admin` and `service_accounts` groups still exist for organizing membership and for admin-gated route checks (e.g. `require_admin`), but they no longer drive the permission bypass — `is_platform_admin` and `is_service_account` on `User` do.
+A service account is a `User` record with `is_service_account=True`. This flag drives two behaviors:
 
-#### ORCID groups and ownership
+1. **Read-only bypass** — can read all resources without an ACL entry; no need to be added to every project
+2. **Elevated route allowlist** — access to routes normally restricted to admins but needed for automation (e.g. `POST /users/resolve`)
 
-Every user has a personal group named after their ORCID. At resource creation, this group is added to the resource's ACL with the `owner` role.
+Write access is never bypassed — it requires explicit project group membership.
 
-There is no separate ownership concept in the permission check. Ownership is a consequence of having `owner` role in a group that has an ACL entry on the resource. The same check that resolves a project member's `editor` rights resolves a creator's `owner` rights.
+Service accounts cannot manage ACL entries regardless of their group role. This is enforced in code.
 
-### Table Changes
-
-```sql
-ALTER TABLE useraccessgrouplink ADD COLUMN role VARCHAR DEFAULT 'contributor';
-ALTER TABLE "user" ADD COLUMN is_platform_admin BOOLEAN DEFAULT FALSE;
-```
-
-The `read`/`write` booleans on `resourceacl` will be dropped. Presence of an ACL entry plus the user's role in the matching group is sufficient.
-
-### Access Check
-
-```python
-require_permission(user, resource_id, user_groups, permission='read')
-# user: User ORM object
-# user_groups: list of AccessGroup objects the user belongs to
-# permission: 'read' | 'write' | 'delete' | 'admin' | 'owner'
-```
-
-1. If `user.is_platform_admin`, grant immediately
-2. If `permission == 'read'` and `user.is_service_account`, grant immediately
-3. Find all `ResourceACL` entries where `accessgroup_id` is in the user's groups
-4. Get the user's role in each matching group from `useraccessgrouplink`
-5. Grant if any role satisfies the required permission level
-
-### ACL Management
-
-A user can only manage ACL entries at or below their own effective role:
-
-- `owner` can add/remove/change any entry except the platform admin bypass (immutable)
-- `admin` can manage entries for `editor`, `contributor`, `viewer` — cannot touch the owner's ORCID group entry
-- `editor` and below cannot manage ACL entries
+The `service_accounts` group exists as an organizational container. The bypass comes from the `is_service_account` flag on `User`, not from group membership.
 
 ---
 
-## Resources
+## Projects
 
-In Crucible, datasets, samples, instruments, and projects are all resources — each has an MFID, an owner, and ACL entries. The same permission system applies to all of them.
+### Project as a resource
 
-Every resource has:
-- An **owner**: the user whose ORCID group has an ACL entry with `owner` role
-- **ACL entries** in `resourceacl`: groups that can access the resource and at what role
-- A **project membership**: which project(s) the resource belongs to (see below)
+A project has an MFID (its `project_id`) and lives in the `resource` table. It has an owner (the project lead) and ACL entries controlling who can view or edit the project's metadata.
 
-Projects and instruments are resources in their own right — they have owners, ACL entries, and go through the same permission checks as datasets and samples.
-
----
-
-## Projects as a Resource
-
-A project has an MFID (its `project_id`) and lives in the `resource` table like any other resource. It has an owner (the project lead), and its own ACL entries controlling who can view or edit the project's metadata.
-
-Separately, each project has a **project group** (named after the `project_id`) that controls access to resources *within* the project. These are distinct:
+Each project also has a **project group** (named after the `project_id`) that controls access to resources *within* the project. These are distinct:
 
 - ACL entry on the project resource → who can view/edit the project itself
 - Project group membership → who has access to the project's datasets and samples
 
----
+### Personal projects
 
-## Multi-Project Resources and `resource_project_link`
+Every user gets a personal project created at registration. It uses their ORCID group as its access group.
+
+- `Project.is_personal = True` distinguishes personal from formal projects
+- Not shown in `GET /projects` for other users
+- `project_id` is the user's ORCID — stable, never shown to users directly
+- `title` (e.g. "Fabrice's workspace") is what the UI displays
+- Cannot be deleted
+
+### Multi-project resources
 
 > **To be implemented** — `resource_project_link` does not exist yet. Currently `Dataset` and `Sample` each have a plain `project_id` string column.
 
-A resource can belong to more than one project. The `project_id` column on `Dataset` and `Sample` is replaced by a relationship table:
+A resource can belong to more than one project via a relationship table:
 
 ```sql
 CREATE TABLE resource_project_link (
@@ -182,62 +172,35 @@ CREATE TABLE resource_project_link (
 );
 ```
 
-Filtering by project becomes a join. ACL entries are added for each linked project group at creation.
-
----
-
-## Personal Projects
-
-Every user gets a personal project created at registration. Resources created by that user are automatically linked to it via `resource_project_link`.
-
-- `Project.is_personal = True` distinguishes personal from formal projects
-- Not shown in `GET /projects` for other users
-- Access group is the user's ORCID group — no extra setup needed
-- `project_id` is the user's ORCID — stable, never shown directly to users
-- `title` (e.g. "Fabrice's workspace") is what the UI displays
-- Cannot be deleted
-
----
-
-## Resource Creation
-
-At creation:
-
+At resource creation:
 1. Owner's ORCID group is added to `resourceacl` with `owner` role
-2. The creator's personal project is always added to `resource_project_link`
-3. Any additional projects specified at creation are also linked, and their project group gets an ACL entry
+2. The creator's personal project is always linked
+3. Any additional projects specified are also linked; their project group gets an ACL entry
 
-Your personal workspace always reflects everything you created, regardless of which formal projects the resource also belongs to.
+Filtering by project becomes a join. Your personal workspace always reflects everything you created.
 
----
+### Project membership
 
-## Data Model Integrity
+`POST /projects/{proj_id}/users/{orcid}?role=contributor` — defaults to `contributor`. Project lead gets `admin` at creation.
 
-Currently `owner_orcid` and `project_id` on `Dataset` and `Sample` are plain strings with no FK enforcement. This allows references to users or projects that don't exist.
+| Role | Can do |
+|---|---|
+| `viewer` | Read project resources |
+| `contributor` | Create and manage their own resources |
+| `editor` | Read and write all project resources |
+| `admin` | Full control, manage membership and ACLs |
 
-Changes:
-- `Dataset.owner_orcid` → FK to `user.orcid` (non-null)
-- `Sample.owner_orcid` → FK to `user.orcid` (non-null)
-- `resource_project_link.project_id` → FK to `project.project_id`
-- `resource_project_link.resource_mfid` → FK to `idtype.mfid`
+Routes:
+- `POST /projects/{proj_id}/users/{orcid}?role=` — add member
+- `PATCH /projects/{proj_id}/users/{orcid}?role=` — change role
+- `GET /projects/{proj_id}/users` — list members with roles
+- `DELETE /projects/{proj_id}/users/{orcid}` — remove member
 
-A resource cannot be created without a registered owner or assigned to a non-existent project. Deleting a user or project requires handling linked resources first.
-
----
-
-## User Resolution
-
-The API always operates on ORCIDs internally. Usernames and emails are resolved at the client/UI layer before making API calls.
-
-`POST /users/resolve` and `GET /users/by-username/{username}` are the resolution endpoints.
-
----
-
-## Sharing
+### Sharing
 
 Primary mechanism: project groups. Adding a user to a project gives them access to all project resources at their role level.
 
-Per-resource sharing will also be available: an owner or project admin can share a single resource with someone outside the project. This adds one ACL entry pointing to the recipient's ORCID group.
+Per-resource sharing is available as an escape hatch: an owner or project admin can share a single resource with someone outside the project. This adds one ACL entry pointing to the recipient's ORCID group.
 
 ```
 POST /resources/{id}/share
@@ -248,51 +211,13 @@ DELETE /resources/{id}/share/{orcid}
 
 ---
 
-## Project Membership
-
-`POST /projects/{proj_id}/users/{orcid}?role=contributor` (defaults to `contributor`).
-
-Project lead gets `admin` role in the project group at creation.
-
-| Role | Can do |
-|---|---|
-| `viewer` | Read project resources |
-| `contributor` | Create and manage their own resources |
-| `editor` | Read, write and edit all project resources |
-| `admin` | Full control, manage membership and ACLs |
-
-Routes:
-- `POST /projects/{proj_id}/users/{orcid}?role=` — add member
-- `PATCH /projects/{proj_id}/users/{orcid}?role=` — change role
-- `GET /projects/{proj_id}/users` — list members with roles
-- `DELETE /projects/{proj_id}/users/{orcid}` — remove member
-
----
-
-## Service Accounts
-
-A service account is a `User` record with `is_service_account=True`. This flag drives two behaviors:
-
-1. **Read-only bypass** — the account can read all resources without an ACL entry, so it does not need to be added to every project just to observe data
-2. **Elevated route allowlist** — access to routes normally restricted to admins but needed for automation (e.g. `POST /users/resolve`)
-
-Write access is never bypassed. It requires explicit membership in a project group.
-
-Service accounts cannot manage ACL entries regardless of their group role. This is enforced in code — `is_service_account` users are blocked from ACL management operations.
-
-The `service_accounts` group exists as an organizational container. Adding a user to this group is how `is_service_account` is conventionally set, but the bypass itself comes from the flag on `User`, not from group membership.
-
----
-
 ## Instruments
 
 > **Draft — to be revisited at implementation.**
 
 ### Instrument as a resource
 
-An instrument is a first-class resource: it has an MFID, an owner (the person who registered it in Crucible), and ACL entries controlling who can view and manage it. It goes through the same permission system as datasets and samples.
-
-Each instrument also has its own **instrument group** (named after the instrument MFID) with its own ACL entry on the instrument resource. This group controls who can manage the instrument:
+An instrument is a first-class resource: it has an MFID, an owner (the registrar), and ACL entries. Each instrument also has an **instrument group** (named after the instrument MFID) controlling who can manage it:
 
 | Role | Who | Rights |
 |---|---|---|
@@ -300,16 +225,16 @@ Each instrument also has its own **instrument group** (named after the instrumen
 | `admin` | Beamline scientists, facility staff | Edit metadata, change status, manage project associations |
 | `admin` | Instrument service account | Update instrument metadata programmatically |
 
-The service account holds `admin`, not `owner` — it cannot decommission the instrument or manage the instrument group membership.
+The service account holds `admin`, not `owner` — it cannot decommission the instrument or manage group membership.
 
 ### Instrument service account
 
-An instrument service account is a separate concept from the instrument resource itself. It is a `User` record (`is_service_account=True`) that represents the software running on the physical instrument. It is an **actor**, not the instrument.
+An instrument service account is a `User` record (`is_service_account=True`) representing the software running on the physical instrument. It is an actor, not the instrument itself.
 
 At instrument registration:
 - A service account user is created with `is_service_account=True`
-- Added to the `service_accounts` group (grants read bypass and route allowlist)
-- Added to the instrument group with `admin` role (grants instrument metadata management)
+- Added to the `service_accounts` group (read bypass and route allowlist)
+- Added to the instrument group with `admin` role (instrument metadata management)
 
 ### Status lifecycle
 
@@ -321,11 +246,11 @@ Instruments are not deleted. A `status` column tracks their lifecycle:
 | `maintenance` | Yes, maintenance is temporary |
 | `decommissioned` | No, all project associations auto-revoked |
 
-`GET /instruments` defaults to `status=active`. Only instrument `owner`, `admin`, or platform admins can change status. On decommissioning, all project associations are removed; instrument group membership is kept for audit.
+`GET /instruments` defaults to `status=active`. Only instrument `owner`, `admin`, or platform admins can change status. On decommissioning, all project associations are removed; group membership is kept for audit.
 
 ### Project associations
 
-A project admin explicitly associates an instrument with a project. This auto-grants the service account `contributor` role in that project group, allowing it to create datasets and request ingestion. Removing the association revokes that role.
+A project admin associates an instrument with a project. This auto-grants the service account `contributor` role in that project group. Removing the association revokes it.
 
 ```
 POST   /instruments/{id}/projects/{proj_id}
@@ -336,13 +261,13 @@ An instrument can be associated with multiple projects simultaneously.
 
 ### Dataset ownership
 
-Datasets created by an instrument service account belong to the researcher, not the instrument. The `owner_orcid` in the creation payload names the researcher; the ORCID group ACL entry is created for them. The instrument is the technical actor, the researcher retains ownership.
+Datasets created by an instrument service account belong to the researcher, not the instrument. The `owner_orcid` in the creation payload names the researcher; the ORCID group ACL entry is created for them.
 
 ---
 
-## Ownership Transfer
+## Deferred
 
-> **Deferred.**
+### Ownership transfer
 
 When an owner leaves, their resources remain under their ORCID group. Only the owner can modify that ACL entry; platform admins have no route to reassign it.
 
@@ -353,67 +278,76 @@ Open questions:
 
 ---
 
-## What Needs to Change
+## Implementation
 
-### Schema
+### Data model integrity
+
+Currently `owner_orcid` and `project_id` on `Dataset` and `Sample` are plain strings with no FK enforcement. Changes required:
+
+- `Dataset.owner_orcid` → FK to `user.orcid` (non-null)
+- `Sample.owner_orcid` → FK to `user.orcid` (non-null)
+- `resource_project_link.project_id` → FK to `project.project_id`
+- `resource_project_link.resource_mfid` → FK to `idtype.mfid`
+
+A resource cannot be created without a registered owner or assigned to a non-existent project. Deleting a user or project requires handling linked resources first.
+
+### User resolution
+
+The API always operates on ORCIDs internally. Usernames and emails are resolved at the client/UI layer. `POST /users/resolve` and `GET /users/by-username/{username}` serve this purpose.
+
+### What needs to change
+
+**Schema**
 - [ ] Add `role VARCHAR DEFAULT 'contributor'` to `useraccessgrouplink`
 - [ ] Add `is_platform_admin BOOLEAN DEFAULT FALSE` to `user`
-- [ ] Migration: set `is_platform_admin=True` for existing platform admin users
-- [ ] Migration: set ORCID-named group memberships to `owner`
-- [ ] Migration: set project lead memberships to `admin`
-- [ ] Migration: set `admin` group memberships to `admin`
 - [ ] Drop `read`/`write` booleans from `resourceacl` after migration
+- [ ] Add `is_personal BOOLEAN DEFAULT FALSE` to `project`
+- [ ] Create `resource_project_link` table
+- [ ] Add FK: `Dataset.owner_orcid` → `user.orcid`
+- [ ] Add FK: `Sample.owner_orcid` → `user.orcid`
+- [ ] Remove `project_id` from `Dataset` and `Sample` after migration
+- [ ] Add `status VARCHAR DEFAULT 'active'` to `instrument` table
 
-### Models
+**Models**
 - [ ] `UserAccessGroupLink` — add `role: str = 'contributor'`
 - [ ] `RoleEnum`: `viewer`, `contributor`, `editor`, `admin`, `owner`
 
-### Auth Utils
-- [ ] Update `authorize_user` to return `(User, list[AccessGroup])` instead of `(orcid, list[AccessGroup])`
+**Auth**
+- [ ] Update `authorize_user` to return `(User, list[AccessGroup])`
 - [ ] Add `require_permission(user, resource_id, user_groups, permission)`
 - [ ] Keep `require_admin` as an alias during migration
 - [ ] Replace `require_read_access` and `require_write_access` route by route
 
-### Resource Creation
-- [ ] `create_standard_acls` — add owner ORCID entry with `owner` role, project entry
+**Resource creation**
+- [ ] `create_standard_acls` — owner ORCID entry with `owner` role, personal project link, project group ACL entry
 
-### Resource Sharing
+**Sharing**
 - [ ] `POST /resources/{id}/share` — owner or project admin only
 - [ ] `DELETE /resources/{id}/share/{orcid}` — owner or project admin only
 
-### Project Routes
+**Projects**
 - [ ] `POST /projects/{proj_id}/users/{orcid}` — add `role` param
 - [ ] `PATCH /projects/{proj_id}/users/{orcid}` — new route to update role
 - [ ] `GET /projects/{proj_id}/users` — include role in response
 - [ ] Project creation — assign lead `admin` role in project group
+- [ ] At user registration, auto-create personal project (`project_id = orcid`, `title = "{first_name}'s workspace"`)
 
-### Deletion
+**Deletion**
 - [ ] Replace global-admin deletion with `require_permission(..., 'delete')`
 - [ ] Resource owners and project admins can delete within their scope
 
-### Instruments
-- [ ] Add `status VARCHAR DEFAULT 'active'` to `instrument` table
+**Instruments**
 - [ ] `GET /instruments` — default to `status=active`, expose `?status=` param
 - [ ] `PATCH /instruments/{id}` — status change requires instrument `admin`/`owner` or platform admin
 - [ ] `POST /instruments/{id}/projects/{proj_id}` — associate, auto-grant `contributor`
 - [ ] `DELETE /instruments/{id}/projects/{proj_id}` — disassociate, auto-revoke
 - [ ] At instrument creation, create instrument group; add creator as `owner`, service account as `admin`
 
-### Access Group Routes
+**Access groups**
 - [ ] Expose role in `GET /access_groups/{name}/users`
 - [ ] Allow role updates by group admins
 
-### Data Model Integrity
-- [ ] Add `is_personal BOOLEAN DEFAULT FALSE` to `project` table
-- [ ] Create `resource_project_link` table
-- [ ] Add FK: `Dataset.owner_orcid` → `user.orcid`
-- [ ] Add FK: `Sample.owner_orcid` → `user.orcid`
-- [ ] Remove `project_id` from `Dataset` and `Sample` after migration
-- [ ] At user registration, auto-create personal project (`project_id = orcid`, `title = "{first_name}'s workspace"`)
-
----
-
-## Migration Path
+### Migration path
 
 1. Add `role VARCHAR DEFAULT 'contributor'` to `useraccessgrouplink`
 2. Backfill roles from current `resourceacl` booleans:
@@ -421,8 +355,9 @@ Open questions:
    - `read=true, write=true` → `contributor`
    - ORCID-named group memberships → `owner`
    - Project lead memberships → `admin`
-3. Implement `require_permission` alongside existing checks — no routes changed yet
-4. Migrate routes one by one
-5. Drop `read`/`write` booleans from `resourceacl`
+3. Set `is_platform_admin=True` for existing platform admin users
+4. Implement `require_permission` alongside existing checks — no routes changed yet
+5. Migrate routes one by one
+6. Drop `read`/`write` booleans from `resourceacl`
 
 Existing users with `write=true` are mapped to `contributor`, not `editor`. Project leads can promote users on a case-by-case basis.

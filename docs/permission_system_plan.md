@@ -159,7 +159,8 @@ Every user has a **personal project** — a first-class `Project` row created au
 - `Project.is_personal = True` flag distinguishes personal from formal projects
 - Personal projects are excluded from public project listings (`GET /projects`) for other users
 - The personal project's access group is the user's ORCID group — no extra setup needed
-- The project `project_id` slug is the user's `username` (set at registration). If no username is set yet, falls back to the ORCID. Once set, the slug does not change even if the username changes later.
+- The `project_id` slug is the user's ORCID — stable, unique, never changes, never shown directly to users
+- The `title` field (e.g. "Fabrice's workspace") is what the UI displays — set from the user's name at registration
 - Personal projects are automatically created at user registration and cannot be deleted
 
 This makes `project_id` always resolvable via the relationship table, enabling a non-null FK constraint.
@@ -184,19 +185,11 @@ These constraints mean:
 
 ---
 
-## User Resolution Utilities
+## User Resolution
 
-Several parts of the system accept user identifiers in different forms (ORCID, username, email). A shared resolution utility avoids duplicating lookup logic:
+Internally the API always operates on ORCIDs — the stable, externally-validated user identifier. Usernames and emails are display and lookup aliases, resolved at the client/UI layer before making API calls.
 
-```python
-def resolve_user(identifier: str, session) -> User | None:
-    """Resolve an ORCID, username, or email to a User row."""
-    ...
-```
-
-This is used internally wherever a user reference must be validated — resource creation, project membership, sharing, personal project assignment.
-
-The existing `POST /users/resolve` API endpoint already exposes this at the HTTP level. The internal utility ensures the same logic is reused in route handlers rather than duplicated.
+The existing `POST /users/resolve` and `GET /users/by-username/{username}` endpoints serve this purpose: a client converts a `@username` or email into an ORCID, then uses the ORCID for the actual operation. The API itself never accepts a username as a resource or project identifier.
 
 ---
 
@@ -390,11 +383,11 @@ The instrument group membership is retained after decommissioning for audit purp
 - [ ] Add FK constraint: `Dataset.owner_orcid` → `user.orcid`
 - [ ] Add FK constraint: `Sample.owner_orcid` → `user.orcid`
 - [ ] Remove `project_id` column from `Dataset` and `Sample` after migration
-- [ ] At user registration, auto-create personal project with `is_personal=True` and `project_id = username or orcid`
+- [ ] At user registration, auto-create personal project with `is_personal=True`, `project_id = orcid`, `title = "{first_name}'s workspace"`
 
 ### User Resolution
-- [ ] Add `resolve_user(identifier, session)` utility — accepts ORCID, username, or email
-- [ ] Wire into resource creation, project membership, sharing routes
+- [ ] `POST /users/resolve` and `GET /users/by-username/{username}` already implemented — no internal utility needed
+- [ ] Document that API routes always accept ORCIDs; username/email resolution is a client responsibility
 
 ---
 

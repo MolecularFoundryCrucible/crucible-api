@@ -127,13 +127,15 @@ def create_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instr
         db_instrument.instrument_name = db_instrument.instrument_name.lower()
         session.add(db_instrument)
         now = get_utc_isoformat()
+        existing_ri = session.exec(select(Resource).where(Resource.mfid == db_instrument.unique_id)).one_or_none()
         ri = add_or_update(session, Resource,
                            where=(Resource.mfid == db_instrument.unique_id),
                            mfid=db_instrument.unique_id,
-                           resource_type="instrument", 
+                           resource_type="instrument",
                            created_with_api_version = API_VERSION,
                            api_version_githash = API_VERSION_GITHASH)
-        ri.creation_time = now
+        if existing_ri is None:
+            ri.creation_time = now
         ri.modification_time = now
         session.commit()
         session.refresh(db_instrument)

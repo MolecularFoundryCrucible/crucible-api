@@ -175,6 +175,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
             ).one_or_none()
 
         now = get_utc_isoformat()
+        existing_ri = session.exec(select(Resource).where(Resource.mfid == sample.unique_id)).one_or_none()
         ri = add_or_update(session,
                            Resource,
                            where=(Resource.mfid == sample.unique_id),
@@ -182,7 +183,8 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
                            resource_type="sample",
                            created_with_api_version = API_VERSION,
                            api_version_githash = API_VERSION_GITHASH)
-        ri.creation_time = now
+        if existing_ri is None:
+            ri.creation_time = now
         ri.modification_time = now
         ri.public = S.public
         session.commit()

@@ -150,24 +150,76 @@ Routes:
 
 ---
 
+## Ownership Transfer
+
+> **Deferred — needs design decision.**
+
+When a resource owner leaves (e.g. a researcher moves institutions), their datasets remain owned by their ORCID group. Under the current model, only the owner can modify their ORCID group ACL entry, and platform admins bypass ACL checks but have no route to reassign ownership.
+
+A future ownership transfer mechanism is needed. Open questions to resolve:
+- Who can initiate a transfer — platform admins only, or also project admins?
+- Does the previous owner lose access after transfer, or retain a lower role (e.g. `editor`)?
+- Can ownership be transferred to a project group rather than an individual?
+
+---
+
 ## Instrument Service Accounts
 
-> **Under discussion** — see open questions below.
+> **Draft design — to be revisited when implementation begins.**
 
-Each instrument may have an associated service account (`User` with `is_service_account=True`) representing the software running on the instrument. These accounts need rights to upload data and manage instrument metadata without being platform admins.
+Instrument service accounts are `User` records with `is_service_account=True`, representing software running on a physical instrument. They need to read broadly, write to associated projects, and act as agents on behalf of researchers — without having full platform admin rights.
 
-Proposed design mirrors the ORCID group pattern:
+### `service_accounts` group
 
-- Each instrument gets its own **instrument group** (named after instrument MFID)
-- The instrument's service account is a member with `owner` role in that group
-- The instrument resource itself has that group in its ACL
-- When an instrument is associated with a project, it gets added to the project group with `editor` role
+A dedicated `service_accounts` group (analogous to the `admin` group) grants two things:
 
-**Open questions:**
-- How is a service account linked to an instrument? New route: `POST /instruments/{id}/service_account`?
-- Can an instrument be associated with multiple projects simultaneously?
-- What happens to the instrument group's project access when the instrument is decommissioned?
-- Should instrument service accounts be able to create datasets autonomously, or only ingest into pre-created ones?
+1. **Read-only bypass** — members can read all resources without an ACL entry. No need to add the instrument to every new project just to see its data.
+2. **Allowlisted elevated routes** — routes normally restricted to admins but safe for instrument automation (e.g. `POST /users/resolve`, project/sample reads for orchestration).
+
+```python
+def require_permission(..., permission='read'):
+    if any(g.group_name == 'admin' for g in user_groups):
+        return True  # full bypass
+    if permission == 'read' and any(g.group_name == 'service_accounts' for g in user_groups):
+        return True  # read-only bypass for service accounts
+    # normal ACL + role check...
+```
+
+Write operations (dataset creation, ingestion requests) are NOT bypassed — they require explicit project association.
+
+### Instrument group
+
+Each instrument gets its own group (named after instrument MFID). The instrument's service account is a member with `owner` role in that group. The instrument resource itself has that group in its ACL, giving the service account management rights over the instrument's own metadata.
+
+### Instrument-project association
+
+Instruments are explicitly associated with the projects they actively serve. When the association is created (by a project admin or scheduling system), the service account automatically receives `contributor` role in the project group. When removed, access is revoked.
+
+```
+POST   /instruments/{id}/projects/{proj_id}   # associate + auto-grant contributor access
+DELETE /instruments/{id}/projects/{proj_id}   # disassociate + revoke access
+```
+
+An instrument can be associated with multiple projects simultaneously.
+
+### Dataset ownership
+
+Datasets created by an instrument service account are owned by the **researcher**, not the instrument. The `owner_orcid` is passed in the creation payload; the ownership ACL entry uses the researcher's ORCID group. The instrument is the technical creator but the researcher retains legal ownership.
+
+### Capability summary
+
+| Capability | Mechanism |
+|---|---|
+| Read all data | `service_accounts` group → read bypass |
+| Create datasets in project | `contributor` role via instrument-project association |
+| Assign researcher as owner | `owner_orcid` in creation payload |
+| Request ingestion | `contributor` role via instrument-project association |
+| Manage instrument metadata | `owner` role in instrument group |
+| Resolve users / elevated lookups | `service_accounts` group allowlist |
+
+### Decommissioning
+
+When an instrument is decommissioned, remove all instrument-project associations (revoking write access) and submit a deletion request for the instrument resource. Historical datasets the instrument created are unaffected — the researcher remains owner.
 
 ---
 
@@ -215,9 +267,14 @@ Proposed design mirrors the ORCID group pattern:
 
 ## Migration Path
 
-1. Add `role` column with default `'editor'`
-2. Backfill: set ORCID-named group memberships to `owner`
-3. Backfill: set project lead memberships to `admin`
-4. Implement `require_permission` alongside existing checks (no routes changed yet)
-5. Migrate routes one by one, replacing old checks with `require_permission`
-6. Drop `read`/`write` booleans from `resourceacl` once all checks are role-driven
+1. Add `role VARCHAR DEFAULT 'contributor'` to `useraccessgrouplink`
+2. Backfill `useraccessgrouplink` roles using the current `resourceacl` booleans:
+   - `read=true, write=false` → `viewer`
+   - `read=true, write=true` → `contributor`
+   - ORCID-named group memberships → `owner` (override regardless of booleans)
+   - Project lead memberships → `admin` (override regardless of booleans)
+3. Implement `require_permission` alongside existing checks (no routes changed yet)
+4. Migrate routes one by one, replacing old checks with `require_permission`
+5. Drop `read`/`write` booleans from `resourceacl` once all checks are role-driven
+
+> **Note:** Existing users with `write=true` are conservatively mapped to `contributor` rather than `editor`. Project leads can promote individual users via `PATCH /projects/{proj_id}/users/{orcid}?role=editor` on a case-by-case basis.

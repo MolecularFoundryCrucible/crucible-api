@@ -128,9 +128,75 @@ The `admin` group entry is always immutable — no user can remove platform admi
 At creation, two ACL entries are added automatically:
 
 1. **Owner's ORCID group** — creator gets `owner` role on their resource
-2. **Project group** — members' effective access determined by their role in the project group
+2. **Project group(s)** — members' effective access determined by their role in the project group. If no project is specified, the resource is assigned to the creator's personal project (see below).
 
 Platform admins access all resources via the bypass — no ACL entry needed.
+
+---
+
+## Multi-Project Resources
+
+A resource can belong to more than one project. This replaces the single `project_id` string field on `Dataset` and `Sample` with a relationship table:
+
+```sql
+CREATE TABLE resource_project_link (
+    resource_mfid VARCHAR REFERENCES idtype(mfid),
+    project_id    VARCHAR REFERENCES project(project_id),
+    PRIMARY KEY (resource_mfid, project_id)
+);
+```
+
+Filtering by project still works — `GET /datasets?project_id=10k_perovskites` becomes a join. A resource appears in all its linked projects' listings. At creation, ACL entries are added for each linked project group.
+
+The `project_id` column on `Dataset` and `Sample` is removed in favour of this table.
+
+---
+
+## Personal Projects
+
+Every user has a **personal project** — a first-class `Project` row created automatically at user registration. Resources created without specifying a project are assigned to the creator's personal project.
+
+- `Project.is_personal = True` flag distinguishes personal from formal projects
+- Personal projects are excluded from public project listings (`GET /projects`) for other users
+- The personal project's access group is the user's ORCID group — no extra setup needed
+- The project `project_id` slug is the user's `username` (set at registration). If no username is set yet, falls back to the ORCID. Once set, the slug does not change even if the username changes later.
+- Personal projects are automatically created at user registration and cannot be deleted
+
+This makes `project_id` always resolvable via the relationship table, enabling a non-null FK constraint.
+
+---
+
+## Data Model Integrity
+
+Currently `owner_orcid` and `project_id` on `Dataset` and `Sample` are plain strings with no FK enforcement. This allows orphaned references to non-existent users or projects.
+
+### Changes required
+
+- `Dataset.owner_orcid` → FK to `user.orcid` (non-null)
+- `Sample.owner_orcid` → FK to `user.orcid` (non-null)
+- `resource_project_link.project_id` → FK to `project.project_id`
+- `resource_project_link.resource_mfid` → FK to `idtype.mfid`
+
+These constraints mean:
+- A resource cannot be created without a registered owner
+- A resource cannot be assigned to a non-existent project
+- Deleting a user or project requires handling linked resources first
+
+---
+
+## User Resolution Utilities
+
+Several parts of the system accept user identifiers in different forms (ORCID, username, email). A shared resolution utility avoids duplicating lookup logic:
+
+```python
+def resolve_user(identifier: str, session) -> User | None:
+    """Resolve an ORCID, username, or email to a User row."""
+    ...
+```
+
+This is used internally wherever a user reference must be validated — resource creation, project membership, sharing, personal project assignment.
+
+The existing `POST /users/resolve` API endpoint already exposes this at the HTTP level. The internal utility ensures the same logic is reused in route handlers rather than duplicated.
 
 ---
 
@@ -317,6 +383,18 @@ The instrument group membership is retained after decommissioning for audit purp
 ### Access Group Routes
 - [ ] Expose role when listing group members (`GET /access_groups/{name}/users`)
 - [ ] Allow role updates by group admins
+
+### Data Model Integrity
+- [ ] Add `is_personal BOOLEAN DEFAULT FALSE` to `project` table
+- [ ] Create `resource_project_link` table (replaces `project_id` on `Dataset`/`Sample`)
+- [ ] Add FK constraint: `Dataset.owner_orcid` → `user.orcid`
+- [ ] Add FK constraint: `Sample.owner_orcid` → `user.orcid`
+- [ ] Remove `project_id` column from `Dataset` and `Sample` after migration
+- [ ] At user registration, auto-create personal project with `is_personal=True` and `project_id = username or orcid`
+
+### User Resolution
+- [ ] Add `resolve_user(identifier, session)` utility — accepts ORCID, username, or email
+- [ ] Wire into resource creation, project membership, sharing routes
 
 ---
 

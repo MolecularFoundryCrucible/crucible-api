@@ -1,6 +1,5 @@
 import json
 import os
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -119,20 +118,20 @@ def _create_upload_session(
     size: int,
 ) -> str:
     """Persist an UploadSession record and return the generated upload_id."""
-    upload_id = str(uuid.uuid4())
     expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    us = UploadSession(
+        dataset_mfid=dsid,
+        gcs_path=gcs_path,
+        associated_file_name=safe_filename,
+        owner_user_id=user_unique_id,
+        expires_at=expires_at,
+        size=size,
+    )
     with Session(engine) as session:
-        session.add(UploadSession(
-            upload_id=upload_id,
-            dataset_mfid=dsid,
-            gcs_path=gcs_path,
-            associated_file_name=safe_filename,
-            owner_user_id=user_unique_id,
-            expires_at=expires_at,
-            size=size,
-        ))
+        session.add(us)
         session.commit()
-    return upload_id
+        session.refresh(us)
+    return us.upload_id
 
 
 @router.get('/datasets/{dsid}/download_links')

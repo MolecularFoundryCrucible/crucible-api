@@ -346,7 +346,7 @@ class IngestionRequest(SQLModel, table=True):
 class UploadSession(SQLModel, table=True):
     __tablename__ = "upload_sessions"
     id: Optional[int] = Field(default=None, primary_key=True)
-    upload_id: str = Field(index=True, unique=True)
+    upload_id: str = Field(default_factory=get_mfid_value, index=True, unique=True)
     dataset_mfid: str
     gcs_path: str           # full blob path in prod bucket: "{dsid}/{filename}"
     associated_file_name: str   # relative filename within the dataset: "{safe_filename}"

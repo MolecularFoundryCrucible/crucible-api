@@ -32,6 +32,7 @@ def app():
 
 @pytest.fixture
 def client(app):
+    app.dependency_overrides = {}  # reset between tests
     return TestClient(app)
 
 
@@ -42,17 +43,22 @@ def _make_mock_dataset(dsid="ds-001"):
     return ds
 
 
+def _fake_auth():
+    """Dependency override: skip real auth, return a test user."""
+    return ('user-orcid-001', [MagicMock(id=1)])
+
+
 class TestInitiateMultipartUpload:
 
-    @patch('app.utils.auth_utils.authorize_user')
     @patch('app.api.routes.gcs_storage.require_write_access')
     @patch('app.api.routes.gcs_storage.Session')
     @patch('app.api.routes.gcs_storage._mint_upload_token')
     def test_returns_token_and_upload_id(
-        self, mock_mint, mock_session_cls, mock_write_access, mock_auth, client
+        self, mock_mint, mock_session_cls, mock_write_access, client, app
     ):
         """Happy path: returns access token, upload_id, and GCS coordinates."""
-        mock_auth.return_value = ('user-orcid-001', [MagicMock(id=1)])
+        from app.utils.auth_utils import authorize_user
+        app.dependency_overrides[authorize_user] = _fake_auth
         mock_mint.return_value = ("ya29.fake_token", "2026-06-08T16:00:00+00:00")
 
         session = MagicMock()
@@ -74,15 +80,15 @@ class TestInitiateMultipartUpload:
         assert data["upload_id"] is not None
         assert data["existing_file"] is None
 
-    @patch('app.utils.auth_utils.authorize_user')
     @patch('app.api.routes.gcs_storage.require_write_access')
     @patch('app.api.routes.gcs_storage.Session')
     @patch('app.api.routes.gcs_storage._mint_upload_token')
     def test_dedup_returns_existing_file(
-        self, mock_mint, mock_session_cls, mock_write_access, mock_auth, client
+        self, mock_mint, mock_session_cls, mock_write_access, client, app
     ):
         """When SHA256 matches an existing file, returns existing_file without minting a token."""
-        mock_auth.return_value = ('user-orcid-001', [MagicMock(id=1)])
+        from app.utils.auth_utils import authorize_user
+        app.dependency_overrides[authorize_user] = _fake_auth
 
         session = MagicMock()
         mock_session_cls.return_value.__enter__.return_value = session
@@ -111,11 +117,11 @@ class TestInitiateMultipartUpload:
         assert data["access_token"] is None
         mock_mint.assert_not_called()
 
-    @patch('app.utils.auth_utils.authorize_user')
     @patch('app.api.routes.gcs_storage.Session')
-    def test_dataset_not_found_returns_404(self, mock_session_cls, mock_auth, client):
+    def test_dataset_not_found_returns_404(self, mock_session_cls, client, app):
         """Returns 404 when the dataset does not exist."""
-        mock_auth.return_value = ('user-orcid-001', [MagicMock(id=1)])
+        from app.utils.auth_utils import authorize_user
+        app.dependency_overrides[authorize_user] = _fake_auth
 
         session = MagicMock()
         mock_session_cls.return_value.__enter__.return_value = session
@@ -127,11 +133,10 @@ class TestInitiateMultipartUpload:
         assert resp.status_code == 404
         assert "not found" in resp.json()["detail"].lower()
 
-    @patch('app.utils.auth_utils.authorize_user')
-    @patch('app.api.routes.gcs_storage.Session')
-    def test_zero_size_returns_400(self, mock_session_cls, mock_auth, client):
-        """Returns 400 when size is 0."""
-        mock_auth.return_value = ('user-orcid-001', [MagicMock(id=1)])
+    def test_zero_size_returns_400(self, client, app):
+        """Returns 400 when size is 0 — checked before auth."""
+        from app.utils.auth_utils import authorize_user
+        app.dependency_overrides[authorize_user] = _fake_auth
 
         body = {"filename": "data.h5", "size": 0}
         resp = client.post("/api/datasets/ds-001/upload/initiate/multipart", json=body)
@@ -139,15 +144,15 @@ class TestInitiateMultipartUpload:
         assert resp.status_code == 400
         assert "size" in resp.json()["detail"].lower()
 
-    @patch('app.utils.auth_utils.authorize_user')
     @patch('app.api.routes.gcs_storage.require_write_access')
     @patch('app.api.routes.gcs_storage.Session')
     @patch('app.api.routes.gcs_storage._mint_upload_token')
     def test_gcs_failure_returns_503(
-        self, mock_mint, mock_session_cls, mock_write_access, mock_auth, client
+        self, mock_mint, mock_session_cls, mock_write_access, client, app
     ):
         """Returns 503 when token minting fails."""
-        mock_auth.return_value = ('user-orcid-001', [MagicMock(id=1)])
+        from app.utils.auth_utils import authorize_user
+        app.dependency_overrides[authorize_user] = _fake_auth
         mock_mint.side_effect = Exception("GCS unavailable")
 
         session = MagicMock()
@@ -162,15 +167,15 @@ class TestInitiateMultipartUpload:
 
         assert resp.status_code == 503
 
-    @patch('app.utils.auth_utils.authorize_user')
     @patch('app.api.routes.gcs_storage.require_write_access')
     @patch('app.api.routes.gcs_storage.Session')
     @patch('app.api.routes.gcs_storage._mint_upload_token')
     def test_path_traversal_rejected(
-        self, mock_mint, mock_session_cls, mock_write_access, mock_auth, client
+        self, mock_mint, mock_session_cls, mock_write_access, client, app
     ):
         """Returns 400 for filenames that strip to empty after removing traversal components."""
-        mock_auth.return_value = ('user-orcid-001', [MagicMock(id=1)])
+        from app.utils.auth_utils import authorize_user
+        app.dependency_overrides[authorize_user] = _fake_auth
 
         session = MagicMock()
         mock_session_cls.return_value.__enter__.return_value = session

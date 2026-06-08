@@ -69,6 +69,71 @@ def _mint_upload_token() -> tuple[str, str]:
     return scoped.token, scoped.expiry.isoformat()
 
 
+def _validate_and_prepare_upload(
+    dsid: str,
+    body: "UploadInitiate",
+    user_unique_id: str,
+    ag_ids: list,
+) -> "AssociatedFile | tuple[str, str]":
+    """Common preamble for both upload initiation routes.
+    Validates size, checks write access, dedup-checks by SHA256, and sanitizes filename.
+    Returns AssociatedFile on dedup hit, or (gcs_path, safe_filename) on success.
+    """
+    if body.size <= 0:
+        raise HTTPException(status_code=400, detail="File size must be greater than 0")
+    if body.size > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File size {body.size} exceeds the maximum allowed upload size of {_MAX_UPLOAD_BYTES} bytes",
+        )
+
+    with Session(engine) as session:
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        require_write_access(session, ag_ids, [dsid])
+
+        if body.sha256_hash:
+            existing = session.exec(
+                select(AssociatedFile).where(
+                    AssociatedFile.dataset_id == ds.id,
+                    AssociatedFile.sha256_hash == body.sha256_hash,
+                )
+            ).one_or_none()
+            if existing is not None:
+                return existing
+
+    from pathlib import PurePosixPath
+    parts = [p for p in PurePosixPath(body.filename).parts if p not in ("", "/", ".", "..")]
+    if not parts:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    safe_filename = str(PurePosixPath(*parts))
+    return f"{dsid}/{safe_filename}", safe_filename
+
+
+def _create_upload_session(
+    dsid: str,
+    gcs_path: str,
+    safe_filename: str,
+    user_unique_id: str,
+    size: int,
+) -> str:
+    """Persist an UploadSession record and return the generated upload_id."""
+    upload_id = str(uuid.uuid4())
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    with Session(engine) as session:
+        session.add(UploadSession(
+            upload_id=upload_id,
+            dataset_mfid=dsid,
+            gcs_path=gcs_path,
+            associated_file_name=safe_filename,
+            owner_user_id=user_unique_id,
+            expires_at=expires_at,
+            size=size,
+        ))
+        session.commit()
+    return upload_id
+
 
 @router.get('/datasets/{dsid}/download_links')
 def generate_signed_url_download_link(
@@ -137,39 +202,10 @@ def initiate_resumable_upload(
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
-    if body.size <= 0:
-        raise HTTPException(status_code=400, detail="File size must be greater than 0")
-    if body.size > _MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File size {body.size} exceeds the maximum allowed upload size of {_MAX_UPLOAD_BYTES} bytes",
-        )
-
-    with Session(engine) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        require_write_access(session, ag_ids, [dsid])
-
-        if body.sha256_hash:
-            existing = session.exec(
-                select(AssociatedFile).where(
-                    AssociatedFile.dataset_id == ds.id,
-                    AssociatedFile.sha256_hash == body.sha256_hash,
-                )
-            ).one_or_none()
-            if existing is not None:
-                return UploadInitiateRead(existing_file=AssociatedFileRead.model_validate(existing, update={"dataset_mfid": existing.dataset.unique_id}))
-
-    # Strip absolute markers, current-dir dots, and traversal components.
-    from pathlib import PurePosixPath
-    parts = [p for p in PurePosixPath(body.filename).parts if p not in ("", "/", ".", "..")]
-    if not parts:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    safe_filename = str(PurePosixPath(*parts))
-
-    gcs_path = f"{dsid}/{safe_filename}"
-    associated_file_name = safe_filename
+    result = _validate_and_prepare_upload(dsid, body, user_unique_id, ag_ids)
+    if not isinstance(result, tuple):
+        return UploadInitiateRead(existing_file=AssociatedFileRead.model_validate(result, update={"dataset_mfid": result.dataset.unique_id}))
+    gcs_path, safe_filename = result
 
     try:
         authed = _get_gcs_authed_session()
@@ -189,20 +225,7 @@ def initiate_resumable_upload(
     if not resumable_uri:
         raise HTTPException(status_code=503, detail="GCS did not return a resumable upload URI")
 
-    upload_id = str(uuid.uuid4())
-    expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
-
-    with Session(engine) as session:
-        session.add(UploadSession(
-            upload_id=upload_id,
-            dataset_mfid=dsid,
-            gcs_path=gcs_path,
-            associated_file_name=associated_file_name,
-            owner_user_id=user_unique_id,
-            expires_at=expires_at,
-            size=body.size,
-        ))
-        session.commit()
+    upload_id = _create_upload_session(dsid, gcs_path, safe_filename, user_unique_id, body.size)
 
     return UploadInitiateRead(
         upload_id=upload_id,
@@ -226,60 +249,17 @@ def initiate_multipart_upload(
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
-    if body.size <= 0:
-        raise HTTPException(status_code=400, detail="File size must be greater than 0")
-    if body.size > _MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File size {body.size} exceeds the maximum allowed upload size of {_MAX_UPLOAD_BYTES} bytes",
-        )
-
-    with Session(engine) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        require_write_access(session, ag_ids, [dsid])
-
-        if body.sha256_hash:
-            existing = session.exec(
-                select(AssociatedFile).where(
-                    AssociatedFile.dataset_id == ds.id,
-                    AssociatedFile.sha256_hash == body.sha256_hash,
-                )
-            ).one_or_none()
-            if existing is not None:
-                return UploadMultipartInitiateRead(
-                    existing_file=AssociatedFileRead.model_validate(
-                        existing, update={"dataset_mfid": existing.dataset.unique_id}
-                    )
-                )
-
-    from pathlib import PurePosixPath
-    parts = [p for p in PurePosixPath(body.filename).parts if p not in ("", "/", ".", "..")]
-    if not parts:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    safe_filename = str(PurePosixPath(*parts))
-
-    gcs_path = f"{dsid}/{safe_filename}"
-    upload_id = str(uuid.uuid4())
-    expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    result = _validate_and_prepare_upload(dsid, body, user_unique_id, ag_ids)
+    if not isinstance(result, tuple):
+        return UploadMultipartInitiateRead(existing_file=AssociatedFileRead.model_validate(result, update={"dataset_mfid": result.dataset.unique_id}))
+    gcs_path, safe_filename = result
 
     try:
         access_token, token_expiry = _mint_upload_token()
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Could not generate GCS upload token: {e}")
 
-    with Session(engine) as session:
-        session.add(UploadSession(
-            upload_id=upload_id,
-            dataset_mfid=dsid,
-            gcs_path=gcs_path,
-            associated_file_name=safe_filename,
-            owner_user_id=user_unique_id,
-            expires_at=expires_at,
-            size=body.size,
-        ))
-        session.commit()
+    upload_id = _create_upload_session(dsid, gcs_path, safe_filename, user_unique_id, body.size)
 
     return UploadMultipartInitiateRead(
         upload_id=upload_id,

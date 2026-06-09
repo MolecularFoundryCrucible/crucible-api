@@ -212,13 +212,18 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
                  include_links: bool = False,
                  include_datasets: bool = False,
                  limit: int = Query(default=100, ge=1, le=1000),
-                 offset: int = Query(default=0, ge=0),
+                 cursor: Optional[str] = None,
                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                  modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
     '''
     Returns a paginated list of samples the requesting user is authorized to view.
-    Default limit is 100, max is 1000. Use offset for pagination.
-    Response includes total count to support parallel fetching.
+    Default limit is 100, max is 1000.
+
+    Keyset (cursor) pagination: results are ordered by unique_id descending, which is
+    creation order since unique_id is a time-sortable UUIDv7. To fetch the next page,
+    pass cursor=<next_cursor from the previous response>. The first page omits cursor.
+    next_cursor is null when there are no further pages. total is included only on the
+    first page (cursor omitted); subsequent pages omit it to avoid a redundant count.
     Pass include_links=true to include parent, child, and associated resources for each sample.
     include_datasets is deprecated — use include_links instead.
     '''
@@ -232,7 +237,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
 
     params_dict = dict(request.query_params)
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
-              'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets', 'limit', 'offset'):
+              'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets', 'limit', 'cursor'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -253,10 +258,13 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
                     q = q.where(getattr(Sample, k) == v)
             return q
 
-        total = session.exec(apply_filters(
-            select(func.count()).select_from(Sample)
-            .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
-        )).one()
+        # total is only needed on the first page; cursor pages skip the redundant count.
+        total = None
+        if cursor is None:
+            total = session.exec(apply_filters(
+                select(func.count()).select_from(Sample)
+                .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+            )).one()
 
         if include_metadata:
             samp_cmd = (
@@ -271,7 +279,9 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
             )
 
         samp_cmd = apply_filters(samp_cmd)
-        samp_cmd = samp_cmd.order_by(Resource.creation_time.desc()).offset(offset).limit(limit)
+        if cursor is not None:
+            samp_cmd = samp_cmd.where(Sample.unique_id < cursor)
+        samp_cmd = samp_cmd.order_by(Sample.unique_id.desc()).limit(limit)
         rows = session.exec(samp_cmd).all()
 
         if include_links:
@@ -333,7 +343,8 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
                 "datasets": compat_datasets,
                 "links": links,
             }))
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+        next_cursor = rows[-1][0].unique_id if len(rows) == limit else None
+        return PaginatedResponse(total=total, limit=limit, items=items, next_cursor=next_cursor)
 
 
 @router.get("/samples/{sample_id}", response_model=SampleResponse)

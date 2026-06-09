@@ -49,13 +49,14 @@ def redirect_exchange(request: Request, code: str, state: str = None):
     Returns:
         RedirectResponse to the appropriate page after successful authentication
     """
+    import urllib.parse
     from app.utils.auth_utils import ALGORITHM, SECRET_KEY, code_for_token_exchange
 
-    api_url = get_api_url()
     orcid_client_id = get_orcid_client_id()
     orcid_client_secret = get_orcid_client_secret()
+    redirect_uri = urllib.parse.unquote_plus(get_redirect_uri())
 
-    token = code_for_token_exchange(code, orcid_client_id, orcid_client_secret, f"{api_url}/auth/callback")
+    token = code_for_token_exchange(code, orcid_client_id, orcid_client_secret, redirect_uri)
     user_from_orcid = requests.get(
         url="https://orcid.org/oauth/userinfo",
         headers={"Authorization": f"Bearer {token}"}

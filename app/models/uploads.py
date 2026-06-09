@@ -27,3 +27,17 @@ class UploadComplete(SQLModel):
     '''Body for POST /datasets/{dsid}/upload/complete.'''
     upload_id: str
     sha256_hash: str        # computed by the client during upload
+
+
+class UploadMultipartInitiateRead(SQLModel):
+    '''Response from POST /datasets/{dsid}/upload/initiate/multipart.
+    Either existing_file is set (dedup hit — no upload needed), or all other fields are set.
+    Pass upload_id to POST /datasets/{dsid}/upload/complete after the transfer finishes.
+    '''
+    upload_id: Optional[str] = None
+    access_token: Optional[str] = None
+    token_expiry: Optional[str] = None   # ISO 8601
+    bucket: Optional[str] = None
+    object_prefix: Optional[str] = None  # "{dsid}/" — prefix the filename to get the full blob path
+    project: Optional[str] = None
+    existing_file: Optional[AssociatedFileRead] = None

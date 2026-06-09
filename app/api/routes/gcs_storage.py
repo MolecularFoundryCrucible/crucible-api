@@ -1,6 +1,5 @@
 import json
 import os
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -12,7 +11,7 @@ from app.api.dependencies import get_engine
 from app.general_utils import get_secret
 from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
-from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead
+from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead, UploadMultipartInitiateRead
 from app.utils.auth_utils import authorize_user, require_read_access, require_write_access
 from app.utils.sql_utils import add_or_update
 
@@ -23,6 +22,7 @@ _DOWNLOAD_BUCKET = "mf-storage-prod"
 _GCS_UPLOAD_API = "https://storage.googleapis.com/upload/storage/v1/b"
 _CHUNK_SIZE_HINT = 8 * 1024 * 1024  # 8 MiB — GCS recommended chunk multiple
 _MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 500 * 1024 ** 3))  # default 500 GiB
+_GCS_PROJECT = os.environ.get("GCS_PROJECT", "crucible-prod")
 
 _gcs_credentials = None
 _gcs_authed_session = None
@@ -57,6 +57,81 @@ def _get_gcs_storage_client():
         _gcs_storage_client = gcs.Client(credentials=_get_gcs_credentials())
     return _gcs_storage_client
 
+
+def _mint_upload_token() -> tuple[str, str]:
+    """Return (access_token, token_expiry_iso) by refreshing the service account credentials."""
+    from google.auth.transport.requests import Request
+    scoped = _get_gcs_credentials().with_scopes(
+        ["https://www.googleapis.com/auth/devstorage.read_write"]
+    )
+    scoped.refresh(Request())
+    return scoped.token, scoped.expiry.isoformat()
+
+
+def _validate_and_prepare_upload(
+    dsid: str,
+    body: "UploadInitiate",
+    user_unique_id: str,
+    ag_ids: list,
+) -> "AssociatedFile | tuple[str, str]":
+    """Common preamble for both upload initiation routes.
+    Validates size, checks write access, dedup-checks by SHA256, and sanitizes filename.
+    Returns AssociatedFile on dedup hit, or (gcs_path, safe_filename) on success.
+    """
+    if body.size <= 0:
+        raise HTTPException(status_code=400, detail="File size must be greater than 0")
+    if body.size > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File size {body.size} exceeds the maximum allowed upload size of {_MAX_UPLOAD_BYTES} bytes",
+        )
+
+    with Session(engine) as session:
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        require_write_access(session, ag_ids, [dsid])
+
+        if body.sha256_hash:
+            existing = session.exec(
+                select(AssociatedFile).where(
+                    AssociatedFile.dataset_id == ds.id,
+                    AssociatedFile.sha256_hash == body.sha256_hash,
+                )
+            ).one_or_none()
+            if existing is not None:
+                return existing
+
+    from pathlib import PurePosixPath
+    parts = [p for p in PurePosixPath(body.filename).parts if p not in ("", "/", ".", "..")]
+    if not parts:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    safe_filename = str(PurePosixPath(*parts))
+    return f"{dsid}/{safe_filename}", safe_filename
+
+
+def _create_upload_session(
+    dsid: str,
+    gcs_path: str,
+    safe_filename: str,
+    user_unique_id: str,
+    size: int,
+) -> str:
+    """Persist an UploadSession record and return the generated upload_id."""
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    us = UploadSession(
+        dataset_mfid=dsid,
+        gcs_path=gcs_path,
+        associated_file_name=safe_filename,
+        owner_user_id=user_unique_id,
+        expires_at=expires_at,
+        size=size,
+    )
+    with Session(engine) as session:
+        session.add(us)
+        session.commit()
+        session.refresh(us)
+    return us.upload_id
 
 
 @router.get('/datasets/{dsid}/download_links')
@@ -126,39 +201,10 @@ def initiate_resumable_upload(
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
-    if body.size <= 0:
-        raise HTTPException(status_code=400, detail="File size must be greater than 0")
-    if body.size > _MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File size {body.size} exceeds the maximum allowed upload size of {_MAX_UPLOAD_BYTES} bytes",
-        )
-
-    with Session(engine) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        require_write_access(session, ag_ids, [dsid])
-
-        if body.sha256_hash:
-            existing = session.exec(
-                select(AssociatedFile).where(
-                    AssociatedFile.dataset_id == ds.id,
-                    AssociatedFile.sha256_hash == body.sha256_hash,
-                )
-            ).one_or_none()
-            if existing is not None:
-                return UploadInitiateRead(existing_file=AssociatedFileRead.model_validate(existing, update={"dataset_mfid": existing.dataset.unique_id}))
-
-    # Strip absolute markers, current-dir dots, and traversal components.
-    from pathlib import PurePosixPath
-    parts = [p for p in PurePosixPath(body.filename).parts if p not in ("", "/", ".", "..")]
-    if not parts:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    safe_filename = str(PurePosixPath(*parts))
-
-    gcs_path = f"{dsid}/{safe_filename}"
-    associated_file_name = safe_filename
+    result = _validate_and_prepare_upload(dsid, body, user_unique_id, ag_ids)
+    if not isinstance(result, tuple):
+        return UploadInitiateRead(existing_file=AssociatedFileRead.model_validate(result, update={"dataset_mfid": result.dataset.unique_id}))
+    gcs_path, safe_filename = result
 
     try:
         authed = _get_gcs_authed_session()
@@ -178,25 +224,49 @@ def initiate_resumable_upload(
     if not resumable_uri:
         raise HTTPException(status_code=503, detail="GCS did not return a resumable upload URI")
 
-    upload_id = str(uuid.uuid4())
-    expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
-
-    with Session(engine) as session:
-        session.add(UploadSession(
-            upload_id=upload_id,
-            dataset_mfid=dsid,
-            gcs_path=gcs_path,
-            associated_file_name=associated_file_name,
-            owner_user_id=user_unique_id,
-            expires_at=expires_at,
-            size=body.size,
-        ))
-        session.commit()
+    upload_id = _create_upload_session(dsid, gcs_path, safe_filename, user_unique_id, body.size)
 
     return UploadInitiateRead(
         upload_id=upload_id,
         resumable_uri=resumable_uri,
         chunk_size_hint=_CHUNK_SIZE_HINT,
+    )
+
+
+@router.post("/datasets/{dsid}/upload/initiate/multipart", response_model=UploadMultipartInitiateRead)
+def initiate_multipart_upload(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    dsid: str,
+    body: UploadInitiate,
+):
+    '''
+    Vend a short-lived GCS OAuth2 access token for parallel client-side uploads.
+    The client uses this token with google-cloud-storage transfer_manager.upload_chunks_concurrently().
+    Returns upload_id — pass it to POST /datasets/{dsid}/upload/complete after the transfer.
+    If existing_file is set, the file already exists; skip the upload entirely.
+    '''
+    user_unique_id, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    result = _validate_and_prepare_upload(dsid, body, user_unique_id, ag_ids)
+    if not isinstance(result, tuple):
+        return UploadMultipartInitiateRead(existing_file=AssociatedFileRead.model_validate(result, update={"dataset_mfid": result.dataset.unique_id}))
+    gcs_path, safe_filename = result
+
+    try:
+        access_token, token_expiry = _mint_upload_token()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Could not generate GCS upload token: {e}")
+
+    upload_id = _create_upload_session(dsid, gcs_path, safe_filename, user_unique_id, body.size)
+
+    return UploadMultipartInitiateRead(
+        upload_id=upload_id,
+        access_token=access_token,
+        token_expiry=token_expiry,
+        bucket=_DOWNLOAD_BUCKET,
+        object_prefix=f"{dsid}/",
+        project=_GCS_PROJECT,
     )
 
 

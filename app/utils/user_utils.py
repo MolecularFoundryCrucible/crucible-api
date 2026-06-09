@@ -43,10 +43,6 @@ def resolve_user(session, orcid: Optional[str] = None, email: Optional[str] = No
     return user
 
 
-def sql_get_user_by_email(email: str, session):
-    return session.exec(select(User).where(User.email == email)).one_or_none()
-
-
 def sql_add_user_to_access_group(orcid, group_name, session):
     """Add a user to an access group by ORCID. Creates the access group if it doesn't exist."""
     user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()

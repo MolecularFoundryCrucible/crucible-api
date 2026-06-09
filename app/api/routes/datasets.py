@@ -101,7 +101,7 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
                          background_tasks: BackgroundTasks):
     
     logger.info(f"Creating dataset: {dataset.unique_id}")
-    dataset_details = dataset.model_dump()
+    dataset_details = dataset.model_dump(exclude_unset=True)
     user_unique_id, ag_list = auth_res
     
     with Session(engine) as session:
@@ -119,7 +119,7 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
         ds = add_or_update(
             session,
             Dataset,
-            Dataset.unique_id == dataset_details['unique_id'],
+            Dataset.unique_id == dataset_details.get('unique_id'),
             **dataset_details
         )
 

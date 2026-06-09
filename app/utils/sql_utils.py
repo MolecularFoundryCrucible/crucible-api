@@ -1,8 +1,11 @@
 
+import logging
 import yaml
 import os
 import urllib.parse
 from app.general_utils import get_secret, is_orcid
+
+logger = logging.getLogger(__name__)
 from sqlalchemy import join
 from sqlmodel import create_engine, select
 from dotenv import load_dotenv
@@ -107,15 +110,24 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None)
 
     if owner_id:
         owner_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == owner_id)).one_or_none()
-        sql_create_resource_acl(owner_ag, mfid, read=True, write=True, session=session)
+        if owner_ag is None:
+            logger.warning("create_standard_acls: no AccessGroup for owner '%s' — skipping owner ACL for resource '%s'", owner_id, mfid)
+        else:
+            sql_create_resource_acl(owner_ag, mfid, read=True, write=True, session=session)
 
     if requestor_id and is_orcid(requestor_id) and requestor_id != owner_id:
         requestor_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == requestor_id)).one_or_none()
-        sql_create_resource_acl(requestor_ag, mfid, read=True, write=True, session=session)
+        if requestor_ag is None:
+            logger.warning("create_standard_acls: no AccessGroup for requestor '%s' — skipping requestor ACL for resource '%s'", requestor_id, mfid)
+        else:
+            sql_create_resource_acl(requestor_ag, mfid, read=True, write=True, session=session)
 
     if project_id:
         proj_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == project_id)).one_or_none()
-        sql_create_resource_acl(proj_ag, mfid, read=True, write=True, session=session)
+        if proj_ag is None:
+            logger.warning("create_standard_acls: no AccessGroup for project '%s' — skipping project ACL for resource '%s'", project_id, mfid)
+        else:
+            sql_create_resource_acl(proj_ag, mfid, read=True, write=True, session=session)
 
 
 def get_active_deletion_request(session, resource_id: str):

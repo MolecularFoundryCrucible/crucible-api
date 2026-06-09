@@ -224,23 +224,28 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                   include_metadata: bool = False,
                   include_links: bool = False,
                   limit: int = Query(default=100, ge=1, le=1000),
-                  offset: int = Query(default=0, ge=0),
+                  cursor: Optional[str] = None,
                   creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                   modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
     '''
     Returns a paginated list of datasets the requesting user is authorized to view.
-    Default limit is 100, max is 1000. Use offset for pagination.
-    Response includes total count to support parallel fetching.
+    Default limit is 100, max is 1000.
+
+    Keyset (cursor) pagination: results are ordered by unique_id descending, which is
+    creation order since unique_id is a time-sortable UUIDv7. To fetch the next page,
+    pass cursor=<next_cursor from the previous response>. The first page omits cursor.
+    next_cursor is null when there are no further pages. total is included only on the
+    first page (cursor omitted); subsequent pages omit it to avoid a redundant count.
     Pass include_links=true to include parent, child, and associated resources for each dataset.
     '''
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
-    
+
     # extract parameters from filters
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
-              'modification_time_lte', 'include_metadata', 'include_links', 'limit', 'offset'):
+              'modification_time_lte', 'include_metadata', 'include_links', 'limit', 'cursor'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -262,13 +267,16 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                     q = q.where(getattr(Dataset, key) == value)
             return q
 
-        count_query = apply_filters(
-            select(func.count()).select_from(Dataset)
-            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
-        )
-        if keyword_filter:
-            count_query = generate_kw_query(session, count_query, keyword_filter)
-        total = session.exec(count_query).one()
+        # total is only needed on the first page; cursor pages skip the redundant count.
+        total = None
+        if cursor is None:
+            count_query = apply_filters(
+                select(func.count()).select_from(Dataset)
+                .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+            )
+            if keyword_filter:
+                count_query = generate_kw_query(session, count_query, keyword_filter)
+            total = session.exec(count_query).one()
 
         if include_metadata:
             query = (
@@ -286,7 +294,9 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         query = apply_filters(query)
         if keyword_filter:
             query = generate_kw_query(session, query, keyword_filter)
-        query = query.order_by(Resource.creation_time.desc()).offset(offset).limit(limit)
+        if cursor is not None:
+            query = query.where(Dataset.unique_id < cursor)
+        query = query.order_by(Dataset.unique_id.desc()).limit(limit)
 
         results = session.exec(query).all()
 
@@ -343,7 +353,8 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                 "scientific_metadata": sci_md,
                 "links": links,
             }))
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+        next_cursor = results[-1][0].unique_id if len(results) == limit else None
+        return PaginatedResponse(total=total, limit=limit, items=items, next_cursor=next_cursor)
 
 
 @router.get("/datasets/{dsid}", response_model=DatasetResponse)

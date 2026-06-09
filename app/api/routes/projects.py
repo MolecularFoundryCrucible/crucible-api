@@ -15,7 +15,7 @@ from app.models.core_models import (
 )
 from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.sql_utils import add_or_update
-from app.utils.user_utils import sql_add_user_to_access_group
+from app.utils.user_utils import sql_add_user_to_access_group, resolve_user
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
@@ -32,28 +32,15 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
     provided and must correspond to an existing user. The resolved ORCID is stored on the project.
     Returns 409 if a project with the given project_id already exists.
     """
-    if not P.project_lead_orcid and not P.project_lead_email:
-        raise HTTPException(status_code=400, detail="Either project_lead_orcid or project_lead_email must be provided.")
+    if not P.project_lead_orcid and not P.project_lead_email and not P.project_lead_username:
+        raise HTTPException(status_code=400, detail="One of project_lead_orcid, project_lead_email, or project_lead_username must be provided.")
 
     with Session(engine) as session:
         existing = session.exec(select(Project).where(Project.project_id == P.project_id)).one_or_none()
         if existing is not None:
             raise HTTPException(status_code=409, detail=f"Project '{P.project_id}' already exists. Use PATCH to update it.")
 
-        if P.project_lead_orcid:
-            project_lead = session.exec(select(User).where(User.unique_id == P.project_lead_orcid)).one_or_none()
-            identifier = P.project_lead_orcid
-        else:
-            email = P.project_lead_email.lower()
-            project_lead = session.exec(
-                select(User).where(
-                    func.lower(User.email) == email
-                )
-            ).first()
-            identifier = P.project_lead_email
-
-        if project_lead is None:
-            raise HTTPException(status_code=404, detail=f"Project lead user '{identifier}' not found")
+        project_lead = resolve_user(session, orcid=P.project_lead_orcid, email=P.project_lead_email, username=P.project_lead_username)
 
         prop = Project(
             project_id=P.project_id,
@@ -177,24 +164,14 @@ def update_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_us
         
         update_data = project_update.model_dump(exclude_unset=True)
 
-        if "project_lead_orcid" in update_data:
-            lead = session.exec(select(User).where(User.unique_id == update_data["project_lead_orcid"])).one_or_none()
-            if lead is None:
-                raise HTTPException(status_code=404, detail=f"Project lead user '{update_data['project_lead_orcid']}' not found")
-            update_data["project_lead_email"] = lead.email
-        elif "project_lead_email" in update_data:
-            email = update_data.pop("project_lead_email").lower()
-            lead = session.exec(
-                select(User).where(
-                    func.lower(User.email) == email
-                )
-            ).first()
-            if lead is None:
-                raise HTTPException(status_code=404, detail=f"Project lead user '{email}' not found")
+        lead_orcid = update_data.pop("project_lead_orcid", None)
+        lead_email = update_data.pop("project_lead_email", None)
+        lead_username = update_data.pop("project_lead_username", None)
+
+        if any([lead_orcid, lead_email, lead_username]):
+            lead = resolve_user(session, orcid=lead_orcid, email=lead_email, username=lead_username)
             update_data["project_lead_orcid"] = lead.unique_id
             update_data["project_lead_email"] = lead.email
-        else:
-            update_data.pop("project_lead_email", None)
 
         for key, value in update_data.items():
             setattr(project, key, value)
@@ -248,35 +225,29 @@ def add_users_to_project(
     orcid: str,
     auth_res: Annotated[tuple, Depends(authorize_user)],
     email: Optional[str] = None,
+    username: Optional[str] = None,
 ):
+    '''
+    Add a user to a project. Provide ?email= or ?username= to resolve the user instead of
+    the orcid path parameter. Only admins or project members can add users.
+    '''
     _, ag_list = auth_res
     require_groups(ag_list, {'admin', proj_id})
 
     with Session(engine) as session:
-        # resolve by email if provided, ignoring the orcid path param
-        if email:
-            user = session.exec(select(User).where(User.email == email)).one_or_none()
-            if user is None:
-                raise HTTPException(status_code=404, detail=f'No user found with email {email}')
-        else:
-            user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
-            if user is None:
-                raise HTTPException(status_code=404, detail=f'User {orcid} not found')
-        
-        # get project details
+        user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
+
         proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if proj is None:
-            raise HTTPException(status_code=404, detail = f'Project {proj_id} not found')
+            raise HTTPException(status_code=404, detail=f'Project {proj_id} not found')
 
-        # add link between user and project
         add_or_update(session,
                       UserProjectLink,
                       where=(and_(UserProjectLink.user_id == user.id, UserProjectLink.project_id == proj_id)),
                       user_id=user.id,
                       project_id=proj_id)
 
-        # add user to access group — committed atomically with the project link
-        sql_add_user_to_access_group(orcid, proj_id, session)
+        sql_add_user_to_access_group(user.unique_id, proj_id, session)
         session.commit()
 
         return _get_project_users(proj_id, session)
@@ -284,23 +255,16 @@ def add_users_to_project(
 
 @router.delete("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
 def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)],
-                             email: Optional[str] = None):
+                             email: Optional[str] = None, username: Optional[str] = None):
     '''
     Remove a user from a project and its associated access group.
     Only admins or the project lead can remove users.
-    Provide ?email= to look up the user by email instead of the orcid path parameter.
+    Provide ?email= or ?username= to look up the user instead of the orcid path parameter.
     '''
     _, ag_list = auth_res
     require_groups(ag_list, {'admin', proj_id})
     with Session(engine) as session:
-        if email:
-            user = session.exec(select(User).where(User.email == email)).one_or_none()
-            if user is None:
-                raise HTTPException(status_code=404, detail=f"No user found with email {email}")
-        else:
-            user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
-            if user is None:
-                raise HTTPException(status_code=404, detail=f"User {orcid} not found")
+        user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
 
         proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if proj is None:

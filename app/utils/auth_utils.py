@@ -79,8 +79,13 @@ def code_for_token_exchange(code: str, client_id, client_secret, redirect_uri):
                                      }, 
                               headers = {'Accept': 'application/json'})   
     
-    token = token_req.json()['access_token']
-    return(token)
+    response_data = token_req.json()
+    if 'access_token' not in response_data:
+        raise HTTPException(
+            status_code=401,
+            detail=f"ORCID authentication failed: {response_data.get('error_description', response_data)}",
+        )
+    return response_data['access_token']
 
 
 def decode_token(token: str, secret_key = SECRET_KEY, alg = ALGORITHM):

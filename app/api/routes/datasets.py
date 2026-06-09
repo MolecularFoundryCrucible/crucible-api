@@ -225,6 +225,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                   include_links: bool = False,
                   limit: int = Query(default=100, ge=1, le=1000),
                   cursor: Optional[str] = None,
+                  offset: int = Query(default=0, ge=0),
                   creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                   modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
     '''
@@ -236,6 +237,10 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     pass cursor=<next_cursor from the previous response>. The first page omits cursor.
     next_cursor is null when there are no further pages. total is included only on the
     first page (cursor omitted); subsequent pages omit it to avoid a redundant count.
+
+    Offset pagination is supported for backward compatibility: pass offset=<n> instead
+    of cursor. cursor takes precedence when both are given. Prefer cursor for large
+    result sets, since deep offsets are slower.
     Pass include_links=true to include parent, child, and associated resources for each dataset.
     '''
     _, ag_list = auth_res
@@ -245,7 +250,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
 
     # extract parameters from filters
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
-              'modification_time_lte', 'include_metadata', 'include_links', 'limit', 'cursor'):
+              'modification_time_lte', 'include_metadata', 'include_links', 'limit', 'cursor', 'offset'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -267,9 +272,10 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                     q = q.where(getattr(Dataset, key) == value)
             return q
 
-        # total is only needed on the first page; cursor pages skip the redundant count.
+        # total is only needed on the first page; cursor pages and deep offset pages
+        # skip the redundant count.
         total = None
-        if cursor is None:
+        if cursor is None and offset == 0:
             count_query = apply_filters(
                 select(func.count()).select_from(Dataset)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
@@ -296,7 +302,10 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
             query = generate_kw_query(session, query, keyword_filter)
         if cursor is not None:
             query = query.where(Dataset.unique_id < cursor)
-        query = query.order_by(Dataset.unique_id.desc()).limit(limit)
+        query = query.order_by(Dataset.unique_id.desc())
+        if cursor is None and offset:
+            query = query.offset(offset)
+        query = query.limit(limit)
 
         results = session.exec(query).all()
 
@@ -354,7 +363,8 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                 "links": links,
             }))
         next_cursor = results[-1][0].unique_id if len(results) == limit else None
-        return PaginatedResponse(total=total, limit=limit, items=items, next_cursor=next_cursor)
+        resp_offset = offset if (cursor is None and offset) else None
+        return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
 
 
 @router.get("/datasets/{dsid}", response_model=DatasetResponse)

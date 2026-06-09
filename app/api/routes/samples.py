@@ -213,6 +213,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
                  include_datasets: bool = False,
                  limit: int = Query(default=100, ge=1, le=1000),
                  cursor: Optional[str] = None,
+                 offset: int = Query(default=0, ge=0),
                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                  modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
     '''
@@ -224,6 +225,10 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
     pass cursor=<next_cursor from the previous response>. The first page omits cursor.
     next_cursor is null when there are no further pages. total is included only on the
     first page (cursor omitted); subsequent pages omit it to avoid a redundant count.
+
+    Offset pagination is supported for backward compatibility: pass offset=<n> instead
+    of cursor. cursor takes precedence when both are given. Prefer cursor for large
+    result sets, since deep offsets are slower.
     Pass include_links=true to include parent, child, and associated resources for each sample.
     include_datasets is deprecated — use include_links instead.
     '''
@@ -237,7 +242,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
 
     params_dict = dict(request.query_params)
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
-              'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets', 'limit', 'cursor'):
+              'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets', 'limit', 'cursor', 'offset'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -258,9 +263,10 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
                     q = q.where(getattr(Sample, k) == v)
             return q
 
-        # total is only needed on the first page; cursor pages skip the redundant count.
+        # total is only needed on the first page; cursor pages and deep offset pages
+        # skip the redundant count.
         total = None
-        if cursor is None:
+        if cursor is None and offset == 0:
             total = session.exec(apply_filters(
                 select(func.count()).select_from(Sample)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
@@ -281,7 +287,10 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         samp_cmd = apply_filters(samp_cmd)
         if cursor is not None:
             samp_cmd = samp_cmd.where(Sample.unique_id < cursor)
-        samp_cmd = samp_cmd.order_by(Sample.unique_id.desc()).limit(limit)
+        samp_cmd = samp_cmd.order_by(Sample.unique_id.desc())
+        if cursor is None and offset:
+            samp_cmd = samp_cmd.offset(offset)
+        samp_cmd = samp_cmd.limit(limit)
         rows = session.exec(samp_cmd).all()
 
         if include_links:
@@ -344,7 +353,8 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
                 "links": links,
             }))
         next_cursor = rows[-1][0].unique_id if len(rows) == limit else None
-        return PaginatedResponse(total=total, limit=limit, items=items, next_cursor=next_cursor)
+        resp_offset = offset if (cursor is None and offset) else None
+        return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
 
 
 @router.get("/samples/{sample_id}", response_model=SampleResponse)

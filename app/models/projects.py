@@ -6,11 +6,12 @@ from app.models.users import UserRead
 
 
 class ProjectCreate(SQLModel):
-    '''Input schema for creating a project. Either project_lead_orcid or project_lead_email must be provided.'''
+    '''Input schema for creating a project. One of project_lead_orcid, project_lead_email, or project_lead_username must be provided.'''
     project_id: str
     organization: str
     project_lead_orcid: Optional[str] = None
     project_lead_email: Optional[str] = None
+    project_lead_username: Optional[str] = None
     status: Optional[str] = None
     title: Optional[str] = None
 
@@ -41,9 +42,10 @@ class ProjectWithLead(ProjectRead):
 
 class ProjectUpdate(SQLModel):
     '''Partial update schema for Project. Only provided fields are modified.
-    Provide either project_lead_orcid or project_lead_email to update the lead.'''
+    Provide one of project_lead_orcid, project_lead_email, or project_lead_username to update the lead.'''
     organization: Optional[str] = None
     status: Optional[str] = None
     title: Optional[str] = None
     project_lead_orcid: Optional[str] = None
     project_lead_email: Optional[str] = None
+    project_lead_username: Optional[str] = None

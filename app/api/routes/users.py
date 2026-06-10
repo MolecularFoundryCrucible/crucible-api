@@ -36,7 +36,6 @@ def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Req
                limit: int = Query(default=100, ge=1, le=1000),
                offset: int = Query(default=0, ge=0)):
     _, ag_list = auth_res
-    require_admin(ag_list)
 
     params_dict = dict(request.query_params)
     for k in ('permissive', 'limit', 'offset'):
@@ -51,6 +50,19 @@ def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Req
         for k, v in params_dict.items():
             if hasattr(User, k):
                 search_cmd = search_cmd.where(getattr(User, k) == v)
+
+    # Admins see all users; non-admins are scoped to users who share an access
+    # group with them (each user has a personal access group, so this includes
+    # themselves).
+    if not any(ag.group_name == 'admin' for ag in ag_list):
+        ag_ids = [ag.id for ag in ag_list]
+        search_cmd = search_cmd.where(
+            User.id.in_(
+                select(UserAccessGroupLink.user_id).where(
+                    UserAccessGroupLink.accessgroup_id.in_(ag_ids)
+                )
+            )
+        )
 
     with Session(engine) as session:
         total = session.exec(select(func.count()).select_from(search_cmd.subquery())).one()

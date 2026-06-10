@@ -20,7 +20,7 @@ from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
-from app.models.users import AccountProfileUpdate, UserCreate, UserRead, UserUpdate
+from app.models.users import AccountProfileUpdate, UserCreate, UserPublicRead, UserRead, UserUpdate
 from app.models.response_schemas import ApiKeyRead, ApiKeyVerify
 from app.models.core_models import ApiToken
 from app.models.projects import ProjectWithLead
@@ -125,6 +125,28 @@ def update_current_user(auth_res: Annotated[tuple, Depends(authorize_user)], use
         session.commit()
         session.refresh(user)
         return user
+
+
+@router.get("/users/search", response_model=List[UserPublicRead])
+def search_users(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    q: str = Query(min_length=3, description="Search term matched against username, first name, and last name."),
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    '''
+    Search users by username, first name, or last name. Returns public profiles only (no email).
+    Minimum query length: 3 characters. Maximum results: 50.
+    '''
+    term = f"%{q}%"
+    with Session(engine) as session:
+        results = session.exec(
+            select(User).where(
+                func.lower(User.username).like(func.lower(term)) |
+                func.lower(User.first_name).like(func.lower(term)) |
+                func.lower(User.last_name).like(func.lower(term))
+            ).limit(limit)
+        ).all()
+    return results
 
 
 @router.get("/users/by-username/{username}", response_model=UserRead)

@@ -32,6 +32,16 @@ class UserRead(SQLModel):
     is_service_account: Optional[bool] = False
 
 
+class UserPublicRead(SQLModel):
+    '''Public-safe user representation. Never includes email.
+    Used in search results and any context where a user views another user's info.
+    '''
+    unique_id: str
+    username: Optional[str] = None
+    first_name: str
+    last_name: str
+
+
 class AccountProfileUpdate(SQLModel):
     '''Self-service profile update. Does not allow changing is_service_account.'''
     first_name: Optional[str] = None

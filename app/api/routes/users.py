@@ -247,6 +247,9 @@ def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: 
     with Session(engine) as session:
         # add user to user table
         user_dict = table_obj_to_dict(user_info)
+        if user_dict.get('email', None) is not None:
+            user_dict['email'] = user_dict['email'].lower().strip()
+            
         user = add_or_update(session, User, User.unique_id == user_info.unique_id, **user_dict)
 
         sql_add_user_to_access_group(user.unique_id, user.unique_id, session)

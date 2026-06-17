@@ -100,7 +100,7 @@ def _dual_write_old_table(session, unique_id: str, scientific_md: dict):
 
 @router.get("/resources/metadata/search", response_model=List[ScientificMetadataBinaryRead])
 def search_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str,
-                             limit: int = Query(default=50, ge=1, le=200)):
+                             limit: int):
     """
     Ranked full-text search on scientific metadata using PostgreSQL tsvector/tsquery.
     Returns results the user has read access to, ordered by relevance.

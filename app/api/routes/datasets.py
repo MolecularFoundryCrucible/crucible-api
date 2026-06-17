@@ -95,6 +95,27 @@ def request_insitu_aggregation(dsid, auth_res: Annotated[tuple, Depends(authoriz
     )
     return
 
+@router.post("/datasets/{dsid}/rga_analysis")
+def request_rga_analysis(dsid, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    with Session(engine) as session:
+        dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
+    msg = {
+        "dsid": dataset.unique_id,
+    }
+
+    send_pika_message(
+        message=json.dumps(msg),
+        exchange="",
+        routing_key="rga-analysis",
+        user="admin",
+        rmq_pw=rmq_pw
+    )
+    return
+
 @router.post("/datasets", response_model=DatasetResponse)
 async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
                          dataset: DatasetCreate,

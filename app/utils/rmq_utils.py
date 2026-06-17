@@ -1,8 +1,8 @@
 
 import pika
 
-_INGESTION_SMALL_MAX = int(1.5 * 1024**3)
-_INGESTION_MEDIUM_MAX = 5 * 1024**3
+_INGESTION_SMALL_MAX = int(0.5 * 1024**3)
+_INGESTION_MEDIUM_MAX = 3 * 1024**3
 
 
 def get_ingestion_tier(file_size: int) -> str:

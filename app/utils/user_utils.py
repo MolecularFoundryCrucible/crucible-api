@@ -26,6 +26,15 @@ def sanitize_username_from_email(email: str) -> str:
     return sanitized[:32]
 
 
+def assert_username_available(session, username: str, exclude_orcid: Optional[str] = None) -> None:
+    """Raise 409 if username is already taken by a different user."""
+    q = select(User).where(User.username == username)
+    if exclude_orcid:
+        q = q.where(User.unique_id != exclude_orcid)
+    if session.exec(q).one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="Username already taken")
+
+
 def resolve_user(session, orcid: Optional[str] = None, email: Optional[str] = None, username: Optional[str] = None) -> User:
     """Resolve a user by ORCID, email, or username (priority: orcid > email > username).
     Email matching is case-insensitive. Raises 400 if no identifier provided, 404 if not found.

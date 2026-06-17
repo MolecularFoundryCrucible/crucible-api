@@ -9,6 +9,7 @@ from app.models.core_models import ApiToken, User
 from app.models.response_schemas import AccountInfo, ApiKeyRead, ApiKeyVerify
 from app.models.users import AccountProfileUpdate, UserRead
 from app.utils.auth_utils import authorize_user
+from app.utils.user_utils import assert_username_available
 
 router = APIRouter(tags=["account"])
 engine = get_engine()
@@ -44,7 +45,10 @@ def update_account_profile(auth_res: Annotated[tuple, Depends(authorize_user)], 
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-        for key, value in user_update.model_dump(exclude_unset=True).items():
+        update_data = user_update.model_dump(exclude_unset=True)
+        if "username" in update_data and update_data["username"] is not None:
+            assert_username_available(session, update_data["username"], exclude_orcid=user_unique_id)
+        for key, value in update_data.items():
             setattr(user, key, value)
         session.add(user)
         session.commit()

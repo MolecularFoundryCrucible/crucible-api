@@ -17,7 +17,7 @@ from app.models.core_models import (
 )
 from app.utils.auth_utils import authorize_user, require_admin, require_groups
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
-from app.utils.user_utils import sql_add_user_to_access_group
+from app.utils.user_utils import assert_username_available, sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.models.users import AccountProfileUpdate, UserCreate, UserPublicRead, UserRead, UserUpdate
@@ -149,14 +149,16 @@ def search_users(
     Search users by username, first name, or last name. Returns public profiles only (no email).
     Minimum query length: 3 characters. Maximum results: 50.
     '''
-    term = f"%{q}%"
+    tokens = q.lower().split()
+    conditions = [
+        func.lower(User.username).like(f"%{t}%") |
+        func.lower(User.first_name).like(f"%{t}%") |
+        func.lower(User.last_name).like(f"%{t}%")
+        for t in tokens
+    ]
     with Session(engine) as session:
         results = session.exec(
-            select(User).where(
-                func.lower(User.username).like(func.lower(term)) |
-                func.lower(User.first_name).like(func.lower(term)) |
-                func.lower(User.last_name).like(func.lower(term))
-            ).limit(limit)
+            select(User).where(*conditions).limit(limit)
         ).all()
     return results
 
@@ -267,7 +269,8 @@ def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: 
         )
 
     with Session(engine) as session:
-        # add user to user table
+        if user_info.username:
+            assert_username_available(session, user_info.username, exclude_orcid=user_info.unique_id)
         user_dict = table_obj_to_dict(user_info)
         if user_dict.get('email', None) is not None:
             user_dict['email'] = user_dict['email'].lower().strip()
@@ -313,6 +316,8 @@ def update_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)],
             raise HTTPException(status_code=404, detail="User not found")
 
         update_data = user_update.model_dump(exclude_unset=True)
+        if "username" in update_data and update_data["username"] is not None:
+            assert_username_available(session, update_data["username"], exclude_orcid=orcid)
         for key, value in update_data.items():
             setattr(user, key, value)
 

@@ -15,7 +15,7 @@ from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, Project, Sample, User,
     UserAccessGroupLink, UserProjectLink,
 )
-from app.utils.auth_utils import authorize_user, require_admin, require_groups
+from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_admin, require_groups
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
@@ -276,6 +276,10 @@ def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: 
         session.add(user)
         session.commit()
         session.refresh(user)
+
+    # Mirror the canonical /auth/apikey flow: provisioning a user also mints
+    # their API key (idempotent) so they can authenticate immediately.
+    find_or_add_api_access(user_info.unique_id, engine, regenerate=False)
     return user
 
 

@@ -99,6 +99,12 @@ def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Res
     ).all():
         session.delete(acl)
 
+    # Flush all ORM deletes accumulated above before running raw SQL.
+    # Without this, SQLAlchemy's autoflush (triggered by the select below)
+    # may attempt to DELETE the dataset row before the datasetacl raw delete
+    # runs, causing a FK violation on datasetacl_dataset_id_fkey.
+    session.flush()
+
     # Legacy table not in ORM — delete by dataset integer id if rows exist
     session.execute(text("DELETE FROM datasetacl WHERE dataset_id = :did").bindparams(did=dataset.id))
 

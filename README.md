@@ -123,9 +123,10 @@ Authorization: Bearer your_api_key_here
 - `POST /datasets/{dsid}/ingest` - Start ingestion process
 
 ### Scientific Metadata
-- `GET /datasets/{dsid}/scientific_metadata` - Get dataset metadata
-- `POST /datasets/{dsid}/scientific_metadata` - Add metadata
-- `PATCH /datasets/{dsid}/scientific_metadata` - Update metadata
+- `GET /resources/{unique_id}/metadata` - Get resource metadata
+- `POST /resources/{unique_id}/metadata` - Add metadata
+- `PATCH /resources/{unique_id}/metadata` - Update metadata
+- `GET /resources/metadata/search` - Search resource metadata
 
 ### Thumbnails & Files
 - `GET /datasets/{dsid}/thumbnails` - Get dataset thumbnails
@@ -172,7 +173,7 @@ Authorization: Bearer your_api_key_here
 - **AccessGroup**: Permission groups for access control
 
 ### Metadata Models
-- **ScientificMetadata**: Key-value metadata for datasets
+- **ScientificMetadataBinary**: JSONB metadata attached to resources (datasets, samples, etc.)
 - **Thumbnail**: Image thumbnails for datasets
 - **AssociatedFile**: Files linked to datasets with SHA256 hashing
 - **Keyword**: Searchable tags for datasets

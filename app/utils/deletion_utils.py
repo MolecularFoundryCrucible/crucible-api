@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from app.models.core_models import (
     AssociatedFile, Dataset, DatasetKeywordLink, DatasetLink,
     DatasetSampleLink, DeletionRequest, IngestionRequest, Resource,
-    ResourceACL, Sample, ScientificMetadata, ScientificMetadataBinary,
+    ResourceACL, Sample, ScientificMetadataBinary,
     SampleLink, Thumbnail,
 )
 
@@ -87,12 +87,6 @@ def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Res
     ).one_or_none()
     if smb:
         session.delete(smb)
-
-    sm = session.exec(
-        select(ScientificMetadata).where(ScientificMetadata.dataset_unique_id == dataset_unique_id)
-    ).one_or_none()
-    if sm:
-        session.delete(sm)
 
     for acl in session.exec(
         select(ResourceACL).where(ResourceACL.mfid == dataset_unique_id)

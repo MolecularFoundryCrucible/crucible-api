@@ -13,7 +13,7 @@ from app.models.core_models import (
     DeletionRequest,
     Instrument, Project, Resource,
     ResourceACL, Sample, SampleLink,
-    ScientificMetadata, ScientificMetadataBinary, User,
+    ScientificMetadataBinary, User,
 )
 from app.models.datasets import DatasetRead, DatasetResponse, ScientificMetadataBinaryRead
 from app.models.deletion import DeletionRequestRead
@@ -80,22 +80,6 @@ def _fetch_links(session, resource_type: str, entity) -> List[LinkedResource]:
         results += [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="associated") for d in datasets]
 
     return results
-
-
-def _dual_write_old_table(session, unique_id: str, scientific_md: dict):
-    """Write to the legacy scientific_metadata table for dataset resources (v1 compatibility)."""
-    is_dataset = session.exec(
-        select(Dataset).where(Dataset.unique_id == unique_id)
-    ).one_or_none()
-    if is_dataset:
-        md_obj = add_or_update(
-            session,
-            ScientificMetadata,
-            where=(ScientificMetadata.dataset_unique_id == unique_id),
-            dataset_unique_id=unique_id,
-            scientific_metadata=scientific_md,
-        )
-        attributes.flag_modified(md_obj, 'scientific_metadata')
 
 
 @router.get("/resources/metadata/search", response_model=List[ScientificMetadataBinaryRead])
@@ -326,8 +310,6 @@ def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
         attributes.flag_modified(new_md_obj, 'scientific_metadata')
         resource.modification_time = get_utc_isoformat()
 
-        _dual_write_old_table(session, unique_id, scientific_md)
-
         session.commit()
         session.refresh(new_md_obj)
         background_tasks.add_task(write_metadata, unique_id, scientific_md, user_unique_id, "create")
@@ -364,8 +346,6 @@ def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
         )
         attributes.flag_modified(new_md_obj, 'scientific_metadata')
         resource.modification_time = get_utc_isoformat()
-
-        _dual_write_old_table(session, unique_id, md_dict)
 
         session.commit()
         session.refresh(new_md_obj)

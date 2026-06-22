@@ -436,9 +436,9 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
         auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
         if include_metadata:
             query = (
-                    select(Dataset)
-                    .options(selectinload(Dataset.scientific_metadata))
+                    select(Dataset, ScientificMetadataBinary.scientific_metadata)
                     .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
+                    .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Dataset.unique_id, isouter=True)
                     .filter(auth_filter)
                 )
 
@@ -471,14 +471,14 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
         if limit is not None:
             full_query = full_query.limit(limit)
 
-        datasets = session.exec(full_query).all()
+        results = session.exec(full_query).all()
         if include_metadata:
             return [{**dataset.model_dump(),
-                    "scientific_metadata": dataset.scientific_metadata.model_dump() if dataset.scientific_metadata else None
+                    "scientific_metadata": sci_md
                     }
-                    for dataset in datasets]
+                    for dataset, sci_md in results]
         else:
-            return datasets
+            return results
 
 
 @router.get("/samples/{child_sample_id}/parents", response_model=PaginatedResponse[SampleRead])

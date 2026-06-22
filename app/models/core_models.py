@@ -130,8 +130,6 @@ class Dataset(SQLModel, table=True):
     measurement: Optional[str]
     data_type: Optional[str]
     session_name: Optional[str]
-    scientific_metadata: Optional["ScientificMetadata"] = Relationship(
-        back_populates = 'dataset')
     samples: List[Sample] = Relationship(back_populates="datasets", link_model = DatasetSampleLink)
     keywords: List[Keyword] = Relationship(back_populates="datasets", link_model=DatasetKeywordLink)
     thumbnails: List[Thumbnail] = Relationship(back_populates = "dataset")
@@ -224,14 +222,6 @@ class Project(SQLModel, table=True):
     resource: Optional["Resource"] = Relationship(
         sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Project.project_id", "lazy": "noload"}
     )
-
-
-class ScientificMetadata(SQLModel, table = True):
-    __tablename__ = "scientificmetadata"
-    id: Optional[int] = Field(default=None, primary_key=True)
-    dataset_unique_id: str = Field(foreign_key="dataset.unique_id", index=True)
-    scientific_metadata: dict = Field(sa_column=Column(JSON), default={})
-    dataset: Optional["Dataset"] = Relationship(back_populates="scientific_metadata")
 
 
 # --- Resource / Identity ---

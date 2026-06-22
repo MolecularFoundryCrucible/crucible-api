@@ -143,12 +143,10 @@ Authorization: Bearer your_api_key_here
 - `GET /samples/{sample_id}/datasets` - Get sample datasets
 - `POST /samples/{parent_sample_id}/children/{child_sample_id}` - Create sample hierarchy
 
-### Projects & Collections
+### Projects
 - `POST /projects` - Create project
 - `GET /projects` - List projects
 - `GET /projects/{proj_id}` - Get project details
-- `POST /dataset_collections` - Create dataset collection
-- `GET /dataset_collections` - List collections
 
 ### Access Control
 - `POST /access_groups` - Create access group

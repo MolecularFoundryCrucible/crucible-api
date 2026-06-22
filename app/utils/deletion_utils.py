@@ -93,9 +93,6 @@ def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Res
     ).all():
         session.delete(acl)
 
-    # Legacy table not in ORM — delete by dataset integer id if rows exist
-    session.execute(text("DELETE FROM datasetacl WHERE dataset_id = :did").bindparams(did=dataset.id))
-
     for dr in session.exec(
         select(DeletionRequest).where(DeletionRequest.resource_id == dataset_unique_id)
     ).all():

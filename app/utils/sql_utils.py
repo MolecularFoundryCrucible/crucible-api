@@ -6,7 +6,7 @@ import urllib.parse
 from app.general_utils import get_secret, is_orcid
 
 logger = logging.getLogger(__name__)
-from sqlalchemy import case, func, join
+from sqlalchemy import join
 from sqlmodel import create_engine, select
 from dotenv import load_dotenv
 # Need a .env file with the following variables
@@ -152,16 +152,6 @@ def deletion_filter_for(resource_model):
         DeletionRequest.status.in_(["pending", "approved"])
     )
 
-
-def search_relevance_order(column, q: str):
-    """Return a SQLAlchemy ordering expression that ranks exact matches first,
-    prefix matches second, and substring matches third."""
-    q_lower = q.lower()
-    return case(
-        (func.lower(column) == q_lower, 0),
-        (func.lower(column).like(q_lower + "%"), 1),
-        else_=2,
-    )
 
 
 def generate_kw_query(session, base_query, keyword_filter):

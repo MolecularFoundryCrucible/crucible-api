@@ -14,7 +14,7 @@ from app.models.core_models import (
     ResourceACL, Dataset, DatasetSampleLink,
 )
 from app.utils.auth_utils import authorize_user, require_groups
-from app.utils.sql_utils import add_or_update, search_relevance_order
+from app.utils.sql_utils import add_or_update
 from app.utils.user_utils import sql_add_user_to_access_group, resolve_user
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
@@ -151,12 +151,11 @@ def search_projects(
         if base is None:
             return PaginatedResponse(limit=limit, items=[])
 
-        query = base.where(
-            Project.title.ilike(f"%{q}%") | Project.project_id.ilike(f"%{q}%")
-        ).order_by(
-            search_relevance_order(func.coalesce(Project.title, Project.project_id), q),
-            Project.project_id,
-        ).limit(limit)
+        relevance = func.greatest(
+            func.coalesce(func.word_similarity(q, Project.title), 0),
+            func.word_similarity(q, Project.project_id),
+        )
+        query = base.where(relevance > 0.2).order_by(relevance.desc()).limit(limit)
 
         results = session.exec(query).all()
         return PaginatedResponse(limit=limit, items=results)

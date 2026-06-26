@@ -149,16 +149,14 @@ def search_users(
     Search users by username, first name, or last name. Returns public profiles only (no email).
     Minimum query length: 3 characters. Maximum results: 50.
     '''
-    tokens = q.lower().split()
-    conditions = [
-        func.lower(User.username).like(f"%{t}%") |
-        func.lower(User.first_name).like(f"%{t}%") |
-        func.lower(User.last_name).like(f"%{t}%")
-        for t in tokens
-    ]
     with Session(engine) as session:
+        relevance = func.greatest(
+            func.coalesce(func.word_similarity(q, User.username), 0),
+            func.word_similarity(q, User.first_name),
+            func.word_similarity(q, User.last_name),
+        )
         results = session.exec(
-            select(User).where(*conditions).limit(limit)
+            select(User).where(relevance > 0.2).order_by(relevance.desc()).limit(limit)
         ).all()
     return results
 

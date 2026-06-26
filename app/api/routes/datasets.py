@@ -45,7 +45,7 @@ from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
-from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, search_relevance_order, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
+from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
 from app.utils.gcs_record_utils import write_record, dataset_record
 
 router = APIRouter(tags=["datasets"])
@@ -415,10 +415,10 @@ def search_datasets(
 
     with Session(engine) as session:
         query = _dataset_base_query(ag_ids)
-        query = query.where(Dataset.dataset_name.ilike(f"%{q}%"))
+        query = query.where(func.word_similarity(q, Dataset.dataset_name) > 0.2)
         if project_id:
             query = query.where(Dataset.project_id == project_id)
-        query = query.order_by(search_relevance_order(Dataset.dataset_name, q), Dataset.dataset_name).limit(limit)
+        query = query.order_by(func.word_similarity(q, Dataset.dataset_name).desc()).limit(limit)
         results = session.exec(query).all()
         items = [DatasetResponse.model_validate({
             **dataset.model_dump(),

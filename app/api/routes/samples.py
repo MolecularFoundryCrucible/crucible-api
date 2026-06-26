@@ -22,7 +22,7 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
-from app.utils.sql_utils import add_or_update, generate_kw_query, search_relevance_order, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
+from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
 from app.utils.gcs_record_utils import write_record, sample_record
 
 router = APIRouter(tags=["samples"])
@@ -384,10 +384,10 @@ def search_samples(
 
     with Session(engine) as session:
         query = _sample_base_query(ag_ids)
-        query = query.where(Sample.sample_name.ilike(f"%{q}%"))
+        query = query.where(func.word_similarity(q, Sample.sample_name) > 0.2)
         if project_id:
             query = query.where(Sample.project_id == project_id)
-        query = query.order_by(search_relevance_order(Sample.sample_name, q), Sample.sample_name).limit(limit)
+        query = query.order_by(func.word_similarity(q, Sample.sample_name).desc()).limit(limit)
         results = session.exec(query).all()
         items = [SampleResponse.model_validate({
             **samp.model_dump(),

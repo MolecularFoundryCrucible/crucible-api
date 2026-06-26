@@ -45,7 +45,7 @@ from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
-from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
+from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, search_relevance_order, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
 from app.utils.gcs_record_utils import write_record, dataset_record
 
 router = APIRouter(tags=["datasets"])
@@ -386,6 +386,47 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         next_cursor = results[-1][0].unique_id if len(results) == limit else None
         resp_offset = offset if (cursor is None and offset) else None
         return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
+
+
+def _dataset_base_query(ag_ids: list):
+    """Auth-scoped, deletion-filtered base query for datasets. Caller adds ordering and pagination."""
+    auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
+    return (
+        select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public)
+        .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+        .where(auth_filter)
+        .where(deletion_filter)
+    )
+
+
+@router.get("/datasets/search", response_model=PaginatedResponse[DatasetResponse])
+def search_datasets(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    q: str = Query(min_length=3, description="Search term matched against dataset_name."),
+    project_id: Optional[str] = None,
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    '''
+    Search datasets by name. Returns results ordered by match quality (exact → prefix → substring).
+    Optionally scope to a project with ?project_id=. Maximum 50 results.
+    '''
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    with Session(engine) as session:
+        query = _dataset_base_query(ag_ids)
+        query = query.where(Dataset.dataset_name.ilike(f"%{q}%"))
+        if project_id:
+            query = query.where(Dataset.project_id == project_id)
+        query = query.order_by(search_relevance_order(Dataset.dataset_name, q), Dataset.dataset_name).limit(limit)
+        results = session.exec(query).all()
+        items = [DatasetResponse.model_validate({
+            **dataset.model_dump(),
+            "public": public if public is not None else False,
+            "creation_time": creation_time,
+            "modification_time": modification_time,
+        }) for dataset, creation_time, modification_time, public in results]
+        return PaginatedResponse(limit=limit, items=items)
 
 
 @router.get("/datasets/{dsid}", response_model=DatasetResponse)

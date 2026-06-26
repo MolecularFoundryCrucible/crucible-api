@@ -14,7 +14,7 @@ from app.models.core_models import (
     ResourceACL, Dataset, DatasetSampleLink,
 )
 from app.utils.auth_utils import authorize_user, require_groups
-from app.utils.sql_utils import add_or_update
+from app.utils.sql_utils import add_or_update, search_relevance_order
 from app.utils.user_utils import sql_add_user_to_access_group, resolve_user
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
@@ -116,6 +116,50 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)],
                 scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
             ))
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+
+
+def _project_base_query(user_unique_id: str, ag_list: list, session):
+    """Return a base select for projects visible to the user (same scoping as list_projects)."""
+    if is_orcid(user_unique_id):
+        user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
+        if user is None:
+            return None
+        return (
+            select(Project)
+            .join(UserProjectLink, Project.project_id == UserProjectLink.project_id)
+            .where(UserProjectLink.user_id == user.id)
+        )
+    else:
+        require_groups(ag_list)
+        return select(Project)
+
+
+@router.get("/projects/search", response_model=PaginatedResponse[ProjectRead])
+def search_projects(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    q: str = Query(min_length=3, description="Search term matched against project title and project_id."),
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    '''
+    Search projects by title or project_id. Returns results ordered by match quality.
+    Scoped to projects the caller is a member of. Maximum 50 results.
+    '''
+    user_unique_id, ag_list = auth_res
+
+    with Session(engine) as session:
+        base = _project_base_query(user_unique_id, ag_list, session)
+        if base is None:
+            return PaginatedResponse(limit=limit, items=[])
+
+        query = base.where(
+            Project.title.ilike(f"%{q}%") | Project.project_id.ilike(f"%{q}%")
+        ).order_by(
+            search_relevance_order(func.coalesce(Project.title, Project.project_id), q),
+            Project.project_id,
+        ).limit(limit)
+
+        results = session.exec(query).all()
+        return PaginatedResponse(limit=limit, items=results)
 
 
 @router.get("/projects/{proj_id}", response_model=ProjectWithLead)

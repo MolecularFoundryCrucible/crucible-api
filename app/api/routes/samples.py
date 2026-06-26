@@ -22,7 +22,7 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
-from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
+from app.utils.sql_utils import add_or_update, generate_kw_query, search_relevance_order, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
 from app.utils.gcs_record_utils import write_record, sample_record
 
 router = APIRouter(tags=["samples"])
@@ -355,6 +355,47 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         next_cursor = rows[-1][0].unique_id if len(rows) == limit else None
         resp_offset = offset if (cursor is None and offset) else None
         return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
+
+
+def _sample_base_query(ag_ids: list):
+    """Auth-scoped, deletion-filtered base query for samples. Caller adds ordering and pagination."""
+    auth_filter, deletion_filter = read_access_filter_list(Sample, ag_ids)
+    return (
+        select(Sample, Resource.creation_time, Resource.modification_time, Resource.public)
+        .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+        .where(auth_filter)
+        .where(deletion_filter)
+    )
+
+
+@router.get("/samples/search", response_model=PaginatedResponse[SampleResponse])
+def search_samples(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    q: str = Query(min_length=3, description="Search term matched against sample_name."),
+    project_id: Optional[str] = None,
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    '''
+    Search samples by name. Returns results ordered by match quality (exact → prefix → substring).
+    Optionally scope to a project with ?project_id=. Maximum 50 results.
+    '''
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    with Session(engine) as session:
+        query = _sample_base_query(ag_ids)
+        query = query.where(Sample.sample_name.ilike(f"%{q}%"))
+        if project_id:
+            query = query.where(Sample.project_id == project_id)
+        query = query.order_by(search_relevance_order(Sample.sample_name, q), Sample.sample_name).limit(limit)
+        results = session.exec(query).all()
+        items = [SampleResponse.model_validate({
+            **samp.model_dump(),
+            "public": public if public is not None else False,
+            "creation_time": creation_time,
+            "modification_time": modification_time,
+        }) for samp, creation_time, modification_time, public in results]
+        return PaginatedResponse(limit=limit, items=items)
 
 
 @router.get("/samples/{sample_id}", response_model=SampleResponse)

@@ -118,6 +118,49 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)],
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
+def _project_base_query(user_unique_id: str, ag_list: list, session):
+    """Return a base select for projects visible to the user (same scoping as list_projects)."""
+    if is_orcid(user_unique_id):
+        user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
+        if user is None:
+            return None
+        return (
+            select(Project)
+            .join(UserProjectLink, Project.project_id == UserProjectLink.project_id)
+            .where(UserProjectLink.user_id == user.id)
+        )
+    else:
+        require_groups(ag_list)
+        return select(Project)
+
+
+@router.get("/projects/search", response_model=PaginatedResponse[ProjectRead])
+def search_projects(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    q: str = Query(min_length=3, description="Search term matched against project title and project_id."),
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    '''
+    Search projects by title or project_id. Returns results ordered by match quality.
+    Scoped to projects the caller is a member of. Maximum 50 results.
+    '''
+    user_unique_id, ag_list = auth_res
+
+    with Session(engine) as session:
+        base = _project_base_query(user_unique_id, ag_list, session)
+        if base is None:
+            return PaginatedResponse(limit=limit, items=[])
+
+        relevance = func.greatest(
+            func.coalesce(func.word_similarity(q, Project.title), 0),
+            func.word_similarity(q, Project.project_id),
+        )
+        query = base.where(relevance > 0.2).order_by(relevance.desc()).limit(limit)
+
+        results = session.exec(query).all()
+        return PaginatedResponse(limit=limit, items=results)
+
+
 @router.get("/projects/{proj_id}", response_model=ProjectWithLead)
 def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], include_metadata: bool = False):
     '''

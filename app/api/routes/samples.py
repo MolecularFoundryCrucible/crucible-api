@@ -357,6 +357,47 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
 
 
+def _sample_base_query(ag_ids: list):
+    """Auth-scoped, deletion-filtered base query for samples. Caller adds ordering and pagination."""
+    auth_filter, deletion_filter = read_access_filter_list(Sample, ag_ids)
+    return (
+        select(Sample, Resource.creation_time, Resource.modification_time, Resource.public)
+        .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+        .where(auth_filter)
+        .where(deletion_filter)
+    )
+
+
+@router.get("/samples/search", response_model=PaginatedResponse[SampleResponse])
+def search_samples(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    q: str = Query(min_length=3, description="Search term matched against sample_name."),
+    project_id: Optional[str] = None,
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    '''
+    Search samples by name. Returns results ordered by match quality (exact → prefix → substring).
+    Optionally scope to a project with ?project_id=. Maximum 50 results.
+    '''
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    with Session(engine) as session:
+        query = _sample_base_query(ag_ids)
+        query = query.where(func.word_similarity(q, Sample.sample_name) > 0.2)
+        if project_id:
+            query = query.where(Sample.project_id == project_id)
+        query = query.order_by(func.word_similarity(q, Sample.sample_name).desc()).limit(limit)
+        results = session.exec(query).all()
+        items = [SampleResponse.model_validate({
+            **samp.model_dump(),
+            "public": public if public is not None else False,
+            "creation_time": creation_time,
+            "modification_time": modification_time,
+        }) for samp, creation_time, modification_time, public in results]
+        return PaginatedResponse(limit=limit, items=items)
+
+
 @router.get("/samples/{sample_id}", response_model=SampleResponse)
 def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], include_links: bool = False, include_metadata: bool = False):
     '''

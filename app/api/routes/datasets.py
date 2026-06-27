@@ -388,6 +388,47 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
 
 
+def _dataset_base_query(ag_ids: list):
+    """Auth-scoped, deletion-filtered base query for datasets. Caller adds ordering and pagination."""
+    auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
+    return (
+        select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public)
+        .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+        .where(auth_filter)
+        .where(deletion_filter)
+    )
+
+
+@router.get("/datasets/search", response_model=PaginatedResponse[DatasetResponse])
+def search_datasets(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    q: str = Query(min_length=3, description="Search term matched against dataset_name."),
+    project_id: Optional[str] = None,
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    '''
+    Search datasets by name. Returns results ordered by match quality (exact → prefix → substring).
+    Optionally scope to a project with ?project_id=. Maximum 50 results.
+    '''
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    with Session(engine) as session:
+        query = _dataset_base_query(ag_ids)
+        query = query.where(func.word_similarity(q, Dataset.dataset_name) > 0.2)
+        if project_id:
+            query = query.where(Dataset.project_id == project_id)
+        query = query.order_by(func.word_similarity(q, Dataset.dataset_name).desc()).limit(limit)
+        results = session.exec(query).all()
+        items = [DatasetResponse.model_validate({
+            **dataset.model_dump(),
+            "public": public if public is not None else False,
+            "creation_time": creation_time,
+            "modification_time": modification_time,
+        }) for dataset, creation_time, modification_time, public in results]
+        return PaginatedResponse(limit=limit, items=items)
+
+
 @router.get("/datasets/{dsid}", response_model=DatasetResponse)
 def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
                  include_metadata: bool = False, include_links: bool = False):

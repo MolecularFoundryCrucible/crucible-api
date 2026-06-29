@@ -39,3 +39,7 @@ def get_orcid_client_secret():
 
 def get_redirect_uri():
     return urllib.parse.quote_plus(f"{get_api_url()}/auth")
+
+
+def get_trgm_search_threshold() -> float:
+    return float(get_api_config().get("trgm_search_threshold", 0.3))

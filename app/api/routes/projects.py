@@ -1,13 +1,13 @@
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, join, literal
+from sqlalchemy import func, join, literal, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select, col
 import networkx as nx
 from networkx.readwrite import json_graph
 
-from app.api.dependencies import get_engine
+from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import is_orcid
 from app.models.core_models import (
     AccessGroup, Project, Resource, Sample, User, UserProjectLink, UserAccessGroupLink,
@@ -151,6 +151,7 @@ def search_projects(
         if base is None:
             return PaginatedResponse(limit=limit, items=[])
 
+        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
         query = base.where(
             literal(q).op("<<%")(Project.project_id) |
             literal(q).op("<<%")(Project.title)

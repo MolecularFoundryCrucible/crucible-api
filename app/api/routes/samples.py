@@ -11,7 +11,7 @@ from sqlalchemy import exists, func, join, literal, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, Session, select
 
-from app.api.dependencies import get_engine
+from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import get_utc_isoformat, is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, DatasetSampleLink,
@@ -383,6 +383,7 @@ def search_samples(
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
+        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
         query = _sample_base_query(ag_ids)
         query = query.where(literal(q).op("<<%")(Sample.sample_name))
         if project_id:

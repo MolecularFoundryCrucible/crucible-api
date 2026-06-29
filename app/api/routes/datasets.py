@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request
-from sqlalchemy import exists, func, join, text
+from sqlalchemy import exists, func, join, literal, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 
@@ -415,10 +415,10 @@ def search_datasets(
 
     with Session(engine) as session:
         query = _dataset_base_query(ag_ids)
-        query = query.where(func.word_similarity(q, Dataset.dataset_name) > 0.2)
+        query = query.where(literal(q).op("<<%")(Dataset.dataset_name))
         if project_id:
             query = query.where(Dataset.project_id == project_id)
-        query = query.order_by(func.word_similarity(q, Dataset.dataset_name).desc()).limit(limit)
+        query = query.order_by(func.strict_word_similarity(q, Dataset.dataset_name).desc()).limit(limit)
         results = session.exec(query).all()
         items = [DatasetResponse.model_validate({
             **dataset.model_dump(),

@@ -1,7 +1,7 @@
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, join
+from sqlalchemy import func, join, literal
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select, col
 import networkx as nx
@@ -151,11 +151,15 @@ def search_projects(
         if base is None:
             return PaginatedResponse(limit=limit, items=[])
 
-        relevance = func.greatest(
-            func.coalesce(func.word_similarity(q, Project.title), 0),
-            func.word_similarity(q, Project.project_id),
-        )
-        query = base.where(relevance > 0.2).order_by(relevance.desc()).limit(limit)
+        query = base.where(
+            literal(q).op("<<%")(Project.project_id) |
+            literal(q).op("<<%")(Project.title)
+        ).order_by(
+            func.greatest(
+                func.strict_word_similarity(q, Project.project_id),
+                func.coalesce(func.strict_word_similarity(q, Project.title), 0),
+            ).desc()
+        ).limit(limit)
 
         results = session.exec(query).all()
         return PaginatedResponse(limit=limit, items=results)

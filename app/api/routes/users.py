@@ -5,7 +5,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from sqlalchemy import func, join
+from sqlalchemy import func, join, literal
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select, col
 
@@ -150,13 +150,21 @@ def search_users(
     Minimum query length: 3 characters. Maximum results: 50.
     '''
     with Session(engine) as session:
-        relevance = func.greatest(
-            func.coalesce(func.word_similarity(q, User.username), 0),
-            func.word_similarity(q, User.first_name),
-            func.word_similarity(q, User.last_name),
-        )
         results = session.exec(
-            select(User).where(relevance > 0.2).order_by(relevance.desc()).limit(limit)
+            select(User)
+            .where(
+                literal(q).op("<<%")(User.first_name) |
+                literal(q).op("<<%")(User.last_name) |
+                literal(q).op("<<%")(User.username)
+            )
+            .order_by(
+                func.greatest(
+                    func.strict_word_similarity(q, User.first_name),
+                    func.strict_word_similarity(q, User.last_name),
+                    func.coalesce(func.strict_word_similarity(q, User.username), 0),
+                ).desc()
+            )
+            .limit(limit)
         ).all()
     return results
 

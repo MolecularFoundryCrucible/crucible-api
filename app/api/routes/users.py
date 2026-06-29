@@ -5,11 +5,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from sqlalchemy import func, join, literal
+from sqlalchemy import func, join, literal, text
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select, col
 
-from app.api.dependencies import get_engine
+from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, Project, Sample, User,
@@ -150,6 +150,7 @@ def search_users(
     Minimum query length: 3 characters. Maximum results: 50.
     '''
     with Session(engine) as session:
+        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
         results = session.exec(
             select(User)
             .where(

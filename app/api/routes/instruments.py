@@ -5,7 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from sqlalchemy import func, join, literal
 from sqlmodel import Session, select
 
-from app.api.dependencies import get_engine
+from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import get_utc_isoformat
 from app.models.core_models import Instrument, Resource, ScientificMetadataBinary
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
@@ -88,6 +88,7 @@ def search_instruments(
     Returns results ordered by match quality. Maximum 50 results.
     '''
     with Session(engine) as session:
+        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
         statement = (
             select(Instrument, Resource)
             .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)

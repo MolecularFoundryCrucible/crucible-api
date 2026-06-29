@@ -12,7 +12,7 @@ from sqlalchemy import exists, func, join, literal, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 
-from app.api.dependencies import get_engine
+from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import get_secret, get_utc_isoformat
 from app.models.core_models import (
     AccessGroup,
@@ -414,6 +414,7 @@ def search_datasets(
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
+        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
         query = _dataset_base_query(ag_ids)
         query = query.where(literal(q).op("<<%")(Dataset.dataset_name))
         if project_id:

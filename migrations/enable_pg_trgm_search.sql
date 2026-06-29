@@ -10,4 +10,7 @@ CREATE INDEX IF NOT EXISTS idx_project_title_trgm  ON project USING gin(title   
 CREATE INDEX IF NOT EXISTS idx_project_id_trgm     ON project USING gin(project_id     gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_user_username_trgm  ON "user"  USING gin(username       gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_user_firstname_trgm ON "user"  USING gin(first_name     gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_user_lastname_trgm  ON "user"  USING gin(last_name      gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_user_lastname_trgm       ON "user"      USING gin(last_name        gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_instrument_name_trgm    ON instrument  USING gin(instrument_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_instrument_type_trgm    ON instrument  USING gin(instrument_type gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_instrument_mfr_trgm     ON instrument  USING gin(manufacturer    gin_trgm_ops);

@@ -2,7 +2,7 @@ from typing import Annotated, List, Optional, Union
 
 import os
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from sqlalchemy import func, join
+from sqlalchemy import func, join, literal
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -88,16 +88,21 @@ def search_instruments(
     Returns results ordered by match quality. Maximum 50 results.
     '''
     with Session(engine) as session:
-        relevance = func.greatest(
-            func.word_similarity(q, Instrument.instrument_name),
-            func.coalesce(func.word_similarity(q, Instrument.instrument_type), 0),
-            func.coalesce(func.word_similarity(q, Instrument.manufacturer), 0),
-        )
         statement = (
             select(Instrument, Resource)
             .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
-            .where(relevance > 0.2)
-            .order_by(relevance.desc())
+            .where(
+                literal(q).op("<<%")(Instrument.instrument_name) |
+                literal(q).op("<<%")(Instrument.instrument_type) |
+                literal(q).op("<<%")(Instrument.manufacturer)
+            )
+            .order_by(
+                func.greatest(
+                    func.strict_word_similarity(q, Instrument.instrument_name),
+                    func.coalesce(func.strict_word_similarity(q, Instrument.instrument_type), 0),
+                    func.coalesce(func.strict_word_similarity(q, Instrument.manufacturer), 0),
+                ).desc()
+            )
             .limit(limit)
         )
         rows = session.exec(statement).all()

@@ -7,7 +7,7 @@ import os
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from sqlalchemy import exists, func, join, text
+from sqlalchemy import exists, func, join, literal, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, Session, select
 
@@ -384,10 +384,10 @@ def search_samples(
 
     with Session(engine) as session:
         query = _sample_base_query(ag_ids)
-        query = query.where(func.word_similarity(q, Sample.sample_name) > 0.2)
+        query = query.where(literal(q).op("<<%")(Sample.sample_name))
         if project_id:
             query = query.where(Sample.project_id == project_id)
-        query = query.order_by(func.word_similarity(q, Sample.sample_name).desc()).limit(limit)
+        query = query.order_by(func.strict_word_similarity(q, Sample.sample_name).desc()).limit(limit)
         results = session.exec(query).all()
         items = [SampleResponse.model_validate({
             **samp.model_dump(),

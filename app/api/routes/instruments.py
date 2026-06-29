@@ -77,6 +77,41 @@ def list_instruments(auth_res: Annotated[tuple, Depends(authorize_user)], reques
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
+@router.get("/instruments/search", response_model=PaginatedResponse[InstrumentResponse])
+def search_instruments(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    q: str = Query(min_length=3, description="Search term matched against instrument_name, instrument_type, and manufacturer."),
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    '''
+    Search instruments by name, type, or manufacturer using fuzzy matching.
+    Returns results ordered by match quality. Maximum 50 results.
+    '''
+    with Session(engine) as session:
+        relevance = func.greatest(
+            func.word_similarity(q, Instrument.instrument_name),
+            func.coalesce(func.word_similarity(q, Instrument.instrument_type), 0),
+            func.coalesce(func.word_similarity(q, Instrument.manufacturer), 0),
+        )
+        statement = (
+            select(Instrument, Resource)
+            .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
+            .where(relevance > 0.2)
+            .order_by(relevance.desc())
+            .limit(limit)
+        )
+        rows = session.exec(statement).all()
+        items = [
+            InstrumentResponse.model_validate({
+                **inst.model_dump(),
+                "creation_time": ri.creation_time if ri else None,
+                "modification_time": ri.modification_time if ri else None,
+            })
+            for inst, ri in rows
+        ]
+        return PaginatedResponse(limit=limit, items=items)
+
+
 @router.get("/instruments/{instrument_unique_id}", response_model=InstrumentResponse)
 def read_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instrument_unique_id: str, include_metadata: bool = False):
     '''

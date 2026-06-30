@@ -58,6 +58,35 @@ def _get_gcs_storage_client():
     return _gcs_storage_client
 
 
+def _determine_storage_path(dataset_mfid, filename):
+    """
+    For a given dataset ID, list the gcs blobs in the corresponding
+    folder and return the storage path for the file. 
+    """
+    basename = filename.split("/")[-1]
+    ds_blobs = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).list_blobs(prefix=f'{dataset_mfid}/')
+    for blob in ds_blobs:
+        if blob.name.endswith(basename):
+            return f"{_DOWNLOAD_BUCKET}/{blob.name}"
+    else:
+        raise HTTPException(
+            status_code=404,
+            detail="File not found in production storage",
+        )
+
+def _generate_signed_url_link(cloud_storage_path, bucket_name, expire_hours = 1):
+    bucket_name, _, blob_name = cloud_storage_path.partition("/")
+    blob = _get_gcs_storage_client().bucket(bucket_name).blob(blob_name)
+
+    try:
+        url = blob.generate_signed_url(version="v4", expiration=timedelta(hours=expire_hours), method="GET")
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Could not generate signed URL: {e}")
+
+    return {"url": url, "expires_in": expire_hours*60*60}
+
+
+
 def _mint_upload_token() -> tuple[str, str]:
     """Return (access_token, token_expiry_iso) by refreshing the service account credentials."""
     from google.auth.transport.requests import Request
@@ -157,32 +186,16 @@ def generate_signed_url_download_link(
             select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)
         ).all()
 
-    blob_to_mfid = {}
-    for af in af_records:
-        if af.storage_path:
-            blob_name = af.storage_path.partition("/")[2]
-            blob_to_mfid[blob_name] = af.mfid
-
-    try:
-        storage_client = _get_gcs_storage_client()
-        bucket_obj = storage_client.bucket(_DOWNLOAD_BUCKET)
-        ds_blobs = list(bucket_obj.list_blobs(prefix=f'{dsid}/'))
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not access storage bucket: {e}")
-
-    if not ds_blobs:
-        raise HTTPException(status_code=404, detail=f"No files found for dataset '{dsid}'")
-
-    try:
-        def _sign(blob):
-            key = blob_to_mfid.get(blob.name, blob.name)
-            return key, blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")
-
-        with ThreadPoolExecutor() as executor:
-            urls = dict(executor.map(_sign, ds_blobs))
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not generate signed URLs: {e}")
-
+        # get the URLs
+        urls = []
+        for af in af_records:
+            if not af.storage_path:
+                af.storage_path = _determine_storage_path(dsid, af.filename)
+                session.add(af)
+            storage_path = af.storage_path
+            url, _ = _generate_signed_url_link(storage_path)
+            urls.append(url)
+        session.commit()
     return urls
 
 

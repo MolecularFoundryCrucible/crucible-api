@@ -18,7 +18,9 @@ from app.models.core_models import (
 )
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.pagination import PaginatedResponse
-from app.api.routes.gcs_storage import _DOWNLOAD_BUCKET, _get_gcs_storage_client
+from app.api.routes.gcs_storage import (_determine_storage_path,
+                                        _generate_signed_url_link)
+
 from app.utils.auth_utils import authorize_user, require_write_access
 
 router = APIRouter(tags=["files"])
@@ -95,30 +97,14 @@ def get_file_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], 
         af, ds = _get_af_with_read_access(session, file_id, ag_ids)
 
         if not af.storage_path:
-            # Fallback for files uploaded before direct-to-prod migration — probe by basename
-            basename = af.filename.split("/")[-1]
-            ds_blobs = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).list_blobs(prefix=f'{ds.unique_id}/')
-            for blob in ds_blobs:
-                if blob.name.endswith(basename):
-                    break
-            else:
-                raise HTTPException(
-                    status_code=404,
-                    detail="File not found in production storage",
-                )
-            af.storage_path = f"{_DOWNLOAD_BUCKET}/{blob.name}"
+            af.storage_path = _determine_storage_path(ds.unique_id, af.filename)
             session.add(af)
-            session.commit()
-        else:
-            bucket_name, _, blob_name = af.storage_path.partition("/")
-            blob = _get_gcs_storage_client().bucket(bucket_name).blob(blob_name)
+        
+        storage_path = af.storage_path
+        session.commit()
 
-    try:
-        url = blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not generate signed URL: {e}")
-
-    return {"url": url, "expires_in": 3600}
+    url, expires_in = _generate_signed_url_link(storage_path)
+    return {"url": url, "expires_in": expires_in}
 
 
 @router.patch("/files/{file_id}", response_model=AssociatedFileRead)

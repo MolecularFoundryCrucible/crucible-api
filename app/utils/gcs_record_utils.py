@@ -124,3 +124,6 @@ def write_metadata(mfid: str, metadata: dict, actor: str, operation: str) -> Non
         logger.info("Wrote metadata.json for %s (revision %d)", mfid, audit["revision"])
     except Exception:
         logger.exception("Failed to write metadata.json for %s", mfid)
+
+
+

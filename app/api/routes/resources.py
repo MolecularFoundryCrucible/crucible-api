@@ -1,7 +1,7 @@
 from typing import Annotated, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from sqlalchemy import desc, func, text, Text
+from sqlalchemy import desc, func, join, text, Text
 from sqlalchemy.orm import attributes, selectinload
 from sqlalchemy.sql import and_, exists, or_
 from sqlmodel import Session, select
@@ -9,20 +9,22 @@ from sqlmodel import Session, select
 from app.api.dependencies import get_engine
 from app.general_utils import get_utc_isoformat
 from app.models.core_models import (
+    AccessGroup,
     Dataset, DatasetLink, DatasetSampleLink,
     DeletionRequest,
     Instrument, Project, Resource,
     ResourceACL, Sample, SampleLink,
     ScientificMetadataBinary, User,
 )
+from app.models.access_groups import AccessGroupRead
 from app.models.datasets import DatasetRead, DatasetResponse, ScientificMetadataBinaryRead
 from app.models.deletion import DeletionRequestRead
 from app.models.instrument import InstrumentResponse
 from app.models.links import LinkedResource
 from app.models.projects import ProjectWithLead
 from app.models.samples import SampleResponse
-from app.utils.auth_utils import authorize_user, require_read_access, require_write_access
-from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request
+from app.utils.auth_utils import authorize_user, require_groups, require_read_access, require_write_access
+from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, sql_create_resource_acl
 from app.utils.gcs_record_utils import write_metadata
 
 
@@ -411,3 +413,39 @@ def create_deletion_request(
             **deletion_req.model_dump(),
             resource_type=deletion_req.resource.resource_type if deletion_req.resource else None,
         )
+
+
+@router.get("/resources/{mfid}/access_groups", response_model=List[AccessGroupRead])
+def read_resource_acl(mfid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    _, ag_list = auth_res
+    require_groups(ag_list)
+    with Session(engine) as session:
+        # Verify resource exists
+        resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
+
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+
+        cmd = select(AccessGroup).select_from(
+            join(AccessGroup,
+                 join(ResourceACL, Resource, ResourceACL.mfid == Resource.mfid),
+                 AccessGroup.id == ResourceACL.accessgroup_id)
+        ).where(Resource.mfid == mfid)
+        acl = session.exec(cmd).all()
+
+        return acl
+
+
+@router.post("/resources/{mfid}/access_groups", response_model=ResourceACL)
+def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    _, ag_list = auth_res
+    require_groups(ag_list)
+    with Session(engine) as session:
+        resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
+        if ag is None:
+            raise HTTPException(status_code=404, detail="Access Group not found")
+        acl = sql_create_resource_acl(ag, mfid, read, write, session)
+    return acl

@@ -39,11 +39,10 @@ from app.models.datasets import (
     DatasetCreate, DatasetRead, DatasetResponse, DatasetUpdate,
     ThumbnailCreate, ThumbnailRead,
 )
-from app.models.access_groups import AccessGroupRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
-from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
+from app.utils.auth_utils import authorize_user, require_write_access, require_read_access, read_access_filter_list
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
 from app.utils.gcs_record_utils import write_record, dataset_record
@@ -929,42 +928,6 @@ def add_keyword(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, 
         session.commit()
         session.refresh(kw_obj)
         return(kw_obj)
-
-
-@router.get("/datasets/{dsid}/access_groups", response_model=List[AccessGroupRead])
-def read_dataset_acl(dsid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    _, ag_list = auth_res
-    require_groups(ag_list)
-    with Session(engine) as session:
-        # Verify dataset exists
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
-        dscmd = select(AccessGroup).select_from(
-            join(AccessGroup,
-                 join(ResourceACL, Dataset, ResourceACL.mfid == Dataset.unique_id),
-                 AccessGroup.id == ResourceACL.accessgroup_id)
-        ).where(Dataset.unique_id == dsid)
-        ds_acl = session.exec(dscmd).all()
-
-        return ds_acl
-
-
-@router.post("/datasets/{dsid}/access_groups", response_model=ResourceACL)
-def create_dataset_acl(group_name: str, dsid: str, read: bool, write: bool, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    _, ag_list = auth_res
-    require_groups(ag_list)
-    with Session(engine) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
-        if ag is None:
-            raise HTTPException(status_code=404, detail = "Access Group not found")
-        acl = sql_create_resource_acl(ag, dsid, read, write, session)
-    return acl
 
 
 @router.post("/datasets/{dsid}/samples/{sample_id}", response_model=DatasetSampleLinkResponse)

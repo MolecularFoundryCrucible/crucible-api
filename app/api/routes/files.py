@@ -1,3 +1,5 @@
+import os
+import json
 import logging
 from datetime import timedelta
 from typing import Annotated, List, Optional
@@ -16,6 +18,8 @@ from app.models.core_models import (
     IngestionRequest,
     ResourceACL,
 )
+from app.general_utils import get_secret, get_utc_isoformat
+from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.pagination import PaginatedResponse
 from app.api.routes.gcs_storage import (_determine_storage_path,
@@ -147,3 +151,56 @@ def delete_file(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: st
         session.delete(af)
         session.commit()
         return {"message": f"File {file_id} deleted"}
+
+
+# ingestion
+@router.post("/files/{file_id}/ingest", response_model=IngestionRequest)
+def create_file_ingestion_request(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    file_id: str,
+    ingestion_class: Optional[str] = None,
+):
+    '''
+    Creates an ingestion request for a file, scoped to the specified dataset.
+    Returns error if the dataset associated with the file is not found, or the user does not have access.
+    Requires write access to the dataset.
+    '''
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    with Session(engine) as session:
+        af, ds = _get_af_with_read_access(session, file_id, ag_ids)
+        RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
+        ingestion_request = IngestionRequest(
+            dataset_mfid=ds.unique_id,
+            file_mfid=af.mfid,
+            file_to_upload=af.storage_path,
+            ingestion_class=ingestion_class,
+            time_created=get_utc_isoformat(),
+            status="requested",
+        )
+        session.add(ingestion_request)
+        session.commit()
+        session.refresh(ingestion_request)
+        ir_id = ingestion_request.id
+        af_size = af.size
+        af_storage_path = af.storage_path
+
+    tier = get_ingestion_tier(af_size)
+    routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
+    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
+    send_pika_message(
+        message=json.dumps({
+            "filename": af_storage_path,
+            "reqid": ir_id,
+            "dsid": ds.unique_id,
+            "ingestion_class": ingestion_class,
+        }),
+        exchange="",
+        routing_key=routing_key,
+        user="admin",
+        rmq_pw=rmq_pw,
+    )
+
+    with Session(engine) as session:
+        return session.exec(select(IngestionRequest).where(IngestionRequest.id == ir_id)).one()

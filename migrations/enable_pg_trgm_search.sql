@@ -1,0 +1,22 @@
+-- Enable trigram extension and add GIN indexes for fuzzy search endpoints.
+-- Safe to run multiple times (IF NOT EXISTS).
+-- Requires PostgreSQL superuser or pg_extension_owner membership.
+--
+-- Search endpoints use strict_word_similarity with the <<% operator, which is
+-- governed by pg_trgm.word_similarity_threshold (default 0.6). To tune:
+--   ALTER SYSTEM SET pg_trgm.word_similarity_threshold = 0.5;
+--   SELECT pg_reload_conf();
+-- Lower values return more results; higher values are stricter.
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE INDEX IF NOT EXISTS idx_dataset_name_trgm   ON dataset USING gin(dataset_name   gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_sample_name_trgm    ON sample  USING gin(sample_name    gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_project_title_trgm  ON project USING gin(title          gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_project_id_trgm     ON project USING gin(project_id     gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_user_username_trgm  ON "user"  USING gin(username       gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_user_firstname_trgm ON "user"  USING gin(first_name     gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_user_lastname_trgm       ON "user"      USING gin(last_name        gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_instrument_name_trgm    ON instrument  USING gin(instrument_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_instrument_type_trgm    ON instrument  USING gin(instrument_type gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_instrument_mfr_trgm     ON instrument  USING gin(manufacturer    gin_trgm_ops);

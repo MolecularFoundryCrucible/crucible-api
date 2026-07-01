@@ -2,10 +2,10 @@ from typing import Annotated, List, Optional, Union
 
 import os
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from sqlalchemy import func, join
+from sqlalchemy import func, join, literal, text
 from sqlmodel import Session, select
 
-from app.api.dependencies import get_engine
+from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import get_utc_isoformat
 from app.models.core_models import Instrument, Resource, ScientificMetadataBinary
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
@@ -75,6 +75,47 @@ def list_instruments(auth_res: Annotated[tuple, Depends(authorize_user)], reques
                     "modification_time": ri.modification_time if ri else None,
                 }))
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+
+
+@router.get("/instruments/search", response_model=PaginatedResponse[InstrumentResponse])
+def search_instruments(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    q: str = Query(min_length=3, description="Search term matched against instrument_name, instrument_type, and manufacturer."),
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    '''
+    Search instruments by name, type, or manufacturer using fuzzy matching.
+    Returns results ordered by match quality. Maximum 50 results.
+    '''
+    with Session(engine) as session:
+        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
+        statement = (
+            select(Instrument, Resource)
+            .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
+            .where(
+                literal(q).op("<<%")(Instrument.instrument_name) |
+                literal(q).op("<<%")(Instrument.instrument_type) |
+                literal(q).op("<<%")(Instrument.manufacturer)
+            )
+            .order_by(
+                func.greatest(
+                    func.strict_word_similarity(q, Instrument.instrument_name),
+                    func.coalesce(func.strict_word_similarity(q, Instrument.instrument_type), 0),
+                    func.coalesce(func.strict_word_similarity(q, Instrument.manufacturer), 0),
+                ).desc()
+            )
+            .limit(limit)
+        )
+        rows = session.exec(statement).all()
+        items = [
+            InstrumentResponse.model_validate({
+                **inst.model_dump(),
+                "creation_time": ri.creation_time if ri else None,
+                "modification_time": ri.modification_time if ri else None,
+            })
+            for inst, ri in rows
+        ]
+        return PaginatedResponse(limit=limit, items=items)
 
 
 @router.get("/instruments/{instrument_unique_id}", response_model=InstrumentResponse)

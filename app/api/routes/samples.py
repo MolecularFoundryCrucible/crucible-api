@@ -7,11 +7,11 @@ import os
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from sqlalchemy import exists, func, join, text
+from sqlalchemy import exists, func, join, literal, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, Session, select
 
-from app.api.dependencies import get_engine
+from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import get_utc_isoformat, is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, DatasetSampleLink,
@@ -355,6 +355,48 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         next_cursor = rows[-1][0].unique_id if len(rows) == limit else None
         resp_offset = offset if (cursor is None and offset) else None
         return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
+
+
+def _sample_base_query(ag_ids: list):
+    """Auth-scoped, deletion-filtered base query for samples. Caller adds ordering and pagination."""
+    auth_filter, deletion_filter = read_access_filter_list(Sample, ag_ids)
+    return (
+        select(Sample, Resource.creation_time, Resource.modification_time, Resource.public)
+        .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+        .where(auth_filter)
+        .where(deletion_filter)
+    )
+
+
+@router.get("/samples/search", response_model=PaginatedResponse[SampleResponse])
+def search_samples(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    q: str = Query(min_length=3, description="Search term matched against sample_name."),
+    project_id: Optional[str] = None,
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    '''
+    Search samples by name. Returns results ordered by match quality (exact → prefix → substring).
+    Optionally scope to a project with ?project_id=. Maximum 50 results.
+    '''
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    with Session(engine) as session:
+        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
+        query = _sample_base_query(ag_ids)
+        query = query.where(literal(q).op("<<%")(Sample.sample_name))
+        if project_id:
+            query = query.where(Sample.project_id == project_id)
+        query = query.order_by(func.strict_word_similarity(q, Sample.sample_name).desc()).limit(limit)
+        results = session.exec(query).all()
+        items = [SampleResponse.model_validate({
+            **samp.model_dump(),
+            "public": public if public is not None else False,
+            "creation_time": creation_time,
+            "modification_time": modification_time,
+        }) for samp, creation_time, modification_time, public in results]
+        return PaginatedResponse(limit=limit, items=items)
 
 
 @router.get("/samples/{sample_id}", response_model=SampleResponse)

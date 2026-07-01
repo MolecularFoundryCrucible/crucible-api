@@ -8,11 +8,11 @@ logger = logging.getLogger(__name__)
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request
-from sqlalchemy import exists, func, join, text
+from sqlalchemy import exists, func, join, literal, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 
-from app.api.dependencies import get_engine
+from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import get_secret, get_utc_isoformat
 from app.models.core_models import (
     AccessGroup,
@@ -385,6 +385,48 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
         next_cursor = results[-1][0].unique_id if len(results) == limit else None
         resp_offset = offset if (cursor is None and offset) else None
         return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
+
+
+def _dataset_base_query(ag_ids: list):
+    """Auth-scoped, deletion-filtered base query for datasets. Caller adds ordering and pagination."""
+    auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
+    return (
+        select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public)
+        .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+        .where(auth_filter)
+        .where(deletion_filter)
+    )
+
+
+@router.get("/datasets/search", response_model=PaginatedResponse[DatasetResponse])
+def search_datasets(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    q: str = Query(min_length=3, description="Search term matched against dataset_name."),
+    project_id: Optional[str] = None,
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    '''
+    Search datasets by name. Returns results ordered by match quality (exact → prefix → substring).
+    Optionally scope to a project with ?project_id=. Maximum 50 results.
+    '''
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    with Session(engine) as session:
+        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
+        query = _dataset_base_query(ag_ids)
+        query = query.where(literal(q).op("<<%")(Dataset.dataset_name))
+        if project_id:
+            query = query.where(Dataset.project_id == project_id)
+        query = query.order_by(func.strict_word_similarity(q, Dataset.dataset_name).desc()).limit(limit)
+        results = session.exec(query).all()
+        items = [DatasetResponse.model_validate({
+            **dataset.model_dump(),
+            "public": public if public is not None else False,
+            "creation_time": creation_time,
+            "modification_time": modification_time,
+        }) for dataset, creation_time, modification_time, public in results]
+        return PaginatedResponse(limit=limit, items=items)
 
 
 @router.get("/datasets/{dsid}", response_model=DatasetResponse)

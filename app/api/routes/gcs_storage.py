@@ -129,7 +129,7 @@ def _validate_and_prepare_upload(
                 )
             ).one_or_none()
             if existing is not None:
-                return existing
+                return existing # TODO - this feels wrong, can return relative storage path, filename
 
     from pathlib import PurePosixPath
     parts = [p for p in PurePosixPath(body.filename).parts if p not in ("", "/", ".", "..")]
@@ -216,7 +216,7 @@ def initiate_resumable_upload(
 
     result = _validate_and_prepare_upload(dsid, body, user_unique_id, ag_ids)
     if not isinstance(result, tuple):
-        return UploadInitiateRead(existing_file=AssociatedFileRead.model_validate(result, update={"dataset_mfid": result.dataset.unique_id}))
+        return UploadInitiateRead(existing_file=AssociatedFileRead.model_validate(result, update={"dataset_mfid": dsid}))
     gcs_path, safe_filename = result
 
     try:
@@ -263,7 +263,7 @@ def initiate_multipart_upload(
 
     result = _validate_and_prepare_upload(dsid, body, user_unique_id, ag_ids)
     if not isinstance(result, tuple):
-        return UploadMultipartInitiateRead(existing_file=AssociatedFileRead.model_validate(result, update={"dataset_mfid": result.dataset.unique_id}))
+        return UploadMultipartInitiateRead(existing_file=AssociatedFileRead.model_validate(result, update={"dataset_mfid": dsid}))
     gcs_path, safe_filename = result
 
     try:

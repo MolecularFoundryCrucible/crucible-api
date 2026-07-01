@@ -1,13 +1,13 @@
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, join
+from sqlalchemy import func, join, literal, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select, col
 import networkx as nx
 from networkx.readwrite import json_graph
 
-from app.api.dependencies import get_engine
+from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import is_orcid
 from app.models.core_models import (
     AccessGroup, Project, Resource, Sample, User, UserProjectLink, UserAccessGroupLink,
@@ -116,6 +116,54 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)],
                 scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
             ))
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+
+
+def _project_base_query(user_unique_id: str, ag_list: list, session):
+    """Return a base select for projects visible to the user (same scoping as list_projects)."""
+    if is_orcid(user_unique_id):
+        user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
+        if user is None:
+            return None
+        return (
+            select(Project)
+            .join(UserProjectLink, Project.project_id == UserProjectLink.project_id)
+            .where(UserProjectLink.user_id == user.id)
+        )
+    else:
+        require_groups(ag_list)
+        return select(Project)
+
+
+@router.get("/projects/search", response_model=PaginatedResponse[ProjectRead])
+def search_projects(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    q: str = Query(min_length=3, description="Search term matched against project title and project_id."),
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    '''
+    Search projects by title or project_id. Returns results ordered by match quality.
+    Scoped to projects the caller is a member of. Maximum 50 results.
+    '''
+    user_unique_id, ag_list = auth_res
+
+    with Session(engine) as session:
+        base = _project_base_query(user_unique_id, ag_list, session)
+        if base is None:
+            return PaginatedResponse(limit=limit, items=[])
+
+        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
+        query = base.where(
+            literal(q).op("<<%")(Project.project_id) |
+            literal(q).op("<<%")(Project.title)
+        ).order_by(
+            func.greatest(
+                func.strict_word_similarity(q, Project.project_id),
+                func.coalesce(func.strict_word_similarity(q, Project.title), 0),
+            ).desc()
+        ).limit(limit)
+
+        results = session.exec(query).all()
+        return PaginatedResponse(limit=limit, items=results)
 
 
 @router.get("/projects/{proj_id}", response_model=ProjectWithLead)

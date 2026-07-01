@@ -153,6 +153,7 @@ def deletion_filter_for(resource_model):
     )
 
 
+
 def generate_kw_query(session, base_query, keyword_filter):
     from app.models.core_models import Dataset, DatasetKeywordLink, Keyword
 

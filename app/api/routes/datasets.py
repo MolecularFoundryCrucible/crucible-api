@@ -816,69 +816,22 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
         return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": af_obj.dataset.unique_id})
 
 
-@router.post("/datasets/{dsid}/files/{file_id}/ingest", response_model=IngestionRequest)
-def create_file_ingestion_request(
+@router.post("/datasets/{dsid}/files/{file_id}/ingest", response_model=IngestionRequest, deprecated = True)
+def create_ds_file_ingestion_request(
     auth_res: Annotated[tuple, Depends(authorize_user)],
     dsid: str,
     file_id: str,
     ingestion_class: Optional[str] = None,
 ):
     '''
-    Creates an ingestion request for a file, scoped to the specified dataset.
-    Returns 409 if the file does not belong to that dataset.
+    Creates an ingestion request for a file.
+    Returns error if the dataset associated with the file is not found, or the user does not have access.
     Requires write access to the dataset.
     '''
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
-
-    with Session(engine) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
-        require_write_access(session, ag_ids, [dsid])
-
-        af = session.exec(
-            select(AssociatedFile).where(AssociatedFile.mfid == file_id)).one_or_none()
-        if af is None:
-            raise HTTPException(status_code=404, detail="File not found")
-
-        if af.dataset_id != ds.id:
-            raise HTTPException(status_code=409, detail="File does not belong to this dataset")
-
-        ingestion_request = IngestionRequest(
-            dataset_mfid=ds.unique_id,
-            file_mfid=af.mfid,
-            file_to_upload=af.storage_path,
-            ingestion_class=ingestion_class,
-            time_created=get_utc_isoformat(),
-            status="requested",
-        )
-        session.add(ingestion_request)
-        session.commit()
-        session.refresh(ingestion_request)
-        ir_id = ingestion_request.id
-        af_size = af.size
-        af_storage_path = af.storage_path
-
-    tier = get_ingestion_tier(af_size)
-    routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    send_pika_message(
-        message=json.dumps({
-            "filename": af_storage_path,
-            "reqid": ir_id,
-            "dsid": dsid,
-            "ingestion_class": ingestion_class,
-        }),
-        exchange="",
-        routing_key=routing_key,
-        user="admin",
-        rmq_pw=rmq_pw,
-    )
-
-    with Session(engine) as session:
-        return session.exec(select(IngestionRequest).where(IngestionRequest.id == ir_id)).one()
+    from app.api.routes.files import create_file_ingestion_request
+    return create_file_ingestion_request(auth_res, file_id, ingestion_class)
 
 
 @router.get("/datasets/{dsid}/keywords", response_model=List[Keyword])

@@ -185,6 +185,7 @@ def create_file_ingestion_request(
         ir_id = ingestion_request.id
         af_size = af.size
         af_storage_path = af.storage_path
+        ds_unique_id = ds.unique_id
 
     tier = get_ingestion_tier(af_size)
     routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
@@ -193,7 +194,7 @@ def create_file_ingestion_request(
         message=json.dumps({
             "filename": af_storage_path,
             "reqid": ir_id,
-            "dsid": ds.unique_id,
+            "dsid": ds_unique_id,
             "ingestion_class": ingestion_class,
         }),
         exchange="",

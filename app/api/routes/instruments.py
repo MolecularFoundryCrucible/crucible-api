@@ -2,7 +2,7 @@ from typing import Annotated, List, Optional, Union
 
 import os
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from sqlalchemy import func, join, literal
+from sqlalchemy import func, join, literal, text
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold

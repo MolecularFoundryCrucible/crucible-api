@@ -1,3 +1,5 @@
+import os
+import json
 import logging
 from datetime import timedelta
 from typing import Annotated, List, Optional
@@ -16,9 +18,13 @@ from app.models.core_models import (
     IngestionRequest,
     ResourceACL,
 )
+from app.general_utils import get_secret, get_utc_isoformat
+from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.pagination import PaginatedResponse
-from app.api.routes.gcs_storage import _DOWNLOAD_BUCKET, _get_gcs_storage_client
+from app.api.routes.gcs_storage import (_determine_storage_path,
+                                        _generate_signed_url_link)
+
 from app.utils.auth_utils import authorize_user, require_write_access
 
 router = APIRouter(tags=["files"])
@@ -95,30 +101,14 @@ def get_file_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], 
         af, ds = _get_af_with_read_access(session, file_id, ag_ids)
 
         if not af.storage_path:
-            # Fallback for files uploaded before direct-to-prod migration — probe by basename
-            basename = af.filename.split("/")[-1]
-            ds_blobs = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).list_blobs(prefix=f'{ds.unique_id}/')
-            for blob in ds_blobs:
-                if blob.name.endswith(basename):
-                    break
-            else:
-                raise HTTPException(
-                    status_code=404,
-                    detail="File not found in production storage",
-                )
-            af.storage_path = f"{_DOWNLOAD_BUCKET}/{blob.name}"
+            af.storage_path = _determine_storage_path(ds.unique_id, af.filename)
             session.add(af)
-            session.commit()
-        else:
-            bucket_name, _, blob_name = af.storage_path.partition("/")
-            blob = _get_gcs_storage_client().bucket(bucket_name).blob(blob_name)
+        
+        storage_path = af.storage_path
+        session.commit()
 
-    try:
-        url = blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not generate signed URL: {e}")
-
-    return {"url": url, "expires_in": 3600}
+    url, expires_in = _generate_signed_url_link(storage_path)
+    return {"url": url, "expires_in": expires_in}
 
 
 @router.patch("/files/{file_id}", response_model=AssociatedFileRead)
@@ -161,3 +151,56 @@ def delete_file(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: st
         session.delete(af)
         session.commit()
         return {"message": f"File {file_id} deleted"}
+
+
+# ingestion
+@router.post("/files/{file_id}/ingest", response_model=IngestionRequest)
+def create_file_ingestion_request(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    file_id: str,
+    ingestion_class: Optional[str] = None,
+):
+    '''
+    Creates an ingestion request for a file, scoped to the specified dataset.
+    Returns error if the dataset associated with the file is not found, or the user does not have access.
+    Requires write access to the dataset.
+    '''
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    with Session(engine) as session:
+        af, ds = _get_af_with_read_access(session, file_id, ag_ids)
+        RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
+        ingestion_request = IngestionRequest(
+            dataset_mfid=ds.unique_id,
+            file_mfid=af.mfid,
+            file_to_upload=af.storage_path,
+            ingestion_class=ingestion_class,
+            time_created=get_utc_isoformat(),
+            status="requested",
+        )
+        session.add(ingestion_request)
+        session.commit()
+        session.refresh(ingestion_request)
+        ir_id = ingestion_request.id
+        af_size = af.size
+        af_storage_path = af.storage_path
+
+    tier = get_ingestion_tier(af_size)
+    routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
+    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
+    send_pika_message(
+        message=json.dumps({
+            "filename": af_storage_path,
+            "reqid": ir_id,
+            "dsid": ds.unique_id,
+            "ingestion_class": ingestion_class,
+        }),
+        exchange="",
+        routing_key=routing_key,
+        user="admin",
+        rmq_pw=rmq_pw,
+    )
+
+    with Session(engine) as session:
+        return session.exec(select(IngestionRequest).where(IngestionRequest.id == ir_id)).one()

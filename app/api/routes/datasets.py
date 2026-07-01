@@ -39,11 +39,10 @@ from app.models.datasets import (
     DatasetCreate, DatasetRead, DatasetResponse, DatasetUpdate,
     ThumbnailCreate, ThumbnailRead,
 )
-from app.models.access_groups import AccessGroupRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
-from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
+from app.utils.auth_utils import authorize_user, require_write_access, require_read_access, read_access_filter_list
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
 from app.utils.gcs_record_utils import write_record, dataset_record
@@ -859,69 +858,22 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
         return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": af_obj.dataset.unique_id})
 
 
-@router.post("/datasets/{dsid}/files/{file_id}/ingest", response_model=IngestionRequest)
-def create_file_ingestion_request(
+@router.post("/datasets/{dsid}/files/{file_id}/ingest", response_model=IngestionRequest, deprecated = True)
+def create_ds_file_ingestion_request(
     auth_res: Annotated[tuple, Depends(authorize_user)],
     dsid: str,
     file_id: str,
     ingestion_class: Optional[str] = None,
 ):
     '''
-    Creates an ingestion request for a file, scoped to the specified dataset.
-    Returns 409 if the file does not belong to that dataset.
+    Creates an ingestion request for a file.
+    Returns error if the dataset associated with the file is not found, or the user does not have access.
     Requires write access to the dataset.
     '''
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
-
-    with Session(engine) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
-        require_write_access(session, ag_ids, [dsid])
-
-        af = session.exec(
-            select(AssociatedFile).where(AssociatedFile.mfid == file_id)).one_or_none()
-        if af is None:
-            raise HTTPException(status_code=404, detail="File not found")
-
-        if af.dataset_id != ds.id:
-            raise HTTPException(status_code=409, detail="File does not belong to this dataset")
-
-        ingestion_request = IngestionRequest(
-            dataset_mfid=ds.unique_id,
-            file_mfid=af.mfid,
-            file_to_upload=af.storage_path,
-            ingestion_class=ingestion_class,
-            time_created=get_utc_isoformat(),
-            status="requested",
-        )
-        session.add(ingestion_request)
-        session.commit()
-        session.refresh(ingestion_request)
-        ir_id = ingestion_request.id
-        af_size = af.size
-        af_storage_path = af.storage_path
-
-    tier = get_ingestion_tier(af_size)
-    routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    send_pika_message(
-        message=json.dumps({
-            "filename": af_storage_path,
-            "reqid": ir_id,
-            "dsid": dsid,
-            "ingestion_class": ingestion_class,
-        }),
-        exchange="",
-        routing_key=routing_key,
-        user="admin",
-        rmq_pw=rmq_pw,
-    )
-
-    with Session(engine) as session:
-        return session.exec(select(IngestionRequest).where(IngestionRequest.id == ir_id)).one()
+    from app.api.routes.files import create_file_ingestion_request
+    return create_file_ingestion_request(auth_res, file_id, ingestion_class)
 
 
 @router.get("/datasets/{dsid}/keywords", response_model=List[Keyword])
@@ -971,42 +923,6 @@ def add_keyword(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, 
         session.commit()
         session.refresh(kw_obj)
         return(kw_obj)
-
-
-@router.get("/datasets/{dsid}/access_groups", response_model=List[AccessGroupRead])
-def read_dataset_acl(dsid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    _, ag_list = auth_res
-    require_groups(ag_list)
-    with Session(engine) as session:
-        # Verify dataset exists
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
-        dscmd = select(AccessGroup).select_from(
-            join(AccessGroup,
-                 join(ResourceACL, Dataset, ResourceACL.mfid == Dataset.unique_id),
-                 AccessGroup.id == ResourceACL.accessgroup_id)
-        ).where(Dataset.unique_id == dsid)
-        ds_acl = session.exec(dscmd).all()
-
-        return ds_acl
-
-
-@router.post("/datasets/{dsid}/access_groups", response_model=ResourceACL)
-def create_dataset_acl(group_name: str, dsid: str, read: bool, write: bool, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    _, ag_list = auth_res
-    require_groups(ag_list)
-    with Session(engine) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
-        if ag is None:
-            raise HTTPException(status_code=404, detail = "Access Group not found")
-        acl = sql_create_resource_acl(ag, dsid, read, write, session)
-    return acl
 
 
 @router.post("/datasets/{dsid}/samples/{sample_id}", response_model=DatasetSampleLinkResponse)

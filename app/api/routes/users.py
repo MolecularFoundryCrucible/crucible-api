@@ -200,9 +200,9 @@ def read_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
         return users
 
 
-@router.get("/users/{orcid}/apikey", response_model=ApiKeyRead)
-def get_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    '''Returns the current API key for the given user. Admin only. Returns 404 if no key exists.'''
+@router.post("/users/{orcid}/apikey", response_model=ApiKeyRead)
+def get_or_provision_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+    '''Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.'''
     _, ag_list = auth_res
     require_admin(ag_list)
 
@@ -211,14 +211,7 @@ def get_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_use
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        token = session.exec(
-            select(ApiToken).where(ApiToken.user_unique_id == orcid)
-            .order_by(ApiToken.token_created.desc())
-        ).first()
-        if token is None:
-            raise HTTPException(status_code=404, detail="No API key found for this user")
-
-        return ApiKeyRead(api_key=token.token)
+    return ApiKeyRead(api_key=find_or_add_api_access(orcid, engine, regenerate=False))
 
 
 @router.get("/users/{orcid}/apikey/verify", response_model=ApiKeyVerify)

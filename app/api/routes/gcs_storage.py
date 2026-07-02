@@ -74,7 +74,7 @@ def _determine_storage_path(dataset_mfid, filename):
             detail="File not found in production storage",
         )
 
-def _generate_signed_url_link(cloud_storage_path, bucket_name, expire_hours = 1):
+def _generate_signed_url_link(cloud_storage_path, expire_hours=1):
     bucket_name, _, blob_name = cloud_storage_path.partition("/")
     blob = _get_gcs_storage_client().bucket(bucket_name).blob(blob_name)
 

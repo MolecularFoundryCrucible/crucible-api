@@ -22,8 +22,7 @@ from app.general_utils import get_secret, get_utc_isoformat
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.pagination import PaginatedResponse
-from app.api.routes.gcs_storage import (_determine_storage_path,
-                                        _generate_signed_url_link)
+from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
 from app.utils.auth_utils import authorize_user, require_write_access
 
@@ -100,11 +99,7 @@ def get_file_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], 
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, ag_ids)
 
-        if not af.storage_path:
-            af.storage_path = _determine_storage_path(ds.unique_id, af.filename)
-            session.add(af)
-        
-        storage_path = af.storage_path
+        storage_path = _ensure_storage_path(af, ds.unique_id, session)
         session.commit()
 
     url, expires_in = _generate_signed_url_link(storage_path)

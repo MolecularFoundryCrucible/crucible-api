@@ -273,6 +273,8 @@ def read_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], 
 
         require_read_access(session, unique_id, ag_ids)
 
+        if resource.scientific_metadata is None:
+            return ScientificMetadataBinaryRead(unique_id=unique_id, scientific_metadata={})
         return resource.scientific_metadata
 
 

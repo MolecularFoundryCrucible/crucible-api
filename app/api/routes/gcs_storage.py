@@ -74,7 +74,16 @@ def _determine_storage_path(dataset_mfid, filename):
             detail="File not found in production storage",
         )
 
+def _ensure_storage_path(af, dsid: str, session) -> str:
+    """Backfill storage_path from GCS if not set. Returns the storage_path."""
+    if not af.storage_path:
+        af.storage_path = _determine_storage_path(dsid, af.filename)
+        session.add(af)
+    return af.storage_path
+
+
 def _generate_signed_url_link(cloud_storage_path, expire_hours=1):
+    """Return (signed_url, expires_in_seconds) for the given storage path."""
     bucket_name, _, blob_name = cloud_storage_path.partition("/")
     blob = _get_gcs_storage_client().bucket(bucket_name).blob(blob_name)
 
@@ -83,7 +92,7 @@ def _generate_signed_url_link(cloud_storage_path, expire_hours=1):
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Could not generate signed URL: {e}")
 
-    return {"url": url, "expires_in": expire_hours*60*60}
+    return url, expire_hours * 60 * 60
 
 
 
@@ -162,41 +171,6 @@ def _create_upload_session(
         session.refresh(us)
     return us.upload_id
 
-
-@router.get('/datasets/{dsid}/download_links')
-def generate_signed_url_download_link(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
-    dsid: str,
-):
-    '''
-    Returns signed GCS download URLs (1-hour expiry) for all ingested files in the dataset.
-    Keys are AssociatedFile MFIDs where a match is found, falling back to the GCS blob path.
-    '''
-    _, ag_list = auth_res
-    ag_ids = [ag.id for ag in ag_list]
-
-    with Session(engine) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        require_read_access(session, dsid, ag_ids)
-
-        # Build blob_name → mfid map from AssociatedFile records
-        af_records = session.exec(
-            select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)
-        ).all()
-
-        # get the URLs
-        urls = []
-        for af in af_records:
-            if not af.storage_path:
-                af.storage_path = _determine_storage_path(dsid, af.filename)
-                session.add(af)
-            storage_path = af.storage_path
-            url, _ = _generate_signed_url_link(storage_path)
-            urls.append(url)
-        session.commit()
-    return urls
 
 
 @router.post("/datasets/{dsid}/upload/initiate", response_model=UploadInitiateRead)

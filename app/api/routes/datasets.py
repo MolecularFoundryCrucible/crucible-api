@@ -46,6 +46,7 @@ from app.utils.auth_utils import authorize_user, require_write_access, require_r
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
 from app.utils.gcs_record_utils import write_record, dataset_record
+from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
@@ -796,6 +797,39 @@ def delete_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: 
         session.delete(tn)
         session.commit()
         return {"message": f"Thumbnail {thumbnail_id} deleted from dataset {dsid}"}
+
+
+@router.get("/datasets/{dsid}/download_links")
+def generate_dataset_download_links(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    dsid: str,
+):
+    '''
+    Returns signed GCS download URLs (1-hour expiry) for all files in the dataset,
+    keyed by AssociatedFile mfid. Backfills missing storage_path records on the fly.
+    '''
+    _, ag_list = auth_res
+    ag_ids = [ag.id for ag in ag_list]
+
+    with Session(engine) as session:
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        require_read_access(session, dsid, ag_ids)
+
+        af_records = session.exec(
+            select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)
+        ).all()
+
+        mfid_to_path = {af.mfid: _ensure_storage_path(af, dsid, session) for af in af_records}
+        session.commit()
+
+    # Generate signed URLs outside the DB session
+    result = {}
+    for mfid, storage_path in mfid_to_path.items():
+        url, _ = _generate_signed_url_link(storage_path)
+        result[mfid] = url
+    return result
 
 
 @router.get("/datasets/{dsid}/files", response_model=List[AssociatedFileRead])

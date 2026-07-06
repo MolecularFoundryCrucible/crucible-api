@@ -91,4 +91,48 @@ def read_keyword(keyword: str, permissive: bool = True):
         K = session.exec(cmd).all()
     return(K)
 
+# TODO: We can find a way to pull this more dynamically, but for now make the list API available
+@router.get("/ingestors", response_model=List[str])
+def list_ingestors():
+    '''
+    Returns a list of all ingestor options to use when making an ingestion request.
+    '''
+    ingestors =['AFMIngestor',
+                'PtychographyH5Ingestor',
+                'SimpleTiledImageScopeFoundryH5Ingestor,' 
+                'BioGlowIngestor',
+                'QSpleemSVRampIngestor',
+                'QSpleemSVRampSpinIngestor',
+                'QSpleemImageIngestor',
+                'QSpleemSPLEEMImageIngestor',
+                'QSpleemDepositionMonitorIngestor',
+                'QSpleemARRESEKIngestor',
+                'QSpleemARRESMMIngestor',
+                'RgaTeyBatchIngestor',
+                'CanonCaptureScopeFoundryH5Ingestor,' 
+                'SingleSpecScopeFoundryH5Ingestor',
+                'HyperspecScopeFoundryH5Ingestor',
+                'HyperspecSweepScopeFoundryH5Ingestor',
+                'ToupcamLiveScopeFoundryH5Ingestor',
+                'CLSyncRasterScanIngestor',
+                'CLHyperspecIngestor,' 
+                'SpinbotSpecLineIngestor',
+                'SpinbotCameraCaptureIngestor,' 
+                'SpinbotPhotoRunIngestor,' 
+                'InSituPlIngestor',
+                'CziIngestor',
+                'DigitalMicrographIngestor',
+                'EmiIngestor',
+                'SerIngestor',
+                'BcfIngestor',
+                'BerkeleyEmdIngestor',
+                'VeloxEmdIngestor',
+                'SpinbotSpecRunIngestor',
+                'ImageIngestor',
+                'NirvanaMultiPosLineScanIngestor',
+                'ScopeFoundryH5Ingestor',
+                'H5Ingestor']
+    
+    return ingestors
+
 

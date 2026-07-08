@@ -11,6 +11,7 @@ _USERNAME_RE = re.compile(r'^[a-z][a-z0-9_-]{2,31}$')
 
 
 def validate_username_format(username: str) -> str:
+    username = username.lower()
     if not _USERNAME_RE.match(username):
         raise ValueError(
             "username must be 3-32 chars, start with a letter, "
@@ -28,7 +29,7 @@ def sanitize_username_from_email(email: str) -> str:
 
 def assert_username_available(session, username: str, exclude_orcid: Optional[str] = None) -> None:
     """Raise 409 if username is already taken by a different user."""
-    q = select(User).where(User.username == username)
+    q = select(User).where(User.username == username.lower())
     if exclude_orcid:
         q = q.where(User.unique_id != exclude_orcid)
     if session.exec(q).one_or_none() is not None:
@@ -44,7 +45,7 @@ def resolve_user(session, orcid: Optional[str] = None, email: Optional[str] = No
     elif email:
         user = session.exec(select(User).where(func.lower(User.email) == email.lower())).one_or_none()
     elif username:
-        user = session.exec(select(User).where(User.username == username)).one_or_none()
+        user = session.exec(select(User).where(User.username == username.lower())).one_or_none()
     else:
         raise HTTPException(status_code=400, detail="One of orcid, email, or username must be provided")
     if user is None:

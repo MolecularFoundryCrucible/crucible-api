@@ -22,6 +22,13 @@ class UserCreate(SQLModel):
             return v
         return validate_username_format(str(v))
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v):
+        if v is None:
+            return v
+        return str(v).lower()
+
 
 class UserRead(SQLModel):
     first_name: str
@@ -56,6 +63,13 @@ class AccountProfileUpdate(SQLModel):
             return v
         return validate_username_format(str(v))
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v):
+        if v is None:
+            return v
+        return str(v).lower()
+
 
 class UserUpdate(SQLModel):
     '''Admin partial update schema for User. All fields may be modified.'''
@@ -71,3 +85,10 @@ class UserUpdate(SQLModel):
         if v is None:
             return v
         return validate_username_format(str(v))
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v):
+        if v is None:
+            return v
+        return str(v).lower()

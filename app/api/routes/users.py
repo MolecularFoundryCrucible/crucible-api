@@ -97,12 +97,14 @@ def resolve_users(
                 results[user.unique_id] = user
 
         if usernames:
-            for user in session.exec(select(User).where(User.username.in_(usernames))).all():
+            normalized_usernames = [u.lower() for u in usernames]
+            for user in session.exec(select(User).where(User.username.in_(normalized_usernames))).all():
                 if user.unique_id not in results:
                     results[user.unique_id] = user
 
         if emails:
-            for user in session.exec(select(User).where(User.email.in_(emails))).all():
+            normalized_emails = [e.lower() for e in emails]
+            for user in session.exec(select(User).where(func.lower(User.email).in_(normalized_emails))).all():
                 if user.unique_id not in results:
                     results[user.unique_id] = user
 
@@ -176,7 +178,7 @@ def get_user_by_username(username: str, auth_res: Annotated[tuple, Depends(autho
     user_unique_id, ag_list = auth_res
 
     with Session(engine) as session:
-        user = session.exec(select(User).where(User.username == username)).one_or_none()
+        user = session.exec(select(User).where(User.username == username.lower())).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 

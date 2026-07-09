@@ -22,7 +22,7 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
-from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
+from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
 from app.utils.gcs_record_utils import write_record, sample_record
 
 router = APIRouter(tags=["samples"])
@@ -152,7 +152,11 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
 
         if session.exec(
             select(Sample).where(
-                and_(Sample.project_id == S.project_id, Sample.sample_name == S.sample_name)
+                and_(
+                    Sample.project_id == S.project_id,
+                    Sample.sample_name == S.sample_name,
+                    deletion_filter_for(Sample),
+                )
             )
         ).one_or_none():
             raise HTTPException(

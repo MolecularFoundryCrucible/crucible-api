@@ -6,7 +6,7 @@ from app.models.links import LinkedResource
 class DatasetCreate(SQLModel):
     '''
     Fields accepted when creating or upserting a dataset.
-    Provide unique_id to update an existing record; omit it to create a new one
+    Provide unique_id to create a record under a pre-assigned ID; omit it to auto-generate one.
     with an auto-generated MFID.
     '''
     unique_id: Optional[str] = None

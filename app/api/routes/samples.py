@@ -146,20 +146,19 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         raise HTTPException(status_code=400, detail="sample_name must not be empty.")
 
     with Session(engine) as session:
-        # Dedup: return existing sample if (project_id, sample_name) already registered
-        existing = session.exec(
+        if S.unique_id:
+            if session.exec(select(Sample).where(Sample.unique_id == S.unique_id)).one_or_none():
+                raise HTTPException(status_code=409, detail=f"Sample '{S.unique_id}' already exists. Use PATCH to update it.")
+
+        if session.exec(
             select(Sample).where(
                 and_(Sample.project_id == S.project_id, Sample.sample_name == S.sample_name)
             )
-        ).one_or_none()
-        if existing:
-            ri = session.exec(select(Resource).where(Resource.mfid == existing.unique_id)).one_or_none()
-            return SampleResponse.model_validate({
-                **existing.model_dump(),
-                "public": ri.public if ri else False,
-                "creation_time": ri.creation_time if ri else None,
-                "modification_time": ri.modification_time if ri else None,
-            })
+        ).one_or_none():
+            raise HTTPException(
+                status_code=409,
+                detail=f"A sample named '{S.sample_name}' already exists in project '{S.project_id}'.",
+            )
 
         sample = Sample(**S.model_dump(exclude_unset=True))
         session.add(sample)

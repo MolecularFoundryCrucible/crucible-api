@@ -126,6 +126,11 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
     user_unique_id, ag_list = auth_res
     
     with Session(engine) as session:
+        if dataset_details.get('unique_id'):
+            existing = session.exec(select(Dataset).where(Dataset.unique_id == dataset_details['unique_id'])).one_or_none()
+            if existing is not None:
+                raise HTTPException(status_code=409, detail=f"Dataset '{dataset_details['unique_id']}' already exists. Use PATCH to update it.")
+
         if not dataset.owner_orcid:
             dataset_details['owner_orcid'] = user_unique_id
 
@@ -137,13 +142,8 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
             instrument = session.exec(select(Instrument).where(Instrument.instrument_name == dataset_details['instrument_name'])).one_or_none()
             dataset_details['instrument_id'] = instrument.id if instrument else None
 
-        ds = add_or_update(
-            session,
-            Dataset,
-            Dataset.unique_id == dataset_details.get('unique_id'),
-            **dataset_details
-        )
-
+        ds = Dataset(**dataset_details)
+        session.add(ds)
         session.flush()
 
         # get time

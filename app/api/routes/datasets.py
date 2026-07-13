@@ -116,6 +116,7 @@ def request_rga_analysis(dsid, auth_res: Annotated[tuple, Depends(authorize_user
     )
     return
 
+@router.post("/datasets/{dsid}/mosaic_stitch")
 def request_mosaic_stitch(dsid, auth_res: Annotated[tuple, Depends(authorize_user)]):
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()

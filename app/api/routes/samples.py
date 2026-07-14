@@ -22,7 +22,7 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
-from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
+from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
 from app.utils.gcs_record_utils import write_record, sample_record
 
 router = APIRouter(tags=["samples"])
@@ -146,20 +146,23 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         raise HTTPException(status_code=400, detail="sample_name must not be empty.")
 
     with Session(engine) as session:
-        # Dedup: return existing sample if (project_id, sample_name) already registered
-        existing = session.exec(
+        if S.unique_id:
+            if session.exec(select(Sample).where(Sample.unique_id == S.unique_id)).one_or_none():
+                raise HTTPException(status_code=409, detail=f"Sample '{S.unique_id}' already exists. Use PATCH to update it.")
+
+        if session.exec(
             select(Sample).where(
-                and_(Sample.project_id == S.project_id, Sample.sample_name == S.sample_name)
+                and_(
+                    Sample.project_id == S.project_id,
+                    Sample.sample_name == S.sample_name,
+                    deletion_filter_for(Sample),
+                )
             )
-        ).one_or_none()
-        if existing:
-            ri = session.exec(select(Resource).where(Resource.mfid == existing.unique_id)).one_or_none()
-            return SampleResponse.model_validate({
-                **existing.model_dump(),
-                "public": ri.public if ri else False,
-                "creation_time": ri.creation_time if ri else None,
-                "modification_time": ri.modification_time if ri else None,
-            })
+        ).one_or_none():
+            raise HTTPException(
+                status_code=409,
+                detail=f"A sample named '{S.sample_name}' already exists in project '{S.project_id}'.",
+            )
 
         sample = Sample(**S.model_dump(exclude_unset=True))
         session.add(sample)

@@ -22,7 +22,15 @@ def setup_engine(env_file = '.env'):
         return
     encoded_pw = urllib.parse.quote_plus(password)
     db_url = f'postgresql://{os.environ.get("DB_USERNAME")}:{encoded_pw}@{os.environ.get("DB_SERVER")}/{os.environ.get("DB_DATABASE")}'
-    engine = create_engine(db_url, echo=False)
+    engine = create_engine(
+        db_url,
+        echo=False,
+        pool_size=int(os.environ.get("DB_POOL_SIZE", "15")),
+        max_overflow=int(os.environ.get("DB_MAX_OVERFLOW", "15")),
+        pool_timeout=int(os.environ.get("DB_POOL_TIMEOUT", "30")),
+        pool_recycle=int(os.environ.get("DB_POOL_RECYCLE", "1800")),
+        pool_pre_ping=True,
+    )
     return(engine)
 
 

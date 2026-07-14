@@ -1,9 +1,14 @@
 from typing import Annotated
 import logging
 import re
+import os
+import hashlib
+import threading
 import requests
 import secrets
 import datetime
+from collections import namedtuple
+from cachetools import TTLCache
 from jose import jwt, JWTError
 
 logger = logging.getLogger(__name__)
@@ -29,6 +34,27 @@ engine = get_engine()
 api_path = get_api_path()
 api_url = get_api_url()
 
+# ====== Auth cache
+# Positive-only cache of validated tokens -> (user_unique_id, [CachedGroup]).
+# Per-worker and per-pod: a revoked/rotated key stays valid for up to the TTL.
+CachedGroup = namedtuple("CachedGroup", ["id", "group_name"])
+_AUTH_CACHE_TTL = int(os.environ.get("AUTH_CACHE_TTL", "60"))
+_AUTH_CACHE_MAXSIZE = int(os.environ.get("AUTH_CACHE_MAXSIZE", "10000"))
+_auth_cache = TTLCache(maxsize=_AUTH_CACHE_MAXSIZE, ttl=_AUTH_CACHE_TTL)
+_auth_cache_lock = threading.Lock()
+
+
+def _auth_cache_key(apikey: str) -> str:
+    return hashlib.sha256(apikey.encode()).hexdigest()
+
+
+def _invalidate_auth_cache(apikey: str):
+    """Drop a token from this worker's auth cache. Only affects the current
+    process; other workers/pods clear the entry when their TTL expires."""
+    with _auth_cache_lock:
+        _auth_cache.pop(_auth_cache_key(apikey), None)
+
+
 # ====== Functions
 def find_or_add_api_access(orcid: str, engine, regenerate = False):
 
@@ -42,8 +68,10 @@ def find_or_add_api_access(orcid: str, engine, regenerate = False):
             return(api_acct.token)
 
         elif api_acct is not None and regenerate == True:
+            old_token = api_acct.token
             delete_apikey(orcid, session)
             new_token = generate_apikey(orcid, session)
+            _invalidate_auth_cache(old_token)
             return(new_token)
 
         else:
@@ -93,7 +121,7 @@ def decode_token(token: str, secret_key = SECRET_KEY, alg = ALGORITHM):
         payload = jwt.decode(token, secret_key, algorithms=[alg])
         return payload
     except JWTError:
-        login_path = ''.join(api_path, '/login')
+        login_path = ''.join([api_path, '/login'])
         return RedirectResponse(login_path)
 
 
@@ -118,15 +146,17 @@ def find_key(credentials, engine):
         api_acct = session.exec(cmd).one_or_none()
 
         if api_acct is None:
+            # Return an identical response whether the key never existed or has
+            # expired, so the error can't be used to probe token existence or
+            # leak the exact expiry date. Details go to the server log only.
             cmd = select(ApiToken).where(ApiToken.token == apikey)
             expired_api_acct = session.exec(cmd).one_or_none()
-            if expired_api_acct is None:
-                raise HTTPException(status_code=400, detail="No account found for this API key.")
-            else:
-                logger.warning(f"Expired API account found: {expired_api_acct}")
-                created_date = datetime.datetime.strptime(expired_api_acct.token_created, '%Y-%m-%d')
-                expiration_date = (created_date + timedelta(365)).isoformat()
-                raise HTTPException(status_code=400, detail=f"This API key expired on {expiration_date}")
+            if expired_api_acct is not None:
+                logger.warning(
+                    "Expired API key presented (user=%s, created=%s)",
+                    expired_api_acct.user_unique_id, expired_api_acct.token_created,
+                )
+            raise HTTPException(status_code=401, detail="Invalid or expired API key.")
 
     return(api_acct)
 
@@ -145,16 +175,30 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
         HTTPException: If the API key is invalid or expired
     """
     from app.models.core_models import User
-    api_acct = find_key(credentials, engine)
-    
+
+    apikey = credentials.credentials
+    cache_key = _auth_cache_key(apikey)
+    with _auth_cache_lock:
+        cached = _auth_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    api_acct = find_key(credentials, engine)  # raises 401 on invalid/expired
+
     if api_acct is None:
-        raise HTTPException(status_code=400, detail="Invalid apikey.")
-    
+        raise HTTPException(status_code=401, detail="Invalid or expired API key.")
+
     with Session(engine) as session:
-        user = session.exec(                                                                                                                                      
-            select(User).where(User.unique_id == api_acct.user_unique_id)).first()                                                                                                                                                 
-        ag = user.accessgroups  # relationship handles the join for you                
-        return api_acct.user_unique_id, ag
+        user = session.exec(
+            select(User).where(User.unique_id == api_acct.user_unique_id)).first()
+        # Materialize to plain, immutable data so the cached value is safe to
+        # share across threads and doesn't depend on the closed session.
+        ag = [CachedGroup(id=g.id, group_name=g.group_name) for g in user.accessgroups]
+
+    result = (api_acct.user_unique_id, ag)
+    with _auth_cache_lock:
+        _auth_cache[cache_key] = result
+    return result
 
 
 def require_read_access(session, mfid: str, ag_ids: list):

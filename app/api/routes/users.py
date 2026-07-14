@@ -249,6 +249,26 @@ def verify_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_
             expires_at=expires_dt.date().isoformat(),
         )
 
+def find_mf_user_proposals(orcid):
+    import os
+    import requests
+
+    mf_user_db_url = "https://foundry-admin.lbl.gov/api/JSON/PsyCat-GetProposal.aspx?"
+    apikey = os.environ.get("PROPDB_APIKEY")
+    request_url = f"{mf_user_db_url}key={apikey}&orcid={orcid}"
+    assert apikey is not None
+    print(f"{mf_user_db_url}key=****&orcid={orcid}")
+    response = requests.request(method="get", url=request_url)
+
+    found_proposals = []
+    if len(response.json()) > 0 and response.status_code == 200:
+
+        for u in response.json():
+            found_proposals += u.get('proposals')
+            found_proposals = list(set(found_proposals))
+        
+    return found_proposals
+
 
 @router.post("/users", response_model=UserRead)
 def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: UserCreate, project_ids: List[str] = Body(...)):
@@ -280,6 +300,10 @@ def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: 
         user = add_or_update(session, User, User.unique_id == user_info.unique_id, **user_dict)
 
         sql_add_user_to_access_group(user.unique_id, user.unique_id, session)
+
+        # check if the user is in the MF Proposal Database and should be added to any proposals
+        user_proposal_ids = find_mf_user_proposals(user.unique_id)
+        project_ids.append(user_proposal_ids)
 
         # for each project that the user is a USER on:
         # 1. get the project object from the database

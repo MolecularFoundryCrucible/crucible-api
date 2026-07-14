@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select, col
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.general_utils import is_orcid
+from app.general_utils import is_orcid, get_secret
 from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, Project, Sample, User,
     UserAccessGroupLink, UserProjectLink,
@@ -250,11 +250,10 @@ def verify_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_
         )
 
 def find_mf_user_proposals(orcid):
-    import os
     import requests
 
     mf_user_db_url = "https://foundry-admin.lbl.gov/api/JSON/PsyCat-GetProposal.aspx?"
-    apikey = os.environ.get("PROPDB_APIKEY")
+    apikey = get_secret("PROPDB_APIKEY", "propdb-apikey/versions/1")
     request_url = f"{mf_user_db_url}key={apikey}&orcid={orcid}"
     assert apikey is not None
     print(f"{mf_user_db_url}key=****&orcid={orcid}")

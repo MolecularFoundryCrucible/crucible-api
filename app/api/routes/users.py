@@ -252,7 +252,7 @@ def verify_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_
 def find_mf_user_proposals(orcid):
     import requests
 
-    mf_user_db_url = "https://foundry-admin.lbl.gov/api/JSON/PsyCat-GetProposal.aspx?"
+    mf_user_db_url = "https://foundry-admin.lbl.gov/api/JSON/sciCat-GetUser.aspx?"
     apikey = get_secret("PROPDB_APIKEY", "propdb-apikey/versions/1")
     request_url = f"{mf_user_db_url}key={apikey}&orcid={orcid}"
     assert apikey is not None

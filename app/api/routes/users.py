@@ -261,10 +261,11 @@ def find_mf_user_proposals(orcid):
 
     found_proposals = []
     if len(response.json()) > 0 and response.status_code == 200:
-
+        logger.info(f'{response.json()=}')
         for u in response.json():
-            found_proposals += u.get('proposals')
-            found_proposals = list(set(found_proposals))
+            found_proposals += u.get('proposals', [])
+        
+        found_proposals = list(set(found_proposals))
         
     return found_proposals
 

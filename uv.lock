@@ -304,11 +304,21 @@ wheels = [
 ]
 
 [[package]]
+name = "configupdater"
+version = "3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2b/f4/603bd8a65e040b23d25b5843836297b0f4e430f509d8ed2ef8f072fb4127/ConfigUpdater-3.2.tar.gz", hash = "sha256:9fdac53831c1b062929bf398b649b87ca30e7f1a735f3fbf482072804106306b", size = 140603, upload-time = "2023-11-27T17:16:45.434Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e7/f0/b59cb7613d9d0f866b6ff247c5953ad78363c27ff5d684a2a98899ab8220/ConfigUpdater-3.2-py2.py3-none-any.whl", hash = "sha256:0f65a041627d7693840b4dd743581db4c441c97195298a29d075f91b79539df2", size = 34688, upload-time = "2023-11-27T17:16:43.53Z" },
+]
+
+[[package]]
 name = "crucible-api"
 version = "2.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "anthropic" },
+    { name = "cachetools" },
     { name = "cloudevents" },
     { name = "dotenv" },
     { name = "fastapi" },
@@ -343,6 +353,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=0.40.0" },
+    { name = "cachetools", specifier = ">=5.5.2" },
     { name = "cloudevents", specifier = ">=1.12.0" },
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "fastapi", specifier = "==0.112.2" },
@@ -355,7 +366,7 @@ requires-dist = [
     { name = "imageio", specifier = "==2.37.0" },
     { name = "ipykernel", specifier = ">=7.1.0" },
     { name = "mfid", specifier = "==1.0.0" },
-    { name = "nano-crucible", specifier = "==2.0.2" },
+    { name = "nano-crucible", git = "https://github.com/MolecularFoundryCrucible/nano-crucible?rev=dev" },
     { name = "networkx", specifier = ">=3.6.1" },
     { name = "numpy", specifier = "==2.2.2" },
     { name = "pg8000", specifier = "==1.31.2" },
@@ -1089,21 +1100,23 @@ wheels = [
 
 [[package]]
 name = "nano-crucible"
-version = "2.0.2"
-source = { registry = "https://pypi.org/simple" }
+version = "2.1.2"
+source = { git = "https://github.com/MolecularFoundryCrucible/nano-crucible?rev=dev#7214153e7239db778845e6fb4085a763e3f5aca7" }
 dependencies = [
     { name = "argcomplete" },
+    { name = "configupdater" },
+    { name = "google-cloud-storage" },
+    { name = "google-crc32c" },
     { name = "ipywidgets" },
     { name = "mfid" },
     { name = "platformdirs" },
+    { name = "prompt-toolkit" },
     { name = "pydantic" },
+    { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "pytz" },
+    { name = "pyyaml" },
     { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9c/5c/eedcf14121e541472db7c18ff3254b486fb1dc0194a0947ae59607bb2d4e/nano_crucible-2.0.2.tar.gz", hash = "sha256:b060d9f5454e22446b71c77588062bd15be854525aa112a733f4334550653882", size = 54051, upload-time = "2026-03-16T20:51:46.211Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/bf/88/729b6ce6227eacae87c7aba8eb9fd922fdb5cc2809f7d33ac56b842182bb/nano_crucible-2.0.2-py3-none-any.whl", hash = "sha256:22dfc7ce6207146fc265574bd62791b1e764723d782c985e1fdbf256bf6dd0c5", size = 67739, upload-time = "2026-03-16T20:51:44.754Z" },
 ]
 
 [[package]]

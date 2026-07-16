@@ -842,14 +842,25 @@ def generate_dataset_download_links(
             select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)
         ).all()
 
-        mfid_to_path = {af.mfid: _ensure_storage_path(af, dsid, session) for af in af_records}
+        mfid_to_path = {}
+        for af in af_records:
+            try:
+                mfid_to_path[af.mfid] = _ensure_storage_path(af, dsid, session)
+            except HTTPException:
+                mfid_to_path[af.mfid] = None
         session.commit()
 
-    # Generate signed URLs outside the DB session
+    # Generate signed URLs outside the DB session; null for missing blobs
     result = {}
     for mfid, storage_path in mfid_to_path.items():
-        url, _ = _generate_signed_url_link(storage_path)
-        result[mfid] = url
+        if storage_path is None:
+            result[mfid] = None
+            continue
+        try:
+            url, _ = _generate_signed_url_link(storage_path)
+            result[mfid] = url
+        except HTTPException:
+            result[mfid] = None
     return result
 
 

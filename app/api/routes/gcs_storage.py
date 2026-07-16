@@ -83,9 +83,15 @@ def _ensure_storage_path(af, dsid: str, session) -> str:
 
 
 def _generate_signed_url_link(cloud_storage_path, expire_hours=1):
-    """Return (signed_url, expires_in_seconds) for the given storage path."""
+    """Return (signed_url, expires_in_seconds), or raise 404 if the blob does not exist."""
     bucket_name, _, blob_name = cloud_storage_path.partition("/")
     blob = _get_gcs_storage_client().bucket(bucket_name).blob(blob_name)
+
+    if not blob.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"File not found in storage: {cloud_storage_path}",
+        )
 
     try:
         url = blob.generate_signed_url(version="v4", expiration=timedelta(hours=expire_hours), method="GET")

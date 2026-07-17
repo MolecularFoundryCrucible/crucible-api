@@ -309,14 +309,18 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
     Only admins or the project lead can remove users.
     Provide ?email= or ?username= to look up the user instead of the orcid path parameter.
     '''
-    _, ag_list = auth_res
-    require_groups(ag_list, {'admin', proj_id})
-    with Session(engine) as session:
-        user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
+    user_unique_id, ag_list = auth_res
+    is_admin = any(ag.group_name == 'admin' for ag in ag_list)
 
+    with Session(engine) as session:
         proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project {proj_id} not found")
+
+        if not is_admin and user_unique_id != proj.project_lead_orcid:
+            raise HTTPException(status_code=403, detail="Only platform admins or the project lead can remove members.")
+
+        user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
 
         # Remove the user-project link
         link = session.exec(

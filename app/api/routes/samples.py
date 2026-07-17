@@ -24,6 +24,7 @@ from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleU
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
 from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
 from app.utils.gcs_record_utils import write_record, sample_record
+from app.models.users import UserPublicRead
 
 router = APIRouter(tags=["samples"])
 engine = get_engine()
@@ -214,6 +215,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
                  include_metadata: bool = False,
                  include_links: bool = False,
                  include_datasets: bool = False,
+                 include_owner: bool = False,
                  limit: int = Query(default=100, ge=1, le=1000),
                  cursor: Optional[str] = None,
                  offset: int = Query(default=0, ge=0),
@@ -245,7 +247,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
 
     params_dict = dict(request.query_params)
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
-              'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets', 'limit', 'cursor', 'offset'):
+              'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets', 'include_owner', 'limit', 'cursor', 'offset'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -329,6 +331,14 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
                     )
                     dataset_reads_by_sample.setdefault(sid, []).append(DatasetRead.model_validate(ds))
 
+        # Batch-resolve owners if requested
+        owners_by_orcid = {}
+        if include_owner:
+            orcids = {row[0].owner_orcid for row in rows if row[0].owner_orcid}
+            if orcids:
+                for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all():
+                    owners_by_orcid[u.unique_id] = UserPublicRead.model_validate(u)
+
         items = []
         for row in rows:
             if include_metadata:
@@ -354,6 +364,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
                 "scientific_metadata": sci_md,
                 "datasets": compat_datasets,
                 "links": links,
+                "owner": owners_by_orcid.get(samp.owner_orcid),
             }))
         next_cursor = rows[-1][0].unique_id if len(rows) == limit else None
         resp_offset = offset if (cursor is None and offset) else None
@@ -403,7 +414,7 @@ def search_samples(
 
 
 @router.get("/samples/{sample_id}", response_model=SampleResponse)
-def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], include_links: bool = False, include_metadata: bool = False):
+def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], include_links: bool = False, include_metadata: bool = False, include_owner: bool = False):
     '''
     Returns the sample for the provided ID.
     Pass include_links=true to include parent, child, and associated resources.
@@ -448,6 +459,11 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
             )
 
         resource_md = samp.resource.scientific_metadata if samp.resource else None
+        owner = None
+        if include_owner and samp.owner_orcid:
+            owner_user = session.exec(select(User).where(User.unique_id == samp.owner_orcid)).one_or_none()
+            if owner_user:
+                owner = UserPublicRead.model_validate(owner_user)
         return SampleResponse.model_validate({
             **samp.model_dump(),
             "public": samp.resource.public if samp.resource else False,
@@ -457,6 +473,7 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
             "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
             "deletion_request": deletion_req.model_dump() if deletion_req else None,
             "links": links,
+            "owner": owner,
         })
 
 

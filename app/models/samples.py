@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, List, Optional
 from sqlmodel import SQLModel
 
 from app.models.datasets import DatasetRead
@@ -53,3 +53,4 @@ class SampleResponse(SampleRead):
     datasets: Optional[List[DatasetRead]] = None
     deletion_request: Optional[dict] = None
     links: Optional[List[LinkedResource]] = None
+    owner: Optional[Any] = None  # UserPublicRead when include_owner=true

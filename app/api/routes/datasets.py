@@ -42,6 +42,7 @@ from app.models.datasets import (
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
+from app.models.users import UserPublicRead
 from app.utils.auth_utils import authorize_user, require_write_access, require_read_access, read_access_filter_list
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
@@ -265,6 +266,7 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
                   include_metadata: bool = False,
                   include_links: bool = False,
+                  include_owner: bool = False,
                   limit: int = Query(default=100, ge=1, le=1000),
                   cursor: Optional[str] = None,
                   offset: int = Query(default=0, ge=0),
@@ -292,7 +294,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
 
     # extract parameters from filters
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
-              'modification_time_lte', 'include_metadata', 'include_links', 'limit', 'cursor', 'offset'):
+              'modification_time_lte', 'include_metadata', 'include_links', 'include_owner', 'limit', 'cursor', 'offset'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -382,6 +384,14 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                         LinkedResource(unique_id=samp.unique_id, resource_type="sample", name=samp.sample_name, relationship="associated")
                     )
 
+        # Batch-resolve owners if requested
+        owners_by_orcid = {}
+        if include_owner:
+            orcids = {row[0].owner_orcid for row in results if row[0].owner_orcid}
+            if orcids:
+                for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all():
+                    owners_by_orcid[u.unique_id] = UserPublicRead.model_validate(u)
+
         items = []
         for row in results:
             if include_metadata:
@@ -403,6 +413,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                 "modification_time": modification_time,
                 "scientific_metadata": sci_md,
                 "links": links,
+                "owner": owners_by_orcid.get(dataset.owner_orcid),
             }))
         next_cursor = results[-1][0].unique_id if len(results) == limit else None
         resp_offset = offset if (cursor is None and offset) else None
@@ -453,10 +464,12 @@ def search_datasets(
 
 @router.get("/datasets/{dsid}", response_model=DatasetResponse)
 def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
-                 include_metadata: bool = False, include_links: bool = False):
+                 include_metadata: bool = False, include_links: bool = False,
+                 include_owner: bool = False):
     '''
     Returns a dataset found with the provided unique ID.
     Pass include_links=true to include parent, child, and associated resources.
+    Pass include_owner=true to resolve owner_orcid to a user object.
     '''
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -503,6 +516,11 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
             )
 
         resource_md = ds.resource.scientific_metadata if ds.resource else None
+        owner = None
+        if include_owner and ds.owner_orcid:
+            owner_user = session.exec(select(User).where(User.unique_id == ds.owner_orcid)).one_or_none()
+            if owner_user:
+                owner = UserPublicRead.model_validate(owner_user)
         return DatasetResponse.model_validate({
             **ds.model_dump(),
             "public": ds.resource.public if ds.resource else ds.public,
@@ -511,6 +529,7 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
             "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
             "deletion_request": deletion_req.model_dump() if deletion_req else None,
             "links": links,
+            "owner": owner,
         })
 
 

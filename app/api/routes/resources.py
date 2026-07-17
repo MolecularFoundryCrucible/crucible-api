@@ -23,6 +23,7 @@ from app.models.instrument import InstrumentResponse
 from app.models.links import LinkedResource
 from app.models.projects import ProjectWithLead
 from app.models.samples import SampleResponse
+from app.models.users import UserPublicRead
 from app.utils.auth_utils import authorize_user, require_groups, require_read_access, require_write_access
 from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, sql_create_resource_acl
 from app.utils.gcs_record_utils import write_metadata
@@ -126,7 +127,8 @@ def search_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
 
 @router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse, InstrumentResponse, ProjectWithLead])
 def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_id: str,
-                 include_metadata: bool = False, include_links: bool = False):
+                 include_metadata: bool = False, include_links: bool = False,
+                 include_owner: bool = False):
     """
     Fetch a dataset, sample, instrument, or project by ID without knowing its type in advance.
     Resolves the type from idtype, then returns the full resource record.
@@ -154,6 +156,12 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
             ).one_or_none()
             sci_md = smb.scientific_metadata if smb else None
 
+        def _resolve_owner(orcid):
+            if not include_owner or not orcid:
+                return None
+            u = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
+            return UserPublicRead.model_validate(u) if u else None
+
         if resource.resource_type == "dataset":
             ds = session.exec(
                 select(Dataset).where(Dataset.unique_id == resource_id)
@@ -168,6 +176,7 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
                 "scientific_metadata": sci_md,
                 "deletion_request": deletion_req.model_dump() if deletion_req else None,
                 "links": _fetch_links(session, "dataset", ds) if include_links else None,
+                "owner": _resolve_owner(ds.owner_orcid),
             })
 
         elif resource.resource_type == "sample":
@@ -187,6 +196,7 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
                 "scientific_metadata": sci_md,
                 "deletion_request": deletion_req.model_dump() if deletion_req else None,
                 "links": _fetch_links(session, "sample", samp) if include_links else None,
+                "owner": _resolve_owner(samp.owner_orcid),
             })
 
         elif resource.resource_type == "instrument":

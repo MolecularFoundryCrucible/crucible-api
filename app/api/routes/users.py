@@ -72,7 +72,7 @@ def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Req
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.post("/users/resolve", response_model=Dict[str, UserRead])
+@router.post("/users/resolve", response_model=Dict[str, UserPublicRead])
 def resolve_users(
     auth_res: Annotated[tuple, Depends(authorize_user)],
     orcids: Optional[List[str]] = Body(default=None),
@@ -81,32 +81,30 @@ def resolve_users(
 ):
     '''
     Batch-resolve users by any mix of ORCIDs, usernames, or emails.
-    Returns a dict keyed by ORCID: {orcid: UserRead}.
+    Returns a dict keyed by ORCID: {orcid: UserPublicRead}. No email included.
+    Any authenticated user can call this. Admins needing email should use GET /users/{orcid}.
     '''
-    _, ag_list = auth_res
-    require_admin(ag_list)
-
     if not orcids and not usernames and not emails:
         return {}
 
     with Session(engine) as session:
-        results: Dict[str, UserRead] = {}
+        results: Dict[str, UserPublicRead] = {}
 
         if orcids:
             for user in session.exec(select(User).where(User.unique_id.in_(orcids))).all():
-                results[user.unique_id] = user
+                results[user.unique_id] = UserPublicRead.model_validate(user)
 
         if usernames:
             normalized_usernames = [u.lower() for u in usernames]
             for user in session.exec(select(User).where(User.username.in_(normalized_usernames))).all():
                 if user.unique_id not in results:
-                    results[user.unique_id] = user
+                    results[user.unique_id] = UserPublicRead.model_validate(user)
 
         if emails:
             normalized_emails = [e.lower() for e in emails]
             for user in session.exec(select(User).where(func.lower(User.email).in_(normalized_emails))).all():
                 if user.unique_id not in results:
-                    results[user.unique_id] = user
+                    results[user.unique_id] = UserPublicRead.model_validate(user)
 
         return results
 
@@ -172,20 +170,14 @@ def search_users(
     return results
 
 
-@router.get("/users/by-username/{username}", response_model=UserRead)
+@router.get("/users/by-username/{username}", response_model=UserPublicRead)
 def get_user_by_username(username: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    '''Look up a user by username. Admin or the matched user themselves.'''
-    user_unique_id, ag_list = auth_res
-
+    '''Look up a user by username. Returns public profile (no email). Any authenticated user.'''
     with Session(engine) as session:
         user = session.exec(select(User).where(User.username == username.lower())).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-
-        if user_unique_id != user.unique_id:
-            require_admin(ag_list)
-
-        return user
+        return UserPublicRead.model_validate(user)
 
 
 @router.get("/users/{orcid}", response_model=Union[None, UserRead])

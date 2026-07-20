@@ -151,14 +151,19 @@ def search_users(
     '''
     with Session(engine) as session:
         session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
-        results = session.exec(
-            select(User)
-            .where(
-                literal(q).op("<<%")(User.first_name) |
-                literal(q).op("<<%")(User.last_name) |
-                literal(q).op("<<%")(User.username)
+        tokens = q.lower().split()
+        query = select(User)
+        for token in tokens:
+            query = query.where(
+                User.first_name.ilike(f"{token}%") |
+                User.last_name.ilike(f"{token}%") |
+                User.username.ilike(f"{token}%") |
+                literal(token).op("<<%")(User.first_name) |
+                literal(token).op("<<%")(User.last_name) |
+                literal(token).op("<<%")(User.username)
             )
-            .order_by(
+        results = session.exec(
+            query.order_by(
                 func.greatest(
                     func.strict_word_similarity(q, User.first_name),
                     func.strict_word_similarity(q, User.last_name),

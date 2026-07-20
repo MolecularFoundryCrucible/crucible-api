@@ -449,7 +449,10 @@ def search_datasets(
         session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
         query = _dataset_base_query(ag_ids)
         for token in q.lower().split():
-            query = query.where(literal(token).op("<%")(Dataset.dataset_name))
+            query = query.where(
+                Dataset.dataset_name.ilike(f"{token}%") |
+                literal(token).op("<%")(Dataset.dataset_name)
+            )
         if project_id:
             query = query.where(Dataset.project_id == project_id)
         query = query.order_by(func.word_similarity(q, Dataset.dataset_name).desc()).limit(limit)

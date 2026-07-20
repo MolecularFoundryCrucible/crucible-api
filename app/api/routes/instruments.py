@@ -95,6 +95,7 @@ def search_instruments(
         )
         for token in q.lower().split():
             base = base.where(
+                Instrument.instrument_name.ilike(f"{token}%") |
                 literal(token).op("<%")(Instrument.instrument_name) |
                 literal(token).op("<%")(Instrument.instrument_type) |
                 literal(token).op("<%")(Instrument.manufacturer)

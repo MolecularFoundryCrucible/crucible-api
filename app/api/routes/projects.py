@@ -156,6 +156,7 @@ def search_projects(
         query = base
         for token in tokens:
             query = query.where(
+                Project.project_id.ilike(f"{token}%") |
                 literal(token).op("<%")(Project.project_id) |
                 literal(token).op("<%")(Project.title)
             )

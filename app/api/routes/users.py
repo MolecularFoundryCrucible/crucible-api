@@ -158,16 +158,16 @@ def search_users(
                 User.first_name.ilike(f"{token}%") |
                 User.last_name.ilike(f"{token}%") |
                 User.username.ilike(f"{token}%") |
-                literal(token).op("<<%")(User.first_name) |
-                literal(token).op("<<%")(User.last_name) |
-                literal(token).op("<<%")(User.username)
+                literal(token).op("<%")(User.first_name) |
+                literal(token).op("<%")(User.last_name) |
+                literal(token).op("<%")(User.username)
             )
         results = session.exec(
             query.order_by(
                 func.greatest(
-                    func.strict_word_similarity(q, User.first_name),
-                    func.strict_word_similarity(q, User.last_name),
-                    func.coalesce(func.strict_word_similarity(q, User.username), 0),
+                    func.word_similarity(q, User.first_name),
+                    func.word_similarity(q, User.last_name),
+                    func.coalesce(func.word_similarity(q, User.username), 0),
                 ).desc()
             )
             .limit(limit)

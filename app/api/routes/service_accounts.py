@@ -55,6 +55,7 @@ def create_service_account(
         ag = add_or_update(session, AccessGroup,
                            AccessGroup.group_name == unique_id,
                            group_name=unique_id)
+        session.flush()  # ensure ag.id is populated before creating the link
         link = UserAccessGroupLink(user_id=user.id, accessgroup_id=ag.id)
         session.add(link)
         session.commit()

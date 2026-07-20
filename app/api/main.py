@@ -6,7 +6,7 @@ from app.api.dependencies import get_api_config
 from app.api.routes import (account, auth, files, datasets, gcs_storage, resources,
                             samples, instruments, users, projects,
                             access_groups, entities, misc, deletion,
-                            ingestion_requests, ai)
+                            ingestion_requests, ai, service_accounts)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,3 +41,4 @@ app.include_router(entities.router)
 app.include_router(misc.router)
 app.include_router(deletion.router)
 app.include_router(ai.router)
+app.include_router(service_accounts.router)

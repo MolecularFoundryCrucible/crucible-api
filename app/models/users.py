@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, List, Optional
 from pydantic import Field, field_validator
 from sqlmodel import SQLModel
 from app.utils.user_utils import validate_username_format
@@ -92,3 +92,27 @@ class UserUpdate(SQLModel):
         if v is None:
             return v
         return str(v).lower()
+
+
+class ServiceAccountCreate(SQLModel):
+    '''Request body for POST /service_accounts.
+    username is required and must be unique across all users.
+    unique_id is optional — if omitted the server generates an mfid.
+    '''
+    username: str
+    unique_id: Optional[str] = None
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def check_username(cls, v):
+        return validate_username_format(str(v))
+
+
+class ServiceAccountRead(SQLModel):
+    '''Response from POST /service_accounts and POST /service_accounts/{id}/rotate_key.
+    api_key is only returned once — store it securely.
+    '''
+    unique_id: str
+    username: str
+    is_service_account: bool = True
+    api_key: str

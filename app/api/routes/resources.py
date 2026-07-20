@@ -24,6 +24,8 @@ from app.models.links import LinkedResource
 from app.models.projects import ProjectWithLead
 from app.models.samples import SampleResponse
 from app.models.users import UserPublicRead
+from app.models.search import ResourceSearchResult
+from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_groups, require_read_access, require_write_access
 from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, sql_create_resource_acl
 from app.utils.gcs_record_utils import write_metadata
@@ -85,12 +87,15 @@ def _fetch_links(session, resource_type: str, entity) -> List[LinkedResource]:
     return results
 
 
-@router.get("/resources/metadata/search", response_model=List[ScientificMetadataBinaryRead])
-def search_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], q: str,
-                             limit: int):
+@router.get("/resources/metadata/search", response_model=PaginatedResponse[ResourceSearchResult])
+def search_resource_metadata_v2(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    q: str = Query(min_length=3, description="Full-text search against scientific metadata content."),
+    limit: int = Query(default=20, ge=1, le=50),
+):
     """
-    Ranked full-text search on scientific metadata using PostgreSQL tsvector/tsquery.
-    Returns results the user has read access to, ordered by relevance.
+    Search resources by scientific metadata content using full-text search.
+    Returns a unified structure compatible with other search endpoints, including scientific_metadata.
     """
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -107,22 +112,64 @@ def search_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
         ResourceACL.accessgroup_id.in_(ag_ids)
     )
 
-    stmt = (
-        select(ScientificMetadataBinary, rank_expr.label("rank"))
-        .join(Resource, Resource.mfid == ScientificMetadataBinary.unique_id)
-        .where(
-            and_(
-                or_(Resource.public == True, acl_subquery),
-                metadata_vector.op('@@')(search_query)
-            )
-        )
-        .order_by(desc("rank"))
-        .distinct()
-        .limit(limit)
+    active_deletion = exists().where(
+        DeletionRequest.resource_id == ScientificMetadataBinary.unique_id,
+        DeletionRequest.status.in_(["pending", "approved"])
     )
+
     with Session(engine) as session:
-        results = session.exec(stmt).all()
-        return [row[0] for row in results]
+        rows = session.exec(
+            select(ScientificMetadataBinary, Resource, rank_expr.label("rank"))
+            .join(Resource, Resource.mfid == ScientificMetadataBinary.unique_id)
+            .where(and_(
+                or_(Resource.public == True, acl_subquery),
+                metadata_vector.op('@@')(search_query),
+                ~active_deletion,
+            ))
+            .order_by(desc("rank"))
+            .limit(limit)
+        ).all()
+
+        if not rows:
+            return PaginatedResponse(limit=limit, items=[])
+
+        # Group mfids by resource type for batch name resolution
+        by_type: dict = {}
+        for smb, resource, rank in rows:
+            by_type.setdefault(resource.resource_type, []).append(smb.unique_id)
+
+        name_map: dict = {}
+        owner_map: dict = {}
+        if "dataset" in by_type:
+            for ds in session.exec(select(Dataset).where(Dataset.unique_id.in_(by_type["dataset"]))).all():
+                name_map[ds.unique_id] = ds.dataset_name
+                owner_map[ds.unique_id] = ds.owner_orcid
+        if "sample" in by_type:
+            for s in session.exec(select(Sample).where(Sample.unique_id.in_(by_type["sample"]))).all():
+                name_map[s.unique_id] = s.sample_name
+                owner_map[s.unique_id] = s.owner_orcid
+        if "instrument" in by_type:
+            for i in session.exec(select(Instrument).where(Instrument.unique_id.in_(by_type["instrument"]))).all():
+                name_map[i.unique_id] = i.instrument_name
+        if "project" in by_type:
+            for p in session.exec(select(Project).where(Project.project_id.in_(by_type["project"]))).all():
+                name_map[p.project_id] = p.title
+
+        items = [
+            ResourceSearchResult(
+                unique_id=resource.mfid,
+                resource_type=resource.resource_type,
+                name=name_map.get(resource.mfid),
+                owner_orcid=owner_map.get(resource.mfid),
+                creation_time=resource.creation_time,
+                modification_time=resource.modification_time,
+                rank=float(rank) if rank is not None else None,
+                scientific_metadata=smb.scientific_metadata,
+            )
+            for smb, resource, rank in rows
+        ]
+
+    return PaginatedResponse(limit=limit, items=items)
 
 
 @router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse, InstrumentResponse, ProjectWithLead])

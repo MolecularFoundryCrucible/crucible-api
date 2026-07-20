@@ -152,13 +152,18 @@ def search_projects(
             return PaginatedResponse(limit=limit, items=[])
 
         session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
-        query = base.where(
-            literal(q).op("<<%")(Project.project_id) |
-            literal(q).op("<<%")(Project.title)
-        ).order_by(
+        tokens = q.lower().split()
+        query = base
+        for token in tokens:
+            query = query.where(
+                Project.project_id.ilike(f"{token}%") |
+                literal(token).op("<%")(Project.project_id) |
+                literal(token).op("<%")(Project.title)
+            )
+        query = query.order_by(
             func.greatest(
-                func.strict_word_similarity(q, Project.project_id),
-                func.coalesce(func.strict_word_similarity(q, Project.title), 0),
+                func.word_similarity(q, Project.project_id),
+                func.coalesce(func.word_similarity(q, Project.title), 0),
             ).desc()
         ).limit(limit)
 

@@ -89,23 +89,24 @@ def search_instruments(
     '''
     with Session(engine) as session:
         session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
-        statement = (
+        base = (
             select(Instrument, Resource)
             .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
-            .where(
-                literal(q).op("<<%")(Instrument.instrument_name) |
-                literal(q).op("<<%")(Instrument.instrument_type) |
-                literal(q).op("<<%")(Instrument.manufacturer)
-            )
-            .order_by(
-                func.greatest(
-                    func.strict_word_similarity(q, Instrument.instrument_name),
-                    func.coalesce(func.strict_word_similarity(q, Instrument.instrument_type), 0),
-                    func.coalesce(func.strict_word_similarity(q, Instrument.manufacturer), 0),
-                ).desc()
-            )
-            .limit(limit)
         )
+        for token in q.lower().split():
+            base = base.where(
+                Instrument.instrument_name.ilike(f"{token}%") |
+                literal(token).op("<%")(Instrument.instrument_name) |
+                literal(token).op("<%")(Instrument.instrument_type) |
+                literal(token).op("<%")(Instrument.manufacturer)
+            )
+        statement = base.order_by(
+            func.greatest(
+                func.word_similarity(q, Instrument.instrument_name),
+                func.coalesce(func.word_similarity(q, Instrument.instrument_type), 0),
+                func.coalesce(func.word_similarity(q, Instrument.manufacturer), 0),
+            ).desc()
+        ).limit(limit)
         rows = session.exec(statement).all()
         items = [
             InstrumentResponse.model_validate({

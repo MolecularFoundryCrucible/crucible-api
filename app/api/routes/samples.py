@@ -399,10 +399,14 @@ def search_samples(
     with Session(engine) as session:
         session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
         query = _sample_base_query(ag_ids)
-        query = query.where(literal(q).op("<<%")(Sample.sample_name))
+        for token in q.lower().split():
+            query = query.where(
+                Sample.sample_name.ilike(f"{token}%") |
+                literal(token).op("<%")(Sample.sample_name)
+            )
         if project_id:
             query = query.where(Sample.project_id == project_id)
-        query = query.order_by(func.strict_word_similarity(q, Sample.sample_name).desc()).limit(limit)
+        query = query.order_by(func.word_similarity(q, Sample.sample_name).desc()).limit(limit)
         results = session.exec(query).all()
         items = [SampleResponse.model_validate({
             **samp.model_dump(),

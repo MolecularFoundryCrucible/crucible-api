@@ -33,12 +33,13 @@ engine = get_engine()
 @router.get("/users", response_model=PaginatedResponse[UserRead])
 def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
                permissive: bool = True,
+               is_service_account: Optional[bool] = None,
                limit: int = Query(default=100, ge=1, le=1000),
                offset: int = Query(default=0, ge=0)):
     _, ag_list = auth_res
 
     params_dict = dict(request.query_params)
-    for k in ('permissive', 'limit', 'offset'):
+    for k in ('permissive', 'limit', 'offset', 'is_service_account'):
         params_dict.pop(k, None)
 
     search_cmd = select(User)
@@ -50,6 +51,9 @@ def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Req
         for k, v in params_dict.items():
             if hasattr(User, k):
                 search_cmd = search_cmd.where(getattr(User, k) == v)
+
+    if is_service_account is not None:
+        search_cmd = search_cmd.where(User.is_service_account == is_service_account)
 
     # Admins see all users; non-admins are scoped to users who share an access
     # group with them (each user has a personal access group, so this includes

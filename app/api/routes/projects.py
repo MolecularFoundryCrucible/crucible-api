@@ -19,7 +19,7 @@ from app.utils.user_utils import resolve_user
 from app.utils.project_utils import sql_add_user_to_project, sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
-from app.models.users import UserRead
+from app.models.users import UserPublicRead, UserRead
 
 router = APIRouter(tags=["projects"])
 engine = get_engine()
@@ -118,22 +118,6 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)],
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-def _project_base_query(user_unique_id: str, ag_list: list, session):
-    """Return a base select for projects visible to the user (same scoping as list_projects)."""
-    if is_orcid(user_unique_id):
-        user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-        if user is None:
-            return None
-        return (
-            select(Project)
-            .join(UserProjectLink, Project.project_id == UserProjectLink.project_id)
-            .where(UserProjectLink.user_id == user.id)
-        )
-    else:
-        require_groups(ag_list)
-        return select(Project)
-
-
 @router.get("/projects/search", response_model=PaginatedResponse[ProjectRead])
 def search_projects(
     auth_res: Annotated[tuple, Depends(authorize_user)],
@@ -141,19 +125,19 @@ def search_projects(
     limit: int = Query(default=20, ge=1, le=50),
 ):
     '''
-    Search projects by title or project_id. Returns results ordered by match quality.
-    Scoped to projects the caller is a member of. Maximum 50 results.
+    Search projects by title or project_id across all projects, not just ones the
+    caller is a member of — this is how a user discovers a project to request to
+    join via POST /access_groups/{group_name}/join. Returns results ordered by
+    match quality. Maximum 50 results.
+
+    Note: ProjectRead has no lead/scientific_metadata fields, so this is safe to
+    open regardless of membership — see GET /projects/{proj_id} for the fields
+    that stay member-only.
     '''
-    user_unique_id, ag_list = auth_res
-
     with Session(engine) as session:
-        base = _project_base_query(user_unique_id, ag_list, session)
-        if base is None:
-            return PaginatedResponse(limit=limit, items=[])
-
         session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
         tokens = q.lower().split()
-        query = base
+        query = select(Project)
         for token in tokens:
             query = query.where(
                 Project.project_id.ilike(f"{token}%") |
@@ -175,21 +159,27 @@ def search_projects(
 def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], include_metadata: bool = False):
     '''
     Returns the project object for the provided ID, including the resolved project lead.
+    Any authenticated user can read basic project info (project_id, organization,
+    status, title) to support discovery for join requests. Members and admins
+    additionally get the lead's email (UserRead) and scientific_metadata; non-members
+    get the lead as UserPublicRead (no email) and scientific_metadata is always null,
+    regardless of ?include_metadata=.
     '''
     user_unique_id, ag_list = auth_res
-    require_groups(ag_list, {'admin', proj_id})
+    is_member = any(ag.group_name in ('admin', proj_id) for ag in ag_list)
 
     with Session(engine) as session:
         query = select(Project).where(Project.project_id == proj_id)
-        if include_metadata:
+        if include_metadata and is_member:
             query = query.options(selectinload(Project.resource).selectinload(Resource.scientific_metadata))
         else:
             query = query.options(selectinload(Project.resource))
         prop = session.exec(query).one_or_none()
         if prop is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        lead = session.exec(select(User).where(User.unique_id == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
-        resource_md = prop.resource.scientific_metadata if prop.resource else None
+        lead_user = session.exec(select(User).where(User.unique_id == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
+        lead = (UserRead.model_validate(lead_user) if is_member else UserPublicRead.model_validate(lead_user)) if lead_user else None
+        resource_md = prop.resource.scientific_metadata if (prop.resource and is_member) else None
         return ProjectWithLead(
             **prop.model_dump(),
             lead=lead,

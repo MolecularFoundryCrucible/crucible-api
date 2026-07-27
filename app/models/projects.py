@@ -1,8 +1,8 @@
 import warnings
-from typing import Optional
+from typing import Optional, Union
 from pydantic import model_validator
 from sqlmodel import SQLModel
-from app.models.users import UserRead
+from app.models.users import UserPublicRead, UserRead
 
 
 class ProjectCreate(SQLModel):
@@ -33,8 +33,10 @@ class ProjectRead(SQLModel):
 
 
 class ProjectWithLead(ProjectRead):
-    '''ProjectRead extended with the resolved project lead User, if requested.'''
-    lead: Optional[UserRead] = None
+    '''ProjectRead extended with the resolved project lead. Non-members get the
+    project lead as UserPublicRead (no email) and never see scientific_metadata,
+    regardless of ?include_metadata=. Members and admins get the full UserRead.'''
+    lead: Optional[Union[UserRead, UserPublicRead]] = None
     scientific_metadata: Optional[dict] = None
     creation_time: Optional[str] = None
     modification_time: Optional[str] = None

@@ -3,7 +3,7 @@ from typing import Annotated, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, join, literal, text
 from sqlalchemy.orm import joinedload, selectinload
-from sqlmodel import and_, or_, Session, select, col
+from sqlmodel import Session, select, col
 import networkx as nx
 from networkx.readwrite import json_graph
 
@@ -15,8 +15,8 @@ from app.models.core_models import (
 )
 from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.sql_utils import add_or_update
-from app.utils.user_utils import sql_add_user_to_access_group, resolve_user
-from app.utils.project_utils import sql_get_projects_for_user
+from app.utils.user_utils import resolve_user
+from app.utils.project_utils import sql_add_user_to_project, sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
 from app.models.users import UserRead
@@ -294,13 +294,7 @@ def add_users_to_project(
         if proj is None:
             raise HTTPException(status_code=404, detail=f'Project {proj_id} not found')
 
-        add_or_update(session,
-                      UserProjectLink,
-                      where=(and_(UserProjectLink.user_id == user.id, UserProjectLink.project_id == proj_id)),
-                      user_id=user.id,
-                      project_id=proj_id)
-
-        sql_add_user_to_access_group(user.unique_id, proj_id, session)
+        sql_add_user_to_project(user, proj_id, session)
         session.commit()
 
         return _get_project_users(proj_id, session)

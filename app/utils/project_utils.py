@@ -1,6 +1,18 @@
-from sqlalchemy import join
+from sqlalchemy import and_, join
 from sqlmodel import select
 from app.models.core_models import Project, User, UserProjectLink
+from app.utils.sql_utils import add_or_update
+from app.utils.user_utils import sql_add_user_to_access_group
+
+
+def sql_add_user_to_project(user: User, proj_id: str, session):
+    """Add a user to a project's membership and access group. Idempotent."""
+    add_or_update(session,
+                  UserProjectLink,
+                  where=(and_(UserProjectLink.user_id == user.id, UserProjectLink.project_id == proj_id)),
+                  user_id=user.id,
+                  project_id=proj_id)
+    sql_add_user_to_access_group(user.unique_id, proj_id, session)
 
 
 def sql_get_projects_for_user(orcid, session, options=None):

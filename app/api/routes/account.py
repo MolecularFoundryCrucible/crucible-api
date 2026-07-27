@@ -1,11 +1,14 @@
 from datetime import timedelta, datetime
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import ApiToken, User
+from app.models.core_models import AccessGroupJoinRequest, ApiToken, User
+from app.models.join_requests import JoinRequestRead
+from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import AccountInfo, ApiKeyRead, ApiKeyVerify
 from app.models.users import AccountProfileUpdate, UserRead
 from app.utils.auth_utils import authorize_user
@@ -54,6 +57,28 @@ def update_account_profile(auth_res: Annotated[tuple, Depends(authorize_user)], 
         session.commit()
         session.refresh(user)
         return user
+
+
+@router.get("/account/join_requests", response_model=PaginatedResponse[JoinRequestRead])
+def get_account_join_requests(
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+    status: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    """Return the authenticated caller's own join request history across all groups.
+    Filter by ?status=pending|approved|rejected."""
+    user_unique_id, _ = auth_res
+    with Session(engine) as session:
+        query = select(AccessGroupJoinRequest).where(AccessGroupJoinRequest.requester_id == user_unique_id)
+        if status:
+            query = query.where(AccessGroupJoinRequest.status == status)
+
+        total = session.exec(select(func.count()).select_from(query.subquery())).one()
+        items = session.exec(
+            query.order_by(AccessGroupJoinRequest.id.desc()).offset(offset).limit(limit)
+        ).all()
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
 @router.get("/account/apikey", response_model=ApiKeyRead)

@@ -287,6 +287,20 @@ class DeletionRequest(SQLModel, table=True):
     reviewer_notes: Optional[str] = Field(default=None)
 
 
+class AccessGroupJoinRequest(SQLModel, table=True):
+    """Tracks a request to join an access group. Currently only used for projects,
+    but modeled generically since any access group could support this in the future."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    group_name: str = Field(foreign_key="accessgroup.group_name", index=True)
+    requester_id: str = Field(foreign_key="user.orcid", index=True)
+    reason: Optional[str] = Field(default=None)
+    status: str = Field(default="pending", index=True)
+    request_time: Optional[str] = Field(default_factory=get_utc_isoformat)
+    review_time: Optional[str] = Field(default=None)
+    reviewer_id: Optional[str] = Field(default=None, foreign_key="user.orcid")
+    reviewer_notes: Optional[str] = Field(default=None)
+
+
 class DeletionAuditLog(SQLModel, table=True):
     """Permanent record of every approved hard-deletion. Survives after the resource is gone."""
     id: Optional[int] = Field(default=None, primary_key=True)

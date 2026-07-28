@@ -15,6 +15,13 @@ def is_orcid(val):
         return True
     else:
         return False
+
+_MFID_PATTERN = re.compile(r"^[0-9a-hjkmnp-tv-z]{26}$")
+
+def is_valid_mfid(val):
+    """Check that val matches the mfid format: 26-character lowercase
+    Crockford's Base32 (excludes i, l, o, u to avoid visual ambiguity)."""
+    return bool(_MFID_PATTERN.match(val))
     
 def run_shell(cmd, checkflag = True, background = False):
     if background:

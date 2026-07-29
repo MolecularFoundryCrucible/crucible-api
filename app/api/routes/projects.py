@@ -14,7 +14,7 @@ from app.models.core_models import (
     ResourceACL, Dataset, DatasetSampleLink,
 )
 from app.utils.auth_utils import authorize_user, require_groups
-from app.utils.sql_utils import add_or_update
+from app.utils.sql_utils import add_or_update, touch_resource_modification_time
 from app.utils.user_utils import resolve_user
 from app.utils.project_utils import sql_add_user_to_project, sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
@@ -220,6 +220,7 @@ def update_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_us
             setattr(project, key, value)
 
         session.add(project)
+        touch_resource_modification_time(session, proj_id)
         session.commit()
         session.refresh(project)
         lead = session.exec(select(User).where(User.unique_id == project.project_lead_orcid)).one_or_none() if project.project_lead_orcid else None
@@ -334,6 +335,7 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
             if ag_link:
                 session.delete(ag_link)
 
+        touch_resource_modification_time(session, proj_id)
         session.commit()
         return _get_project_users(proj_id, session)
 

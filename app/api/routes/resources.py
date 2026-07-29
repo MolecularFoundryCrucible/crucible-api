@@ -27,7 +27,7 @@ from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_groups, require_read_access, require_write_access
-from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, sql_create_resource_acl
+from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
 
 
@@ -466,6 +466,7 @@ def create_deletion_request(
             status="pending",
         )
         session.add(deletion_req)
+        touch_resource_modification_time(session, resource_id)
         session.commit()
         session.refresh(deletion_req)
         return DeletionRequestRead(
@@ -507,4 +508,7 @@ def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, aut
         if ag is None:
             raise HTTPException(status_code=404, detail="Access Group not found")
         acl = sql_create_resource_acl(ag, mfid, read, write, session)
+        touch_resource_modification_time(session, mfid)
+        session.commit()
+        session.refresh(acl)
     return acl

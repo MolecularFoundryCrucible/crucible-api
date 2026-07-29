@@ -22,7 +22,7 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
-from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
+from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.models.users import UserPublicRead
 
@@ -53,6 +53,9 @@ def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annota
                      parent_sample_id=parent_sample.id,
                      sample_id=child_sample.id)
 
+        touch_resource_modification_time(session, parent_sample_id)
+        touch_resource_modification_time(session, child_sample_id)
+
         session.commit()
         session.refresh(link)
         return link
@@ -82,6 +85,8 @@ def unlink_sample_parent_child(parent_sample_id: str, child_sample_id: str, auth
             raise HTTPException(status_code=404, detail="No link found between these samples")
 
         session.delete(link)
+        touch_resource_modification_time(session, parent_sample_id)
+        touch_resource_modification_time(session, child_sample_id)
         session.commit()
         return {"message": f"Successfully unlinked {parent_sample_id} -> {child_sample_id}"}
 

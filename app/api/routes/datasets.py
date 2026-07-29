@@ -45,7 +45,7 @@ from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
 from app.utils.auth_utils import authorize_user, require_write_access, require_read_access, read_access_filter_list
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
-from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
+from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
@@ -558,6 +558,9 @@ def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Ann
                      parent_dataset_id=parent.id,
                      child_dataset_id=child.id)
 
+        touch_resource_modification_time(session, parent_dataset_id)
+        touch_resource_modification_time(session, child_dataset_id)
+
         session.commit()
         session.refresh(link)
         return link
@@ -587,6 +590,8 @@ def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, a
             raise HTTPException(status_code=404, detail="No link found between these datasets")
 
         session.delete(link)
+        touch_resource_modification_time(session, parent_dataset_id)
+        touch_resource_modification_time(session, child_dataset_id)
         session.commit()
         return {"message": f"Successfully unlinked {parent_dataset_id} -> {child_dataset_id}"}
 
@@ -673,6 +678,8 @@ def unlink_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], d
             raise HTTPException(status_code=404, detail=f"No link found between dataset {dsid} and sample {sample_id}")
 
         session.delete(link)
+        touch_resource_modification_time(session, dsid)
+        touch_resource_modification_time(session, sample_id)
         session.commit()
         return {"message": f"Successfully unlinked dataset {dsid} and sample {sample_id}"}
 
@@ -839,6 +846,7 @@ def delete_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: 
             raise HTTPException(status_code=404, detail="Thumbnail not found")
 
         session.delete(tn)
+        touch_resource_modification_time(session, dsid)
         session.commit()
         return {"message": f"Thumbnail {thumbnail_id} deleted from dataset {dsid}"}
 
@@ -1009,6 +1017,7 @@ def add_keyword(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, 
         kw_obj.num_datasets = count
         session.add(kw_obj)
         session.add(ds)
+        touch_resource_modification_time(session, dsid)
         session.commit()
         session.refresh(kw_obj)
         return(kw_obj)
@@ -1035,6 +1044,8 @@ def link_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], dsi
                       sample_id=samp.id,
                       dataset_id=ds.id)
 
+        touch_resource_modification_time(session, dsid)
+        touch_resource_modification_time(session, sample_id)
         session.commit()
         return DatasetSampleLinkResponse(dataset_id=ds.unique_id, dataset_name=ds.dataset_name, sample_id=samp.unique_id, sample_type=samp.sample_type, sample_name=samp.sample_name)
 

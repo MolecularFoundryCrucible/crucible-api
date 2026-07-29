@@ -20,6 +20,7 @@ from app.models.core_models import (
 )
 from app.general_utils import get_secret, get_utc_isoformat
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
+from app.utils.sql_utils import touch_resource_modification_time
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.pagination import PaginatedResponse
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
@@ -123,6 +124,7 @@ def update_file(
         for field, value in updates.model_dump(exclude_unset=True).items():
             setattr(af, field, value)
         session.add(af)
+        touch_resource_modification_time(session, ds.unique_id)
         session.commit()
         session.refresh(af)
         return AssociatedFileRead.model_validate(af, update={"dataset_mfid": af.dataset.unique_id})
@@ -144,6 +146,7 @@ def delete_file(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: st
             session.delete(ir)
 
         session.delete(af)
+        touch_resource_modification_time(session, ds.unique_id)
         session.commit()
         return {"message": f"File {file_id} deleted"}
 

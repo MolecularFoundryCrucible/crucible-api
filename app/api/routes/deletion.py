@@ -13,6 +13,7 @@ from app.models.core_models import Dataset, DeletionAuditLog, DeletionRequest, R
 from app.models.deletion import DeletionAuditLogRead, DeletionRequestRead
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_admin, require_groups
+from app.utils.sql_utils import touch_resource_modification_time
 from app.general_utils import get_utc_isoformat
 
 router = APIRouter(tags=["deletion"])
@@ -167,6 +168,10 @@ def review_deletion_request(
             hard_delete_resource(req.resource_id, session)
             session.commit()
         else:
+            # Rejection makes the resource visible again in filtered list/search
+            # results (deletion_filter_for excludes pending/approved requests) —
+            # bump modification_time so syncing clients notice it reappeared.
+            touch_resource_modification_time(session, req.resource_id)
             session.commit()
 
         return snapshot

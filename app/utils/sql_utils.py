@@ -3,7 +3,7 @@ import logging
 import yaml
 import os
 import urllib.parse
-from app.general_utils import get_secret, is_orcid
+from app.general_utils import get_secret, get_utc_isoformat, is_orcid
 
 logger = logging.getLogger(__name__)
 from sqlalchemy import join
@@ -79,6 +79,23 @@ def delete_link(table, dataset_id, session):
     found_records = session.exec(statement).all()
     for rec in found_records:
         session.delete(rec)
+
+
+def touch_resource_modification_time(session, mfid):
+    """Bump Resource.modification_time for mfid to now, so clients polling
+    modification_time_gte can detect that something about this resource changed
+    (even if the change happened to a related object, e.g. a linked file or
+    keyword, rather than the resource's own core fields).
+
+    No-op (returns None) if no Resource row exists for mfid, so callers don't
+    need to guard against not-yet-created or already-deleted resources.
+    """
+    from app.models.core_models import Resource
+    resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
+    if resource is not None:
+        resource.modification_time = get_utc_isoformat()
+        session.add(resource)
+    return resource
 
 
 def sql_create_resource_acl(ag, mfid, read, write, session):

@@ -157,6 +157,31 @@ def list_join_requests(
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
+@router.get("/join_requests/{request_id}", response_model=JoinRequestRead)
+def get_join_request(
+    request_id: int,
+    auth_res: Annotated[tuple, Depends(authorize_user)],
+):
+    '''
+    Fetch a single join request by id. Visible to admins, the lead of the
+    request's group, or the user who submitted it.
+    '''
+    user_unique_id, ag_list = auth_res
+    is_admin = any(ag.group_name == 'admin' for ag in ag_list)
+
+    with Session(engine) as session:
+        req = session.exec(
+            select(AccessGroupJoinRequest).where(AccessGroupJoinRequest.id == request_id)
+        ).one_or_none()
+        if req is None:
+            raise HTTPException(status_code=404, detail="Join request not found.")
+
+        if not is_admin and user_unique_id != req.requester_id and not _is_group_lead(user_unique_id, req.group_name, session):
+            raise HTTPException(status_code=403, detail="Only admins, the lead of this group, or the requester can view this join request.")
+
+        return req
+
+
 @router.patch("/join_requests/{request_id}", response_model=JoinRequestRead)
 def review_join_request(
     request_id: int,

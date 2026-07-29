@@ -24,6 +24,13 @@ def _is_group_lead(user_unique_id: str, group_name: str, session: Session) -> bo
     return proj is not None and proj.project_lead_orcid == user_unique_id
 
 
+def _led_group_names(user_unique_id: str, session: Session) -> List[str]:
+    """All group_names (project_ids) the caller is the project lead of."""
+    return session.exec(
+        select(Project.project_id).where(Project.project_lead_orcid == user_unique_id)
+    ).all()
+
+
 @router.post("/access_groups", response_model=AccessGroupRead)
 def create_access_group(auth_res: Annotated[tuple, Depends(authorize_user)], ag: AccessGroupCreate):
     _, ag_list = auth_res
@@ -130,21 +137,31 @@ def list_join_requests(
     offset: int = Query(default=0, ge=0),
 ):
     '''
-    List join requests. Admins can list across all groups (optionally filtered
-    by ?group_name=). A non-admin caller must pass ?group_name= for a group
-    they lead, otherwise 403.
+    List join requests.
+    - Admins can list across all groups, optionally filtered by ?group_name=.
+    - A non-admin caller who passes ?group_name= must be the lead of that
+      group, otherwise 403.
+    - A non-admin caller who omits ?group_name= gets requests scoped to every
+      group they lead (empty list if they lead none) — this is the cheap way
+      for someone leading multiple projects to fetch all their pending
+      requests in one call instead of one request per project.
     '''
     user_unique_id, ag_list = auth_res
     is_admin = any(ag.group_name == 'admin' for ag in ag_list)
 
     with Session(engine) as session:
-        if not is_admin:
-            if not group_name or not _is_group_lead(user_unique_id, group_name, session):
-                raise HTTPException(status_code=403, detail="Only admins, or the lead of the requested group, can list join requests.")
-
         query = select(AccessGroupJoinRequest)
+
         if group_name:
+            if not is_admin and not _is_group_lead(user_unique_id, group_name, session):
+                raise HTTPException(status_code=403, detail="Only admins, or the lead of the requested group, can list join requests.")
             query = query.where(AccessGroupJoinRequest.group_name == group_name)
+        elif not is_admin:
+            led_names = _led_group_names(user_unique_id, session)
+            if not led_names:
+                return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
+            query = query.where(col(AccessGroupJoinRequest.group_name).in_(led_names))
+
         if status:
             query = query.where(AccessGroupJoinRequest.status == status)
         if requester_id:

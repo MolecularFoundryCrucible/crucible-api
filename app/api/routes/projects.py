@@ -296,7 +296,9 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
                              email: Optional[str] = None, username: Optional[str] = None):
     '''
     Remove a user from a project and its associated access group.
-    Only admins or the project lead can remove users.
+    Admins or the project lead can remove any member. A member can also
+    remove themselves (leave the project), but the project lead cannot
+    remove themselves — transfer leadership first.
     Provide ?email= or ?username= to look up the user instead of the orcid path parameter.
     '''
     user_unique_id, ag_list = auth_res
@@ -307,8 +309,12 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project {proj_id} not found")
 
-        if not is_admin and user_unique_id != proj.project_lead_orcid:
-            raise HTTPException(status_code=403, detail="Only platform admins or the project lead can remove members.")
+        is_self = user_unique_id == orcid and not email and not username
+        if not is_admin and user_unique_id != proj.project_lead_orcid and not is_self:
+            raise HTTPException(status_code=403, detail="Only platform admins, the project lead, or the member themselves can remove a member.")
+
+        if is_self and user_unique_id == proj.project_lead_orcid:
+            raise HTTPException(status_code=409, detail="The project lead cannot remove themselves. Transfer leadership first.")
 
         user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
 

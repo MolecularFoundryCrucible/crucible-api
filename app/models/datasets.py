@@ -1,15 +1,25 @@
 from typing import Any, List, Optional
+from pydantic import field_validator
 from sqlmodel import SQLModel
+from app.general_utils import is_valid_mfid
 from app.models.links import LinkedResource
 
 
 class DatasetCreate(SQLModel):
     '''
     Fields accepted when creating or upserting a dataset.
-    Provide unique_id to create a record under a pre-assigned ID; omit it to auto-generate one.
-    with an auto-generated MFID.
+    Provide unique_id to create a record under a pre-assigned ID (must be a
+    valid mfid, e.g. one generated client-side by an instrument using the
+    same mfid library); omit it to auto-generate one.
     '''
     unique_id: Optional[str] = None
+
+    @field_validator("unique_id")
+    @classmethod
+    def check_unique_id(cls, v):
+        if v is not None and not is_valid_mfid(v):
+            raise ValueError("unique_id must be a valid mfid: 26-character lowercase Crockford's Base32")
+        return v
     dataset_name: Optional[str] = None
     project_id: Optional[str] = None
     source_folder: Optional[str] = None

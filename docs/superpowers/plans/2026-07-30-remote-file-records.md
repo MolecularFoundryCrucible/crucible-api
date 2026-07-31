@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Design spec: `docs/superpowers/specs/2026-07-30-remote-file-records-design.md` — every requirement below traces back to it.
-- Scope is limited to: `app/models/core_models.py`, `app/models/datasets.py`, `app/api/routes/files.py`, `app/api/routes/datasets.py`, one new file under `migrations/`, `tests/conftest.py`, and one new test file under `tests/`. No other files change.
+- Scope is limited to: `app/models/core_models.py`, `app/models/datasets.py`, `app/api/routes/files.py`, `app/api/routes/datasets.py`, one new file under `migrations/`, `tests/conftest.py`, one new test file under `tests/`, and `pyproject.toml`/`uv.lock` (Task 1 only, to add `pytest` as a dev dependency — this repo has no working test runner today). No other files change.
 - `storage_backend` is free text, not an enum — never add validation constraining its values.
 - `sha256_hash`/`size` stay required on `AssociatedFileCreate` for every backend — no relaxation.
 - Response shapes of `GET /files/{file_id}/download_link` and `GET /datasets/{dsid}/download_links` do not change (still `{"url":..., "expires_in":...}` and `{mfid: url_or_null}` respectively) — catalog fields (`storage_backend`, `access_note`) are only ever exposed via `AssociatedFileRead`-returning routes.

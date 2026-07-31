@@ -192,3 +192,27 @@ def test_non_gcs_file_in_batch_download_links_is_null(client, db_engine, auth_as
     body = resp.json()
     assert body[gcs_mfid] == "https://signed.example/local.txt"
     assert body[remote_mfid] is None
+
+
+def test_ingest_rejects_non_gcs_file(client, db_engine, auth_as):
+    with Session(db_engine) as session:
+        session.add(Resource(mfid="ds_pub_4", resource_type="dataset", public=True))
+        ds = Dataset(unique_id="ds_pub_4", dataset_name="test", public=True, owner_orcid="0000-0000-0000-0001")
+        session.add(ds)
+        session.commit()
+        session.refresh(ds)
+        af = AssociatedFile(
+            filename="remote.dat", storage_path="globus://endpoint/remote.dat",
+            storage_backend="globus", size=1, sha256_hash="h1", dataset_id=ds.id,
+        )
+        session.add(af)
+        session.commit()
+        session.refresh(af)
+        file_mfid = af.mfid
+
+    auth_as("0000-0000-0000-0001")
+
+    resp = client.post(f"/files/{file_mfid}/ingest")
+
+    assert resp.status_code == 400, resp.text
+    assert "globus" in resp.json()["detail"]

@@ -172,6 +172,13 @@ def create_file_ingestion_request(
 
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, ag_ids)
+
+        if af.storage_backend != "gcs":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ingestion is not supported for storage_backend='{af.storage_backend}' files.",
+            )
+
         RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
         ingestion_request = IngestionRequest(
             dataset_mfid=ds.unique_id,

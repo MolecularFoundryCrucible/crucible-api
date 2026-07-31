@@ -129,3 +129,66 @@ def test_create_update_and_read_remote_file_round_trip(client, db_engine, auth_a
     assert update_resp.status_code == 200, update_resp.text
     assert update_resp.json()["access_note"] == "updated: contact data steward"
     assert update_resp.json()["storage_backend"] == "globus"
+
+
+def test_non_gcs_single_file_download_link_returns_null_without_calling_gcs(client, db_engine, auth_as):
+    with Session(db_engine) as session:
+        session.add(Resource(mfid="ds_pub_2", resource_type="dataset", public=True))
+        ds = Dataset(unique_id="ds_pub_2", dataset_name="test", public=True, owner_orcid="0000-0000-0000-0001")
+        session.add(ds)
+        session.commit()
+        session.refresh(ds)
+        af = AssociatedFile(
+            filename="remote.dat", size=1, sha256_hash="h1", dataset_id=ds.id,
+            storage_backend="globus", storage_path="globus://endpoint/remote.dat",
+        )
+        session.add(af)
+        session.commit()
+        session.refresh(af)
+        file_mfid = af.mfid
+
+    auth_as("0000-0000-0000-0001")
+
+    with patch("app.api.routes.files._generate_signed_url_link") as mock_sign, \
+         patch("app.api.routes.files._ensure_storage_path") as mock_ensure:
+        resp = client.get(f"/files/{file_mfid}/download_link")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"url": None, "expires_in": None}
+    mock_sign.assert_not_called()
+    mock_ensure.assert_not_called()
+
+
+def test_non_gcs_file_in_batch_download_links_is_null(client, db_engine, auth_as):
+    with Session(db_engine) as session:
+        session.add(Resource(mfid="ds_pub_3", resource_type="dataset", public=True))
+        ds = Dataset(unique_id="ds_pub_3", dataset_name="test", public=True, owner_orcid="0000-0000-0000-0001")
+        session.add(ds)
+        session.commit()
+        session.refresh(ds)
+        gcs_af = AssociatedFile(
+            filename="local.txt", storage_path="mf-storage-prod/ds_pub_3/local.txt",
+            size=1, sha256_hash="h_gcs", dataset_id=ds.id,
+        )
+        remote_af = AssociatedFile(
+            filename="remote.dat", storage_path="globus://endpoint/remote.dat",
+            storage_backend="globus", size=1, sha256_hash="h_remote", dataset_id=ds.id,
+        )
+        session.add_all([gcs_af, remote_af])
+        session.commit()
+        session.refresh(gcs_af)
+        session.refresh(remote_af)
+        gcs_mfid, remote_mfid = gcs_af.mfid, remote_af.mfid
+
+    auth_as("0000-0000-0000-0001")
+
+    with patch(
+        "app.api.routes.datasets._generate_signed_url_link",
+        return_value=("https://signed.example/local.txt", 3600),
+    ):
+        resp = client.get("/datasets/ds_pub_3/download_links")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body[gcs_mfid] == "https://signed.example/local.txt"
+    assert body[remote_mfid] is None

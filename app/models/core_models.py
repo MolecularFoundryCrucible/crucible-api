@@ -40,7 +40,9 @@ class AssociatedFile(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     mfid: str = Field(default_factory=get_mfid_value, unique=True, index=True)
     filename: str                        # relative path within the dataset: "{safe_filename}"
-    storage_path: Optional[str] = None  # full GCS path: "mf-storage-prod/{dsid}/{safe_filename}"
+    storage_path: Optional[str] = None  # GCS bucket/blob path when storage_backend="gcs"; a backend-specific location string otherwise
+    storage_backend: str = Field(default="gcs")  # "gcs" triggers signed-URL generation; any other value is catalog-only
+    access_note: Optional[str] = None    # how to access this file when there's no self-service path (non-gcs backends)
     size: int = Field(sa_column=Column(BigInteger()))
     sha256_hash: str
     dataset_id: int = Field(foreign_key="dataset.id")

@@ -33,3 +33,28 @@ def test_gcs_backend_download_link_still_calls_generate_signed_url(client, db_en
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"url": "https://signed.example/x", "expires_in": 3600}
     mock_sign.assert_called_once()
+
+
+def test_associated_file_storage_backend_defaults_to_gcs(db_engine):
+    with Session(db_engine) as session:
+        session.add(Resource(mfid="ds_model_1", resource_type="dataset", public=True))
+        ds = Dataset(unique_id="ds_model_1", dataset_name="test", owner_orcid="0000-0000-0000-0001")
+        session.add(ds)
+        session.commit()
+        session.refresh(ds)
+
+        af_default = AssociatedFile(filename="a.txt", size=1, sha256_hash="h1", dataset_id=ds.id)
+        af_remote = AssociatedFile(
+            filename="b.txt", size=2, sha256_hash="h2", dataset_id=ds.id,
+            storage_backend="globus", storage_path="globus://endpoint/path/b.txt",
+            access_note="request via NERSC allocation X",
+        )
+        session.add_all([af_default, af_remote])
+        session.commit()
+        session.refresh(af_default)
+        session.refresh(af_remote)
+
+        assert af_default.storage_backend == "gcs"
+        assert af_default.access_note is None
+        assert af_remote.storage_backend == "globus"
+        assert af_remote.access_note == "request via NERSC allocation X"

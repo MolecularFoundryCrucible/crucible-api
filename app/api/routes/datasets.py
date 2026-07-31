@@ -875,6 +875,9 @@ def generate_dataset_download_links(
 
         mfid_to_path = {}
         for af in af_records:
+            if af.storage_backend != "gcs":
+                mfid_to_path[af.mfid] = None
+                continue
             try:
                 mfid_to_path[af.mfid] = _ensure_storage_path(af, dsid, session)
             except HTTPException:

@@ -40,3 +40,8 @@ dependencies = [
 
 [tool.uv.sources]
 nano-crucible = { git = "https://github.com/MolecularFoundryCrucible/nano-crucible", rev = "dev" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

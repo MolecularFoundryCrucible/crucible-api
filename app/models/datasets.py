@@ -83,11 +83,16 @@ class ThumbnailRead(SQLModel):
 class AssociatedFileCreate(SQLModel):
     '''Fields required to attach an associated file to a dataset.
     filename should be in the format {cloud-bucket}/{path-to-file}
-    Ingestion is currently only supported for files in the crucible-uploads cloud-bucket. 
+    Ingestion is currently only supported for files in the crucible-uploads cloud-bucket.
+    storage_backend defaults to "gcs"; any other value marks this as a catalog-only
+    reference to a file living outside GCS (e.g. an HPC partition or Globus path) —
+    Crucible does not verify existence or broker access for non-gcs files.
     '''
     filename: str
     size: int
     sha256_hash: str
+    storage_backend: str = "gcs"
+    access_note: Optional[str] = None
 
 
 class AssociatedFileRead(SQLModel):
@@ -97,6 +102,8 @@ class AssociatedFileRead(SQLModel):
     dataset_mfid: str
     filename: str
     storage_path: Optional[str] = None
+    storage_backend: str
+    access_note: Optional[str] = None
     size: int
     sha256_hash: str
 
@@ -105,6 +112,8 @@ class AssociatedFileUpdate(SQLModel):
     '''Partial update schema for AssociatedFile. Only provided fields are modified.'''
     filename: Optional[str] = None
     storage_path: Optional[str] = None
+    storage_backend: Optional[str] = None
+    access_note: Optional[str] = None
     size: Optional[int] = None
     sha256_hash: Optional[str] = None
     

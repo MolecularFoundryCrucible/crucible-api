@@ -93,12 +93,16 @@ def get_file(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: str):
 
 @router.get("/files/{file_id}/download_link")
 def get_file_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: str):
-    '''Returns a signed GCS download URL (1-hour expiry) for a single file.'''
+    '''Returns a signed GCS download URL (1-hour expiry) for a single file.
+    Returns url=None for files whose storage_backend is not "gcs" (catalog-only).'''
     _, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, ag_ids)
+
+        if af.storage_backend != "gcs":
+            return {"url": None, "expires_in": None}
 
         storage_path = _ensure_storage_path(af, ds.unique_id, session)
         session.commit()
@@ -168,6 +172,13 @@ def create_file_ingestion_request(
 
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, ag_ids)
+
+        if af.storage_backend != "gcs":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ingestion is not supported for storage_backend='{af.storage_backend}' files.",
+            )
+
         RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
         ingestion_request = IngestionRequest(
             dataset_mfid=ds.unique_id,

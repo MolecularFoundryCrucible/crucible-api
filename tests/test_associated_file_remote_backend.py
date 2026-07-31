@@ -1,6 +1,6 @@
 from unittest.mock import patch
 from sqlmodel import Session
-from app.models.core_models import Resource, Dataset, AssociatedFile
+from app.models.core_models import Resource, Dataset, AssociatedFile, AccessGroup, ResourceACL
 from app.models.datasets import AssociatedFileCreate, AssociatedFileRead, AssociatedFileUpdate
 
 
@@ -85,3 +85,47 @@ def test_associated_file_read_and_update_schemas_have_new_fields():
     update = AssociatedFileUpdate()
     assert update.storage_backend is None
     assert update.access_note is None
+
+
+def _grant_write_access(db_engine, dsid, user_id):
+    with Session(db_engine) as session:
+        session.add(Resource(mfid=dsid, resource_type="dataset", public=False))
+        session.add(Dataset(unique_id=dsid, dataset_name="test", owner_orcid=user_id))
+        ag = AccessGroup(group_name=dsid)
+        session.add(ag)
+        session.commit()
+        session.refresh(ag)
+        session.add(ResourceACL(mfid=dsid, accessgroup_id=ag.id, read=True, write=True))
+        session.commit()
+        return ag.id
+
+
+def test_create_update_and_read_remote_file_round_trip(client, db_engine, auth_as):
+    user_id = "0000-0000-0000-0001"
+    ag_id = _grant_write_access(db_engine, "ds_roundtrip", user_id)
+    auth_as(user_id, groups=[("ds_roundtrip", ag_id)])
+
+    create_resp = client.post(
+        "/datasets/ds_roundtrip/files",
+        json={
+            "filename": "remote.dat", "size": 42, "sha256_hash": "deadbeef",
+            "storage_backend": "globus", "access_note": "ask PI for access",
+        },
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    body = create_resp.json()
+    assert body["storage_backend"] == "globus"
+    assert body["access_note"] == "ask PI for access"
+    file_mfid = body["mfid"]
+
+    read_resp = client.get(f"/files/{file_mfid}")
+    assert read_resp.status_code == 200, read_resp.text
+    assert read_resp.json()["storage_backend"] == "globus"
+
+    update_resp = client.patch(
+        f"/files/{file_mfid}",
+        json={"access_note": "updated: contact data steward"},
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    assert update_resp.json()["access_note"] == "updated: contact data steward"
+    assert update_resp.json()["storage_backend"] == "globus"

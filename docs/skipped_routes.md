@@ -20,6 +20,4 @@ User deactivation or removal. Deferred — requires a design decision on soft vs
 
 ## Generalize `AssociatedFile.dataset_id` to a resource-generic `resource_id`
 
-Came up while designing remote (non-GCS) file records (see `docs/superpowers/specs/`). `AssociatedFile.dataset_id` is a hard `int` FK to `dataset.id`, unlike `ResourceACL.mfid`, `ScientificMetadataBinary.unique_id`, and `DeletionRequest.resource_id`, which all key off the generic `idtype.mfid` layer so they work across any resource type. Making `AssociatedFile` resource-generic the same way would let samples/instruments attach files with no new table or route family.
-
-Deferred — no current use case (samples/instruments don't need files today), and it's a real migration (retype a live FK column + backfill from `dataset.unique_id`), not just a rename. Revisit if/when a non-dataset resource actually needs file attachments. Note: this trades a small amount of index efficiency (26-char mfid string keys vs. 4-byte int keys) for genericity — the same tradeoff already made for the three models above, and not expected to matter at Crucible's realistic scale.
+Would let samples/instruments attach files with no new table or route family, matching the pattern `ResourceACL`/`ScientificMetadataBinary`/`DeletionRequest` already use. No current use case, and it's a real migration, not a rename. See "Future: generalizing file attachment" in `docs/remote_file_records.md` for the full writeup.

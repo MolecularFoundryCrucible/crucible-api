@@ -1,6 +1,7 @@
 from unittest.mock import patch
 from sqlmodel import Session
 from app.models.core_models import Resource, Dataset, AssociatedFile
+from app.models.datasets import AssociatedFileCreate, AssociatedFileRead, AssociatedFileUpdate
 
 
 def _make_public_dataset_with_file(db_engine, dsid, storage_path="mf-storage-prod/x/f.txt"):
@@ -58,3 +59,29 @@ def test_associated_file_storage_backend_defaults_to_gcs(db_engine):
         assert af_default.access_note is None
         assert af_remote.storage_backend == "globus"
         assert af_remote.access_note == "request via NERSC allocation X"
+
+
+def test_associated_file_create_schema_defaults_and_overrides():
+    default = AssociatedFileCreate(filename="a.txt", size=1, sha256_hash="h1")
+    assert default.storage_backend == "gcs"
+    assert default.access_note is None
+
+    remote = AssociatedFileCreate(
+        filename="b.txt", size=2, sha256_hash="h2",
+        storage_backend="lawrencium", access_note="ask PI for access",
+    )
+    assert remote.storage_backend == "lawrencium"
+    assert remote.access_note == "ask PI for access"
+
+
+def test_associated_file_read_and_update_schemas_have_new_fields():
+    read = AssociatedFileRead(
+        mfid="m1", dataset_id=1, dataset_mfid="ds1", filename="a.txt",
+        storage_path=None, storage_backend="gcs", access_note=None,
+        size=1, sha256_hash="h1",
+    )
+    assert read.storage_backend == "gcs"
+
+    update = AssociatedFileUpdate()
+    assert update.storage_backend is None
+    assert update.access_note is None

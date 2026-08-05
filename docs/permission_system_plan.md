@@ -430,10 +430,60 @@ No join against `useraccessgrouplink` is required in list queries.
 - [ ] `GET /instruments` — default `status=active`; `PATCH` status gated to instrument `admin`/`owner`
 - [ ] Expose role in `GET /access_groups/{name}/users`
 
+### Testing
+
+A change touching 70+ authorization call sites currently has **no regression coverage on authorization at all**, and the suite it would land in is already red.
+
+#### Current state
+
+| File | Reality |
+|---|---|
+| `test_datasets.py`, `test_users.py` | empty — 0 lines |
+| `test_graph_diff.py`, `test_graph_speed.py` | scripts and benchmarks; 0 test functions, collected anyway |
+| `test_datasets_endpoints.py` | 21 failed / 1 passed — mocks `app.api.main.Session`, which no longer exists |
+| `test_gcs_multipart_endpoint.py` | 6 errors on collection |
+| `test_username_utils.py` | 19 passed / 1 failed |
+| `test_associated_file_remote_backend.py` | 8 passed |
+
+Totals: **28 passed, 22 failed, 6 errors.** Four real test files, two of them broken.
+
+The single username failure is a stale test, not a bug — `validate_username_format` lowercases before validating, so uppercase input normalizes rather than raising, which is the intended case-normalization behaviour. The assertion needs updating, one line.
+
+#### Red as the normal state is the actual problem
+
+With 22 failures and 6 errors as the baseline, a new break is indistinguishable from background noise. Adding good permission tests to a suite that is already red buys very little, because the signal is gone. **Reaching green is a precondition**, and most of the route there is deletion rather than repair:
+
+- [ ] delete the two empty files
+- [ ] move the two script/benchmark files out of `tests/` so pytest stops collecting them
+- [ ] fix the stale username assertion
+- [ ] quarantine `test_datasets_endpoints.py` and `test_gcs_multipart_endpoint.py` with a stated reason — they mock a module structure that no longer exists, so they are artifacts rather than tests pending an update. Rewriting them against the current fixtures is genuine work and should not block this.
+
+#### Keep the decision logic pure
+
+Exhaustive testing is only cheap if the decision does not touch the database. Split the check:
+
+```python
+def effective_role(principal, acl_rows) -> Role:                      # pure — no DB, no HTTP
+def require_permission(session, principal, resource_id, permission):  # fetches, delegates, raises
+```
+
+The combinatorial matrix — five standings × five grants × five operations, plus multi-group, public, platform-admin and no-access cases, roughly 200 assertions — then runs as a parametrized unit test in milliseconds, leaving only a thin fetch-and-raise layer needing integration coverage.
+
+This is the second payoff from `Principal`: a principal is a plain frozen value, so a test constructs one directly, with no database, request, or fixture.
+
+#### What to cover
+
+**Unit, exhaustive and pure.** Every `(standing, grant)` pair resolving to the correct `MIN`; `MAX` across multiple group paths; each operation threshold; platform-admin bypass; `public` granting exactly `viewer` and nothing more; no matching group denied.
+
+**Integration, thin — one per threshold class, not one per route.** Viewer reads but cannot edit; contributor creates, edits own, cannot edit others'; editor edits others' but cannot delete; admin deletes; service account creates on behalf but cannot read outside its projects. The `auth_as` fixture in `tests/conftest.py` already fakes group membership and is the right foundation.
+
+**Agreement tests, specific to the migration.** For a matrix of `(principal, resource, operation)`, assert the old check and the new check return the same answer, with a deliberate enumerated list of exceptions where behaviour is *supposed* to change — for example project members losing the ability to add other members. This is the test-time counterpart to shadow-mode validation, and it turns "did this break something across 70 routes" into a question with an answer.
+
 ### Migration path
 
 ~70 call sites use the four existing check helpers (`require_groups` 21, `require_write_access` 16, `require_admin` 12, `read_access_filter_list` 12, `require_read_access` 9). The risk in this project is the migration, not the model.
 
+0. **Get the test suite green** (see Testing) — delete the empty files, move the benchmark scripts out, fix the stale username assertion, quarantine the two broken files. Nothing after this is verifiable until the baseline is clean.
 1. Add columns and the enum; backfill roles from current booleans:
    - `read=true, write=false` → `viewer`
    - `read=true, write=true` → `contributor`
@@ -441,13 +491,14 @@ No join against `useraccessgrouplink` is required in list queries.
    - Project leads → `admin`
 2. Set `is_platform_admin=true` for existing platform admins
 3. **Introduce `Principal`** — one mechanical commit rewriting all 106 destructuring lines to `auth_res.user_id, auth_res.groups`. No logic changes, no behaviour change, every hunk identical. Land and verify this on its own before anything else touches auth.
-4. Add `require_permission` alongside existing checks — no routes rewired yet
-5. Migrate routes one at a time, converging inline ACL filters onto the helper and dropping each route's destructuring line as it adopts the principal directly
-6. Add create-on-behalf verification; relax the directory route; close unguarded operations
-7. Fix reassignment to revoke stale ACL entries (see Reassignment Never Revokes)
-8. Add the covering index; drop `read`/`write` and their indexes
+4. Add the pure `effective_role` and its exhaustive unit matrix, plus `require_permission` alongside existing checks — no routes rewired yet
+5. Write the agreement tests: old check vs new check across the matrix, with deliberate exceptions enumerated
+6. Migrate routes one at a time, converging inline ACL filters onto the helper and dropping each route's destructuring line as it adopts the principal directly
+7. Add create-on-behalf verification; relax the directory route; close unguarded operations
+8. Fix reassignment to revoke stale ACL entries (see Reassignment Never Revokes)
+9. Add the covering index; drop `read`/`write` and their indexes
 
-Step 3 is deliberately isolated. It is the only step that touches every route at once, and it is safe precisely because it is mechanical — mixing it with logic changes would forfeit that.
+Two steps are load-bearing for safety. **Step 3** is the only one that touches every route at once, and it is safe precisely because it is mechanical — mixing it with logic changes would forfeit that. **Steps 4 and 5 must precede step 6**: migrating routes without the matrix and the agreement tests is unverifiable, which is the single largest risk in this project.
 
 Existing `write=true` users map to `contributor`, not `editor` — no silent privilege grants. Project leads promote individuals deliberately.
 

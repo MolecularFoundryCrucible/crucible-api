@@ -123,8 +123,59 @@ The two-axis design is a deliberate single level of indirection between "who the
 | ORCID group | user's ORCID | The user, always at `owner` |
 | `admin` group | `admin` | Platform admins (organizational only — see below) |
 | Instrument group | instrument name (today) / MFID (target) | Instrument service account, facility staff |
+| `public` group | `public` | **Virtual** — every principal, always at `viewer` |
 
 > **Migration note.** Instrument access groups are currently named after `instrument_name.lower()` (`datasets.py:195`), not the instrument MFID. Renaming them to MFIDs is a data migration touching existing ACL rows, not a greenfield choice. Either keep the name-based convention or schedule the rename explicitly.
+
+### Public resources
+
+`Resource.public` is replaced by an ACL entry against a virtual `public` group. Publishing a resource writes one row: `(resource, public_group, viewer)`. Every `Principal` is constructed with that group appended at `viewer`.
+
+The group is **virtual**: the `accessgroup` row exists so ACL rows can reference it, but there are no `useraccessgrouplink` rows. Nobody is added to it — the principal builder injects it.
+
+**Why this rather than a boolean.** A flag forces a branch into the permission check, and the natural one-liner is catastrophically wrong:
+
+```python
+if resource.public:
+    return True          # grants edit and delete, not just read
+```
+
+As a group, that mistake is unrepresentable. Every principal's standing in `public` is `viewer`, and effective role is `MIN(standing, grant)`:
+
+```
+min(viewer, viewer) = viewer
+min(viewer, admin)  = viewer      ← even a mis-written ACL row
+min(viewer, owner)  = viewer
+```
+
+**A resource cannot be made world-writable, structurally** — not by a bug in the check, not by a bad row, not by a botched migration. With a flag, that guarantee depends on every code path remembering to treat `public` as read-only; here it is a property of the model.
+
+Three things follow:
+
+- **The `OR` in the access filter disappears.** `public = true OR EXISTS(acl…)` spanned two tables and was already flagged as a planner hazard; it collapses into the ordinary `accessgroup_id IN (:my_groups)` predicate.
+- **Publishing inherits the right authorization for free.** It becomes an ACL-management operation, which already requires `admin` on the resource — so the currently ungated `public = true` is closed by construction rather than by adding a check.
+- **Anonymous access, if ever wanted** (published data behind a DOI, readable without login), is a principal whose only group is `public`. A boolean would require the whole auth path to tolerate having no user.
+
+**The column goes; the API field stays.** `public: bool` remains on the create, update, and read models so no client changes. On read it is derived:
+
+```sql
+EXISTS (SELECT 1 FROM resourceacl
+        WHERE mfid = dataset.unique_id AND accessgroup_id = :public_group_id) AS public
+```
+
+one probe per row against the covering index, well under a millisecond for a 100-row page. On write, `public: true` is translated by the route into the ACL row. It is deliberately *not* kept as a stored column alongside the ACL row — that would recreate the two-sources-of-truth drift documented in `docs/schema_hygiene.md`.
+
+**It also collapses an existing inconsistency.** There are currently *two* public flags, and different code paths consult different ones:
+
+| Column | Indexed | Access-filter sites |
+|---|---|---|
+| `Dataset.public` | yes | 14 — `files.py`, `ingestion_requests.py`, and others |
+| `Resource.public` (`idtype`) | no | 3, including `read_access_filter_list` |
+| `Sample` — no column | — | samples rely solely on `Resource.public` |
+
+They are kept in step by hand (`ri.public = ds.public` on create and update). Nothing enforces it, so a drift makes a dataset visible through `GET /files` but not `GET /datasets`, or the reverse — an authorization inconsistency, not merely duplicated state. One ACL row replaces both columns and leaves a single code path.
+
+Two edges to handle: `GET /access_groups/public/users` returns empty, since membership is virtual; and anything iterating `principal.groups` — "which projects am I in", for instance — must exclude the public group.
 
 ---
 
@@ -280,12 +331,12 @@ Discovered while mapping existing routes. These take `auth_res` — so authentic
 | `POST /instruments` | none | platform admin or instrument registrar |
 | `PATCH /instruments/{instrument_unique_id}` | none | instrument `admin`/`owner` |
 | `POST /datasets`, `POST /samples` | none | `>= contributor` in the target project, plus create-on-behalf verification |
-| setting `public = true` | none | `>= editor`, arguably project `admin` |
+| setting `public = true` | none | resolved by construction — see below |
 | `instrument_name` on `POST /datasets` | none | validate against the `Instrument` table |
 
 The instrument ones are the most exposed: nothing currently prevents any authenticated user from renaming or re-pointing someone else's instrument.
 
-**Publishing is the subtlest.** `public` is a plain pass-through field (`ri.public = ds.public`, `datasets.py:185` and `samples.py:198`) with no gate, so any user who can create or edit a resource can make it world-readable. For projects doing confidential or industry-partnered work, a contributor can currently publish unilaterally.
+**Publishing is the subtlest, and the redesign closes it without adding a check.** Today `public` is a plain pass-through field (`ri.public = ds.public`, `datasets.py:185` and `samples.py:198`) with no gate at all, so any user who can create or edit a resource can make it world-readable — a contributor on confidential or industry-partnered work can publish unilaterally. Once publishing becomes an ACL entry against the `public` group (see Core Concepts → Public resources), it is an ACL-management operation and therefore already requires `admin` on the resource. The gap closes as a consequence of the model rather than as a special case.
 
 **Unvalidated `instrument_name` creates access groups.** `create_dataset` looks the name up in the `Instrument` table (`datasets.py:164`) and sets `instrument_id = None` when there is no match — but then creates an access group from the raw string anyway (`datasets.py:197-201`) and writes an ACL entry for it. So `POST /datasets {"instrument_name": "xrd-typo"}` silently produces a permanent access group named `xrd-typo`. A typo pollutes the group table and attaches a meaningless ACL entry. The name should be validated against registered instruments.
 
@@ -324,6 +375,9 @@ Until then, the safest interim behaviour is to reject an `owner_orcid` change th
 - [ ] `resourceacl` — add covering index `(accessgroup_id, mfid, role)`
 - [ ] `user` — add `is_platform_admin BOOLEAN DEFAULT FALSE`
 - [ ] `instrument` — add `status VARCHAR DEFAULT 'active'`
+- [ ] `accessgroup` — insert the virtual `public` group row
+- [ ] `idtype` — drop `public` after the ACL rows are backfilled
+- [ ] `dataset` — drop `public` **and its index** (bare boolean index, no selectivity)
 
 ### Indexing
 
@@ -353,7 +407,7 @@ Note the apparent contradiction, so it is not "fixed" later: a **standalone** in
 
 Existing waste to remove: `resourceacl.read` and `resourceacl.write` each carry a standalone index on a two-value column — no selectivity, pure write cost. They go with the columns and must not be replaced by a standalone `role` index. `idtype.public` has the same problem; a partial index (`ON idtype (mfid) WHERE public`) would be smaller and actually usable.
 
-**Designated tuning lever.** The `public = true OR EXISTS(...)` filter spans two tables, and such ORs routinely defeat index usage. If list latency regresses, the first fix is rewriting it as a `UNION` of two well-indexed queries — the public set and the ACL-accessible set — not adding more indexes.
+**The `OR` goes away.** Today's filter is `public = true OR EXISTS(acl…)`, which spans two tables, and such ORs routinely defeat index usage. Once `public` becomes an ACL entry against a virtual group, the whole predicate collapses to `accessgroup_id IN (:my_groups)` — a single indexed clause with no `OR` at all, so the `UNION` rewrite that would otherwise be the tuning lever is not needed.
 
 **Explicitly rejected:** a materialized `user_resource_access` table (adding one user to a 10k-dataset project would mean 10k inserts, plus staleness, to speed a path that is already fast when correctly indexed), and a second cache layer for effective roles (`authorize_user` already TTL-caches group membership at the right level). Revisit only if measurement demands it.
 
@@ -496,6 +550,7 @@ This is the second payoff from `Principal`: a principal is a plain frozen value,
    - project leads → `admin`
    - drop `read_only` ACL rows; drop `admin`-group ACL rows
    - remaining ACL rows → `admin` for project groups, `contributor` for instrument groups, `owner` for ORCID groups
+   - create the virtual `public` group; for every resource with `public=true`, insert `(mfid, public_group, viewer)`; then drop the `Resource.public` column
 2. Set `is_platform_admin=true` for existing platform admins
 3. **Introduce `Principal`** — one mechanical commit rewriting all 106 destructuring lines to `auth_res.user_id, auth_res.groups`. No logic changes, every hunk identical. Land and verify on its own.
 4. Add the pure `effective_role` and its exhaustive unit matrix, plus `require_permission` — not yet wired to any route
@@ -605,11 +660,13 @@ The proposal is a per-project setting governing outward exposure. **The critical
 
 Three levels, ordered by outward exposure:
 
-| Level | `public = true` | Share outside the project |
+| Level | Publish (ACL entry for `public`) | Share outside the project |
 |---|---|---|
 | `open` | anyone with `admin` on the resource | anyone with `admin` on the resource |
 | `restricted` | project admin only | project admin only |
 | `closed` | forbidden | project admin only |
+
+Once `public` is an ACL entry against a virtual group rather than a boolean, these two columns stop being separate mechanisms. Both are the same question — *which groups may appear in this resource's ACL, and who may put them there* — so the policy is one rule applied at ACL-write time, with `public` simply being one of the groups it can forbid. That is a good deal simpler to implement than gating a boolean field and a share route independently.
 
 Enforcement points: `POST /resources/{id}/share`, setting `public` on resource create/update, and adding an ACL entry for a different project's group.
 

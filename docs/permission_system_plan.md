@@ -209,6 +209,26 @@ Routes:
 
 Several routes currently key off `Project.project_lead_orcid` directly: join-request review (`_is_group_lead` in `access_groups.py`), project member removal, and project listing. Under this model "lead" becomes "holds `admin` in the project group." Those checks must be migrated together, or the two notions will drift.
 
+### Personal workspaces — no special concept
+
+**Decided: there is no "personal project" type.** Ownership is already automatic and a one-member project already is a personal project, so the concept adds a name and nothing else.
+
+Three points on a spectrum cover the need, all using machinery that exists today:
+
+| Want | Do |
+|---|---|
+| Capture data without organising it | omit `project_id` — you own it, nobody else sees it |
+| Group some measurements under a name | create an ordinary project; you are its only member |
+| Collaborate | same project, add members with roles |
+
+The distinction that makes this work is **ownership versus container**. Ownership happens automatically — every resource you create gets your ORCID group as `owner`, project or no project. A container is a name you choose, which is what projects already are. A personal project would only have duplicated the first to provide the second.
+
+A single-member project needs no `is_personal` flag and no separate code path, and it becomes a shared project by adding members — no conversion step. `project_id` is already `Optional` on `DatasetCreate` and `SampleCreate`, and `create_standard_acls` already skips the project ACL when it is absent, so unattached resources work today.
+
+What a personal project would have cost, for that name: a `Project` row per user with a backfill for everyone existing, an `is_personal` column, a `project_id` that is also an ORCID (two namespaces colliding in one unique column), hiding rules so they do not appear in other people's `GET /projects`, a "cannot be deleted" lifecycle rule — and, once projects become resources, a `Resource` row and ACL entries per user as well.
+
+**The one real gap is presentational.** If the UI organises everything by project, unattached data has nowhere to appear. That is a "My data" view, not a table: query resources whose owner is the caller. Note this must filter on the indexed `owner_user_id`, not `owner_orcid` — see Schema Hygiene, item 1, since `owner_user_id` needs to be made reliable first.
+
 ### Sharing
 
 Primary mechanism: project groups. Adding a user to a project gives them access to all project resources at the weaker of their project role and each resource's grant to that project.
@@ -265,9 +285,27 @@ The instrument ones are the most exposed: nothing currently prevents any authent
 
 **Unvalidated `instrument_name` creates access groups.** `create_dataset` looks the name up in the `Instrument` table (`datasets.py:164`) and sets `instrument_id = None` when there is no match — but then creates an access group from the raw string anyway (`datasets.py:197-201`) and writes an ACL entry for it. So `POST /datasets {"instrument_name": "xrd-typo"}` silently produces a permanent access group named `xrd-typo`. A typo pollutes the group table and attaches a meaningless ACL entry. The name should be validated against registered instruments.
 
-`POST /projects` deserves a deliberate exception to this list. It has no check today, and that is arguably correct: ad-hoc single-member projects are the intended way to group personal work (see Future Work on personal projects). Requiring approval to create one would kill that workflow and push people back toward wanting automatic personal projects. Leave it open, knowingly.
+`POST /projects` deserves a deliberate exception to this list. It has no check today, and that is arguably correct: ad-hoc single-member projects are the intended way to group personal work (see Projects → Personal workspaces). Requiring approval to create one would kill that workflow and push people back toward wanting automatic personal projects. Leave it open, knowingly.
 
 Several other routes show no helper call but do filter inline on `ResourceACL.accessgroup_id.in_(ag_ids)` (e.g. `add_keyword`). Those are checked, just not through the shared helper — they need converging on `require_permission`, not fixing.
+
+---
+
+## Reassignment Never Revokes
+
+Verified, and it affects both resource types. `PATCH /datasets/{dsid}` (`datasets.py:238-252`) and `PATCH /samples/{sample_id}` (`samples.py:121-127`) **add** an ACL entry when the owner, project, or instrument changes, and never remove the previous one:
+
+| Change | Result today |
+|---|---|
+| move dataset from project P to Q | Q gains access; **P keeps full access indefinitely** |
+| change `owner_orcid` from Alice to Bob | Bob gains `owner`; **Alice stays `owner`** |
+| change `instrument_name` | new instrument group gains access; old one keeps it |
+
+So reassignment grants without revoking. The owner case is the sharpest: PATCHing `owner_orcid` is the closest thing to an ownership transfer the API has, and it leaves the resource with two owners and no way to remove the first.
+
+This is a correctness bug independent of the redesign, but it lands squarely in scope, because these are exactly the routes being migrated to `require_permission`. Each reassignment path needs a matching revoke, and the revoke must be careful: removing the old project's ACL entry is correct, but removing the old *owner's* entry is an ownership transfer and should follow whatever rule Future Work settles for that — not silently drop it as a side effect of a `PATCH`.
+
+Until then, the safest interim behaviour is to reject an `owner_orcid` change through `PATCH` altogether and require the eventual explicit transfer route, rather than continue silently accumulating owners.
 
 ---
 
@@ -366,11 +404,28 @@ Existing `write=true` users map to `contributor`, not `editor` — no silent pri
 
 Deferred with reasons, so the decisions are not relitigated from scratch.
 
-### Multi-project resources and personal projects
+### Multi-project resources
 
-The earlier draft proposed a `resource_project_link` table, a personal project per user, and eventually dropping `project_id` from `Dataset` and `Sample`. Deferred: it is the largest and most client-breaking piece — `project_id` appears in `DatasetCreate`/`Read`/`Update`, the sample equivalents, and client-side `?project_id=` filters — and landing it alongside a 70-call-site permission migration means two high-risk changes at once.
+Worth being precise about what is and is not missing, because the two halves have very different costs.
 
-Personal projects may also be unnecessary. Their stated purpose was "your workspace always reflects everything you created," but the owner ACL entry already provides that: *resources where my ORCID group holds `owner`* is a query that needs no new table, no `is_personal` column, and no per-user backfill.
+**Access across projects already works.** The ACL layer was never single-project — a resource can carry a row per project group, each with its own grant, and `MAX` over groups already resolves someone who belongs to several of them:
+
+```
+resourceacl:
+  (D, bob_orcid_group,  owner)
+  (D, 10k_perovskites,  admin)      <- primary
+  (D, other_project,    viewer)     <- shared in, capped at read
+```
+
+**Nothing in the role model needs to change** when multi-project lands. That is the expensive part, and it is already done.
+
+**Listing across projects is the gap.** `Dataset.project_id` is a single column and drives `?project_id=`. With the ACL above, a member of `other_project` *can read* D — it passes the auth filter and appears in a plain `GET /datasets` — but `GET /datasets?project_id=other_project` will not return it. Cross-project sharing works; the shared-in resource is just invisible in the recipient project's own view.
+
+The fix is a `resource_project_link` table, with one design rule: **it records belonging, not access.** Linking a resource to a project writes both a link row and an ACL row. If the link table replaced project ACL rows instead, the permission check would need two code paths — link table for projects, `resourceacl` for users and instruments — and sharing with a project would stop being the same operation as sharing with a person.
+
+Deferred because of client breakage, not model complexity: `project_id` appears in `DatasetCreate`/`Read`/`Update`, the sample equivalents, and client-side `?project_id=` filters. Either `Dataset.project_id` survives as a denormalised "primary" for compatibility, or every client changes.
+
+On performance, the join is roughly a wash rather than a regression, provided the index is right. Because `resource_project_link.resource_mfid` *is* the value listings order by, an index on `(project_id, resource_mfid)` yields project-filtered rows already in output order from a two-column table; take the page, then join to `dataset` by primary key. Which side wins depends on selectivity — today's column filter is fine when your project dominates recent data, the link index is better when it is a small slice. Note that the composite index today's query actually wants, `(project_id, unique_id)` on `Dataset`, does not exist either (see Schema Hygiene, item 3).
 
 ### Instrument ↔ project association
 
@@ -444,7 +499,7 @@ owner_orcid:   Optional[str] = Field(default=None)   # no index, no FK
 
 Neither is documented as authoritative, and they drift — `samples.py:181` lazily backfills `owner_user_id` when it finds it null, which means the indexed column is *sometimes* unpopulated while the unindexed one is set.
 
-The practical consequence: **the indexed column is unreliable and the reliable column is unindexed.** A "resources I own" query (`GET /datasets?owner_orcid=<me>`) filters the string column and therefore sequentially scans. This matters because that query is the mechanism replacing personal projects (see Future Work).
+The practical consequence: **the indexed column is unreliable and the reliable column is unindexed.** A "resources I own" query (`GET /datasets?owner_orcid=<me>`) filters the string column and therefore sequentially scans. This matters because that query is the mechanism replacing personal projects (see Projects → Personal workspaces).
 
 The fix is *not* to index `owner_orcid`. It is to make `owner_user_id` trustworthy — backfill it, populate it on every write path — and then resolve ORCID → `user.id` in the route and filter on the existing integer index. No schema addition required.
 

@@ -34,7 +34,7 @@ What a newly created dataset or sample actually gets. Created by U, owned by O, 
 | I's instrument group | read+write | `contributor` | **datasets only**, when `instrument_name` given |
 | U's ORCID group, if U≠O | read+write | **dropped** | — |
 | `admin` | read+write | **dropped** — bypass | — |
-| `read_only` | read-only | **dropped** — bypass | — |
+| `read_only` | read-only | **dropped** — unused, not replaced | — |
 
 Roughly six rows becomes three. Three of those changes carry reasoning worth keeping:
 
@@ -147,7 +147,11 @@ def require_permission(principal, resource_id, permission='read'):
     # effective-role check against resourceacl
 ```
 
-**Stop materializing bypass access.** `create_standard_acls` currently writes an ACL row for the `admin` group and the `read_only` group on every resource created. Under this model the `admin` row is dead weight — platform admins never consult the ACL. If `read_only` is a platform-wide auditor group it should become a bypass too. Removing both drops per-resource ACL rows from ~6 to ~4 and eliminates two inserts per resource creation.
+**Stop materializing bypass access.** `create_standard_acls` currently writes an ACL row for the `admin` group and the `read_only` group on every resource created. The `admin` row is dead weight under this model — platform admins never consult the ACL.
+
+`read_only` is dropped outright rather than converted. It is not in use, so there is nothing to preserve, and its ACL rows are the only place in the schema where `write=False` appears systematically — removing them is what makes the backfill a single uniform assignment rather than a mapping (see Migration path). If a platform-wide read-only auditor is wanted later, it should be designed as a flag and a bypass, not as a group with a row on every resource, per the invariant above.
+
+Removing both drops per-resource ACL rows from roughly six to three and eliminates two inserts per resource creation.
 
 The `admin` group remains as an organizational container and for route-level checks, but no longer drives the bypass.
 
@@ -483,24 +487,74 @@ This is the second payoff from `Principal`: a principal is a plain frozen value,
 
 ~70 call sites use the four existing check helpers (`require_groups` 21, `require_write_access` 16, `require_admin` 12, `read_access_filter_list` 12, `require_read_access` 9). The risk in this project is the migration, not the model.
 
+**Routes are cut over all at once, not one at a time.** Two permission systems coexisting is its own hazard — anyone reading the code has to know which routes are on which check, and that ambiguity lasts as long as the migration does. A single maintainer on a rollback-capable deployment does not need per-route staging; what is needed instead is confidence *before* the cutover, which steps 4–6 provide.
+
 0. **Get the test suite green** (see Testing) — delete the empty files, move the benchmark scripts out, fix the stale username assertion, quarantine the two broken files. Nothing after this is verifiable until the baseline is clean.
-1. Add columns and the enum; backfill roles from current booleans:
-   - `read=true, write=false` → `viewer`
-   - `read=true, write=true` → `contributor`
+1. Add columns and the enum; backfill:
+   - every existing project-group membership → `editor`
    - ORCID-group memberships → `owner`
-   - Project leads → `admin`
+   - project leads → `admin`
+   - drop `read_only` ACL rows; drop `admin`-group ACL rows
+   - remaining ACL rows → `admin` for project groups, `contributor` for instrument groups, `owner` for ORCID groups
 2. Set `is_platform_admin=true` for existing platform admins
-3. **Introduce `Principal`** — one mechanical commit rewriting all 106 destructuring lines to `auth_res.user_id, auth_res.groups`. No logic changes, no behaviour change, every hunk identical. Land and verify this on its own before anything else touches auth.
-4. Add the pure `effective_role` and its exhaustive unit matrix, plus `require_permission` alongside existing checks — no routes rewired yet
+3. **Introduce `Principal`** — one mechanical commit rewriting all 106 destructuring lines to `auth_res.user_id, auth_res.groups`. No logic changes, every hunk identical. Land and verify on its own.
+4. Add the pure `effective_role` and its exhaustive unit matrix, plus `require_permission` — not yet wired to any route
 5. Write the agreement tests: old check vs new check across the matrix, with deliberate exceptions enumerated
-6. Migrate routes one at a time, converging inline ACL filters onto the helper and dropping each route's destructuring line as it adopts the principal directly
-7. Add create-on-behalf verification; relax the directory route; close unguarded operations
-8. Fix reassignment to revoke stale ACL entries (see Reassignment Never Revokes)
-9. Add the covering index; drop `read`/`write` and their indexes
+6. **Run shadow mode** until mismatches settle to only the enumerated exceptions (see below)
+7. **Cut over.** Replace all check call sites in one deploy, converging inline ACL filters onto the helper and dropping the destructuring lines
+8. Add create-on-behalf verification; relax the directory route; close unguarded operations
+9. Fix reassignment to revoke stale ACL entries (see Reassignment Never Revokes)
+10. Add the covering index; drop `read`/`write` and their indexes
 
-Two steps are load-bearing for safety. **Step 3** is the only one that touches every route at once, and it is safe precisely because it is mechanical — mixing it with logic changes would forfeit that. **Steps 4 and 5 must precede step 6**: migrating routes without the matrix and the agreement tests is unverifiable, which is the single largest risk in this project.
+#### Why the backfill is a uniform assignment, not a mapping
 
-Existing `write=true` users map to `contributor`, not `editor` — no silent privilege grants. Project leads promote individuals deliberately.
+Every ACL row `create_standard_acls` writes is `read=True, write=True`. The sole systematic exception is `read_only`, and those rows are being deleted. The only remaining unknown is manually created entries via `POST /resources/{mfid}/access_groups`, which takes `read` and `write` as caller-supplied parameters — worth one query to confirm the set is empty before relying on this:
+
+```sql
+SELECT read, write, count(*) FROM resourceacl GROUP BY read, write;
+```
+
+If it returns only `(t,t)` and `(t,f)` — the latter being `read_only` — the backfill needs no conditional logic at all.
+
+#### Existing members become `editor`, not `contributor`
+
+This preserves current behaviour exactly. Today the project group holds `write=True` on every project resource and `require_write_access` passes if *any* of your groups has write — so **any project member can currently edit any project resource**, including colleagues' work. Backfilling to `contributor` would silently remove that from every user on day one.
+
+`editor` is the neutral choice: nobody's effective access changes at cutover. New memberships still default to `contributor` per `POST /projects/{proj_id}/users/{orcid}?role=`, so the stricter model applies going forward, and project admins demote existing members deliberately rather than by migration side effect.
+
+#### Shadow mode
+
+Cutting over in one deploy makes pre-cutover evidence essential. Before step 7, compute both answers on every request, act on the old one, and log where they differ:
+
+```python
+def require_write_access(session, ag_ids, mfids):      # still authoritative
+    allowed_old = _existing_check(...)
+    if SHADOW_MODE:
+        try:
+            allowed_new = effective_role(principal, acl_rows) >= EDITOR
+            if allowed_new != allowed_old:
+                logger.warning("permission_shadow_mismatch route=%s mfid=%s user=%s old=%s new=%s",
+                               route, mfid, principal.user_id, allowed_old, allowed_new)
+        except Exception:
+            logger.exception("permission_shadow_error route=%s mfid=%s", route, mfid)
+    return allowed_old
+```
+
+Three properties keep it safe: the new result is **discarded**, so a bug in it cannot affect any request; it is wrapped in **its own try/except**, so unfinished code cannot take down a working route; and it is **behind a flag**, so it can be switched off instantly.
+
+It costs almost nothing, because `effective_role` is pure and the ACL rows have already been fetched by the old check — one in-memory call, no extra query. That is only true given the pure/impure split described in Testing; the two decisions depend on each other.
+
+Mismatches are the deliverable:
+
+| Mismatch | Meaning |
+|---|---|
+| new denies, old allowed | An intended tightening, or the backfill under-assigned a role |
+| new allows, old denied | Almost always a bug — investigate every one |
+| new raises | An implementation gap, surfaced without a user seeing a 500 |
+
+Anything not on the enumerated exception list is a finding. Two practical cautions: **rate-limit or sample the logs**, since a badly wrong backfill could make every request emit; and **count matches too, per route**, otherwise "no mismatches" is indistinguishable from "this route was never exercised."
+
+Shadow mode and the agreement tests are complementary — the tests prove the *model* is right against cases you thought of, shadow mode proves your *data* matches what the model assumes, against traffic you did not.
 
 ---
 

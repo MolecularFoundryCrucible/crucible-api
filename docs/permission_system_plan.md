@@ -23,6 +23,31 @@ A resource is anything with an MFID: datasets, samples, and instruments. Every r
 
 **[FR]**: It is time that projects are also added to the resource table, this should simplify some of the logic and allow to have their fields properly filled.
 
+### ACL entries at resource creation
+
+What a newly created dataset or sample actually gets. Created by U, owned by O, in project P, on instrument I:
+
+| Group | Today | Proposed | Applies to |
+|---|---|---|---|
+| O's ORCID group | read+write | `owner` | both |
+| P's project group | read+write | `admin` | both, when `project_id` given |
+| I's instrument group | read+write | `contributor` | **datasets only**, when `instrument_name` given |
+| U's ORCID group, if U≠O | read+write | **dropped** | — |
+| `admin` | read+write | **dropped** — bypass | — |
+| `read_only` | read-only | **dropped** — bypass | — |
+
+Roughly six rows becomes three. Three of those changes carry reasoning worth keeping:
+
+**The ACL grant is a ceiling, not an assignment.** Because effective role is `MIN(standing, grant)`, the value here caps what the group's members can reach. The primary project is granted `admin` so that project roles apply at face value — granting `editor` instead would silently demote project admins on their own project's data, which is its only effect. The same column expresses sharing intent elsewhere: a project a resource is shared *into* gets `viewer` or `editor`, a real cap.
+
+Note what `admin` on the primary project unlocks beyond deletion review: project admins can delete member resources directly (both paths write a `DeletionAuditLog` row) and can manage ACL entries, which includes sharing project data outward. That last point is what the deferred project-privacy setting addresses.
+
+**The instrument group gets `contributor`, not `editor`.** An instrument service account can create and manage its own output but cannot modify another researcher's datasets taken on the same machine.
+
+**The requestor entry is dropped.** It was redundant once create-on-behalf must name a project — the creator reaches the resource through that project group. Keeping it meant a service account accumulating a personal ACL entry on every dataset it ever created, thousands of rows expressing nothing. "Who created this" is audit-log information, not an access grant.
+
+Samples never receive an instrument entry. For datasets the instrument entry is re-written on update when `instrument_name` changes (`datasets.py:252`).
+
 ### Roles
 
 Five roles, declared in ascending order:
@@ -232,10 +257,15 @@ Discovered while mapping existing routes. These take `auth_res` — so authentic
 | `PATCH /instruments/{instrument_unique_id}` | none | instrument `admin`/`owner` |
 | `POST /datasets`, `POST /samples` | none | `>= contributor` in the target project, plus create-on-behalf verification |
 | setting `public = true` | none | `>= editor`, arguably project `admin` |
+| `instrument_name` on `POST /datasets` | none | validate against the `Instrument` table |
 
 The instrument ones are the most exposed: nothing currently prevents any authenticated user from renaming or re-pointing someone else's instrument.
 
 **Publishing is the subtlest.** `public` is a plain pass-through field (`ri.public = ds.public`, `datasets.py:185` and `samples.py:198`) with no gate, so any user who can create or edit a resource can make it world-readable. For projects doing confidential or industry-partnered work, a contributor can currently publish unilaterally.
+
+**Unvalidated `instrument_name` creates access groups.** `create_dataset` looks the name up in the `Instrument` table (`datasets.py:164`) and sets `instrument_id = None` when there is no match — but then creates an access group from the raw string anyway (`datasets.py:197-201`) and writes an ACL entry for it. So `POST /datasets {"instrument_name": "xrd-typo"}` silently produces a permanent access group named `xrd-typo`. A typo pollutes the group table and attaches a meaningless ACL entry. The name should be validated against registered instruments.
+
+`POST /projects` deserves a deliberate exception to this list. It has no check today, and that is arguably correct: ad-hoc single-member projects are the intended way to group personal work (see Future Work on personal projects). Requiring approval to create one would kill that workflow and push people back toward wanting automatic personal projects. Leave it open, knowingly.
 
 Several other routes show no helper call but do filter inline on `ResourceACL.accessgroup_id.in_(ag_ids)` (e.g. `add_keyword`). Those are checked, just not through the shared helper — they need converging on `require_permission`, not fixing.
 
@@ -354,9 +384,32 @@ Letting a service account act with a named user's permissions capped at `contrib
 
 `public` is currently the only classification a resource carries, as a boolean. Real scientific-data needs — `sensitive`, `embargoed`, `proprietary` — are not expressible. The natural generalization is a tag set per resource, with policy mapping (role, tag) to entitlements, and **tag-application authority** as the control: who may declassify a resource by marking it public is exactly the question the current ungated `public` field fails to answer. `public` is the degenerate first case of this.
 
-### Sharing policy: DAC vs MAC
+### Project privacy / sharing policy
 
-`POST /resources/{id}/share` is discretionary — a resource owner may share project data outside the project at will, and no project-level policy can prevent it. For confidential or industry-partnered work that may be wrong. Open question: should a project be able to forbid outward sharing of its resources by individual members?
+`POST /resources/{id}/share` is discretionary — anyone with `admin` on a resource may share it outside the project at will, and no project-level policy can prevent it. Since the primary project is granted `admin`, that includes every project admin. For confidential or industry-partnered work that may be wrong.
+
+The proposal is a per-project setting governing outward exposure. **The critical implementation constraint is that it must be enforced at grant time, not evaluation time.** A policy that computes an effective role and then subtracts from it is a deny rule: it breaks the monotonicity invariant and makes access unauditable. Instead, the policy refuses to *create* the offending ACL entry. `resourceacl` remains the single source of truth and `effective_role` stays a pure `MAX(MIN(...))`.
+
+Three levels, ordered by outward exposure:
+
+| Level | `public = true` | Share outside the project |
+|---|---|---|
+| `open` | anyone with `admin` on the resource | anyone with `admin` on the resource |
+| `restricted` | project admin only | project admin only |
+| `closed` | forbidden | project admin only |
+
+Enforcement points: `POST /resources/{id}/share`, setting `public` on resource create/update, and adding an ACL entry for a different project's group.
+
+Two hazards:
+
+- **The default must be `open`.** Publishing is currently ungated, so defaulting existing projects to anything stricter would break live workflows. Stricter levels are opt-in per project.
+- **For a resource in multiple projects, most restrictive wins** — consistent with the `MIN` philosophy elsewhere in the model.
+
+Resources with no project have no policy to apply; the owner decides, since it is personal data by definition.
+
+This should also **subsume the per-project `discoverable` flag** deferred during the project-discovery work. Discoverability and sharing policy are the same concern — how exposed is this project's existence and data — and should not ship as two parallel flags.
+
+Naming is unresolved. "Private" is ambiguous (private from whom?), which is why the levels above describe policy rather than state. Worth settling before implementation.
 
 ### Ownership transfer
 

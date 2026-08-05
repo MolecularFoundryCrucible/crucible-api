@@ -138,11 +138,11 @@ Platform admins bypass all resource-level checks. This is a flag on `User`, not 
 ALTER TABLE "user" ADD COLUMN is_platform_admin BOOLEAN DEFAULT FALSE;
 ```
 
-`authorize_user` returns the `User` object alongside the group list, so the check needs no extra query:
+The flag travels on the `Principal` (see Implementation → Auth), so the check needs no extra query:
 
 ```python
-def require_permission(user, resource_id, user_groups, permission='read'):
-    if user.is_platform_admin:
+def require_permission(principal, resource_id, permission='read'):
+    if principal.is_platform_admin:
         return True
     # effective-role check against resourceacl
 ```
@@ -357,14 +357,61 @@ Existing waste to remove: `resourceacl.read` and `resourceacl.write` each carry 
 
 ### Auth
 
-- [ ] `authorize_user` returns `(User, list[AccessGroup])` with roles attached
-- [ ] `require_permission(user, resource_id, user_groups, permission)` as the single entry point
-- [ ] `read_access_filter_list(model, ag_ids, required_role)` — gains the role argument
+#### Introduce a `Principal` type
 
-The `MIN` costs nothing on the read path. Because `min(a,b) >= r ⟺ a >= r AND b >= r`, and per-group roles are already in the auth context, "which of my groups clear the bar" is computed in Python and SQL sees only a single column comparison:
+`authorize_user` currently returns an anonymous 2-tuple, `(orcid_string, list[CachedGroup])`, unpacked by **106 call sites** as `user_unique_id, ag_list = auth_res`. The authenticated caller is a first-class domain concept represented as an unnamed tuple — and it is about to grow roles and two flags. Give it a name:
 
 ```python
-qualifying = [g.id for g in user_groups if g.role >= required]
+class GroupMembership(NamedTuple):
+    id: int
+    group_name: str
+    role: Role
+
+@dataclass(frozen=True)
+class Principal:
+    user_id: str                     # ORCID — remains a plain string
+    is_platform_admin: bool
+    is_service_account: bool
+    groups: tuple[GroupMembership, ...]
+
+    def role_in(self, group_name: str) -> Role | None: ...
+    def groups_at_or_above(self, role: Role) -> list[int]: ...
+```
+
+Four properties are deliberate:
+
+- **Named and typed.** `principal: Annotated[Principal, Depends(authorize_user)]` states what a route receives. `Annotated[tuple, ...]` states nothing, and matches FastAPI's own `current_user` convention.
+- **Immutable and ORM-free.** A frozen dataclass of plain values, never a `User` instance. `authorize_user` caches its result in a TTL cache and the existing code comment is explicit about why the cached value must be plain, thread-safe, and independent of the closed session. Caching an ORM object would reintroduce exactly the `DetachedInstanceError` class of bug that comment prevents. This extends the pattern `CachedGroup` already established rather than inventing one.
+- **Behaviour lives on the type.** `groups_at_or_above(role)` is precisely the computation the `MIN` decomposition needs. Keeping it here stops it being re-derived at each call site, which is how permission bugs get introduced.
+- **`user_id` stays a plain string**, so the many places that compare it, write it to `owner_orcid` / `requester_id` / `reviewer_id` columns, and pass it to helpers and background tasks are unaffected.
+
+Consequently the other two signatures take the principal rather than its pieces:
+
+- [ ] `authorize_user` returns `Principal`
+- [ ] `require_permission(principal, resource_id, permission)` as the single entry point
+- [ ] `read_access_filter_list(model, principal, required_role)`
+
+#### Migrating the 106 call sites
+
+This is a **mechanical** change, and its safety depends on keeping it that way. One identical line per route, no logic touched:
+
+```python
+# before
+user_unique_id, ag_list = auth_res
+# after
+user_unique_id, ag_list = auth_res.user_id, auth_res.groups
+```
+
+Every downstream use of both variables continues to work untouched, so this lands as a single reviewable commit where every hunk has the same shape. Routes then adopt `principal.is_platform_admin` and `principal.role_in(...)` gradually as they migrate to `require_permission`, deleting the destructuring line as they go.
+
+The distinction that matters: a mechanical 106-site change is safe and reviewable; a semantic one is not. The incremental promise of this migration applies to permission *logic*, not to the type of the auth object — trying to keep the tuple shape forever costs more than changing it once.
+
+#### The `MIN` costs nothing on the read path
+
+Because `min(a,b) >= r ⟺ a >= r AND b >= r`, and per-group roles are already in the principal, "which of my groups clear the bar" is computed in Python and SQL sees only a single column comparison:
+
+```python
+qualifying = principal.groups_at_or_above(required)
 # SQL: resourceacl.accessgroup_id IN :qualifying AND resourceacl.role >= :required
 ```
 
@@ -393,10 +440,14 @@ No join against `useraccessgrouplink` is required in list queries.
    - ORCID-group memberships → `owner`
    - Project leads → `admin`
 2. Set `is_platform_admin=true` for existing platform admins
-3. Add `require_permission` alongside existing checks — no routes rewired yet
-4. Migrate routes one at a time, converging inline ACL filters onto the helper
-5. Add create-on-behalf verification; relax the directory route; close unguarded operations
-6. Add the covering index; drop `read`/`write` and their indexes
+3. **Introduce `Principal`** — one mechanical commit rewriting all 106 destructuring lines to `auth_res.user_id, auth_res.groups`. No logic changes, no behaviour change, every hunk identical. Land and verify this on its own before anything else touches auth.
+4. Add `require_permission` alongside existing checks — no routes rewired yet
+5. Migrate routes one at a time, converging inline ACL filters onto the helper and dropping each route's destructuring line as it adopts the principal directly
+6. Add create-on-behalf verification; relax the directory route; close unguarded operations
+7. Fix reassignment to revoke stale ACL entries (see Reassignment Never Revokes)
+8. Add the covering index; drop `read`/`write` and their indexes
+
+Step 3 is deliberately isolated. It is the only step that touches every route at once, and it is safe precisely because it is mechanical — mixing it with logic changes would forfeit that.
 
 Existing `write=true` users map to `contributor`, not `editor` — no silent privilege grants. Project leads promote individuals deliberately.
 

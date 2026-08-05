@@ -227,7 +227,7 @@ A single-member project needs no `is_personal` flag and no separate code path, a
 
 What a personal project would have cost, for that name: a `Project` row per user with a backfill for everyone existing, an `is_personal` column, a `project_id` that is also an ORCID (two namespaces colliding in one unique column), hiding rules so they do not appear in other people's `GET /projects`, a "cannot be deleted" lifecycle rule — and, once projects become resources, a `Resource` row and ACL entries per user as well.
 
-**The one real gap is presentational.** If the UI organises everything by project, unattached data has nowhere to appear. That is a "My data" view, not a table: query resources whose owner is the caller. Note this must filter on the indexed `owner_user_id`, not `owner_orcid` — see Schema Hygiene, item 1, since `owner_user_id` needs to be made reliable first.
+**The one real gap is presentational.** If the UI organises everything by project, unattached data has nowhere to appear. That is a "My data" view, not a table: query resources whose owner is the caller. Note this must filter on the indexed `owner_user_id`, not `owner_orcid` — see `docs/schema_hygiene.md`, item 1, since `owner_user_id` needs to be made reliable first.
 
 ### Sharing
 
@@ -322,6 +322,8 @@ Until then, the safest interim behaviour is to reject an `owner_orcid` change th
 - [ ] `instrument` — add `status VARCHAR DEFAULT 'active'`
 
 ### Indexing
+
+> Table-level schema issues found during this audit — the `owner_orcid`/`owner_user_id` duplication, `Sample.project_id` lacking an index and FK, and the FK-convention inconsistencies — are recorded separately in `docs/schema_hygiene.md`. They are cleanup with their own migration risk and are not part of this redesign.
 
 Row-count is not the scaling concern: ~4 ACL rows per resource over 10⁴–10⁵ resources is a few hundred thousand rows, a few million at 10× growth — a narrow table Postgres handles without effort. **Index design is the concern**, and there is a real gap today.
 
@@ -425,7 +427,7 @@ The fix is a `resource_project_link` table, with one design rule: **it records b
 
 Deferred because of client breakage, not model complexity: `project_id` appears in `DatasetCreate`/`Read`/`Update`, the sample equivalents, and client-side `?project_id=` filters. Either `Dataset.project_id` survives as a denormalised "primary" for compatibility, or every client changes.
 
-On performance, the join is roughly a wash rather than a regression, provided the index is right. Because `resource_project_link.resource_mfid` *is* the value listings order by, an index on `(project_id, resource_mfid)` yields project-filtered rows already in output order from a two-column table; take the page, then join to `dataset` by primary key. Which side wins depends on selectivity — today's column filter is fine when your project dominates recent data, the link index is better when it is a small slice. Note that the composite index today's query actually wants, `(project_id, unique_id)` on `Dataset`, does not exist either (see Schema Hygiene, item 3).
+On performance, the join is roughly a wash rather than a regression, provided the index is right. Because `resource_project_link.resource_mfid` *is* the value listings order by, an index on `(project_id, resource_mfid)` yields project-filtered rows already in output order from a two-column table; take the page, then join to `dataset` by primary key. Which side wins depends on selectivity — today's column filter is fine when your project dominates recent data, the link index is better when it is a small slice. Note that the composite index today's query actually wants, `(project_id, unique_id)` on `Dataset`, does not exist either (see `docs/schema_hygiene.md`, item 3).
 
 ### Instrument ↔ project association
 
@@ -482,56 +484,26 @@ Service accounts already avoid researchers typing API keys into lab computers, b
 
 Platform-admin bypass and ACL modifications are currently indistinguishable from ordinary authorized actions in any audit trail. A `ResourceAuditLog` table — one row per mutation with actor, action, and target — would cover this and the broader "who changed what" gap that `mf-record-prod` snapshots only partially address.
 
----
+### Project identity: mfid vs `project_id`
 
-## Schema Hygiene and FK Conventions
+`project_id` currently does two jobs at once — it is the stable identity that every foreign key points at, *and* the human-readable label that appears in URLs and UI. Those pull in opposite directions the moment an admin wants to rename a project, and the model already solves this correctly one table over: `User` separates `unique_id` (ORCID, stable, what FKs reference) from `username` (mutable, unique, what people type). Projects should follow the same split.
 
-Found while auditing the permission path. Deliberately **not** part of the permission redesign — this is schema cleanup with its own migration risk, and bundling it would make an already-large change harder to review. Recorded here because item 1 directly affects a query the permission model depends on.
+This converges with making projects first-class resources. A `Resource` row is keyed by `mfid`, and an mfid is immutable by definition — so a renameable `project_id` *cannot* be the mfid. Generating an mfid for projects and adding them to `idtype` is therefore one change, not two, and it is a prerequisite for renaming rather than a separate nicety.
 
-### 1. `owner_orcid` / `owner_user_id` duplication
+What a rename would touch, once identity moves to the mfid:
 
-`Dataset` and `Sample` each carry **both** an owner reference:
+| Reference | Today | After |
+|---|---|---|
+| `Dataset.project_id`, `Sample.project_id` | FK → `project.project_id` | FK → `project.unique_id` |
+| `UserProjectLink.project_id` | FK → `project.project_id` | FK → `project.unique_id` |
+| `AccessGroup.group_name` for project groups | equals `project_id` | equals the project mfid |
+| `AccessGroupJoinRequest.group_name` | FK → `accessgroup.group_name` | unchanged, follows the group |
+| `ResourceACL` | references `accessgroup.id` (int) | **unaffected** — already stable |
 
-```python
-owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
-owner_orcid:   Optional[str] = Field(default=None)   # no index, no FK
-```
+`ResourceACL` needing no change is the useful part: ACL rows point at `accessgroup.id`, so renames never touch the permission data itself.
 
-Neither is documented as authoritative, and they drift — `samples.py:181` lazily backfills `owner_user_id` when it finds it null, which means the indexed column is *sometimes* unpopulated while the unindexed one is set.
+Naming project access groups after the mfid rather than the label is what makes renaming free, but it also means every `require_groups(ag_list, {'admin', proj_id})` comparison changes shape. Those call sites are being rewritten for `require_permission` anyway, so the two migrations should be sequenced together rather than done twice.
 
-The practical consequence: **the indexed column is unreliable and the reliable column is unindexed.** A "resources I own" query (`GET /datasets?owner_orcid=<me>`) filters the string column and therefore sequentially scans. This matters because that query is the mechanism replacing personal projects (see Projects → Personal workspaces).
+One open question worth settling before implementation: **what do routes take?** `/projects/{mfid}` is stable but unreadable; `/projects/{project_id}` stays readable but breaks bookmarks on rename. The `User` precedent suggests offering both — a canonical path on the stable id plus a lookup route on the label, mirroring `GET /users/by-username/{username}`. Renames would also want the old label to 404 rather than silently resolve to a different project, which argues for never reusing a retired `project_id`.
 
-The fix is *not* to index `owner_orcid`. It is to make `owner_user_id` trustworthy — backfill it, populate it on every write path — and then resolve ORCID → `user.id` in the route and filter on the existing integer index. No schema addition required.
-
-### 2. `Sample.project_id` has neither index nor FK
-
-```python
-# Dataset — indexed and constrained
-project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")
-# Sample — neither
-project_id: Optional[str] = None
-```
-
-`GET /samples?project_id=X` is a sequential scan today. There is no rationale for the asymmetry; Sample should match Dataset.
-
-### 3. No composite index for the dominant listing query
-
-`WHERE project_id = X ORDER BY unique_id DESC LIMIT n` forces the planner to choose between scanning the `project_id` index and sorting everything, or walking `unique_id` and filtering. A composite `(project_id, unique_id)` on `Dataset` serves both — filtered, already ordered, early-terminating under `LIMIT`.
-
-### 4. FK conventions — three variants in use
-
-| Convention | Used by |
-|---|---|
-| Integer surrogate (`user.id`, `dataset.id`, `accessgroup.id`) | link tables, `AssociatedFile.dataset_id`, `UserAccessGroupLink`, `owner_user_id` |
-| String business key (`idtype.mfid`, `user.orcid`, `project.project_id`, `accessgroup.group_name`) | `ResourceACL`, `ScientificMetadataBinary`, `DeletionRequest.resource_id`, `AccessGroupJoinRequest`, `IngestionRequest`, `Dataset.project_id` |
-| Unconstrained string, no FK | `owner_orcid` (both tables), `Sample.project_id`, `DeletionRequest.requester_id` |
-
-`UserProjectLink` mixes the first two within a single table — `user_id` → `user.id` (int), `project_id` → `project.project_id` (string).
-
-The mixture is not wrong in itself; there is a defensible rule that explains most of it, and it is worth stating so new tables do not invent a fourth variant:
-
-- **Internal joins use integer surrogate keys.** Narrow indexes, cheap comparison.
-- **API-visible identity uses the business key, FK-constrained.** The API speaks mfids and ORCIDs, so using them directly avoids a join on every serialization. `ResourceACL.mfid` is correct for exactly this reason: it must resolve uniformly across datasets, samples, and instruments, which an integer FK to any single table could not do.
-- **One relationship, one column.** Denormalize only deliberately; if you do, maintain the copy on every write path and document which side is authoritative.
-
-By that rule the real violations are narrow: the `owner_orcid`/`owner_user_id` pair (item 1), `Sample.project_id` (item 2), and `DeletionRequest.requester_id` being an unconstrained string where the newer `AccessGroupJoinRequest.requester_id` correctly FKs to `user.orcid`.
+Until this lands, `project_id` must be treated as immutable in practice — there is no rename path today, and adding one before identity is separated would break every foreign key pointing at it.

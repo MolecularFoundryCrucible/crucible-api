@@ -44,7 +44,11 @@ Note what `admin` on the primary project unlocks beyond deletion review: project
 
 **The instrument group gets `contributor`, not `editor`.** An instrument service account can create and manage its own output but cannot modify another researcher's datasets taken on the same machine.
 
-**The requestor entry is dropped.** It was redundant once create-on-behalf must name a project — the creator reaches the resource through that project group. Keeping it meant a service account accumulating a personal ACL entry on every dataset it ever created, thousands of rows expressing nothing. "Who created this" is audit-log information, not an access grant.
+This entry is also the *only* thing giving a service account durable access to what it produces, since the SA is deliberately not a project member. Note what it is keyed on: the dataset names an instrument, so the dataset gets that instrument's group. It is a structural property of the resource, not a fact about who made the request — the rule holds identically whether a service account or a human created the dataset. Who that reaches is then purely a membership question, which is why the instrument group contains only the SA (see Instruments).
+
+**The requestor entry is dropped**, for every caller with no exceptions. It was redundant once create-on-behalf must name a project — the creator reaches the resource through that project group. Keeping it meant a service account accumulating a personal ACL entry on every dataset it ever created, thousands of rows expressing nothing. "Who created this" is audit-log information, not an access grant.
+
+Restoring it *only for service accounts* was considered and rejected. Branching the creation path on the principal's type is machinery, and it is not needed: separating the instrument group from the staff group solves the same problem with a membership change instead of a conditional.
 
 Samples never receive an instrument entry. For datasets the instrument entry is re-written on update when `instrument_name` changes (`datasets.py:252`).
 
@@ -122,7 +126,7 @@ The two-axis design is a deliberate single level of indirection between "who the
 | Project group | `project_id` | Project members, at their project role |
 | ORCID group | user's ORCID | The user, always at `owner` |
 | `admin` group | `admin` | Platform admins (organizational only — see below) |
-| Instrument group | instrument name (today) / MFID (target) | Instrument service account, facility staff |
+| Instrument group | instrument name (today) / MFID (target) | The instrument's service account, and nothing else — see Instruments |
 | `public` group | `public` | **Virtual** — every principal, always at `viewer` |
 
 > **Migration note.** Instrument access groups are currently named after `instrument_name.lower()` (`datasets.py:195`), not the instrument MFID. Renaming them to MFIDs is a data migration touching existing ACL rows, not a greenfield choice. Either keep the name-based convention or schedule the rename explicitly.
@@ -231,7 +235,7 @@ Authority derives from the researcher, not from the service account, so **the SA
 
 This also closes a hole that exists today for *every* caller, not only service accounts: `owner_orcid` arrives in the request body and is used unverified (`datasets.py:156-160`). Any authenticated user can currently create a dataset attributed to anyone, in any project.
 
-**3. Instrument metadata.** The SA holds `admin` in its instrument group, letting it update the instrument it runs on and nothing else.
+**3. Instrument metadata.** The SA is the sole member of its instrument group, which holds `editor` on that instrument resource — enough to update the machine it runs on, and nothing else. It cannot change the instrument's status or touch any other instrument.
 
 Service accounts can never manage ACL entries, regardless of role. Enforced in code.
 
@@ -301,15 +305,27 @@ This adds one ACL entry pointing at the recipient's ORCID group at the named rol
 
 ## Instruments
 
-An instrument is a resource with an MFID, an owner, and ACL entries, plus an instrument group controlling who may manage it:
+An instrument is a resource with an MFID, an owner, and ACL entries, plus an instrument group holding the machine's operational identity.
 
-| Role | Who | Rights |
-|---|---|---|
-| `owner` | Registrar | Full management, decommission, transfer |
-| `admin` | Facility staff | Edit metadata, change status |
-| `admin` | Instrument service account | Update instrument metadata programmatically |
+### The instrument group contains only the service account
 
-The service account holds `admin`, not `owner` — it cannot decommission the instrument or manage group membership.
+A group is a set of principals that should have **the same** access. The service account and the humans who look after the instrument do not: the SA needs to write the datasets the machine produces, while the registrar and facility staff need to manage the hardware record. Putting all three in one group and then trying to separate them is not expressible — standing is a single value per `(user, group)`, and there is no role below `viewer`, so a member of a group holding an ACL entry always gets at least read.
+
+So the boundary is drawn where it actually falls:
+
+| Principal | Reached via | Standing | Grant on the instrument resource | Grant on the machine's datasets |
+|---|---|---|---|---|
+| Service account | `instrument-{mfid}` group | `admin` | `editor` | `contributor` |
+| Registrar | own ORCID group | `owner` | `owner` | none |
+| Facility staff | *staff group — deferred, see below* | `admin` | `admin` | none |
+
+The SA's grant on the instrument resource is `editor`, not `admin`: it can update metadata programmatically but cannot delete the instrument, change its status, or manage its ACL entries. That falls out of the role table rather than needing a service-account exception in code.
+
+Facility staff get **no access to datasets at all**. Not by exception — they simply are not in the group that holds the dataset grant. If a staff member needs a project's data, they join the project or receive a share, like anyone else.
+
+> **Defer the staff group.** Do not create a second group per instrument in phase 1. Instrument records are managed today by people who are already platform admins, so they keep managing them through admin bypass and the instrument group is SA-only from day one. Add `instrument-{mfid}-staff` when a beamline scientist actually needs to edit instrument metadata without being a platform admin. This also makes the migration subtractive: existing instrument groups have their human members removed, rather than a new group being backfilled.
+
+> **This tightens what staff can see.** Today anyone in an instrument group can read every dataset that machine has ever produced. Afterwards they see nothing unless they are a project member. That is the intended reduction, but it is the kind of change a beamline scientist notices the same week — worth announcing rather than shipping quietly.
 
 ### Status lifecycle
 
@@ -552,6 +568,7 @@ This is the second payoff from `Principal`: a principal is a plain frozen value,
    - remaining ACL rows → `admin` for project groups, `contributor` for instrument groups, `owner` for ORCID groups
    - create the virtual `public` group; for every resource with `public=true`, insert `(mfid, public_group, viewer)`; then drop the `Resource.public` column
 2. Set `is_platform_admin=true` for existing platform admins
+   - in the same pass, **remove every non-service-account member from instrument groups**, leaving each group holding only its SA (see Instruments). Confirm first that each affected human is either a platform admin or a member of the projects whose data they need, since this is the one backfill step that removes access people have today
 3. **Introduce `Principal`** — one mechanical commit rewriting all 106 destructuring lines to `auth_res.user_id, auth_res.groups`. No logic changes, every hunk identical. Land and verify on its own.
 4. Add the pure `effective_role` and its exhaustive unit matrix, plus `require_permission` — not yet wired to any route
 5. Write the agreement tests: old check vs new check across the matrix, with deliberate exceptions enumerated
@@ -643,6 +660,12 @@ On performance, the join is roughly a wash rather than a regression, provided th
 ### Instrument ↔ project association
 
 `POST/DELETE /instruments/{id}/projects/{proj_id}`, auto-granting the service account `contributor` in the associated project group. Deferred as too much operational machinery for now; create-on-behalf works without it. Revisit when scoped *read* access for instruments is needed (see the consequence noted above), or when it becomes desirable to state explicitly which instruments a project has approved.
+
+### Deriving the instrument grant instead of storing it
+
+`Dataset.instrument_id` already records which machine produced a dataset, so the per-dataset instrument ACL row is in principle redundant: the read filter could carry `OR dataset.instrument_id IN (<caller's instrument groups>)` and the row could be dropped entirely. At one row per dataset, that is a real saving at the volumes discussed under Indexing.
+
+Not done, because it introduces a second permission path alongside `resourceacl`. It works only for datasets — samples and any later resource type would still need rows — and it breaks the invariant that the ACL table is the single source of truth, which is what makes the shadow-mode comparison in the migration tractable. Revisit as a targeted optimization once the ACL model is in production and the row count is measured rather than estimated.
 
 ### Delegated authority beyond creation
 

@@ -123,6 +123,30 @@ class TestNoAccess:
     def test_principal_with_no_groups(self):
         assert effective_role(principal(), [(PROJECT_GID, Role.OWNER)]) is None
 
+
+class TestInputRobustness:
+    def test_duplicate_group_rows_take_the_strongest_not_the_last(self):
+        """A join that fans out must not under-grant."""
+        p = principal(member(PROJECT_GID, Role.OWNER))
+        assert effective_role(p, [(PROJECT_GID, Role.OWNER), (PROJECT_GID, Role.VIEWER)]) == Role.OWNER
+        assert effective_role(p, [(PROJECT_GID, Role.VIEWER), (PROJECT_GID, Role.OWNER)]) == Role.OWNER
+
+    @pytest.mark.parametrize("role", ALL_ROLES)
+    def test_grants_may_arrive_as_database_strings(self, role):
+        p = principal(member(PROJECT_GID, Role.OWNER))
+        assert effective_role(p, [(PROJECT_GID, role.db_value)]) == role
+
+    def test_thresholds_cannot_be_mutated(self):
+        with pytest.raises(TypeError):
+            THRESHOLDS[Permission.DELETE] = Role.VIEWER
+
+    def test_permission_argument_is_required(self):
+        """No permissive default: omitting it must fail loudly rather than
+        silently performing the weakest check."""
+        p = principal(member(PROJECT_GID, Role.VIEWER))
+        with pytest.raises(TypeError):
+            has_permission(p, [(PROJECT_GID, Role.OWNER)])
+
     @pytest.mark.parametrize("permission", ALL_PERMISSIONS)
     def test_no_access_denies_every_permission(self, permission):
         p = principal(member(PROJECT_GID, Role.OWNER))
@@ -330,6 +354,28 @@ class TestCanGrant:
 
     def test_admin_cannot_mint_an_owner(self):
         assert not can_grant(Role.ADMIN, Role.OWNER)
+
+    def test_admin_cannot_demote_an_owner(self):
+        """An owner's entry is not modifiable by an admin. Without the
+        current_role check the target (viewer) clears the cap on its own and a
+        project admin could demote the lead."""
+        for target in ALL_ROLES:
+            assert not can_grant(Role.ADMIN, target, current_role=Role.OWNER)
+
+    def test_owner_may_modify_an_owner_entry(self):
+        assert can_grant(Role.OWNER, Role.VIEWER, current_role=Role.OWNER)
+
+    @pytest.mark.parametrize(
+        "actor,current,target",
+        list(itertools.product(ALL_ROLES, ALL_ROLES, ALL_ROLES)),
+    )
+    def test_cap_binds_on_both_the_existing_and_the_new_role(self, actor, current, target):
+        expected = actor >= Role.ADMIN and target <= actor and current <= actor
+        assert can_grant(actor, target, current_role=current) is expected
+
+    def test_admin_may_modify_entries_at_or_below_admin(self):
+        for current in (Role.VIEWER, Role.CONTRIBUTOR, Role.EDITOR, Role.ADMIN):
+            assert can_grant(Role.ADMIN, Role.VIEWER, current_role=current)
 
     def test_editor_cannot_manage_acls_at_all(self):
         for target in ALL_ROLES:

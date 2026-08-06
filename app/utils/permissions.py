@@ -8,7 +8,8 @@ Design reference: docs/permission_system_plan.md
 """
 from dataclasses import dataclass
 from enum import Enum, IntEnum
-from typing import Iterable, Optional
+from types import MappingProxyType
+from typing import Iterable, Mapping, Optional
 
 PUBLIC_GROUP_NAME = "public"
 
@@ -51,7 +52,7 @@ class Permission(str, Enum):
     TRANSFER = "transfer"
 
 
-THRESHOLDS: dict[Permission, Role] = {
+_THRESHOLDS: dict[Permission, Role] = {
     Permission.READ: Role.VIEWER,
     Permission.CREATE: Role.CONTRIBUTOR,
     Permission.EDIT: Role.EDITOR,
@@ -59,6 +60,10 @@ THRESHOLDS: dict[Permission, Role] = {
     Permission.MANAGE_ACL: Role.ADMIN,
     Permission.TRANSFER: Role.OWNER,
 }
+
+# Read-only view: a mutable module-level dict of security thresholds is one
+# stray assignment away from silently lowering every check in the process.
+THRESHOLDS: Mapping[Permission, Role] = MappingProxyType(_THRESHOLDS)
 
 
 @dataclass(frozen=True)
@@ -128,7 +133,16 @@ def effective_role(
     Deliberately does not consider platform admin. Bypass is never expressed as
     an effective role; require_permission applies it before calling this.
     """
-    grants = dict(acl_rows)
+    grants: dict[int, Role] = {}
+    for group_id, granted in acl_rows:
+        granted = Role.from_db(granted)
+        # Keep the strongest if a group appears twice. The composite primary key
+        # on (mfid, accessgroup_id) makes that impossible from resourceacl
+        # itself, but acl_rows may arrive from a join that fans out, and
+        # silently taking the last row would under-grant.
+        if group_id not in grants or granted > grants[group_id]:
+            grants[group_id] = granted
+
     if not grants:
         return None
 
@@ -137,7 +151,7 @@ def effective_role(
         grant = grants.get(membership.id)
         if grant is None:
             continue
-        reachable = min(membership.role, Role.from_db(grant))
+        reachable = min(Role.from_db(membership.role), grant)
         if best is None or reachable > best:
             best = reachable
     return best
@@ -146,7 +160,7 @@ def effective_role(
 def has_permission(
     principal: Principal,
     acl_rows: Iterable[tuple[int, Role]],
-    permission: Permission = Permission.READ,
+    permission: Permission,
 ) -> bool:
     """Whether the principal may perform `permission` on the resource.
 
@@ -159,16 +173,33 @@ def has_permission(
     return role is not None and role >= THRESHOLDS[permission]
 
 
-def can_grant(actor_role: Optional[Role], target_role: Role) -> bool:
-    """Whether someone at `actor_role` may hand out `target_role`.
+def can_grant(
+    actor_role: Optional[Role],
+    target_role: Role,
+    current_role: Optional[Role] = None,
+) -> bool:
+    """Whether someone at `actor_role` may set an entry to `target_role`.
 
-    The cap rule, applied identically to ACL entries and project membership:
-    you may manage at or below your own standing and never above it. Without
-    it, an admin could mint an owner and escape the ceiling that makes the
-    model monotonic.
+    The cap rule, applied identically to ACL entries and project membership,
+    and it binds on *both* ends:
+
+    - `target_role` at or below your own, so an admin cannot mint an owner.
+    - `current_role` at or below your own, so an admin cannot *overwrite* an
+      owner's entry either. Pass the role being replaced whenever one exists;
+      omitting it checks only the creation direction.
+
+    The second half is what the design means by "an owner's ACL entry cannot be
+    modified by an admin". Without it a project admin could demote the lead to
+    viewer, since viewer clears the target check on its own. Removal is the
+    same operation as assignment for this purpose — pass `current_role` and
+    whatever the entry would become.
     """
     if actor_role is None:
         return False
     if actor_role < THRESHOLDS[Permission.MANAGE_ACL]:
         return False
-    return target_role <= actor_role
+    if target_role > actor_role:
+        return False
+    if current_role is not None and current_role > actor_role:
+        return False
+    return True

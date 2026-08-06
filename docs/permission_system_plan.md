@@ -523,19 +523,27 @@ The cost is two new routes and a client-visible break for anyone currently PATCH
 
 ### Schema
 
+Split by migration phase (see Migration path → Environments and rollout). Nothing in the expand list is destructive; everything in the contract list is, which is why they ship separately.
+
+**Expand — phase 1, additive only:**
+
 - [ ] `CREATE TYPE resource_role AS ENUM ('viewer','contributor','editor','admin','owner')`
+- [ ] `CREATE TYPE platform_role AS ENUM ('none','support','admin')`
 - [ ] `useraccessgrouplink` — add `role resource_role NOT NULL DEFAULT 'contributor'`
 - [ ] `resourceacl` — add `role resource_role`
-- [ ] `resourceacl` — drop `read`/`write` **and their indexes** after migration
 - [ ] `resourceacl` — add covering index `(accessgroup_id, mfid, role)`
-- [ ] `CREATE TYPE platform_role AS ENUM ('none','support','admin')`
 - [ ] `user` — add `platform_role platform_role NOT NULL DEFAULT 'none'`
-- [ ] `useraccessgrouplink` — add partial unique index `one_owner_per_group`
-- [ ] `idtype` — backfill a `Resource` row per existing project, `resource_type='project'`
 - [ ] `instrument` — add `status VARCHAR DEFAULT 'active'`
 - [ ] `accessgroup` — insert the virtual `public` group row
-- [ ] `idtype` — drop `public` after the ACL rows are backfilled
+- [ ] `idtype` — backfill a `Resource` row per existing project, `resource_type='project'`
+- [ ] `useraccessgrouplink` — add partial unique index `one_owner_per_group` (last, after every standing is assigned)
+
+**Contract — phase 5, after the new path is trusted:**
+
+- [ ] `resourceacl` — drop `read`/`write` **and their indexes**
 - [ ] `dataset` — drop `public` **and its index** (bare boolean index, no selectivity)
+- [ ] `idtype` — drop `public`
+- [ ] `project` — drop `project_lead_orcid`
 
 ### Indexing
 
@@ -707,30 +715,81 @@ This is the second payoff from `Principal`: a principal is a plain frozen value,
 
 ~70 call sites use the four existing check helpers (`require_groups` 21, `require_write_access` 16, `require_admin` 12, `read_access_filter_list` 12, `require_read_access` 9). The risk in this project is the migration, not the model.
 
-**Routes are cut over all at once, not one at a time.** Two permission systems coexisting is its own hazard — anyone reading the code has to know which routes are on which check, and that ambiguity lasts as long as the migration does. A single maintainer on a rollback-capable deployment does not need per-route staging; what is needed instead is confidence *before* the cutover, which steps 4–6 provide.
+**Routes are cut over all at once, not one at a time.** Two permission systems coexisting is its own hazard — anyone reading the code has to know which routes are on which check, and that ambiguity lasts as long as the migration does. A single maintainer on a rollback-capable deployment does not need per-route staging; what is needed instead is confidence *before* the cutover, which the expand and validate phases provide.
+
+### Environments and rollout
+
+Work happens against a staging clone of the production database with its own API instance. Two things follow from that, and getting them backwards is the main way this approach yields false confidence.
+
+**Staging proves the migration script. Production shadow mode proves the model.** These are different questions and only one of them a clone can answer:
+
+| Question | Where | Why not the other place |
+|---|---|---|
+| Does the migration run, backfill correctly, build the index? | Staging | Destructive and iterative; must not touch prod |
+| Do the new checks agree with the old ones on real traffic? | **Production**, in shadow mode | Staging has no organic traffic — it would only exercise requests already covered by the agreement tests |
+
+Shadow mode is safe in production by construction: it computes both answers, returns the old one, and logs disagreements. Nothing user-visible changes, which is the entire reason it is built that way. Running it on staging instead would be theatre — it would confirm the cases you thought to try, which is what the agreement tests are for.
+
+**Restore a fresh clone for every migration run.** Iterating the script against an already-migrated staging database tests the wrong thing: a bug gets fixed, the script re-runs, and it passes because the state is already half-converted. Confirm the restore is cheap and scriptable *before* starting — if it is slow and manual, it will get skipped precisely when it matters most.
+
+**Re-run the counting queries against production before the real migration.** The clone is a point-in-time snapshot and drifts from the moment it is taken. Rows created in production in the meantime can introduce fresh public-column disagreements, dangling sample project IDs, or duplicate group owners. The counts are cheap; running them twice is the difference between a migration that fails loudly and one that silently mis-assigns a role.
+
+**Expand, cut over, contract — never all in one migration.** The destructive drops are deferred to a separate phase deliberately. Between expand and contract, a rollback is a code revert and nothing more; once `read`/`write` and the `public` columns are gone, the data the old code reads no longer exists and rollback means restoring from backup under pressure. Carrying dead columns for a few weeks is the price of keeping the scary step reversible.
+
+**Merge the inert work to main early.** Phases 2 and 3 below change no behaviour — `Principal` is a mechanical refactor, and `effective_role` is new code wired to nothing. They can land on main while staging work continues, which takes several thousand lines out of the review that actually matters and leaves one focused cutover PR.
+
+### Phase 0 — baseline
 
 0. **Get the test suite green** (see Testing) — delete the empty files, move the benchmark scripts out, fix the stale username assertion, quarantine the two broken files. Nothing after this is verifiable until the baseline is clean.
-0.5. **Run the counting queries first** — the public-column disagreement count (Public resources) and the dangling `Sample.project_id` count (`docs/schema_hygiene.md`, item 5). Both feed decisions in step 1, and both are cheap. A non-zero result on either needs resolving before anything is frozen into ACL rows.
+0.5. **Run the counting queries** — the public-column disagreement count (Public resources), the dangling `Sample.project_id` count (`docs/schema_hygiene.md`, item 5), and the `read`/`write` distribution below. All three feed decisions in phase 1, and a non-zero result on the first two needs resolving before anything is frozen into ACL rows.
+
+### Phase 1 — expand (staging first, then production)
+
+Additive only. Nothing is dropped and no behaviour changes; the old columns stay populated and the old checks stay in force.
+
 1. Add columns and the enums; backfill:
    - every existing project-group membership → `editor`
    - ORCID-group memberships → `owner`
-   - project leads → `owner` in their project group, then drop `Project.project_lead_orcid`
+   - project leads → `owner` in their project group (the `Project.project_lead_orcid` column stays for now and is dropped in phase 5)
    - a `Resource` row per existing project, plus one ACL entry each: the project's own group at `owner`
-   - drop `read_only` ACL rows; drop `admin`-group ACL rows
+   - delete `read_only` ACL rows and `admin`-group ACL rows — these are row deletions, not schema changes, and are safe here because nothing reads them: platform admins bypass the ACL and `read_only` is unused
    - remaining ACL rows → `admin` for project groups, `contributor` for instrument groups, `owner` for ORCID groups
-   - create the virtual `public` group; insert `(mfid, public_group, viewer)` per public resource, taking `Dataset.public` as authoritative for datasets and `Resource.public` for samples; then drop both columns
+   - create the virtual `public` group; insert `(mfid, public_group, viewer)` per public resource, taking `Dataset.public` as authoritative for datasets and `Resource.public` for samples. **Both columns stay** and keep being written until phase 5
    - **add `one_owner_per_group` last**, after every standing is assigned. If it fails to build, the duplicate it reports is pre-existing bad data — most likely a user who was added to someone else's ORCID group, since nothing enforces those being single-member today. Treat a failure as a finding to investigate, not an obstacle to work around by dropping the index.
 2. Set `platform_role='admin'` for existing platform admins
    - in the same pass, **remove every non-service-account member from instrument groups**, leaving each group holding only its SA (see Instruments). Confirm first that each affected human is either a platform admin or a member of the projects whose data they need, since this is the one backfill step that removes access people have today
    - create the instrument group for any registered instrument that has none, so group existence stops depending on whether a dataset was ever filed against it
+   - add the covering index `(accessgroup_id, mfid, role)`, so the new checks are never measured against an unindexed table
+
+### Phase 2 — inert code (mergeable to main independently)
+
+Changes no behaviour. Safe to merge and deploy while staging validation continues.
+
 3. **Introduce `Principal`** — one mechanical commit rewriting all 106 destructuring lines to `auth_res.user_id, auth_res.groups`. No logic changes, every hunk identical. Land and verify on its own.
 4. Add the pure `effective_role` and its exhaustive unit matrix, plus `require_permission` — not yet wired to any route
 5. Write the agreement tests: old check vs new check across the matrix, with deliberate exceptions enumerated
-6. **Run shadow mode** until mismatches settle to only the enumerated exceptions (see below)
+
+### Phase 3 — validate in production
+
+6. **Run shadow mode in production** until mismatches settle to only the enumerated exceptions (see below). This is the gate on the cutover: it is the only step that tests the model against traffic nobody designed a test case for.
+
+### Phase 4 — cut over
+
+Rollback throughout this phase is a code revert. The old columns are still present and still populated.
+
 7. **Cut over.** Replace all check call sites in one deploy, converging inline ACL filters onto the helper and dropping the destructuring lines
-8. Add create-on-behalf verification; relax the directory route; close unguarded operations
-9. Fix reassignment to revoke stale ACL entries (see Reassignment Never Revokes)
-10. Add the covering index; drop `read`/`write` and their indexes
+8. Add create-on-behalf verification; add the instrument-group branch to the directory route; close unguarded operations
+9. Replace `PATCH`-based reassignment with the explicit transfer and project routes; make the instrument-group change revoke the old entry (see Reassignment Never Revokes)
+10. Create instrument groups at registration; add the SA binding routes; reject unregistered `instrument_name`
+11. Add the `visibility` filter to the dataset and sample listings, replacing `?public=true`
+
+### Phase 5 — contract
+
+Only after the new path has been live long enough to trust. Each of these makes rollback require a restore rather than a revert, which is why they are last and separate.
+
+12. Drop `read`/`write` and their indexes from `resourceacl`
+13. Drop `Dataset.public` (and its index) and `Resource.public`
+14. Drop `Project.project_lead_orcid`, once `_is_group_lead` and the project-listing filter are confirmed migrated
 
 #### Why the backfill is a uniform assignment, not a mapping
 
@@ -750,7 +809,7 @@ This preserves current behaviour exactly. Today the project group holds `write=T
 
 #### Shadow mode
 
-Cutting over in one deploy makes pre-cutover evidence essential. Before step 7, compute both answers on every request, act on the old one, and log where they differ:
+Cutting over in one deploy makes pre-cutover evidence essential. Before step 7 — **in production, against real traffic** — compute both answers on every request, act on the old one, and log where they differ:
 
 ```python
 def require_write_access(session, ag_ids, mfids):      # still authoritative
@@ -779,6 +838,8 @@ Mismatches are the deliverable:
 | new raises | An implementation gap, surfaced without a user seeing a 500 |
 
 Anything not on the enumerated exception list is a finding. Two practical cautions: **rate-limit or sample the logs**, since a badly wrong backfill could make every request emit; and **count matches too, per route**, otherwise "no mismatches" is indistinguishable from "this route was never exercised."
+
+That last caution is also why this runs in production rather than on the staging clone. Per-route match counts are the exit criterion — the cutover is gated on every route having been exercised enough to mean something, and a staging instance with no organic traffic cannot produce that evidence no matter how long it runs.
 
 Shadow mode and the agreement tests are complementary — the tests prove the *model* is right against cases you thought of, shadow mode proves your *data* matches what the model assumes, against traffic you did not.
 

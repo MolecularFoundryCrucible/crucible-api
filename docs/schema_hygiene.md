@@ -49,3 +49,27 @@ The mixture is not wrong in itself; there is a defensible rule that explains mos
 - **One relationship, one column.** Denormalize only deliberately; if you do, maintain the copy on every write path and document which side is authoritative.
 
 By that rule the real violations are narrow: the `owner_orcid`/`owner_user_id` pair (item 1), `Sample.project_id` (item 2), and `DeletionRequest.requester_id` being an unconstrained string where the newer `AccessGroupJoinRequest.requester_id` correctly FKs to `user.orcid`.
+
+## 5. Resources not reachable through a project-organised view
+
+The permission plan replaces personal projects with a "My data" view (resources whose owner is the caller). That covers the common case, but a UI that organises everything by project plus one "My data" tab still cannot reach every resource. The cases, so none is discovered by a user first:
+
+| Case | Reachable via | Notes |
+|---|---|---|
+| `project_id IS NULL` | "My data" | The intended case. Works once `owner_user_id` is reliable (item 1). |
+| Shared directly with you, you are not in the owning project | neither | Reached through an ORCID-group ACL entry; belongs to no project *you* can see and is not owned by you. Needs a "Shared with me" view. |
+| Public resources from projects you are not in | neither | Same shape. Needs the `visibility=public` filter the permission plan adds. |
+| Owned by a departed user, still in the project | project view | Fine, listed for completeness — the resource stays put when its owner leaves. |
+| `project_id` names a project that does not exist | **neither** | A defect, not a view gap. See below. |
+
+The last row follows from item 2: `Sample.project_id` has no foreign key, so nothing prevents a dangling value. Such a sample looks filed — the field is populated — but appears in no project listing, and if its owner is also unset it appears nowhere at all. `Dataset.project_id` is FK-constrained and cannot reach this state.
+
+Count them before the permission migration, since the ACL backfill keys off project membership:
+
+```sql
+SELECT count(*) FROM sample s
+LEFT JOIN project p ON p.project_id = s.project_id
+WHERE s.project_id IS NOT NULL AND p.project_id IS NULL;
+```
+
+Adding the FK in item 2 requires this to be zero, so the count is needed either way.

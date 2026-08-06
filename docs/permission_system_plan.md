@@ -17,11 +17,24 @@ Two goals drive the specifics:
 
 ### Resources
 
-A resource is anything with an MFID: datasets, samples, and instruments. Every resource has ACL entries in `resourceacl` naming which groups may access it and at what role.
+A resource is anything with an MFID: datasets, samples, instruments, **and projects**. Every resource has ACL entries in `resourceacl` naming which groups may access it and at what role.
 
-> **Note on projects.** The earlier draft of this document treated projects as resources with rows in `idtype`. They are not — `create_project()` does not create a `Resource` row, so every project's `creation_time`/`modification_time` is currently null. Making projects first-class resources is deferred (see Future Work); nothing in this phase depends on it.
+### Projects become resources
 
-**[FR]**: It is time that projects are also added to the resource table, this should simplify some of the logic and allow to have their fields properly filled.
+Projects are not resources today — `create_project()` writes no `Resource` row, so every project's `creation_time` and `modification_time` is null and a project cannot carry ACL entries, scientific metadata, or a deletion request the way a dataset can.
+
+An earlier draft deferred fixing this. It is in phase 1 instead, because the rest of the model gets simpler rather than harder once it holds:
+
+- A project has an MFID, so it stops being identified solely by the mutable `project_id` handle (see Future Work → Project identity).
+- A project's own ACL entry replaces `Project.project_lead_orcid` as the definition of who leads it ("Project lead" becomes a role, below).
+- Project metadata edits become an ordinary `require_permission` check instead of a bespoke one.
+- `creation_time`/`modification_time` get populated by the same path as every other resource, so projects become visible to the incremental-sync mechanism.
+
+**A project gets exactly one ACL entry: its own group, at `owner`.**
+
+Because effective role is `MIN(standing, grant)` and the grant is `owner`, effective role on the project resource is simply the member's standing in the project group. The lead holds `owner`, admins hold `admin`, a `contributor` sits below the `editor` bar and therefore cannot rename the project. No second entry, no lookup table, no synchronisation.
+
+The migration backfills a `Resource` row per existing project. The one thing to audit is code that assumes every `Resource` row is a dataset, sample, or instrument — the deletion filter in particular.
 
 ### ACL entries at resource creation
 
@@ -95,7 +108,7 @@ The `MAX` is what makes ownership work. Consider a `contributor` in project P cr
 
 **"Contributors can manage their own resources" is therefore not a rule — it is a consequence.** Editing someone else's dataset leaves you at your project role (`contributor`, below the `editor` bar); editing your own gives you the `owner` path. No `is_it_mine?` branch exists anywhere in the permission check. A reader expecting a special case will go looking for one, so it is worth stating plainly.
 
-**[FR]**: this is crucial that we do properly.
+This is the single most load-bearing behaviour in the model, and the easiest to break by accident — an `is_owner` shortcut added later "for clarity" would silently diverge from the `MAX` path. The exhaustive `effective_role` matrix in Testing must cover it directly: a `contributor` on their own resource, a `contributor` on a peer's, and the same pair after the owner leaves the project.
 
 ### Permission thresholds
 
@@ -107,6 +120,9 @@ The `MAX` is what makes ownership work. Consider a `contributor` in project P cr
 | delete | `>= admin` |
 | manage ACL entries | `>= admin`, and only at or below your own role |
 | transfer ownership | `owner` |
+| reassign a resource's project | `>= admin` on the resource, `>= contributor` in the target project |
+
+The last two rows are **not** reachable through `PATCH`. See Reassignment below.
 
 ### Design invariants
 
@@ -181,26 +197,57 @@ They are kept in step by hand (`ri.public = ds.public` on create and update). No
 
 Two edges to handle: `GET /access_groups/public/users` returns empty, since membership is virtual; and anything iterating `principal.groups` — "which projects am I in", for instance — must exclude the public group.
 
+#### Discovering public resources
+
+Injecting the public group means public resources show up in ordinary listings for every caller with no route changes — that part gets easier. What is *lost* is the ability to ask for public resources specifically: today `?public=true` filters a column that will no longer exist.
+
+So the listing routes need an explicit `visibility` filter (`all` default, `public`, `private`), compiling to a predicate on the presence of the public group's ACL row rather than a column. Without it a "browse public data" view has no query behind it, and the natural workaround — clients filtering client-side after paging — breaks under cursor pagination.
+
+#### Which column wins in the migration
+
+`Dataset.public` and `Resource.public` disagree wherever the hand-maintained copy drifted, so the backfill needs a rule. Neither a union nor an intersection is right blind: a union can publish something intended private, an intersection can un-publish something users rely on.
+
+Authority follows what the code actually writes:
+
+| Resource type | Authoritative column | Why |
+|---|---|---|
+| Dataset | `Dataset.public` | What the dataset routes write and what users toggle; `Resource.public` is the copy |
+| Sample | `Resource.public` | No `Sample.public` column exists |
+
+**Run the disagreement count before migrating**, not after — it is one query, and it says whether this is a real problem or a theoretical one:
+
+```sql
+SELECT count(*) FROM dataset d JOIN idtype r ON r.mfid = d.unique_id
+WHERE d.public IS DISTINCT FROM r.public;
+```
+
+If the count is zero the rule is moot and the migration is trivial. If it is not, every row in it is a resource whose visibility is currently ambiguous depending on which route you ask, and each one wants a decision before it is frozen into an ACL entry.
+
 ---
 
 ## Platform Access
 
 ### Platform admins
 
-Platform admins bypass all resource-level checks. This is a flag on `User`, not group membership — groups control resource access, user flags control system-level bypass.
+Platform admins bypass all resource-level checks. This lives on `User`, not in group membership — groups control resource access, user attributes control system-level bypass.
 
 ```sql
-ALTER TABLE "user" ADD COLUMN is_platform_admin BOOLEAN DEFAULT FALSE;
+CREATE TYPE platform_role AS ENUM ('none','support','admin');
+ALTER TABLE "user" ADD COLUMN platform_role platform_role NOT NULL DEFAULT 'none';
 ```
 
-The flag travels on the `Principal` (see Implementation → Auth), so the check needs no extra query:
+An enum rather than `is_platform_admin BOOLEAN`, for the same reason `resource_role` is an enum. The doc already anticipates wanting a platform-wide read-only auditor; as a boolean that arrives later as a *second* boolean, and two booleans encoding one tier is how `read_only` became a group with a row on every resource. `support` is reserved now and granted to nobody — the cost over a boolean is zero, and it removes the temptation to reach for a group when the need appears.
+
+It travels on the `Principal` (see Implementation → Auth), so the check needs no extra query:
 
 ```python
 def require_permission(principal, resource_id, permission='read'):
-    if principal.is_platform_admin:
+    if principal.platform_role == 'admin':
         return True
     # effective-role check against resourceacl
 ```
+
+**Why a user attribute here, when `Resource.public` is being deleted for being a boolean.** The two are opposite cases, and the distinction is the rule worth keeping. `public` was a *per-resource* flag duplicating something `resourceacl` already expressed — a second access path for a question the ACL table answers, which is why it drifted. Platform admin is a *per-principal* fact the ACL table structurally cannot express: it grants access to resources with no ACL entry, including resources that do not exist yet. Encoding it as a group would require an ACL row on every resource — precisely what removing the `admin` group's rows is undoing. Both changes enforce the same invariant: one access path per question.
 
 **Stop materializing bypass access.** `create_standard_acls` currently writes an ACL row for the `admin` group and the `read_only` group on every resource created. The `admin` row is dead weight under this model — platform admins never consult the ACL.
 
@@ -220,7 +267,22 @@ An instrument service account reaches what it needs through three scoped mechani
 
 **1. Directory lookup.** To create a dataset for a researcher, the instrument must resolve who they are and which projects they belong to. `POST /users/resolve` and `GET /users/by-username/{username}` are already open to all authenticated users and return `UserPublicRead` (no email).
 
-The gap is `GET /users/{orcid}/projects`, gated `require_groups(ag_list, {'admin', orcid})` — admin **or be that user**. A service account is neither. **This single route is why service accounts were historically put in the admin group.** Relax it to any authenticated caller returning project id and title only — not the lead's email, not the member list. Project membership is directory metadata, not research data.
+The gap is `GET /users/{orcid}/projects`, gated `require_groups(ag_list, {'admin', orcid})` — admin **or be that user**. A service account is neither. **This single route is why service accounts were historically put in the admin group.**
+
+An earlier draft proposed relaxing it to any authenticated caller. That is withdrawn: `GET /projects/{proj_id}/users` is itself gated to project members (`projects.py:255`), so opening the per-user direction would make membership readable platform-wide while the reverse lookup stays closed — a disclosure through the back door, not a tidy-up.
+
+It is also more access than the SA needs. Create-on-behalf verifies project membership **server-side** (below), so the instrument never needs the list in order to create. It needs it for one thing only: rendering a project picker for the researcher standing at the machine.
+
+So grant exactly that, and nothing wider:
+
+```
+GET /users/{orcid}/projects
+    allowed if: caller is that user
+             or caller is a platform admin
+             or caller holds standing in any instrument group   # project-picker case
+```
+
+The instrument-group branch returns **project id and title only** — not the lead, not the member list, not descriptions. A capability scoped to the workflow that needs it, rather than a blanket relaxation, and no per-user privacy flag: whether membership is confidential is a property of the *project*, which is where the deferred privacy setting puts it (Future Work → Project privacy).
 
 **2. Create-on-behalf.** When a caller creates a resource naming someone else as owner, the server verifies that the *named user* may create in the target project:
 
@@ -238,6 +300,20 @@ This also closes a hole that exists today for *every* caller, not only service a
 **3. Instrument metadata.** The SA is the sole member of its instrument group, which holds `editor` on that instrument resource — enough to update the machine it runs on, and nothing else. It cannot change the instrument's status or touch any other instrument.
 
 Service accounts can never manage ACL entries, regardless of role. Enforced in code.
+
+#### Binding a service account to an instrument
+
+Nothing connects the two today. `POST /service_accounts` creates the user, its personal group, and an API key (`service_accounts.py:17-72`) and stops there. `POST /instruments` creates the `Instrument` and `Resource` rows and **no access group at all** (`instruments.py:160-190`). Instrument groups only ever come into existence lazily, inside `create_dataset`, from the raw `instrument_name` string — which is also the bug that lets a typo mint a permanent group (see Currently Unguarded Operations).
+
+Both are the same missing step, so they are fixed together:
+
+- [ ] **`POST /instruments` creates the instrument group** and its ACL entry on the instrument resource (`editor`). The group exists from registration, named for the instrument, with no members.
+- [ ] **`create_dataset` stops creating groups.** It looks the instrument group up and rejects an unregistered `instrument_name` with `400` instead of inventing one.
+- [ ] **`POST /instruments/{instrument_unique_id}/service_accounts/{sa_unique_id}`** adds an SA to the instrument group. `DELETE` on the same path removes it. Requires `admin` on the instrument.
+
+A membership route rather than creating the SA through the instrument, because the relationship is many-to-many in both directions: one control PC can drive several detectors, and an instrument may be served by more than one SA during a credential rotation. Creating the SA inside `POST /instruments` would model it as one-to-one and need undoing.
+
+This also gives a clean answer to "which instruments may this credential write for": the SA's group memberships, readable in one query, revocable one instrument at a time without touching the API key.
 
 > **Consequence of deferring instrument↔project association.** Without it, an SA has no read access to project data. Create-on-behalf works, but "link this new dataset to a sample the researcher made last week" fails — that touches a resource the SA has no standing on. If that workflow matters, the extension is to let an SA act with the target user's permissions *capped at `contributor`*: it can do what X could do, but never delete or manage ACLs. Left out until the workflow actually bites.
 
@@ -262,11 +338,52 @@ Routes:
 - `GET /projects/{proj_id}/users` — list members with roles
 - `DELETE /projects/{proj_id}/users/{orcid}` — remove member
 
-> **Existing behaviour this changes.** `POST /projects/{proj_id}/users/{orcid}` is currently gated `require_groups(ag_list, {'admin', proj_id})`, which means **any member of a project can add anyone else to that project** — a viewer can add a collaborator. Under roles this becomes project `admin` only.
+> **Existing behaviour this changes.** `POST /projects/{proj_id}/users/{orcid}` is currently gated `require_groups(ag_list, {'admin', proj_id})`, which means **any member of a project can add anyone else to that project** — a viewer can add a collaborator.
+
+#### Adding members requires `editor`, capped at your own role
+
+Restricting membership management to `admin` is the obvious tightening, but it is stricter than the risk warrants, and it puts a senior postdoc onboarding a student through a project lead every time.
+
+Adding a member and managing ACL entries are not the same power, which is what makes a middle ground safe: **adding a member grants access bounded by the project's own grant, while an ACL entry can share data outward to any group, unbounded.** The second is genuinely `admin`-shaped. The first is not.
+
+So `editor` may add and remove members, subject to the cap rule the thresholds table already states for ACL management: **only at or below your own role.** An `editor` can seat someone as `viewer`, `contributor`, or `editor`, and can never mint an `admin` or an `owner`. Removal is likewise capped, so an `editor` cannot evict a project admin.
+
+No sixth role. Every role added multiplies the `effective_role` test matrix, the migration mapping, and the number of things a reader has to hold in their head — and "can add members but not manage ACLs" is expressible with the roles that exist plus a cap that is already written down.
+
+| Operation | Requires |
+|---|---|
+| add or remove a project member | `>= editor` in the project group, at or below your own role |
+| change a member's role | `>= editor`, and both the old and new role at or below your own |
+| manage resource ACL entries | `>= admin` on the resource, at or below your own role |
 
 ### "Project lead" becomes a role
 
-Several routes currently key off `Project.project_lead_orcid` directly: join-request review (`_is_group_lead` in `access_groups.py`), project member removal, and project listing. Under this model "lead" becomes "holds `admin` in the project group." Those checks must be migrated together, or the two notions will drift.
+Several routes currently key off `Project.project_lead_orcid` directly: join-request review (`_is_group_lead` in `access_groups.py`), project member removal, and project listing.
+
+**The lead holds `owner` in the project group, not `admin`** — and once projects are resources (above), that is not a convention but the same statement as "the lead owns the project resource." The project's single ACL entry grants its own group `owner`, so effective role on the project equals standing in it:
+
+| Standing in project group | Effective role on the project resource | Can |
+|---|---|---|
+| `owner` (lead) | `owner` | Everything, including transferring the project |
+| `admin` | `admin` | Manage members and ACLs, delete resources; cannot transfer |
+| `editor` | `editor` | Edit project metadata and all project resources; add members up to `editor` |
+| `contributor` | `contributor` | Create resources; cannot rename the project |
+| `viewer` | `viewer` | Read |
+
+`admin` was the wrong level for a lead because the two roles differ in exactly the ways a lead needs: only `owner` can transfer the project to a successor, and only an `owner`'s ACL entry is safe from modification by an `admin` — without which any project admin could demote the lead.
+
+`Project.project_lead_orcid` is then **retired, not synchronised.** Keeping both is how the two notions drift; the column's readers (`_is_group_lead` and the project-listing filter) migrate to a standing check in the same commit that drops it. Ownership transfer for projects becomes the same `POST /resources/{mfid}/transfer_ownership` route every other resource uses.
+
+#### At most one owner per group
+
+Worth enforcing in the database rather than in application code, and it holds for every group type — a project has one lead, a user owns their own ORCID group, and instrument groups have no owner at all:
+
+```sql
+CREATE UNIQUE INDEX one_owner_per_group
+    ON useraccessgrouplink (accessgroup_id) WHERE role = 'owner';
+```
+
+> **Open question: co-PIs.** This constraint assumes a single accountable lead per project. If projects with two PIs are a real case, either seat the second at `admin` — which costs them only the ability to transfer the project — or drop the constraint and accept that "the lead" becomes a set. Confirm before adding the index; it is far cheaper to add later than to remove after code depends on it.
 
 ### Personal workspaces — no special concept
 
@@ -287,6 +404,8 @@ A single-member project needs no `is_personal` flag and no separate code path, a
 What a personal project would have cost, for that name: a `Project` row per user with a backfill for everyone existing, an `is_personal` column, a `project_id` that is also an ORCID (two namespaces colliding in one unique column), hiding rules so they do not appear in other people's `GET /projects`, a "cannot be deleted" lifecycle rule — and, once projects become resources, a `Resource` row and ACL entries per user as well.
 
 **The one real gap is presentational.** If the UI organises everything by project, unattached data has nowhere to appear. That is a "My data" view, not a table: query resources whose owner is the caller. Note this must filter on the indexed `owner_user_id`, not `owner_orcid` — see `docs/schema_hygiene.md`, item 1, since `owner_user_id` needs to be made reliable first.
+
+Unattached resources are not the only thing a project-organised UI cannot show, and the full list matters before anyone concludes the "My data" view closes the gap. It is enumerated as item 5 of `docs/schema_hygiene.md`, along with the one case that is an outright defect rather than a presentation choice: `Sample.project_id` carries no foreign key, so it can hold a project ID that does not exist — a sample that looks filed but appears in no project view and in no "My data" view either.
 
 ### Sharing
 
@@ -354,7 +473,9 @@ The instrument ones are the most exposed: nothing currently prevents any authent
 
 **Publishing is the subtlest, and the redesign closes it without adding a check.** Today `public` is a plain pass-through field (`ri.public = ds.public`, `datasets.py:185` and `samples.py:198`) with no gate at all, so any user who can create or edit a resource can make it world-readable — a contributor on confidential or industry-partnered work can publish unilaterally. Once publishing becomes an ACL entry against the `public` group (see Core Concepts → Public resources), it is an ACL-management operation and therefore already requires `admin` on the resource. The gap closes as a consequence of the model rather than as a special case.
 
-**Unvalidated `instrument_name` creates access groups.** `create_dataset` looks the name up in the `Instrument` table (`datasets.py:164`) and sets `instrument_id = None` when there is no match — but then creates an access group from the raw string anyway (`datasets.py:197-201`) and writes an ACL entry for it. So `POST /datasets {"instrument_name": "xrd-typo"}` silently produces a permanent access group named `xrd-typo`. A typo pollutes the group table and attaches a meaningless ACL entry. The name should be validated against registered instruments.
+**Unvalidated `instrument_name` creates access groups.** `create_dataset` looks the name up in the `Instrument` table (`datasets.py:164`) and sets `instrument_id = None` when there is no match — but then creates an access group from the raw string anyway (`datasets.py:197-201`) and writes an ACL entry for it. So `POST /datasets {"instrument_name": "xrd-typo"}` silently produces a permanent access group named `xrd-typo`. A typo pollutes the group table and attaches a meaningless ACL entry.
+
+The fix is not validation bolted onto `create_dataset` — it is moving group creation to `POST /instruments`, so `create_dataset` only ever looks a group up and can reject an unregistered name outright. That is the same change required to bind service accounts to instruments; see Platform Access → Binding a service account to an instrument.
 
 `POST /projects` deserves a deliberate exception to this list. It has no check today, and that is arguably correct: ad-hoc single-member projects are the intended way to group personal work (see Projects → Personal workspaces). Requiring approval to create one would kill that workflow and push people back toward wanting automatic personal projects. Leave it open, knowingly.
 
@@ -374,9 +495,25 @@ Verified, and it affects both resource types. `PATCH /datasets/{dsid}` (`dataset
 
 So reassignment grants without revoking. The owner case is the sharpest: PATCHing `owner_orcid` is the closest thing to an ownership transfer the API has, and it leaves the resource with two owners and no way to remove the first.
 
-This is a correctness bug independent of the redesign, but it lands squarely in scope, because these are exactly the routes being migrated to `require_permission`. Each reassignment path needs a matching revoke, and the revoke must be careful: removing the old project's ACL entry is correct, but removing the old *owner's* entry is an ownership transfer and should follow whatever rule Future Work settles for that — not silently drop it as a side effect of a `PATCH`.
+### The fix: reassignment is not a field edit
 
-Until then, the safest interim behaviour is to reject an `owner_orcid` change through `PATCH` altogether and require the eventual explicit transfer route, rather than continue silently accumulating owners.
+The bug is not that the revoke was forgotten. It is that these operations were modelled as field assignments in the first place.
+
+`PATCH {"owner_orcid": "..."}` reads like a metadata correction, but it is a multi-table state transition: the new owner's ACL entry, the old owner's ACL entry, `owner_user_id`, `owner_orcid`, and `modification_time` all have to move together. It also carries a different authorization bar from the rest of the payload — editing a description needs `editor`, handing the resource to someone else needs `owner`. A single route that mixes both cannot express that in one check, which is exactly how the missing revoke slipped in.
+
+So these two fields leave `PATCH` entirely and become explicit transitions:
+
+| Route | Requires | Does |
+|---|---|---|
+| `POST /resources/{mfid}/transfer_ownership` | `owner` on the resource | Moves the `owner` ACL entry, updates `owner_user_id`/`owner_orcid`, touches `modification_time` — atomically |
+| `POST /resources/{mfid}/project` | `admin` on the resource, `>= contributor` in the target project | Adds the new project's ACL entry, removes the old one |
+
+`PATCH /datasets/{dsid}` and `PATCH /samples/{sample_id}` reject `owner_orcid` and `project_id` with `400` and a pointer to the right route. The instrument case stays on `PATCH` — an instrument group grant is not ownership, so re-pointing it is an ordinary edit — but it must revoke the old group's entry, which it currently does not.
+
+Three properties come out of this that the field-edit version could not provide: the revoke lives in one place per transition rather than being implied by an assignment; the authorization bar is stated per transition instead of averaged across a payload; and each transition is one obvious place to write a `DeletionAuditLog`-style record when permission-change auditing lands (Future Work).
+
+The cost is two new routes and a client-visible break for anyone currently PATCHing `owner_orcid` — worth knowing about, though that path is silently broken today anyway.
+
 
 ---
 
@@ -389,7 +526,10 @@ Until then, the safest interim behaviour is to reject an `owner_orcid` change th
 - [ ] `resourceacl` — add `role resource_role`
 - [ ] `resourceacl` — drop `read`/`write` **and their indexes** after migration
 - [ ] `resourceacl` — add covering index `(accessgroup_id, mfid, role)`
-- [ ] `user` — add `is_platform_admin BOOLEAN DEFAULT FALSE`
+- [ ] `CREATE TYPE platform_role AS ENUM ('none','support','admin')`
+- [ ] `user` — add `platform_role platform_role NOT NULL DEFAULT 'none'`
+- [ ] `useraccessgrouplink` — add partial unique index `one_owner_per_group` (pending the co-PI question)
+- [ ] `idtype` — backfill a `Resource` row per existing project, `resource_type='project'`
 - [ ] `instrument` — add `status VARCHAR DEFAULT 'active'`
 - [ ] `accessgroup` — insert the virtual `public` group row
 - [ ] `idtype` — drop `public` after the ACL rows are backfilled
@@ -444,7 +584,7 @@ class GroupMembership(NamedTuple):
 @dataclass(frozen=True)
 class Principal:
     user_id: str                     # ORCID — remains a plain string
-    is_platform_admin: bool
+    platform_role: PlatformRole      # 'none' | 'support' | 'admin'
     is_service_account: bool
     groups: tuple[GroupMembership, ...]
 
@@ -476,7 +616,7 @@ user_unique_id, ag_list = auth_res
 user_unique_id, ag_list = auth_res.user_id, auth_res.groups
 ```
 
-Every downstream use of both variables continues to work untouched, so this lands as a single reviewable commit where every hunk has the same shape. Routes then adopt `principal.is_platform_admin` and `principal.role_in(...)` gradually as they migrate to `require_permission`, deleting the destructuring line as they go.
+Every downstream use of both variables continues to work untouched, so this lands as a single reviewable commit where every hunk has the same shape. Routes then adopt `principal.platform_role` and `principal.role_in(...)` gradually as they migrate to `require_permission`, deleting the destructuring line as they go.
 
 The distinction that matters: a mechanical 106-site change is safe and reviewable; a semantic one is not. The incremental promise of this migration applies to permission *logic*, not to the type of the auth object — trying to keep the tuple shape forever costs more than changing it once.
 
@@ -494,14 +634,22 @@ No join against `useraccessgrouplink` is required in list queries.
 ### Routes
 
 - [ ] Create-on-behalf verification on `POST /datasets` and `POST /samples`
-- [ ] Relax `GET /users/{orcid}/projects` to any authenticated caller, public-safe fields
+- [ ] `GET /users/{orcid}/projects` — add the instrument-group branch, id and title only; do **not** open to all callers
 - [ ] Close the unguarded operations listed above
-- [ ] `POST/PATCH /projects/{proj_id}/users/{orcid}` — `role` param; require project `admin`
+- [ ] `POST/PATCH /projects/{proj_id}/users/{orcid}` — `role` param; require `>= editor`, capped at caller's own role
 - [ ] `GET /projects/{proj_id}/users` — include role
-- [ ] Migrate `_is_group_lead` and other `project_lead_orcid` checks to the `admin` role
+- [ ] Retire `Project.project_lead_orcid`: migrate `_is_group_lead` and the project-listing filter to an `owner` standing check, then drop the column
+- [ ] `POST /projects` — create the project's `Resource` row and its single ACL entry (own group at `owner`)
 - [ ] `POST /resources/{id}/share`, `DELETE /resources/{id}/share/{orcid}`
+- [ ] `POST /resources/{mfid}/transfer_ownership` — requires `owner`; moves the owner ACL entry and both owner columns atomically
+- [ ] `POST /resources/{mfid}/project` — requires `admin` on the resource and `>= contributor` in the target; adds the new project ACL entry and removes the old
+- [ ] `PATCH /datasets/{dsid}` and `PATCH /samples/{sample_id}` — reject `owner_orcid` and `project_id` with `400`; make the instrument-group change revoke the old entry
 - [ ] Replace global-admin deletion with `require_permission(..., 'delete')`
+- [ ] `POST /instruments` — create the instrument group and its `editor` ACL entry on the instrument resource
+- [ ] `POST/DELETE /instruments/{instrument_unique_id}/service_accounts/{sa_unique_id}` — bind an SA to an instrument; requires instrument `admin`
+- [ ] `POST /datasets` — reject unregistered `instrument_name` with `400` instead of creating a group
 - [ ] `GET /instruments` — default `status=active`; `PATCH` status gated to instrument `admin`/`owner`
+- [ ] `visibility` filter (`all`/`public`/`private`) on dataset and sample listings, replacing `?public=true`
 - [ ] Expose role in `GET /access_groups/{name}/users`
 
 ### Testing
@@ -560,15 +708,18 @@ This is the second payoff from `Principal`: a principal is a plain frozen value,
 **Routes are cut over all at once, not one at a time.** Two permission systems coexisting is its own hazard — anyone reading the code has to know which routes are on which check, and that ambiguity lasts as long as the migration does. A single maintainer on a rollback-capable deployment does not need per-route staging; what is needed instead is confidence *before* the cutover, which steps 4–6 provide.
 
 0. **Get the test suite green** (see Testing) — delete the empty files, move the benchmark scripts out, fix the stale username assertion, quarantine the two broken files. Nothing after this is verifiable until the baseline is clean.
-1. Add columns and the enum; backfill:
+0.5. **Run the counting queries first** — the public-column disagreement count (Public resources) and the dangling `Sample.project_id` count (`docs/schema_hygiene.md`, item 5). Both feed decisions in step 1, and both are cheap. A non-zero result on either needs resolving before anything is frozen into ACL rows.
+1. Add columns and the enums; backfill:
    - every existing project-group membership → `editor`
    - ORCID-group memberships → `owner`
-   - project leads → `admin`
+   - project leads → `owner` in their project group, then drop `Project.project_lead_orcid`
+   - a `Resource` row per existing project, plus one ACL entry each: the project's own group at `owner`
    - drop `read_only` ACL rows; drop `admin`-group ACL rows
    - remaining ACL rows → `admin` for project groups, `contributor` for instrument groups, `owner` for ORCID groups
-   - create the virtual `public` group; for every resource with `public=true`, insert `(mfid, public_group, viewer)`; then drop the `Resource.public` column
-2. Set `is_platform_admin=true` for existing platform admins
+   - create the virtual `public` group; insert `(mfid, public_group, viewer)` per public resource, taking `Dataset.public` as authoritative for datasets and `Resource.public` for samples; then drop both columns
+2. Set `platform_role='admin'` for existing platform admins
    - in the same pass, **remove every non-service-account member from instrument groups**, leaving each group holding only its SA (see Instruments). Confirm first that each affected human is either a platform admin or a member of the projects whose data they need, since this is the one backfill step that removes access people have today
+   - create the instrument group for any registered instrument that has none, so group existence stops depending on whether a dataset was ever filed against it
 3. **Introduce `Principal`** — one mechanical commit rewriting all 106 destructuring lines to `auth_res.user_id, auth_res.groups`. No logic changes, every hunk identical. Land and verify on its own.
 4. Add the pure `effective_role` and its exhaustive unit matrix, plus `require_permission` — not yet wired to any route
 5. Write the agreement tests: old check vs new check across the matrix, with deliberate exceptions enumerated
@@ -704,13 +855,9 @@ This should also **subsume the per-project `discoverable` flag** deferred during
 
 Naming is unresolved. "Private" is ambiguous (private from whom?), which is why the levels above describe policy rather than state. Worth settling before implementation.
 
-### Ownership transfer
+### Ownership transfer — policy questions
 
-When an owner leaves, their resources remain under their ORCID group, and only they can modify that ACL entry. Open questions: who may initiate a transfer (platform admins only, or project admins too); whether the previous owner retains a lower role; whether ownership can transfer to a group rather than an individual.
-
-### Projects as first-class resources
-
-`create_project()` does not create a `Resource` row, so projects have no MFID entry, no `creation_time`/`modification_time`, and cannot carry ACL entries or scientific metadata the way datasets and samples do. Fixing this touches ACL and deletion-filter assumptions that key off `Resource` rows existing.
+The *mechanism* is in phase 1 (`POST /resources/{mfid}/transfer_ownership`, see Reassignment). What stays open is policy: whether a platform admin may transfer on an unresponsive owner's behalf when someone leaves the lab; whether the previous owner is left at a lower role rather than dropped entirely; and whether ownership can rest with a group rather than an individual, which would matter for long-lived instrument or facility data. None of these block the route — they change its authorization branch and can be added without reshaping it.
 
 ### Authorizing on-behalf-of at shared machines
 
@@ -724,7 +871,7 @@ Platform-admin bypass and ACL modifications are currently indistinguishable from
 
 `project_id` currently does two jobs at once — it is the stable identity that every foreign key points at, *and* the human-readable label that appears in URLs and UI. Those pull in opposite directions the moment an admin wants to rename a project, and the model already solves this correctly one table over: `User` separates `unique_id` (ORCID, stable, what FKs reference) from `username` (mutable, unique, what people type). Projects should follow the same split.
 
-This converges with making projects first-class resources. A `Resource` row is keyed by `mfid`, and an mfid is immutable by definition — so a renameable `project_id` *cannot* be the mfid. Generating an mfid for projects and adding them to `idtype` is therefore one change, not two, and it is a prerequisite for renaming rather than a separate nicety.
+**Phase 1 delivers half of this already.** Making projects first-class resources gives every project an mfid and an `idtype` row, and an mfid is immutable by definition — so the stable identifier now exists. What stays deferred is *using* it: repointing the foreign keys off `project_id` and adding a rename path. The prerequisite is done, the migration is not.
 
 What a rename would touch, once identity moves to the mfid:
 

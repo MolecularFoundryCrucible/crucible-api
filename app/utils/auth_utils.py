@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Optional
 import logging
 import re
 import os
@@ -20,7 +20,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.general_utils import  get_secret
 from app.api.dependencies import get_engine, get_api_path, get_api_url
 from app.models.core_models import ApiToken
-from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
+from app.utils.permissions import (
+    PUBLIC_GROUP_NAME, GroupMembership, PlatformRole, Principal, Role)
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import join
@@ -42,6 +43,12 @@ _AUTH_CACHE_TTL = int(os.environ.get("AUTH_CACHE_TTL", "60"))
 _AUTH_CACHE_MAXSIZE = int(os.environ.get("AUTH_CACHE_MAXSIZE", "10000"))
 _auth_cache = TTLCache(maxsize=_AUTH_CACHE_MAXSIZE, ttl=_AUTH_CACHE_TTL)
 _auth_cache_lock = threading.Lock()
+
+
+# Resolved once per process: the public group row is created by the phase 1
+# migration and never changes.
+_UNSET = object()
+_PUBLIC_GROUP_ID = _UNSET
 
 
 def _standing(value) -> Role:
@@ -241,17 +248,48 @@ def load_principal(session, orcid: str) -> Principal:
         .where(UserAccessGroupLink.user_id == user.id)
     ).all()
 
+    groups = [
+        GroupMembership(id=gid, group_name=name, role=_standing(role))
+        for gid, name, role in rows
+    ]
+
+    # Inject the virtual public group. Membership is never stored — every
+    # principal is in it, always at viewer, so min() caps any grant at viewer
+    # and world-writable stays unrepresentable.
+    #
+    # This is what preserves the old `Resource.public == True` shortcut: the
+    # pre-role check granted read to anyone on a public resource, and without
+    # this injection everyone would lose that at cutover. Anything enumerating
+    # "which groups am I in" must use Principal.real_group_names().
+    public_id = _public_group_id(session)
+    if public_id is not None and not any(g.id == public_id for g in groups):
+        groups.append(GroupMembership(id=public_id, group_name=PUBLIC_GROUP_NAME,
+                                      role=Role.VIEWER))
+
     # Materialize to plain, immutable data so the cached value is safe to share
     # across threads and doesn't depend on the closed session.
     return Principal(
         user_id=orcid,
         platform_role=_platform_role(user.platform_role),
         is_service_account=bool(user.is_service_account),
-        groups=tuple(
-            GroupMembership(id=gid, group_name=name, role=_standing(role))
-            for gid, name, role in rows
-        ),
+        groups=tuple(groups),
     )
+
+
+def _public_group_id(session) -> Optional[int]:
+    """Id of the virtual public group, cached for the process.
+
+    The row is created by the phase 1 migration and never changes. Returns None
+    before that migration has run, which makes injection a no-op rather than an
+    error on an un-migrated database.
+    """
+    global _PUBLIC_GROUP_ID
+    if _PUBLIC_GROUP_ID is _UNSET:
+        from app.models.core_models import AccessGroup
+        _PUBLIC_GROUP_ID = session.exec(
+            select(AccessGroup.id).where(AccessGroup.group_name == PUBLIC_GROUP_NAME)
+        ).first()
+    return _PUBLIC_GROUP_ID
 
 
 def require_read_access(session, mfid: str, ag_ids: list):

@@ -22,6 +22,7 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
+from app.utils.permissions import Principal
 from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.models.users import UserPublicRead
@@ -33,8 +34,8 @@ API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 @router.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model=SampleLink)
-def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    _, ag_list = auth_res
+def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -62,8 +63,8 @@ def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annota
 
 
 @router.delete("/samples/{parent_sample_id}/children/{child_sample_id}")
-def unlink_sample_parent_child(parent_sample_id: str, child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    _, ag_list = auth_res
+def unlink_sample_parent_child(parent_sample_id: str, child_sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -92,12 +93,12 @@ def unlink_sample_parent_child(parent_sample_id: str, child_sample_id: str, auth
 
 
 @router.patch('/samples/{sample_id}', response_model=SampleResponse)
-def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id: str, updated_sample: SampleUpdate,
+def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sample_id: str, updated_sample: SampleUpdate,
                   background_tasks: BackgroundTasks):
     '''
     Partially update a sample record. Only provided fields are modified.
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -139,13 +140,13 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
 
 
 @router.post("/samples", response_model=SampleResponse)
-def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: SampleCreate,
+def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: SampleCreate,
                   background_tasks: BackgroundTasks):
     '''
     Create a new sample. If a sample with the same project_id and sample_name already
     exists, the existing record is returned without modification.
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     if not S.sample_name.strip():
@@ -216,7 +217,7 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
 
 
 @router.get("/samples", response_model=PaginatedResponse[SampleResponse])
-def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
+def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
                  include_metadata: bool = False,
                  include_links: bool = False,
                  include_datasets: bool = False,
@@ -247,7 +248,7 @@ def list_samples(auth_res: Annotated[tuple, Depends(authorize_user)], request: R
         warnings.warn("include_datasets is deprecated, use include_links=true instead", DeprecationWarning)
         include_links = True
 
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     params_dict = dict(request.query_params)
@@ -389,7 +390,7 @@ def _sample_base_query(ag_ids: list):
 
 @router.get("/samples/search", response_model=PaginatedResponse[SampleResponse])
 def search_samples(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     q: str = Query(min_length=3, description="Search term matched against sample_name."),
     project_id: Optional[str] = None,
     limit: int = Query(default=20, ge=1, le=50),
@@ -398,7 +399,7 @@ def search_samples(
     Search samples by name. Returns results ordered by match quality (exact → prefix → substring).
     Optionally scope to a project with ?project_id=. Maximum 50 results.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -423,12 +424,12 @@ def search_samples(
 
 
 @router.get("/samples/{sample_id}", response_model=SampleResponse)
-def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], include_links: bool = False, include_metadata: bool = False, include_owner: bool = False):
+def read_sample(sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)], include_links: bool = False, include_metadata: bool = False, include_owner: bool = False):
     '''
     Returns the sample for the provided ID.
     Pass include_links=true to include parent, child, and associated resources.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         # get with metadata or not
@@ -487,11 +488,11 @@ def read_sample(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_use
 
 
 @router.get("/samples/{sample_id}/datasets")
-def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], request: Request, include_metadata: bool = False, limit: Optional[int] = None):
+def list_sample_datasets(sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)], request: Request, include_metadata: bool = False, limit: Optional[int] = None):
     '''
     Returns a list of all datasets linked to a given sample
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     params_dict = dict(request.query_params)
@@ -553,7 +554,7 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[tuple, Depends(auth
 
 
 @router.get("/samples/{child_sample_id}/parents", response_model=PaginatedResponse[SampleRead])
-def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+def list_parent_samples(child_sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                         limit: int = Query(default=100, ge=1, le=1000),
                         offset: int = Query(default=0, ge=0)):
     '''
@@ -576,7 +577,7 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[tuple, Depends
 
 
 @router.get("/samples/{parent_sample_id}/children", response_model=PaginatedResponse[SampleRead])
-def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+def list_child_samples(parent_sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                        limit: int = Query(default=100, ge=1, le=1000),
                        offset: int = Query(default=0, ge=0)):
     '''
@@ -598,13 +599,13 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[tuple, Depends
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 @router.get("/samples/{sample_id}/sample_graph")
-def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def sample_graph(sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     Returns a NetworkX node-link graph of all samples connected (via parent/child
     relationships) to the given sample. Loads all samples in the project and
     returns the directed lineage subgraph (ancestors + descendants) of the target.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -651,13 +652,13 @@ def sample_graph(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_us
 
 
 @router.get("/samples/{sample_id}/sample_graph_cte")
-def sample_graph_cte(sample_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def sample_graph_cte(sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     CTE-based implementation (kept for reference). Prefer /sample_graph.
     Returns a NetworkX node-link graph of all samples connected (via parent/child
     relationships) to the given sample, i.e. its full lineage subgraph.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:

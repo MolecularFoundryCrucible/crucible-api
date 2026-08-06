@@ -12,6 +12,7 @@ from app.models.join_requests import JoinRequestCreate, JoinRequestRead, JoinReq
 from app.models.pagination import PaginatedResponse
 from app.models.users import UserRead
 from app.utils.auth_utils import authorize_user, require_admin, require_groups
+from app.utils.permissions import Principal
 from app.utils.project_utils import sql_add_user_to_project
 
 router = APIRouter(tags=["access_groups"])
@@ -32,8 +33,8 @@ def _led_group_names(user_unique_id: str, session: Session) -> List[str]:
 
 
 @router.post("/access_groups", response_model=AccessGroupRead)
-def create_access_group(auth_res: Annotated[tuple, Depends(authorize_user)], ag: AccessGroupCreate):
-    _, ag_list = auth_res
+def create_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], ag: AccessGroupCreate):
+    ag_list = auth_res.groups
     require_groups(ag_list)
     if not ag.group_name.strip():
         raise HTTPException(status_code=400, detail="group_name must not be empty.")
@@ -47,8 +48,8 @@ def create_access_group(auth_res: Annotated[tuple, Depends(authorize_user)], ag:
 
 
 @router.get("/access_groups/{group_name}", response_model=Union[None, AccessGroupRead])
-def read_access_group(auth_res: Annotated[tuple, Depends(authorize_user)], group_name: str):
-    _, ag_list = auth_res
+def read_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], group_name: str):
+    ag_list = auth_res.groups
     require_groups(ag_list)
     with Session(engine) as session:
         return session.exec(
@@ -57,9 +58,9 @@ def read_access_group(auth_res: Annotated[tuple, Depends(authorize_user)], group
 
 
 @router.get("/access_groups/{group_name}/users", response_model=List[UserRead])
-def list_access_group_users(auth_res: Annotated[tuple, Depends(authorize_user)], group_name: str):
+def list_access_group_users(auth_res: Annotated[Principal, Depends(authorize_user)], group_name: str):
     '''List all users who are members of the given access group. Admin only.'''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_admin(ag_list)
 
     with Session(engine) as session:
@@ -79,15 +80,14 @@ def list_access_group_users(auth_res: Annotated[tuple, Depends(authorize_user)],
 def request_to_join_access_group(
     group_name: str,
     body: JoinRequestCreate,
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
     '''
     Request to join an access group (currently only projects). Blocked if the
     caller is already a member or already has a pending request for this group.
     Resubmission is allowed after a request has been rejected or approved.
     '''
-    user_unique_id, _ = auth_res
-
+    user_unique_id = auth_res.user_id
     with Session(engine) as session:
         proj = session.exec(select(Project).where(Project.project_id == group_name)).one_or_none()
         if proj is None:
@@ -129,7 +129,7 @@ def request_to_join_access_group(
 
 @router.get("/join_requests", response_model=PaginatedResponse[JoinRequestRead])
 def list_join_requests(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     group_name: Optional[str] = None,
     status: Optional[str] = None,
     requester_id: Optional[str] = None,
@@ -146,7 +146,7 @@ def list_join_requests(
       for someone leading multiple projects to fetch all their pending
       requests in one call instead of one request per project.
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     is_admin = any(ag.group_name == 'admin' for ag in ag_list)
 
     with Session(engine) as session:
@@ -177,13 +177,13 @@ def list_join_requests(
 @router.get("/join_requests/{request_id}", response_model=JoinRequestRead)
 def get_join_request(
     request_id: int,
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
     '''
     Fetch a single join request by id. Visible to admins, the lead of the
     request's group, or the user who submitted it.
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     is_admin = any(ag.group_name == 'admin' for ag in ag_list)
 
     with Session(engine) as session:
@@ -203,14 +203,14 @@ def get_join_request(
 def review_join_request(
     request_id: int,
     body: JoinRequestReview,
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
     '''
     Approve or reject a pending join request. Admin or the lead of the
     request's group only. Approving adds the requester to the group's
     project membership and access group.
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     is_admin = any(ag.group_name == 'admin' for ag in ag_list)
 
     with Session(engine) as session:

@@ -114,6 +114,17 @@ def migrated():
     with Session(engine) as session:
         _seed(session)
 
+    # create_all emits the new columns as VARCHAR, because the models declare
+    # them as str so SQLite-backed tests still work. Production's tables predate
+    # those columns entirely, so drop them here — after seeding, which needs the
+    # ORM — to reproduce the state the migration actually runs against.
+    # Otherwise ADD COLUMN IF NOT EXISTS silently skips and the column never
+    # becomes the enum type.
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE useraccessgrouplink DROP COLUMN IF EXISTS role"))
+        conn.execute(text("ALTER TABLE resourceacl DROP COLUMN IF EXISTS role"))
+        conn.execute(text('ALTER TABLE "user" DROP COLUMN IF EXISTS platform_role'))
+
     # Execute the file as one script rather than splitting on ';' — it contains
     # a DO $$ ... $$ block whose body has its own semicolons, and its own
     # BEGIN/COMMIT. This is also closer to how it runs in production (psql -f).
@@ -283,6 +294,49 @@ def test_one_owner_per_group_is_enforced(migrated):
                 VALUES (:u, :g, 'owner')
             """), {"u": uid, "g": gid})
             session.flush()
+
+
+class TestLoadPrincipal:
+    """The real auth-path query, against post-migration data. Route tests
+    override authorize_user, so nothing else exercises this."""
+
+    def _load(self, engine, orcid):
+        from app.utils.auth_utils import load_principal
+        with Session(engine) as session:
+            return load_principal(session, orcid)
+
+    def test_reads_standings_from_the_link_table(self, migrated):
+        p = self._load(migrated, LEAD)
+        assert p.role_in("proj_x") is Role.OWNER
+        assert p.role_in(LEAD) is Role.OWNER
+
+    def test_member_standing_is_editor_after_backfill(self, migrated):
+        assert self._load(migrated, MEMBER).role_in("proj_x") is Role.EDITOR
+
+    def test_platform_role_is_carried(self, migrated):
+        assert self._load(migrated, PLATFORM_ADMIN).platform_role is PlatformRole.ADMIN
+        assert self._load(migrated, MEMBER).platform_role is PlatformRole.NONE
+
+    def test_service_account_flag_is_carried(self, migrated):
+        assert self._load(migrated, SA).is_service_account is True
+        assert self._load(migrated, LEAD).is_service_account is False
+
+    def test_staff_lost_the_instrument_group(self, migrated):
+        assert self._load(migrated, STAFF).role_in("xrd-1") is None
+
+    def test_agrees_with_the_acl_rows(self, migrated):
+        """The loaded principal must resolve the same effective role as one
+        assembled by hand from the same tables."""
+        for orcid in (LEAD, MEMBER, SA):
+            for mfid in ("ds-pub", "ds-priv", "proj_x"):
+                assert (effective_role(self._load(migrated, orcid), acl_for(migrated, mfid))
+                        == effective_role(principal_for(migrated, orcid), acl_for(migrated, mfid)))
+
+    def test_principal_is_hashable_so_it_can_be_cached(self, migrated):
+        """authorize_user stores the result in a TTLCache shared across
+        threads; a mutable value there would be a data race."""
+        p = self._load(migrated, LEAD)
+        assert hash(p) == hash(self._load(migrated, LEAD))
 
 
 def test_backfill_is_idempotent(migrated):

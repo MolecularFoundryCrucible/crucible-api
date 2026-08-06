@@ -13,6 +13,7 @@ from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
 from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead, UploadMultipartInitiateRead
 from app.utils.auth_utils import authorize_user, require_read_access, require_write_access
+from app.utils.permissions import Principal
 from app.utils.sql_utils import add_or_update
 
 router = APIRouter(tags=["storage"])
@@ -181,7 +182,7 @@ def _create_upload_session(
 
 @router.post("/datasets/{dsid}/upload/initiate", response_model=UploadInitiateRead)
 def initiate_resumable_upload(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: str,
     body: UploadInitiate,
 ):
@@ -191,7 +192,7 @@ def initiate_resumable_upload(
     (no API credentials needed for the chunk transfers).
     Call POST /datasets/{dsid}/upload/complete when all chunks are uploaded.
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     result = _validate_and_prepare_upload(dsid, body, user_unique_id, ag_ids)
@@ -228,7 +229,7 @@ def initiate_resumable_upload(
 
 @router.post("/datasets/{dsid}/upload/initiate/multipart", response_model=UploadMultipartInitiateRead)
 def initiate_multipart_upload(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: str,
     body: UploadInitiate,
 ):
@@ -238,7 +239,7 @@ def initiate_multipart_upload(
     Returns upload_id — pass it to POST /datasets/{dsid}/upload/complete after the transfer.
     If existing_file is set, the file already exists; skip the upload entirely.
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     result = _validate_and_prepare_upload(dsid, body, user_unique_id, ag_ids)
@@ -265,7 +266,7 @@ def initiate_multipart_upload(
 
 @router.post("/datasets/{dsid}/upload/complete", response_model=AssociatedFileRead)
 def complete_resumable_upload(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: str,
     body: UploadComplete,
 ):
@@ -274,7 +275,7 @@ def complete_resumable_upload(
     Verifies the blob landed in GCS, registers it as an AssociatedFile on the dataset,
     and deletes the upload session record.
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:

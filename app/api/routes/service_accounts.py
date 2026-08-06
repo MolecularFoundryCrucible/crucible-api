@@ -7,6 +7,7 @@ from app.api.dependencies import get_engine
 from app.models.core_models import AccessGroup, User, UserAccessGroupLink
 from app.models.users import ServiceAccountCreate, ServiceAccountRead
 from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_admin
+from app.utils.permissions import Principal
 from app.utils.sql_utils import add_or_update
 from app.utils.user_utils import assert_username_available
 
@@ -16,7 +17,7 @@ engine = get_engine()
 
 @router.post("/service_accounts", response_model=ServiceAccountRead)
 def create_service_account(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     body: ServiceAccountCreate,
 ):
     '''
@@ -25,7 +26,7 @@ def create_service_account(
     unique_id is optional; if omitted the server generates an mfid.
     Admin only.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_admin(ag_list)
 
     with Session(engine) as session:
@@ -72,7 +73,7 @@ def create_service_account(
 
 @router.post("/service_accounts/{unique_id}/rotate_key", response_model=ServiceAccountRead)
 def rotate_service_account_key(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     unique_id: str,
 ):
     '''
@@ -80,7 +81,7 @@ def rotate_service_account_key(
     The new key is only returned once — store it securely.
     Admin only.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_admin(ag_list)
 
     with Session(engine) as session:

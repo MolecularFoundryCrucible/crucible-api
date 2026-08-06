@@ -12,6 +12,16 @@
 --
 -- The one_owner_per_group index is NOT created here. It belongs at the end of
 -- the backfill, once every standing has been assigned.
+--
+-- WARNING for fresh environments. The SQLModel models declare role and
+-- platform_role as str, so that SQLite-backed tests can create the tables.
+-- That means SQLModel.metadata.create_all() against an empty Postgres produces
+-- VARCHAR columns, and the ADD COLUMN IF NOT EXISTS statements below then
+-- silently do nothing — leaving a database whose columns are the wrong type
+-- and whose ::resource_role casts fail. Bootstrapping a new environment must
+-- run this file against tables that do not yet have these columns, or drop
+-- them first. Existing databases are unaffected: their tables predate the
+-- columns entirely.
 
 BEGIN;
 

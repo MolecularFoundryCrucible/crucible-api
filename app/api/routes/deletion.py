@@ -13,6 +13,7 @@ from app.models.core_models import Dataset, DeletionAuditLog, DeletionRequest, R
 from app.models.deletion import DeletionAuditLogRead, DeletionRequestRead
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_admin, require_groups
+from app.utils.permissions import Principal
 from app.utils.sql_utils import touch_resource_modification_time
 from app.general_utils import get_utc_isoformat
 
@@ -46,12 +47,12 @@ def _to_read(req: DeletionRequest, session: Session) -> DeletionRequestRead:
 # ---------------------------------------------------------------------------
 @router.get("/deletion_requests", response_model=PaginatedResponse[DeletionRequestRead])
 def list_deletion_requests(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     status: Optional[str] = None,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ):
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_groups(ag_list)
     with Session(engine) as session:
         count_query = select(func.count(DeletionRequest.id))
@@ -72,10 +73,10 @@ def list_deletion_requests(
 # ---------------------------------------------------------------------------
 @router.get("/deletion_requests/{request_id}", response_model=DeletionRequestRead)
 def get_deletion_request(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     request_id: int,
 ):
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_groups(ag_list)
     with Session(engine) as session:
         req = session.exec(
@@ -94,12 +95,12 @@ def get_deletion_request(
 # ---------------------------------------------------------------------------
 @router.patch("/deletion_requests/{request_id}", response_model=DeletionRequestRead)
 def review_deletion_request(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     request_id: int,
     status: str,                          # must be "approved" or "rejected"
     reviewer_notes: Optional[str] = None,
 ):
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     require_groups(ag_list)
     if status not in ("approved", "rejected"):
         raise HTTPException(status_code=422, detail="status must be 'approved' or 'rejected'.")
@@ -184,14 +185,14 @@ def review_deletion_request(
 @router.delete("/resources/{resource_id}")
 def hard_delete_resource_route(
     resource_id: str,
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     force: bool = False,
 ):
     """
     Hard-delete a resource and all related data. Admin only.
     Requires an approved deletion request unless ?force=true.
     """
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     require_admin(ag_list)
 
     with Session(engine) as session:
@@ -249,14 +250,14 @@ def hard_delete_resource_route(
 # ---------------------------------------------------------------------------
 @router.get("/deletion_audit", response_model=PaginatedResponse[DeletionAuditLogRead])
 def list_deletion_audit(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     resource_id: Optional[str] = None,
     requester_id: Optional[str] = None,
     reviewer_id: Optional[str] = None,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ):
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_admin(ag_list)
     with Session(engine) as session:
         count_query = select(func.count(DeletionAuditLog.id))
@@ -283,10 +284,10 @@ def list_deletion_audit(
 # ---------------------------------------------------------------------------
 @router.get("/deletion_audit/{audit_id}", response_model=DeletionAuditLogRead)
 def get_deletion_audit(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     audit_id: int,
 ):
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_admin(ag_list)
     with Session(engine) as session:
         entry = session.exec(

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.general_utils import get_secret
 from app.models.ai import ExtractMetadataRequest
 from app.utils.auth_utils import authorize_user
+from app.utils.permissions import Principal
 
 router = APIRouter(tags=["ai"])
 
@@ -33,7 +34,7 @@ SYSTEM_PROMPT = (
 
 @router.post("/extract_metadata")
 def extract_metadata(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     body: ExtractMetadataRequest,
 ):
     """

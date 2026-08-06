@@ -36,8 +36,12 @@ def _make_mock_dataset(dsid="ds-001"):
 
 
 def _fake_auth():
-    """Dependency override: skip real auth, return a test user."""
-    return ('user-orcid-001', [MagicMock(id=1)])
+    """Dependency override: skip real auth, return a test principal."""
+    from app.utils.permissions import GroupMembership, Principal, Role
+    return Principal(
+        user_id='user-orcid-001',
+        groups=(GroupMembership(id=1, group_name='test_group', role=Role.OWNER),),
+    )
 
 
 class TestInitiateMultipartUpload:

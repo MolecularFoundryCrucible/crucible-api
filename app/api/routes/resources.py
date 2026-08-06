@@ -27,6 +27,7 @@ from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_groups, require_read_access, require_write_access
+from app.utils.permissions import Principal
 from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
 
@@ -89,7 +90,7 @@ def _fetch_links(session, resource_type: str, entity) -> List[LinkedResource]:
 
 @router.get("/resources/metadata/search", response_model=PaginatedResponse[ResourceSearchResult])
 def search_resource_metadata_v2(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     q: str = Query(min_length=3, description="Full-text search against scientific metadata content."),
     limit: int = Query(default=20, ge=1, le=50),
 ):
@@ -97,7 +98,7 @@ def search_resource_metadata_v2(
     Search resources by scientific metadata content using full-text search.
     Returns a unified structure compatible with other search endpoints, including scientific_metadata.
     """
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     search_query = func.plainto_tsquery('english', q)
@@ -173,7 +174,7 @@ def search_resource_metadata_v2(
 
 
 @router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse, InstrumentResponse, ProjectWithLead])
-def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_id: str,
+def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resource_id: str,
                  include_metadata: bool = False, include_links: bool = False,
                  include_owner: bool = False):
     """
@@ -182,7 +183,7 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
     Pass include_metadata=true to include scientific metadata.
     Pass include_links=true to include parent/child/associated resources (datasets and samples only).
     """
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -283,12 +284,12 @@ def get_resource(auth_res: Annotated[tuple, Depends(authorize_user)], resource_i
 
 
 @router.get("/resources/{resource_id}/links", response_model=List[LinkedResource])
-def get_resource_links(resource_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def get_resource_links(resource_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     """
     Returns the immediate links for a resource (dataset or sample):
     parent/child via lineage and associated resources.
     """
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -315,8 +316,8 @@ def get_resource_links(resource_id: str, auth_res: Annotated[tuple, Depends(auth
 
 
 @router.get("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
-def read_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str):
-    _, ag_list = auth_res
+def read_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: str):
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         resource = session.exec(
@@ -336,9 +337,9 @@ def read_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], 
 
 
 @router.post("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
-def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md: dict,
+def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: str, scientific_md: dict,
                              background_tasks: BackgroundTasks, overwrite: bool = False):
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -378,9 +379,9 @@ def create_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
 
 
 @router.patch("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
-def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)], unique_id: str, scientific_md_updates: dict,
+def update_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: str, scientific_md_updates: dict,
                              background_tasks: BackgroundTasks):
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -416,7 +417,7 @@ def update_resource_metadata(auth_res: Annotated[tuple, Depends(authorize_user)]
 
 @router.post("/resources/{resource_id}/delete", response_model=DeletionRequestRead)
 def create_deletion_request(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     resource_id: str,
     reason: Optional[str] = None,
 ):
@@ -424,8 +425,7 @@ def create_deletion_request(
     Request deletion of a resource. Any authenticated user with access to the resource may submit.
     Returns 409 if an active deletion request already exists for this resource.
     '''
-    requester_id, _ = auth_res
-
+    requester_id = auth_res.user_id
     with Session(engine) as session:
         resource = session.exec(
             select(Resource).where(Resource.mfid == resource_id)
@@ -476,8 +476,8 @@ def create_deletion_request(
 
 
 @router.get("/resources/{mfid}/access_groups", response_model=List[AccessGroupRead])
-def read_resource_acl(mfid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    _, ag_list = auth_res
+def read_resource_acl(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    ag_list = auth_res.groups
     require_groups(ag_list)
     with Session(engine) as session:
         # Verify resource exists
@@ -497,8 +497,8 @@ def read_resource_acl(mfid: str, auth_res: Annotated[tuple, Depends(authorize_us
 
 
 @router.post("/resources/{mfid}/access_groups", response_model=ResourceACL)
-def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    _, ag_list = auth_res
+def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    ag_list = auth_res.groups
     require_groups(ag_list)
     with Session(engine) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()

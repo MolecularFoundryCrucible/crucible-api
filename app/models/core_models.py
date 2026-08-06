@@ -164,6 +164,10 @@ class ResourceACL(SQLModel, table=True):
     )
     read: bool = Field(index=True)
     write: bool = Field(index=True)
+    # Postgres enum resource_role; declared as str so SQLite-backed tests can
+    # still create the table. Converted with Role.from_db on read.
+    # read/write stay until phase 5 — see docs/permission_system_plan.md.
+    role: Optional[str] = Field(default=None)
 
     accessgroup: "AccessGroup" = Relationship(back_populates="acl")
 
@@ -175,6 +179,8 @@ class UserAccessGroupLink(SQLModel, table=True):
     accessgroup_id: Optional[int] = Field(
         default=None, foreign_key="accessgroup.id", primary_key=True
     )
+    # Standing in the group, not a grant. Postgres enum resource_role.
+    role: Optional[str] = Field(default=None)
 
 
 class AccessGroup(SQLModel, table=True):
@@ -201,6 +207,8 @@ class User(SQLModel, table=True):
     unique_id: str = Field(sa_column=Column("orcid", String, index=True, unique=True))
     is_service_account: Optional[bool] = Field(default=False)
     username: Optional[str] = Field(default=None, max_length=32, index=True)
+    # Platform-wide bypass, deliberately not a group. Postgres enum platform_role.
+    platform_role: Optional[str] = Field(default="none")
     projects: List["Project"] = Relationship(back_populates="users", link_model=UserProjectLink)
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
 

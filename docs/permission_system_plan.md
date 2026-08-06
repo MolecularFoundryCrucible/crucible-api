@@ -666,29 +666,28 @@ No join against `useraccessgrouplink` is required in list queries.
 
 A change touching 70+ authorization call sites currently has **no regression coverage on authorization at all**, and the suite it would land in is already red.
 
-#### Current state
+#### Baseline — done
 
-| File | Reality |
-|---|---|
-| `test_datasets.py`, `test_users.py` | empty — 0 lines |
-| `test_graph_diff.py`, `test_graph_speed.py` | scripts and benchmarks; 0 test functions, collected anyway |
-| `test_datasets_endpoints.py` | 21 failed / 1 passed — mocks `app.api.main.Session`, which no longer exists |
-| `test_gcs_multipart_endpoint.py` | 6 errors on collection |
-| `test_username_utils.py` | 19 passed / 1 failed |
-| `test_associated_file_remote_backend.py` | 8 passed |
+The suite was **28 passed, 22 failed, 6 errors**. It is now **34 passed, 0 failed, 0 errors**. What that took, and what it cost:
 
-Totals: **28 passed, 22 failed, 6 errors.** Four real test files, two of them broken.
+| File | Was | Now |
+|---|---|---|
+| `test_datasets.py`, `test_users.py` | empty — 0 lines | deleted |
+| `test_graph_diff.py`, `test_graph_speed.py` | CLI scripts needing a live API; 0 test functions, collected anyway | moved to `scripts/` |
+| `test_datasets_endpoints.py` | 21 failed / 1 passed | **deleted** — see below |
+| `test_gcs_multipart_endpoint.py` | 6 collection errors | 6 passed |
+| `test_username_utils.py` | 19 passed / 1 failed | 20 passed |
+| `test_associated_file_remote_backend.py` | 8 passed | 8 passed |
 
-The single username failure is a stale test, not a bug — `validate_username_format` lowercases before validating, so uppercase input normalizes rather than raising, which is the intended case-normalization behaviour. The assertion needs updating, one line.
+Two of these were worth understanding rather than just fixing.
 
-#### Red as the normal state is the actual problem
+**The GCS errors were self-inflicted and were hiding a real failure.** `tests/conftest.py` imports `app.api.main` at module scope, registering every SQLModel table before that file's fixture purged `sys.modules` to re-import under patches. The `MetaData` survives the purge, so the re-import raised `Table 'datasetkeywordlink' is already defined`. The purge existed only to patch a module-level `engine = get_engine()`; assigning `gcs_storage.engine` after a normal import does the same job and is what `conftest` already does for other route modules. Underneath the errors sat a genuine failure: `AssociatedFileRead` gained `storage_backend` and `access_note`, which that test's `MagicMock` did not set.
 
-With 22 failures and 6 errors as the baseline, a new break is indistinguishable from background noise. Adding good permission tests to a suite that is already red buys very little, because the signal is gone. **Reaching green is a precondition**, and most of the route there is deletion rather than repair:
+**`test_datasets_endpoints.py` was deleted, not repaired.** It patches `app.api.main.Session`, `app.api.main.sql_create_ds_acl`, and `app.api.main.Path`. Routes moved out of `main.py` long ago, and `sql_create_ds_acl` no longer exists anywhere — it is now `create_standard_acls`. Retargeting the patches to `app.api.routes.datasets` was tried and recovers 1 of 22, so this is a dead API surface rather than a moved module. It had not run since 2025-09.
 
-- [ ] delete the two empty files
-- [ ] move the two script/benchmark files out of `tests/` so pytest stops collecting them
-- [ ] fix the stale username assertion
-- [ ] quarantine `test_datasets_endpoints.py` and `test_gcs_multipart_endpoint.py` with a stated reason — they mock a module structure that no longer exists, so they are artifacts rather than tests pending an update. Rewriting them against the current fixtures is genuine work and should not block this.
+> **Deliverable, phase 2: replace that coverage.** Deleting 21 tests removes no signal — they were not running — but it does leave the dataset routes uncovered, and that gap must not survive quietly. Rewrite them against the `conftest` fixtures as part of the phase-2 test work, where they belong anyway: the deleted versions asserted on mock call patterns rather than behaviour, which is why they would never have caught the reassignment-never-revokes bug or the uncommitted `POST /resources/{mfid}/access_groups`. Both were found by reading code.
+
+Green is not the finish line, it is the precondition — with a red baseline, a new break is indistinguishable from background noise, so permission tests added to it would buy very little.
 
 #### Keep the decision logic pure
 
@@ -740,7 +739,7 @@ Shadow mode is safe in production by construction: it computes both answers, ret
 
 ### Phase 0 — baseline
 
-0. **Get the test suite green** (see Testing) — delete the empty files, move the benchmark scripts out, fix the stale username assertion, quarantine the two broken files. Nothing after this is verifiable until the baseline is clean.
+0. ~~**Get the test suite green**~~ — **done.** 34 passed, 0 failed, 0 errors. See Testing → Baseline for what was deleted and the phase-2 deliverable that replaces it.
 0.5. **Run the counting queries** — the public-column disagreement count (Public resources), the dangling `Sample.project_id` count (`docs/schema_hygiene.md`, item 5), and the `read`/`write` distribution below. All three feed decisions in phase 1, and a non-zero result on the first two needs resolving before anything is frozen into ACL rows.
 
 ### Phase 1 — expand (staging first, then production)

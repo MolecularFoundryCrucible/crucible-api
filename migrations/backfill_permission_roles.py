@@ -325,12 +325,36 @@ def create_owner_index(session):
     print("  index created")
 
 
+PRODUCTION_DB = "crucible"
+
+
+def confirm_target(session, allow_production: bool) -> str:
+    """Ask the server which database this actually is.
+
+    Production and staging live on the same Cloud SQL instance as `crucible`
+    and `crucible-staging`, with the same user and the same host, so the only
+    thing separating them is one config value. Trusting DB_CONF_FILE is not
+    good enough for a script that deletes ACL rows.
+    """
+    actual = session.execute(text("SELECT current_database()")).scalar()
+    user = session.execute(text("SELECT current_user")).scalar()
+    print(f"connected to  : {actual!r} as {user!r}")
+
+    if actual == PRODUCTION_DB and not allow_production:
+        print(f"\nREFUSING TO RUN: {actual!r} is production.")
+        print("Re-run with --yes-this-is-production if that is genuinely intended.")
+        raise SystemExit(2)
+    return actual
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--commit", action="store_true",
                         help="apply the backfill; without it everything is rolled back")
     parser.add_argument("--skip-index", action="store_true",
                         help="skip one_owner_per_group (use if co-PIs are permitted)")
+    parser.add_argument("--yes-this-is-production", action="store_true",
+                        help=f"required to run against the {PRODUCTION_DB!r} database")
     args = parser.parse_args()
 
     engine = get_engine()
@@ -339,6 +363,7 @@ def main():
     print(f"mode: {mode}")
 
     with Session(engine) as session:
+        confirm_target(session, args.yes_this_is_production)
         report_group_kinds(session)
         backfill_standings(session)
         create_project_resources(session)

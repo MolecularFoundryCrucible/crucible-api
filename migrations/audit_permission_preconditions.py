@@ -175,6 +175,11 @@ def main():
     print("read-only; nothing is written")
 
     with Session(engine) as session:
+        # Production and staging are the same instance, differing only by
+        # database name, so report what the server says rather than what the
+        # config claims.
+        actual = session.execute(text("SELECT current_database()")).scalar()
+        print(f"connected to  : {actual!r}")
         public_drift = check_public_disagreement(session)
         dangling = check_dangling_sample_projects(session)
         check_acl_read_write_mix(session)

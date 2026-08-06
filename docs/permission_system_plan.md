@@ -383,7 +383,9 @@ CREATE UNIQUE INDEX one_owner_per_group
     ON useraccessgrouplink (accessgroup_id) WHERE role = 'owner';
 ```
 
-> **Open question: co-PIs.** This constraint assumes a single accountable lead per project. If projects with two PIs are a real case, either seat the second at `admin` — which costs them only the ability to transfer the project — or drop the constraint and accept that "the lead" becomes a set. Confirm before adding the index; it is far cheaper to add later than to remove after code depends on it.
+**Co-PIs sit at `admin`.** A project has exactly one `owner`; every other senior member holds `admin`. The gap between them is deliberately narrow — an `admin` manages members, ACLs, and deletion, and is blocked from precisely two things: transferring the project, and modifying the owner's ACL entry. So a co-PI is unimpeded day to day, and the project always has one unambiguous person accountable for its disposition.
+
+This is also what keeps the constraint enforceable in the database rather than as a policy nobody checks. "The lead is a set" would push that decision into application code on every transfer, deletion, and departure.
 
 ### Personal workspaces — no special concept
 
@@ -528,7 +530,7 @@ The cost is two new routes and a client-visible break for anyone currently PATCH
 - [ ] `resourceacl` — add covering index `(accessgroup_id, mfid, role)`
 - [ ] `CREATE TYPE platform_role AS ENUM ('none','support','admin')`
 - [ ] `user` — add `platform_role platform_role NOT NULL DEFAULT 'none'`
-- [ ] `useraccessgrouplink` — add partial unique index `one_owner_per_group` (pending the co-PI question)
+- [ ] `useraccessgrouplink` — add partial unique index `one_owner_per_group`
 - [ ] `idtype` — backfill a `Resource` row per existing project, `resource_type='project'`
 - [ ] `instrument` — add `status VARCHAR DEFAULT 'active'`
 - [ ] `accessgroup` — insert the virtual `public` group row
@@ -717,6 +719,7 @@ This is the second payoff from `Principal`: a principal is a plain frozen value,
    - drop `read_only` ACL rows; drop `admin`-group ACL rows
    - remaining ACL rows → `admin` for project groups, `contributor` for instrument groups, `owner` for ORCID groups
    - create the virtual `public` group; insert `(mfid, public_group, viewer)` per public resource, taking `Dataset.public` as authoritative for datasets and `Resource.public` for samples; then drop both columns
+   - **add `one_owner_per_group` last**, after every standing is assigned. If it fails to build, the duplicate it reports is pre-existing bad data — most likely a user who was added to someone else's ORCID group, since nothing enforces those being single-member today. Treat a failure as a finding to investigate, not an obstacle to work around by dropping the index.
 2. Set `platform_role='admin'` for existing platform admins
    - in the same pass, **remove every non-service-account member from instrument groups**, leaving each group holding only its SA (see Instruments). Confirm first that each affected human is either a platform admin or a member of the projects whose data they need, since this is the one backfill step that removes access people have today
    - create the instrument group for any registered instrument that has none, so group existence stops depending on whether a dataset was ever filed against it

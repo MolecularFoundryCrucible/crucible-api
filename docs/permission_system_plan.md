@@ -442,7 +442,9 @@ So the boundary is drawn where it actually falls:
 
 The SA's grant on the instrument resource is `editor`, not `admin`: it can update metadata programmatically but cannot delete the instrument, change its status, or manage its ACL entries. That falls out of the role table rather than needing a service-account exception in code.
 
-Facility staff get **no access to datasets at all**. Not by exception — they simply are not in the group that holds the dataset grant. If a staff member needs a project's data, they join the project or receive a share, like anyone else.
+Facility staff get **no instrument-derived access to datasets**. Not by exception — they simply are not in the group that holds the dataset grant. If a staff member needs a project's data, they join the project or receive a share, like anyone else.
+
+What they do keep is `viewer` on *public* datasets, through the virtual public group every principal holds. So the loss is real but narrower than "no access": private data from their beamline becomes unreachable, public data stays readable exactly as it is for everyone else. The agreement tests pin both halves.
 
 > **Defer the staff group.** Do not create a second group per instrument in phase 1. Instrument records are managed today by people who are already platform admins, so they keep managing them through admin bypass and the instrument group is SA-only from day one. Add `instrument-{mfid}-staff` when a beamline scientist actually needs to edit instrument metadata without being a platform admin. This also makes the migration subtractive: existing instrument groups have their human members removed, rather than a new group being backfilled.
 
@@ -470,8 +472,15 @@ Discovered while mapping existing routes. These take `auth_res` — so authentic
 | `POST /datasets`, `POST /samples` | none | `>= contributor` in the target project, plus create-on-behalf verification |
 | setting `public = true` | none | resolved by construction — see below |
 | `instrument_name` on `POST /datasets` | none | validate against the `Instrument` table |
+| `group_name` on `POST /access_groups/{group_name}/join` | none | validate that the group is a project group — see below |
 
 The instrument ones are the most exposed: nothing currently prevents any authenticated user from renaming or re-pointing someone else's instrument.
+
+**Join requests accept any group name but can only be approved for projects.** `POST /access_groups/{group_name}/join` takes the name unvalidated, so a request to join an instrument group, another user's ORCID group, or a typo-created orphan is accepted and sits pending. Approval then fails: `review_join_request` calls `sql_add_user_to_project(requester, req.group_name, ...)`, which inserts a `UserProjectLink` whose `project_id` is foreign-keyed to `project.project_id`. For a non-project group that row has no parent, so the reviewer gets a 500 rather than a 403, after the request has already been accepted.
+
+The fix is validation at request time, not a generic add-to-any-group route. Every group type has a membership path that knows its own authorization bar — projects via `POST /projects/{id}/users/{orcid}`, instruments via the service-account binding route above, ORCID groups created with the user and never joined, and `public` virtual with no membership at all. A generic route could not choose the right bar, and would allow a second member in someone's ORCID group, breaking both `one_owner_per_group` and the assumption that everyone holds `owner` in their own group that makes sharing safe.
+
+This is a live bug independent of the redesign, but it lands in scope because `_is_group_lead` and the whole join-request path are being migrated to standing checks anyway.
 
 **Publishing is the subtlest, and the redesign closes it without adding a check.** Today `public` is a plain pass-through field (`ri.public = ds.public`, `datasets.py:185` and `samples.py:198`) with no gate at all, so any user who can create or edit a resource can make it world-readable — a contributor on confidential or industry-partnered work can publish unilaterally. Once publishing becomes an ACL entry against the `public` group (see Core Concepts → Public resources), it is an ACL-management operation and therefore already requires `admin` on the resource. The gap closes as a consequence of the model rather than as a special case.
 
@@ -658,6 +667,7 @@ No join against `useraccessgrouplink` is required in list queries.
 - [ ] `POST /instruments` — create the instrument group and its `editor` ACL entry on the instrument resource
 - [ ] `POST/DELETE /instruments/{instrument_unique_id}/service_accounts/{sa_unique_id}` — bind an SA to an instrument; requires instrument `admin`
 - [ ] `POST /datasets` — reject unregistered `instrument_name` with `400` instead of creating a group
+- [ ] `POST /access_groups/{group_name}/join` — reject a non-project group with `400`, so a request cannot be accepted and then fail on approval
 - [ ] `GET /instruments` — default `status=active`; `PATCH` status gated to instrument `admin`/`owner`
 - [ ] `visibility` filter (`all`/`public`/`private`) on dataset and sample listings, replacing `?public=true`
 - [ ] Expose role in `GET /access_groups/{name}/users`

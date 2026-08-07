@@ -21,7 +21,8 @@ from app.general_utils import  get_secret
 from app.api.dependencies import get_engine, get_api_path, get_api_url
 from app.models.core_models import ApiToken
 from app.utils.permissions import (
-    PUBLIC_GROUP_NAME, GroupMembership, PlatformRole, Principal, Role)
+    PUBLIC_GROUP_NAME, GroupMembership, Permission, PlatformRole, Principal, Role)
+from app.utils import shadow
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import join
@@ -212,6 +213,7 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
     with _auth_cache_lock:
         cached = _auth_cache.get(cache_key)
     if cached is not None:
+        shadow.current_principal.set(cached)
         return cached
 
     api_acct = find_key(credentials, engine)  # raises 401 on invalid/expired
@@ -224,6 +226,7 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
 
     with _auth_cache_lock:
         _auth_cache[cache_key] = result
+    shadow.current_principal.set(result)
     return result
 
 
@@ -336,6 +339,7 @@ def require_read_access(session, mfid: str, ag_ids: list):
     from app.models.core_models import Resource, ResourceACL
 
     if _is_admin_by_group(session, ag_ids):
+        shadow.compare(session, "require_read_access", mfid, Permission.READ, True)
         return
 
     acl_ok = session.exec(
@@ -347,6 +351,7 @@ def require_read_access(session, mfid: str, ag_ids: list):
             )
         )
     ).first()
+    shadow.compare(session, "require_read_access", mfid, Permission.READ, bool(acl_ok))
     if not acl_ok:
         raise HTTPException(status_code=403, detail="Access denied")
 
@@ -381,6 +386,8 @@ def require_write_access(session, ag_ids: list, mfids: list):
     from sqlmodel import select
 
     if _is_admin_by_group(session, ag_ids):
+        for m in mfids:
+            shadow.compare(session, "require_write_access", m, Permission.EDIT, True)
         return
 
     acl_ok = session.exec(
@@ -390,6 +397,11 @@ def require_write_access(session, ag_ids: list, mfids: list):
             ResourceACL.write == True
         )
     ).first()
+    # The old check passes if ANY mfid is writable, so the comparison is per
+    # resource against that same aggregate answer — a per-mfid mismatch here
+    # means the new model disagrees about that specific resource.
+    for m in mfids:
+        shadow.compare(session, "require_write_access", m, Permission.EDIT, bool(acl_ok))
     if not acl_ok:
         raise HTTPException(status_code=403, detail="Write access required to at least one of the resources")
 

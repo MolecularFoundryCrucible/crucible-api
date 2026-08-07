@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlmodel import Session
 
 from app.utils.permissions import (
-    GroupMembership, Permission, PlatformRole, Principal, Role,
+    THRESHOLDS, GroupMembership, Permission, PlatformRole, Principal, Role,
     effective_role, has_permission,
 )
 from tests.pg_fixture import (
@@ -75,10 +75,18 @@ def test_member_can_edit_but_not_delete_a_peers_dataset(migrated):
     assert not has_permission(p, acl, Permission.DELETE)
 
 
-def test_service_account_creates_but_cannot_edit_researcher_data(migrated):
+def test_service_account_acl_grant_is_contributor(migrated):
+    """What the instrument group actually grants: create, not edit.
+
+    Asserted on effective_role rather than has_permission, because the SA
+    currently also holds platform_role=admin as a transitional measure, which
+    bypasses the check entirely. This is the access it will be left with once
+    that promotion is revoked, so the assertion is the target state.
+    """
     p, acl = principal_for(migrated, SA), acl_for(migrated, "ds-pub")
-    assert has_permission(p, acl, Permission.CREATE)
-    assert not has_permission(p, acl, Permission.EDIT)
+    assert effective_role(p, acl) is Role.CONTRIBUTOR
+    assert Role.CONTRIBUTOR >= THRESHOLDS[Permission.CREATE]
+    assert Role.CONTRIBUTOR < THRESHOLDS[Permission.EDIT]
 
 
 def test_platform_admin_bypasses_without_acl_rows(migrated):
@@ -88,23 +96,40 @@ def test_platform_admin_bypasses_without_acl_rows(migrated):
     assert has_permission(p, acl_for(migrated, "ds-priv"), Permission.DELETE)
 
 
-class TestServiceAccountsAreNotPromoted:
-    """Service accounts sit in the admin group as a historical workaround. The
-    backfill must not turn that into platform_role, which would make the
-    platform-wide access permanent and unconditional — the exact thing scoping
-    instruments is meant to remove."""
+class TestServiceAccountsKeepWorking:
+    """Service accounts in the admin group ARE promoted to platform_role.
 
-    def test_service_account_in_admin_group_keeps_platform_role_none(self, migrated):
-        assert principal_for(migrated, SA).platform_role is PlatformRole.NONE
+    Deliberately, and temporarily. Withholding it would mean they hold nothing
+    the moment cutover switches authorization over, and every instrument stops
+    writing. Preserving today's access is the priority; narrowing it is
+    separate work with its own verification — see "Regressing service account
+    rights" in the plan.
+
+    What must never happen is a service account silently losing everything at
+    cutover, which is what these tests guard.
+    """
+
+    def test_service_account_in_admin_group_is_promoted(self, migrated):
+        assert principal_for(migrated, SA).platform_role is PlatformRole.ADMIN
+
+    def test_promoted_service_account_survives_the_new_check(self, migrated):
+        """The whole point: under the post-cutover check it still reaches things."""
+        p = principal_for(migrated, SA)
+        assert has_permission(p, acl_for(migrated, "ds-priv"), Permission.READ)
+        assert has_permission(p, acl_for(migrated, "ds-priv"), Permission.DELETE)
+
+    def test_the_bypass_is_what_carries_it_not_the_acl(self, migrated):
+        """effective_role stays honest about what the ACL says, so the day the
+        promotion is revoked, this is exactly what the SA will be left with."""
+        p = principal_for(migrated, SA)
+        assert effective_role(p, acl_for(migrated, "ds-priv")) is None
 
     def test_human_in_admin_group_is_promoted(self, migrated):
         assert principal_for(migrated, PLATFORM_ADMIN).platform_role is PlatformRole.ADMIN
 
-    def test_service_account_gets_no_bypass_from_admin_membership(self, migrated):
-        """It is still in the group; the group must simply confer nothing."""
-        p = principal_for(migrated, SA)
-        assert p.role_in("admin") is not None, "fixture should keep it in the group"
-        assert not has_permission(p, acl_for(migrated, "ds-priv"), Permission.READ)
+    def test_still_in_the_admin_group(self, migrated):
+        """Membership stays; the pre-cutover helpers key off it."""
+        assert principal_for(migrated, SA).role_in("admin") is not None
 
     def test_admin_group_confers_nothing_through_the_acl(self, migrated):
         with Session(migrated) as session:

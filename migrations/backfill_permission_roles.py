@@ -117,11 +117,35 @@ def backfill_standings(session):
     """)
 
 
+def hijacked_project_mfids(session):
+    """Projects whose project_id already names a resource of another type.
+
+    Nothing stops a project_id from equalling an existing dataset or sample
+    mfid, and staging has one: a project with project_id '' alongside a sample
+    with unique_id ''. Creating the project's ACL entry against that mfid would
+    grant the project's group `owner` on someone else's resource.
+    """
+    return session.execute(text("""
+        SELECT r.mfid, r.resource_type FROM idtype r
+        JOIN project p ON p.project_id = r.mfid
+        WHERE r.resource_type <> 'project'
+        ORDER BY 1
+    """)).all()
+
+
 def create_project_resources(session):
     """Projects become first-class resources: an idtype row plus a single ACL
     entry granting their own group `owner`, so effective role on a project
     equals standing in it."""
     print("\n[2] projects as resources")
+
+    hijacked = hijacked_project_mfids(session)
+    if hijacked:
+        print(f"  {len(hijacked)} project_id(s) collide with an existing resource:")
+        for mfid, rtype in hijacked:
+            print(f"      project_id={mfid!r} is already a {rtype!r} resource — SKIPPED")
+        print("      granting the project's group owner on that mfid would hand it")
+        print("      someone else's resource. Clean these up before committing.")
 
     created = step(session, "idtype rows created for projects", """
         INSERT INTO idtype (mfid, resource_type, public)
@@ -135,6 +159,7 @@ def create_project_resources(session):
         SELECT p.project_id, ag.id, TRUE, TRUE, 'owner'::resource_role
         FROM project p
         JOIN accessgroup ag ON ag.group_name = p.project_id
+        JOIN idtype r ON r.mfid = p.project_id AND r.resource_type = 'project'
         WHERE NOT EXISTS (
             SELECT 1 FROM resourceacl a
             WHERE a.mfid = p.project_id AND a.accessgroup_id = ag.id
@@ -232,45 +257,64 @@ def migrate_public_flags(session):
 
 
 def set_platform_admins(session):
-    """Promote admin-group members to platform_role — humans only.
+    """Promote every admin-group member to platform_role='admin'.
 
-    Service accounts were historically put in the admin group to work around
-    one gated route. Promoting them here would make that permanent and
-    unconditional, defeating the goal of scoping instruments to what they need.
-    They keep their admin-group membership for now, which the pre-cutover
-    checks still honour; removing them is a separate, sequenced step.
+    Service accounts included, deliberately and temporarily. They were put in
+    the admin group historically to work around one gated route, and on
+    production all 8 admin-group members are service accounts belonging to no
+    other group but their own ORCID one. Withholding platform_role from them
+    would mean they hold nothing the moment cutover switches authorization
+    over — every instrument stops writing.
+
+    Preserving what they have today is the priority; narrowing it is separate,
+    deliberate work with its own verification. See "Regressing service account
+    rights" in docs/permission_system_plan.md.
+
+    This is slightly broader than the access they have now: an admin ACL row
+    only exists on resources that have one, whereas platform_role bypasses
+    everything including resources with no ACL rows at all. In practice the
+    difference is invisible, because create_standard_acls writes an admin row
+    on every resource today.
     """
     print("\n[6] platform_role")
 
-    skipped = session.execute(text("""
-        SELECT u.username, u.orcid FROM useraccessgrouplink l
-        JOIN accessgroup ag ON ag.id = l.accessgroup_id
-        JOIN "user" u ON u.id = l.user_id
-        WHERE ag.group_name = 'admin' AND u.is_service_account = true
-        ORDER BY u.username
-    """)).all()
-
-    promoted = step(session, "humans promoted to platform admin", """
+    promoted = step(session, "admin-group members promoted", """
         UPDATE "user" u
         SET platform_role = 'admin'
         FROM useraccessgrouplink l
         JOIN accessgroup ag ON ag.id = l.accessgroup_id
         WHERE l.user_id = u.id AND ag.group_name = 'admin'
-          AND u.is_service_account IS NOT TRUE
           AND u.platform_role <> 'admin'
     """)
 
-    if skipped:
-        print(f"  {len(skipped)} service accounts in the admin group, NOT promoted:")
-        for username, orcid in skipped:
-            print(f"      {username or orcid}")
-        print("      they keep admin-group membership; the pre-cutover checks")
-        print("      still honour it. Bind them to instruments and remove them")
-        print("      from the group before cutover.")
+    service_accounts = session.execute(text("""
+        SELECT u.username, u.orcid FROM "user" u
+        WHERE u.platform_role = 'admin' AND u.is_service_account = true
+        ORDER BY u.username
+    """)).all()
+    humans = session.execute(text("""
+        SELECT u.username, u.orcid FROM "user" u
+        WHERE u.platform_role = 'admin' AND u.is_service_account IS NOT TRUE
+        ORDER BY u.username
+    """)).all()
 
-    if promoted == 0:
-        print("  WARNING: no human platform admins exist. Name some explicitly")
-        print("           before cutover, or nobody can bypass a resource check.")
+    print(f"  humans with platform_role=admin                            {len(humans)}")
+    for username, orcid in humans:
+        print(f"      {username or orcid}")
+
+    if service_accounts:
+        print(f"  service accounts with platform_role=admin                  {len(service_accounts)}")
+        for username, orcid in service_accounts:
+            print(f"      {username or orcid}")
+        print("      TEMPORARY. These hold a full platform bypass so that cutover")
+        print("      does not break ingestion. Narrowing them is tracked work:")
+        print("      bind each to its instruments, confirm ingestion, then drop")
+        print("      platform_role back to 'none'. Until then any compromised")
+        print("      instrument credential reaches every resource.")
+
+    if not humans:
+        print("  NOTE: no human holds platform_role=admin — there is no")
+        print("        human break-glass path. Worth naming someone.")
 
     return promoted
 
@@ -331,6 +375,9 @@ def verify(session):
     print(f"  useraccessgrouplink rows still null                        {null_standings}")
     print(f"  resourceacl rows still null                                {null_grants}")
 
+    hijacked = hijacked_project_mfids(session)
+    print(f"  project_ids colliding with another resource type            {len(hijacked)}")
+
     dupes = session.execute(text("""
         SELECT ag.group_name, count(*)
         FROM useraccessgrouplink l
@@ -343,7 +390,7 @@ def verify(session):
     for name, n in dupes:
         print(f"      {name:<40} {n}")
 
-    return null_standings, null_grants, dupes
+    return null_standings, null_grants, list(dupes) + list(hijacked)
 
 
 def create_owner_index(session):

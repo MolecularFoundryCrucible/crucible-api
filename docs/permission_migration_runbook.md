@@ -155,8 +155,11 @@ Dry run first, always. It self-verifies and rolls back if anything is left
 null, any group ends up with two owners, or a `project_id` collides with
 another resource type.
 
-Expect it to report **0 humans promoted** and list the service accounts it
-skipped. That is correct: no human platform admins exist yet, by decision.
+Expect it to promote **every admin-group member, service accounts included**,
+and to say so loudly. That is deliberate: withholding `platform_role` from them
+means they hold nothing at cutover and every instrument stops writing.
+Narrowing them is tracked separately — see "Regressing service account rights"
+in the plan.
 
 ### Verify
 
@@ -188,17 +191,19 @@ from app.utils.auth_utils import require_read_access   # must not raise
 Not optional. Cutover switches authorization to `platform_role` and
 `effective_role`, at which point:
 
-- **Every service account loses access.** On staging their `admin` standing is
-  `viewer` and `platform_role` is `none`, so the new check resolves them to
-  nothing. Verified directly. They must be bound to their instruments first,
-  via the binding route added in phase 4.
-- **Nobody can bypass anything.** No human holds `platform_role='admin'`.
-  Name some explicitly, or there is no break-glass path.
+- **Service accounts survive it**, because the backfill gave them
+  `platform_role='admin'`. That is the whole reason for the promotion. Their
+  ACL-derived role is `contributor` on their own instrument's datasets and
+  nothing else — visible via `effective_role`, which ignores the bypass.
+- **No human holds `platform_role='admin'`.** The only accounts that can bypass
+  anything are instrument credentials. Worth naming a human before cutover so
+  there is a break-glass path that is not a machine.
 
-Sequence: name human platform admins → add the SA binding routes → bind each
-service account → relax `GET /users/{orcid}/projects` with the instrument-group
-branch → remove the service accounts from the admin group → verify ingestion →
-then cut over.
+After cutover, narrow the service accounts one instrument at a time: bind →
+confirm the directory route → set `platform_role='none'` → watch ingestion →
+remove from the admin group. See "Regressing service account rights" in the
+plan. Until that is done, a compromised instrument credential reaches every
+resource.
 
 ---
 

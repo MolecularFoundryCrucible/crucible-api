@@ -925,19 +925,28 @@ admin_developer   bnl_admin   perovskite_synthesis_ui
 sa_hip_microscope   sa_m3_microscope   spinbot   titanx
 ```
 
-This is the historical workaround the plan describes — service accounts were put in the admin group because `GET /users/{orcid}/projects` was gated `admin or be that user`. It means a naive step 2 would set `platform_role='admin'` on all seven, permanently enshrining the platform-wide access that goal (2) exists to remove, and doing it in the one place the model treats as unconditional.
+This is the historical workaround the plan describes — service accounts were put in the admin group because `GET /users/{orcid}/projects` was gated `admin or be that user`.
 
-**So step 2 promotes humans only** — `AND u.is_service_account IS NOT TRUE`.
+**Decision: promote them anyway, and narrow their rights later as separate work.**
 
-That cannot be the whole story, because promoting nobody leaves zero platform admins and dropping the service accounts breaks live instruments. The transition has to be sequenced, and it works because the old checks read *group membership* while `platform_role` is not consulted until cutover:
+An earlier draft promoted humans only, on the grounds that giving service accounts a permanent unconditional bypass defeats goal (2). That is true as an end state and wrong as a migration step. Withholding `platform_role` means the service accounts hold *nothing* the moment cutover switches authorization over — their `admin` standing backfills to `viewer` and the admin group's ACL rows are gone — so every instrument stops writing on the day of the switch. Not breaking ingestion outranks reaching the end state in one move.
 
-1. **Phases 1–3.** Service accounts stay in the admin group. Nothing changes for them; the old checks still pass. `platform_role` is set for humans only, and there may be none yet.
-2. **Name the human platform admins** and set `platform_role='admin'` for them. This is an explicit decision, not a migration side effect — the current answer is that nobody holds the role.
-3. **Bind each service account to its instruments** via the binding route, and relax `GET /users/{orcid}/projects` with the instrument-group branch, so they can do their job without the admin group.
-4. **Remove the service accounts from the admin group**, and verify against staging that ingestion still works.
-5. **Only then cut over.** After cutover the admin group no longer confers anything, so a service account left in it would be harmless — but it would also be misleading, and step 4 is the point of the exercise.
+So `platform_role='admin'` goes to every admin-group member, service accounts included. This is marginally broader than what they have today: an admin ACL row only exists where one was written, whereas `platform_role` also covers resources with no ACL rows at all. In practice indistinguishable, since `create_standard_acls` writes an admin row on everything.
 
-Getting this wrong in either direction is costly: promote the service accounts and the redesign achieves nothing for its second goal; drop them early and the instruments stop writing data.
+The cost of this choice, stated plainly: **until the promotion is revoked, a compromised instrument credential reaches every resource on the platform** — which is exactly what goal (2) exists to prevent. It buys a safe cutover, and it has to be paid back.
+
+### Regressing service account rights
+
+Tracked work, to be done after cutover is stable. Per service account:
+
+1. **Bind it to its instruments** via `POST /instruments/{id}/service_accounts/{sa_id}`, so it holds `contributor` on that machine's datasets through the instrument group.
+2. **Confirm the directory route works for it** — `GET /users/{orcid}/projects` needs the instrument-group branch, or the project picker breaks.
+3. **Set `platform_role='none'`** and watch ingestion for that instrument.
+4. **Remove it from the admin group**, which by then confers nothing.
+
+Do them one instrument at a time, not as a batch. The end state is the `contributor` grant the instrument group already provides — `test_service_account_acl_grant_is_contributor` asserts against `effective_role` rather than `has_permission` precisely so it describes that target rather than today's bypass.
+
+**No human currently holds `platform_role='admin'`.** Worth naming someone, so there is a break-glass path that is not an instrument credential.
 
 #### Existing members become `editor`, not `contributor`
 

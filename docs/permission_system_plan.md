@@ -832,6 +832,14 @@ Shadow mode is safe in production by construction: it computes both answers, ret
 
 **Merge the inert work to main early.** Phases 2 and 3 below change no behaviour — `Principal` is a mechanical refactor, and `effective_role` is new code wired to nothing. They can land on main while staging work continues, which takes several thousand lines out of the review that actually matters and leaves one focused cutover PR.
 
+> **This section is the design intent. For what to actually type, in what
+> order, and current status per environment, see
+> `docs/permission_migration_runbook.md`.** The runbook supersedes the ordering
+> implied by the numbering below in one respect: the code carrying the
+> admin-group bypass must be deployed *before* the backfill deletes the
+> `admin` ACL rows, and the schema must exist before that code deploys. So per
+> environment it is schema → code → backfill, not schema → backfill → code.
+
 ### Phase 0 — baseline
 
 0. ~~**Get the test suite green**~~ — **done.** 34 passed, 0 failed, 0 errors. See Testing → Baseline for what was deleted and the phase-2 deliverable that replaces it.

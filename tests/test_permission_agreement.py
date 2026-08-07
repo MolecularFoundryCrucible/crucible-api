@@ -55,6 +55,22 @@ EXPECTED_CHANGES = {
         "the instrument grant is contributor, so the service account can "
         "still create but no longer edit a researcher's dataset taken on the "
         "same machine",
+
+    # The service account is in the admin group — on staging, every
+    # admin-group member is one. That membership gave it read and write on
+    # every resource through the admin ACL rows. Those rows are deleted and it
+    # is deliberately not promoted to platform_role, so the platform-wide
+    # access goes away. This is goal (2) of the redesign, and it is also the
+    # change that breaks live instruments if they are not bound to their
+    # instruments first — see the sequencing in the migration path.
+    (SA, "ds-priv", "read"):
+        "loses admin-group bypass; ds-priv is private and its instrument is "
+        "not xrd-1, so nothing else reaches it",
+    (SA, "ds-priv", "write"):
+        "loses admin-group bypass",
+    (SA, "sm-pub", "write"):
+        "loses admin-group bypass; the public group grants viewer only, so "
+        "read survives and write does not",
 }
 
 

@@ -473,8 +473,63 @@ Discovered while mapping existing routes. These take `auth_res` — so authentic
 | setting `public = true` | none | resolved by construction — see below |
 | `instrument_name` on `POST /datasets` | none | validate against the `Instrument` table |
 | `group_name` on `POST /access_groups/{group_name}/join` | none | validate that the group is a project group — see below |
+| `project_id` on `POST /projects` | none | format check + reserved names + cross-namespace collision — see below |
 
 The instrument ones are the most exposed: nothing currently prevents any authenticated user from renaming or re-pointing someone else's instrument.
+
+### `project_id` collides with the access-group namespace — privilege escalation
+
+**This is a live vulnerability, not a consequence of the redesign.** `create_project` derives the project's access group from the caller-supplied `project_id`:
+
+```python
+ag = add_or_update(session, AccessGroup, AccessGroup.group_name == P.project_id, group_name=P.project_id)
+if project_lead not in ag.users:
+    ag.users.append(project_lead)
+```
+
+`add_or_update` **reuses** an existing group rather than rejecting the name, `project_id` has no validation of any kind, and `POST /projects` has no authorization check. So:
+
+- `project_id: "admin"` appends the named lead to the **admin access group**. Every `require_groups(ag_list, {'admin'})` in the codebase then passes. Any authenticated user can make themselves a platform administrator with one request.
+- `project_id: "public"` attaches the project to the virtual public group. Under this design every principal is injected there at `viewer`, so the whole platform gains read on that project's resources.
+- A `project_id` equal to a user's ORCID or an instrument name silently merges two unrelated groups.
+
+The last case is **not hypothetical**: `unknown` is currently both a project and an instrument. The backfill classifies it as `project` (projects are checked first), so datasets from that instrument grant `admin` rather than `contributor`.
+
+#### The fix is naming, not validation
+
+Validation patches the symptom. The cause is that a group name is derived from user-supplied text. **Group names become MFIDs**:
+
+| Group | Named after | Collision possible? |
+|---|---|---|
+| Project | `project.unique_id` (the MFID projects gain in phase 1) | no |
+| Instrument | `instrument.unique_id` | no |
+| ORCID | the ORCID | no |
+| `public`, `admin` | reserved literals | not from user input |
+
+An MFID is 26 characters of Crockford Base32; it cannot equal `public`, an ORCID, or another project's handle. Collisions stop being forbidden and start being unrepresentable. This also resolves the instrument case cleanly: `instrument_name` is a **display name**, not an identifier — 10 of 43 registered instruments contain spaces (`b30 - aja sputter tool`, `in situ uv-vis`) — so it should never have been a group name, and forcing it into an identifier grammar would destroy readable labels.
+
+This is the Future Work item "Project identity: mfid vs `project_id`" promoted into scope. It is not a nicety; it closes a privilege-escalation class.
+
+#### `project_id` still needs a grammar
+
+Even once groups are MFID-named, `project_id` remains a URL path segment and a foreign key value, so it needs to be well-formed and unique:
+
+```
+^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$
+```
+
+Deliberately looser than `_USERNAME_RE` (`^[a-z][a-z0-9_-]{2,31}$`), because the existing data requires it: **6,707 of 6,757** project IDs contain uppercase (the `MFP*` proposal IDs), and 3 begin with a digit. Requiring lowercase or a leading letter would reject almost every real project.
+
+Only **4** existing rows fail the grammar above, and all four are junk worth cleaning up regardless:
+
+| Value | Problem |
+|---|---|
+| `''` | empty string as a project_id |
+| `'[7093]'` | brackets |
+| `'Training [9069]'` | brackets and spaces |
+| `'SummerSchool DEMO'` | space |
+
+On top of the grammar, reject case-insensitively: the reserved names (`public`, `admin`, `read_only`), any existing user ORCID, and any existing access group belonging to another namespace. Case-insensitively, because `PUBLIC` creating a group distinct from `public` is confusing even where it is not exploitable.
 
 **Join requests accept any group name but can only be approved for projects.** `POST /access_groups/{group_name}/join` takes the name unvalidated, so a request to join an instrument group, another user's ORCID group, or a typo-created orphan is accepted and sits pending. Approval then fails: `review_join_request` calls `sql_add_user_to_project(requester, req.group_name, ...)`, which inserts a `UserProjectLink` whose `project_id` is foreign-keyed to `project.project_id`. For a non-project group that row has no parent, so the reviewer gets a 500 rather than a 403, after the request has already been accepted.
 
@@ -765,7 +820,7 @@ Additive only. Nothing is dropped and no behaviour changes; the old columns stay
    - remaining ACL rows → `admin` for project groups, `contributor` for instrument groups, `owner` for ORCID groups
    - create the virtual `public` group; insert `(mfid, public_group, viewer)` per public resource, taking `Dataset.public` as authoritative for datasets and `Resource.public` for samples. **Both columns stay** and keep being written until phase 5
    - **add `one_owner_per_group` last**, after every standing is assigned. If it fails to build, the duplicate it reports is pre-existing bad data — most likely a user who was added to someone else's ORCID group, since nothing enforces those being single-member today. Treat a failure as a finding to investigate, not an obstacle to work around by dropping the index.
-2. Set `platform_role='admin'` for existing platform admins
+2. Set `platform_role='admin'` for existing admin-group members — **humans only, see below**
    - in the same pass, **remove every non-service-account member from instrument groups**, leaving each group holding only its SA (see Instruments). Confirm first that each affected human is either a platform admin or a member of the projects whose data they need, since this is the one backfill step that removes access people have today
    - create the instrument group for any registered instrument that has none, so group existence stops depending on whether a dataset was ever filed against it
    - add the covering index `(accessgroup_id, mfid, role)`, so the new checks are never measured against an unindexed table
@@ -809,6 +864,29 @@ SELECT read, write, count(*) FROM resourceacl GROUP BY read, write;
 ```
 
 If it returns only `(t,t)` and `(t,f)` — the latter being `read_only` — the backfill needs no conditional logic at all.
+
+#### The admin group is entirely service accounts
+
+Measured on staging: **all 7 admin-group members are service accounts**, and there are no human platform admins at all.
+
+```
+admin_developer   bnl_admin   perovskite_synthesis_ui
+sa_hip_microscope   sa_m3_microscope   spinbot   titanx
+```
+
+This is the historical workaround the plan describes — service accounts were put in the admin group because `GET /users/{orcid}/projects` was gated `admin or be that user`. It means a naive step 2 would set `platform_role='admin'` on all seven, permanently enshrining the platform-wide access that goal (2) exists to remove, and doing it in the one place the model treats as unconditional.
+
+**So step 2 promotes humans only** — `AND u.is_service_account IS NOT TRUE`.
+
+That cannot be the whole story, because promoting nobody leaves zero platform admins and dropping the service accounts breaks live instruments. The transition has to be sequenced, and it works because the old checks read *group membership* while `platform_role` is not consulted until cutover:
+
+1. **Phases 1–3.** Service accounts stay in the admin group. Nothing changes for them; the old checks still pass. `platform_role` is set for humans only, and there may be none yet.
+2. **Name the human platform admins** and set `platform_role='admin'` for them. This is an explicit decision, not a migration side effect — the current answer is that nobody holds the role.
+3. **Bind each service account to its instruments** via the binding route, and relax `GET /users/{orcid}/projects` with the instrument-group branch, so they can do their job without the admin group.
+4. **Remove the service accounts from the admin group**, and verify against staging that ingestion still works.
+5. **Only then cut over.** After cutover the admin group no longer confers anything, so a service account left in it would be harmless — but it would also be misleading, and step 4 is the point of the exercise.
+
+Getting this wrong in either direction is costly: promote the service accounts and the redesign achieves nothing for its second goal; drop them early and the instruments stop writing data.
 
 #### Existing members become `editor`, not `contributor`
 

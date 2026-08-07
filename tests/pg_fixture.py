@@ -147,7 +147,10 @@ def seed(session):
         (LEAD, "proj_x"), (MEMBER, "proj_x"),
         (LEAD, LEAD), (MEMBER, MEMBER), (STAFF, STAFF),
         (PLATFORM_ADMIN, PLATFORM_ADMIN), (PLATFORM_ADMIN, "admin"),
-        (SA, SA), (SA, "xrd-1"),
+        # Service accounts sit in the admin group today, as a workaround for one
+        # gated route. On staging every admin-group member is a service account.
+        # The backfill must not promote them to platform_role.
+        (SA, SA), (SA, "xrd-1"), (SA, "admin"),
         (STAFF, "xrd-1"),  # a human in an instrument group; must be removed
     ]
     for orcid, group_name in memberships:

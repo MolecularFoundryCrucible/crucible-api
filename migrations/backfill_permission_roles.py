@@ -232,15 +232,47 @@ def migrate_public_flags(session):
 
 
 def set_platform_admins(session):
+    """Promote admin-group members to platform_role — humans only.
+
+    Service accounts were historically put in the admin group to work around
+    one gated route. Promoting them here would make that permanent and
+    unconditional, defeating the goal of scoping instruments to what they need.
+    They keep their admin-group membership for now, which the pre-cutover
+    checks still honour; removing them is a separate, sequenced step.
+    """
     print("\n[6] platform_role")
-    return step(session, "users promoted to platform admin", """
+
+    skipped = session.execute(text("""
+        SELECT u.username, u.orcid FROM useraccessgrouplink l
+        JOIN accessgroup ag ON ag.id = l.accessgroup_id
+        JOIN "user" u ON u.id = l.user_id
+        WHERE ag.group_name = 'admin' AND u.is_service_account = true
+        ORDER BY u.username
+    """)).all()
+
+    promoted = step(session, "humans promoted to platform admin", """
         UPDATE "user" u
         SET platform_role = 'admin'
         FROM useraccessgrouplink l
         JOIN accessgroup ag ON ag.id = l.accessgroup_id
         WHERE l.user_id = u.id AND ag.group_name = 'admin'
+          AND u.is_service_account IS NOT TRUE
           AND u.platform_role <> 'admin'
     """)
+
+    if skipped:
+        print(f"  {len(skipped)} service accounts in the admin group, NOT promoted:")
+        for username, orcid in skipped:
+            print(f"      {username or orcid}")
+        print("      they keep admin-group membership; the pre-cutover checks")
+        print("      still honour it. Bind them to instruments and remove them")
+        print("      from the group before cutover.")
+
+    if promoted == 0:
+        print("  WARNING: no human platform admins exist. Name some explicitly")
+        print("           before cutover, or nobody can bypass a resource check.")
+
+    return promoted
 
 
 def scope_instrument_groups(session):

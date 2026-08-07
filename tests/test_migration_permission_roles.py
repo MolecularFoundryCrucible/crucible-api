@@ -88,6 +88,34 @@ def test_platform_admin_bypasses_without_acl_rows(migrated):
     assert has_permission(p, acl_for(migrated, "ds-priv"), Permission.DELETE)
 
 
+class TestServiceAccountsAreNotPromoted:
+    """Service accounts sit in the admin group as a historical workaround. The
+    backfill must not turn that into platform_role, which would make the
+    platform-wide access permanent and unconditional — the exact thing scoping
+    instruments is meant to remove."""
+
+    def test_service_account_in_admin_group_keeps_platform_role_none(self, migrated):
+        assert principal_for(migrated, SA).platform_role is PlatformRole.NONE
+
+    def test_human_in_admin_group_is_promoted(self, migrated):
+        assert principal_for(migrated, PLATFORM_ADMIN).platform_role is PlatformRole.ADMIN
+
+    def test_service_account_gets_no_bypass_from_admin_membership(self, migrated):
+        """It is still in the group; the group must simply confer nothing."""
+        p = principal_for(migrated, SA)
+        assert p.role_in("admin") is not None, "fixture should keep it in the group"
+        assert not has_permission(p, acl_for(migrated, "ds-priv"), Permission.READ)
+
+    def test_admin_group_confers_nothing_through_the_acl(self, migrated):
+        with Session(migrated) as session:
+            rows = session.execute(text("""
+                SELECT count(*) FROM resourceacl a
+                JOIN accessgroup ag ON ag.id = a.accessgroup_id
+                WHERE ag.group_name = 'admin'
+            """)).scalar()
+        assert rows == 0
+
+
 def test_bypass_acl_rows_are_gone(migrated):
     with Session(migrated) as session:
         remaining = session.execute(text("""

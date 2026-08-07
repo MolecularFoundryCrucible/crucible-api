@@ -135,17 +135,44 @@ Two properties that must hold, stated so they are not accidentally broken later:
 
 The two-axis design is a deliberate single level of indirection between "who the user is" and "what the object is." The alternative — one axis — forces a group per (object-type × permission-level) combination, the classic `report-readers` / `report-writers` proliferation. Collapsing this back to one axis to "simplify" it would reintroduce that, and would break sharing as described above.
 
+### Identifiers
+
+Every entity should carry four things, each with one job. `User` already does; `Project` and `Instrument` each miss a piece, and the missing pieces are what make group naming unsafe.
+
+| | internal join key | immutable global id | human handle | display name |
+|---|---|---|---|---|
+| **User** | `id` | `unique_id` (ORCID) | `username` | `first_name` / `last_name` |
+| **Project** | `id` | *missing* → MFID | `project_id` | `title` |
+| **Instrument** | `id` | `unique_id` (MFID) | *missing* | `instrument_name` |
+
+**Project needs an MFID.** Phase 1 already creates it, since making projects resources means an `idtype` row.
+
+**Instrument needs a handle.** `instrument_name` is currently doing two incompatible jobs: it is the display name *and* the access-group name. It cannot be both — 10 of 43 registered instruments contain spaces (`b30 - aja sputter tool`, `in situ uv-vis`), which are fine in a label and wrong in an identifier. Add `instrument_id` alongside, validated like `project_id`, and let `instrument_name` go back to being free text. Backfilling 43 rows with slugs is a small job.
+
+What each one is for:
+
+- **`id`** — internal joins only, never in an API payload. Narrow index, cheap comparison.
+- **MFID** — what never changes. Foreign keys that must survive a rename, and **all access-group names**. An MFID cannot collide with `public`, an ORCID, or another entity's handle, which is what makes the escalation described under Currently Unguarded Operations structurally impossible rather than merely forbidden.
+- **Handle** — what a human types and what appears in a URL. Unique, validated, and *mutable*: renaming must be possible without touching a single foreign key, which is precisely what naming groups after MFIDs buys.
+- **Display name** — free text, no constraints, no uniqueness. Never load-bearing.
+
+The rule that follows: **nothing derived from user input ever becomes an identifier.** Handles are validated but never referenced internally; MFIDs are referenced internally but never typed.
+
+`ResourceACL` is the one deliberate exception to "join on `id`" — it keys on `idtype.mfid` because it must resolve uniformly across datasets, samples, instruments and now projects, which no integer FK to a single table could do. That trade is already made and has not caused a measurable problem.
+
 ### Groups
 
-| Group | Named after | Members |
-|---|---|---|
-| Project group | `project_id` | Project members, at their project role |
-| ORCID group | user's ORCID | The user, always at `owner` |
-| `admin` group | `admin` | Platform admins (organizational only — see below) |
-| Instrument group | instrument name (today) / MFID (target) | The instrument's service account, and nothing else — see Instruments |
-| `public` group | `public` | **Virtual** — every principal, always at `viewer` |
+| Group | Named after (today) | Named after (target) | Members |
+|---|---|---|---|
+| Project group | `project_id` | project MFID | Project members, at their project role |
+| ORCID group | user's ORCID | unchanged | The user, always at `owner` |
+| `admin` group | `admin` | unchanged | Legacy container; confers nothing after cutover |
+| Instrument group | `instrument_name.lower()` | instrument MFID | The instrument's service account, and nothing else — see Instruments |
+| `public` group | `public` | unchanged | **Virtual** — every principal, always at `viewer` |
 
-> **Migration note.** Instrument access groups are currently named after `instrument_name.lower()` (`datasets.py:195`), not the instrument MFID. Renaming them to MFIDs is a data migration touching existing ACL rows, not a greenfield choice. Either keep the name-based convention or schedule the rename explicitly.
+**Every group derived from an entity is named after that entity's MFID.** Only the two reserved literals are exceptions, and neither comes from user input. This is not cosmetic: naming groups after `project_id` and `instrument_name` is what lets a caller-chosen string land in the same namespace as `admin`, which is a live privilege escalation (see Currently Unguarded Operations → `project_id` collides with the access-group namespace).
+
+> **Migration note.** This is a data migration, not a greenfield choice — renaming touches `accessgroup.group_name` for every project and instrument group, and every `require_groups(ag_list, {'admin', proj_id})` comparison changes shape. Those call sites are being rewritten for `require_permission` anyway, so sequence the two together rather than doing the work twice. ACL rows themselves are unaffected: `resourceacl.accessgroup_id` points at `accessgroup.id`, so a rename never touches permission data.
 
 ### Public resources
 
@@ -719,7 +746,10 @@ No join against `useraccessgrouplink` is required in list queries.
 - [ ] `POST /resources/{mfid}/project` — requires `admin` on the resource and `>= contributor` in the target; adds the new project ACL entry and removes the old
 - [ ] `PATCH /datasets/{dsid}` and `PATCH /samples/{sample_id}` — reject `owner_orcid` and `project_id` with `400`; make the instrument-group change revoke the old entry
 - [ ] Replace global-admin deletion with `require_permission(..., 'delete')`
-- [ ] `POST /instruments` — create the instrument group and its `editor` ACL entry on the instrument resource
+- [ ] `POST /instruments` — create the instrument group, **named after the instrument MFID**, and its `editor` ACL entry on the instrument resource
+- [ ] `instrument` — add an `instrument_id` handle, validated like `project_id`; backfill 43 rows from slugified `instrument_name`, which becomes free text
+- [ ] Validate `project_id` on `POST /projects`: grammar, reserved names, cross-namespace collision
+- [ ] Rename existing project and instrument access groups to MFIDs, together with the `require_groups` rewrite
 - [ ] `POST/DELETE /instruments/{instrument_unique_id}/service_accounts/{sa_unique_id}` — bind an SA to an instrument; requires instrument `admin`
 - [ ] `POST /datasets` — reject unregistered `instrument_name` with `400` instead of creating a group
 - [ ] `POST /access_groups/{group_name}/join` — reject a non-project group with `400`, so a request cannot be accepted and then fail on approval
@@ -1020,9 +1050,13 @@ Platform-admin bypass and ACL modifications are currently indistinguishable from
 
 ### Project identity: mfid vs `project_id`
 
+> **Partly superseded.** The four-identifier model is now decided (Core Concepts → Identifiers) and MFID-named groups moved into scope, because `project_id` sharing a namespace with `admin` is a live escalation. What remains deferred is only the last step: repointing the data foreign keys and adding a rename route.
+
 `project_id` currently does two jobs at once — it is the stable identity that every foreign key points at, *and* the human-readable label that appears in URLs and UI. Those pull in opposite directions the moment an admin wants to rename a project, and the model already solves this correctly one table over: `User` separates `unique_id` (ORCID, stable, what FKs reference) from `username` (mutable, unique, what people type). Projects should follow the same split.
 
-**Phase 1 delivers half of this already.** Making projects first-class resources gives every project an mfid and an `idtype` row, and an mfid is immutable by definition — so the stable identifier now exists. What stays deferred is *using* it: repointing the foreign keys off `project_id` and adding a rename path. The prerequisite is done, the migration is not.
+**Phase 1 delivers most of this.** Making projects first-class resources gives every project an mfid and an `idtype` row, and naming the project's access group after that mfid removes the collision risk. What stays deferred is repointing the *data* foreign keys — `Dataset.project_id`, `Sample.project_id`, `UserProjectLink.project_id` — and adding a rename path. Until those move, `project_id` must still be treated as immutable in practice.
+
+The same split applies to instruments, which need a validated `instrument_id` handle so that `instrument_name` can go back to being free text.
 
 What a rename would touch, once identity moves to the mfid:
 

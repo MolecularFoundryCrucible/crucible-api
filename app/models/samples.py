@@ -2,7 +2,7 @@ from typing import Any, List, Optional
 from pydantic import field_validator
 from sqlmodel import SQLModel
 
-from app.general_utils import is_valid_mfid
+from app.general_utils import blank_to_none, is_valid_mfid
 from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 
@@ -30,6 +30,12 @@ class SampleCreate(SQLModel):
     public: bool = False
     owner_orcid: Optional[str] = None  # falls back to the authenticated user if not provided
 
+    @field_validator("project_id", "owner_orcid", mode="before", check_fields=False)
+    @classmethod
+    def blank_identifiers_to_none(cls, v):
+        """Uploaders that send "" instead of omitting the field would otherwise
+        attach the resource to a nameless project. See general_utils."""
+        return blank_to_none(v)
 
 class SampleUpdate(SQLModel):
     '''Partial update schema for Sample. Only provided fields are modified.'''
@@ -40,6 +46,12 @@ class SampleUpdate(SQLModel):
     timestamp: Optional[str] = None
     public: Optional[bool] = None
 
+    @field_validator("project_id", "owner_orcid", mode="before", check_fields=False)
+    @classmethod
+    def blank_identifiers_to_none(cls, v):
+        """Uploaders that send "" instead of omitting the field would otherwise
+        attach the resource to a nameless project. See general_utils."""
+        return blank_to_none(v)
 
 class SampleRead(SQLModel):
     '''Response model for Sample. Includes server-generated fields.'''

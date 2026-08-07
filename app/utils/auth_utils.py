@@ -292,6 +292,40 @@ def _public_group_id(session) -> Optional[int]:
     return _PUBLIC_GROUP_ID
 
 
+def _admin_group_predicate(ag_ids):
+    """SQL predicate: is any of `ag_ids` the `admin` group?
+
+    Resolved by the database rather than a cached id, because these helpers are
+    called with sessions bound to whichever engine the caller has — a
+    process-global id silently answers for the wrong database.
+    """
+    from sqlalchemy import exists
+    from app.models.core_models import AccessGroup
+    return exists().where(
+        AccessGroup.id.in_(ag_ids),
+        AccessGroup.group_name == 'admin',
+    )
+
+
+def _is_admin_by_group(session, ag_ids) -> bool:
+    """Transitional bypass, removed together with these helpers at cutover.
+
+    `create_standard_acls` writes an `admin` ACL row on every resource, so
+    admin-group members currently reach everything through ~360k rows that all
+    say the same thing. Honouring the membership directly makes those rows dead
+    weight, which is what lets the migration delete them without cutting off
+    the service accounts living in that group — on production, none of whom
+    belong to any group but `admin` and their own ORCID one.
+
+    This grants access to exactly the set that already has it. After cutover
+    the same job is done by `platform_role` in `require_permission`.
+    """
+    from sqlalchemy import select as sa_select
+    if not ag_ids:
+        return False
+    return bool(session.execute(sa_select(_admin_group_predicate(ag_ids))).scalar())
+
+
 def require_read_access(session, mfid: str, ag_ids: list):
     """Raise 403 if the user has no read access to the given MFID.
 
@@ -300,6 +334,9 @@ def require_read_access(session, mfid: str, ag_ids: list):
     """
     from sqlalchemy import exists, select
     from app.models.core_models import Resource, ResourceACL
+
+    if _is_admin_by_group(session, ag_ids):
+        return
 
     acl_ok = session.exec(
         select(Resource).where(Resource.mfid == mfid).where(
@@ -330,7 +367,11 @@ def read_access_filter_list(resource_model, ag_ids: list):
         ResourceACL.mfid == resource_model.unique_id,
         ResourceACL.accessgroup_id.in_(ag_ids)
     )
-    auth_filter = (Resource.public == True) | acl_subquery
+    # Admin-group membership short-circuits, evaluated by the database so no
+    # cached group id can answer for the wrong one. See _is_admin_by_group.
+    auth_filter = (
+        _admin_group_predicate(ag_ids) | (Resource.public == True) | acl_subquery
+    )
     return auth_filter, deletion_filter_for(resource_model)
 
 
@@ -338,6 +379,10 @@ def require_write_access(session, ag_ids: list, mfids: list):
     """Raise 403 if the user has no write ACL on any of the given MFIDs."""
     from app.models.core_models import ResourceACL
     from sqlmodel import select
+
+    if _is_admin_by_group(session, ag_ids):
+        return
+
     acl_ok = session.exec(
         select(ResourceACL).where(
             ResourceACL.mfid.in_(mfids),

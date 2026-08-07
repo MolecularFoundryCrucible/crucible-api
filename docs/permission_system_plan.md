@@ -846,7 +846,7 @@ Additive only. Nothing is dropped and no behaviour changes; the old columns stay
    - ORCID-group memberships → `owner`
    - project leads → `owner` in their project group (the `Project.project_lead_orcid` column stays for now and is dropped in phase 5)
    - a `Resource` row per existing project, plus one ACL entry each: the project's own group at `owner`
-   - delete `read_only` ACL rows and `admin`-group ACL rows — these are row deletions, not schema changes, and are safe here because nothing reads them: platform admins bypass the ACL and `read_only` is unused
+   - delete `read_only` ACL rows and `admin`-group ACL rows — **only after the pre-role helpers honour admin-group membership directly**, see below. 721,231 rows on production, 61% of the ACL table
    - remaining ACL rows → `admin` for project groups, `contributor` for instrument groups, `owner` for ORCID groups
    - create the virtual `public` group; insert `(mfid, public_group, viewer)` per public resource, taking `Dataset.public` as authoritative for datasets and `Resource.public` for samples. **Both columns stay** and keep being written until phase 5
    - **add `one_owner_per_group` last**, after every standing is assigned. If it fails to build, the duplicate it reports is pre-existing bad data — most likely a user who was added to someone else's ORCID group, since nothing enforces those being single-member today. Treat a failure as a finding to investigate, not an obstacle to work around by dropping the index.
@@ -894,6 +894,19 @@ SELECT read, write, count(*) FROM resourceacl GROUP BY read, write;
 ```
 
 If it returns only `(t,t)` and `(t,f)` — the latter being `read_only` — the backfill needs no conditional logic at all.
+
+#### Deleting the admin ACL rows needs a bypass in the old helpers first
+
+An earlier draft called this deletion safe "because nothing reads them: platform admins bypass the ACL". That is false before cutover. `platform_role` is only consulted by `require_permission`, which no route calls until phase 4 — until then, admin access comes **entirely from those ACL rows**.
+
+On production every admin-group member is a service account, and none belongs to any group but `admin` and its own ORCID group. Deleting 360,726 admin rows in phase 1 would therefore have cut off every instrument writing to Crucible, immediately, while the old checks were still the ones running. Not at cutover, where it would have been expected — at the additive step billed as changing nothing.
+
+The fix is three lines in `auth_utils`: `require_read_access`, `require_write_access` and `read_access_filter_list` short-circuit on admin-group membership, evaluated as a SQL `EXISTS` against `accessgroup` rather than a cached id, so it cannot answer for the wrong database. That grants access to exactly the set that already has it, which makes the rows genuinely dead and the deletion genuinely inert. The short-circuit is deleted along with these helpers at cutover, where `platform_role` takes over.
+
+Two general lessons, both of which cost a real bug here:
+
+- **"Inert" has to be checked against the code that is running, not the code being written.** Both this and the public-group omission came from reasoning about the new model while the old one was still in force.
+- **Rows that look like boilerplate can be load-bearing.** 360,726 rows that all say the same thing still constituted somebody's only access path.
 
 #### The admin group is entirely service accounts
 

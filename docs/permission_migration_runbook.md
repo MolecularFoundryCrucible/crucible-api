@@ -4,9 +4,9 @@ Operational companion to `docs/permission_system_plan.md`. That document is the
 design — what the model is and why. This one is what to type, in what order,
 and what will bite you.
 
-Staging has been through phases 0–2. Production has not started. Everything
-below reflects what actually happened on staging rather than what was planned,
-including two ordering mistakes made in the process.
+Staging is through phases 0–3. Production has not started. Everything below
+reflects what actually happened rather than what was planned, including the
+ordering mistakes made along the way.
 
 ---
 
@@ -15,16 +15,65 @@ including two ordering mistakes made in the process.
 | Phase | Staging | Production |
 |---|---|---|
 | 0 — green test suite | done | n/a (repo-wide) |
-| 0.5 — precondition audit | done, clean | done, **2 blockers found** |
+| 0.5 — precondition audit | done, clean | done, **1 blocker left** |
 | 1 — expand schema | done | not started |
 | 1 — backfill | done | not started |
-| 2 — inert code (`Principal`, `effective_role`) | deployed `f03838e` | not deployed |
-| 3 — shadow mode | n/a (no organic traffic) | not started |
+| 2 — inert code (`Principal`, `effective_role`) | deployed | not deployed |
+| 3 — shadow mode | deployed, flag on | needs prod traffic |
 | 4 — cutover | not started | not started |
 | 5 — contract (drops) | not started | not started |
 
-**Branch:** `feat/permission-roles`, not merged to `main`. Deployed to staging
-by pushing `feat/permission-roles:staging` (fast-forward).
+**Branch:** `feat/permission-roles`, 22 commits, **not merged to `main`**.
+Deployed to staging by pushing `feat/permission-roles:staging` (fast-forward).
+Test suite: 475 hermetic, 549 with a throwaway Postgres.
+
+### What has been built
+
+| Area | Where |
+|---|---|
+| Pure permission model — `Role`, `Principal`, `effective_role`, `has_permission`, `can_grant` | `app/utils/permissions.py` |
+| Auth returns a `Principal`; admin-group bypass; public-group injection | `app/utils/auth_utils.py` |
+| Shadow mode | `app/utils/shadow.py` |
+| Precondition audit (read-only) | `migrations/audit_permission_preconditions.py` |
+| Additive schema | `migrations/add_permission_roles.sql` |
+| Backfill (dry-run default, idempotent, self-verifying) | `migrations/backfill_permission_roles.py` |
+| Batched delete of the 721k bypass rows | `migrations/delete_bypass_acl_rows.py` |
+| `.sql` runner using the app's own DB config | `migrations/apply_sql.py` |
+| Exhaustive role matrix (221 assertions, no DB) | `tests/test_permissions.py` |
+| Agreement tests — old checks vs new, on real migrated data | `tests/test_permission_agreement.py` |
+| End-to-end migration test against real Postgres | `tests/test_migration_permission_roles.py` |
+
+### Bugs found and fixed along the way
+
+Each of these would have shipped:
+
+| Bug | Consequence if missed |
+|---|---|
+| `can_grant` ignored the role being replaced | A project admin could demote the lead to viewer |
+| Backfill overwrote a project's `owner` grant on itself | Every project lead loses the ability to transfer their project |
+| `Principal` carried no public group | Everyone loses read access to all public data at cutover |
+| Deleting admin ACL rows before the bypass shipped | Every instrument service account offline, at the step billed as inert |
+| `effective_role` took the last of duplicate ACL rows | Silent under-granting on any fan-out join |
+| `has_permission` defaulted to the weakest check | A forgotten argument fails open |
+| `project_id` unvalidated | **Live escalation**: `POST /projects {"project_id":"admin"}` makes any user a platform admin |
+| Uploaders sending `project_id=""` | 1,292 datasets filed under a nameless project; still arriving |
+
+### Data cleanups (production)
+
+| What | Status |
+|---|---|
+| 567 samples naming a nonexistent project | deleted, `~/crucible-audits/dangling-sample-projects.md` |
+| 1,292 datasets under the empty-string project | documented, not actioned, `~/crucible-audits/empty-project-datasets/` |
+| 1 orphaned `idtype` row blocking the backfill | **open** |
+
+### Decisions worth not relitigating
+
+- Service accounts **are** promoted to `platform_role='admin'`, temporarily, so cutover does not stop ingestion. Narrowing them is tracked in the plan.
+- No human holds `platform_role='admin'`. There is currently no human break-glass path.
+- Existing project members backfill to `editor`, not `contributor`, so nobody loses access on day one.
+- `read_only` has one member, a developer, who loses access. Accepted.
+- Facility staff lose instrument-derived access to private datasets; they keep public ones via the public group.
+- Group names should be MFIDs, not `project_id`/`instrument_name`. Deferred to phase 4.
 
 ---
 

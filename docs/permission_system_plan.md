@@ -278,7 +278,9 @@ def require_permission(principal, resource_id, permission='read'):
 
 **Stop materializing bypass access.** `create_standard_acls` currently writes an ACL row for the `admin` group and the `read_only` group on every resource created. The `admin` row is dead weight under this model — platform admins never consult the ACL.
 
-`read_only` is dropped outright rather than converted. It is not in use, so there is nothing to preserve, and its ACL rows are the only place in the schema where `write=False` appears systematically — removing them is what makes the backfill a single uniform assignment rather than a mapping (see Migration path). If a platform-wide read-only auditor is wanted later, it should be designed as a flag and a bypass, not as a group with a row on every resource, per the invariant above.
+`read_only` is dropped outright rather than converted. Its ACL rows are the only place in the schema where `write=False` appears systematically — removing them is what makes the backfill a single uniform assignment rather than a mapping (see Migration path). If a platform-wide read-only auditor is wanted later, it should be designed as a flag and a bypass, not as a group with a row on every resource, per the invariant above.
+
+> **It is not quite unused.** An earlier draft claimed it was. Production has one member, a developer, who today reads every resource through its 360,505 rows. Unlike the `admin` group there is no bypass for them, so deleting those rows removes any access they hold *only* through it. **Decided: accept the loss** — reinstate something deliberate later if it turns out to matter. Recorded because "unused" was wrong once and the same assumption is what produced the admin-group bug.
 
 Removing both drops per-resource ACL rows from roughly six to three and eliminates two inserts per resource creation.
 

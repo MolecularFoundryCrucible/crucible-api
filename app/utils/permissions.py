@@ -15,11 +15,8 @@ PUBLIC_GROUP_NAME = "public"
 
 
 class Role(IntEnum):
-    """Ascending order matters: comparisons and min() are the whole model.
-
-    Values mirror the Postgres `resource_role` enum, whose declaration order
-    gives the same ordering server-side.
-    """
+    """Mirrors the Postgres `resource_role` enum. Ascending order is load-bearing:
+    comparisons and min() are the model."""
     VIEWER = 1
     CONTRIBUTOR = 2
     EDITOR = 3
@@ -68,7 +65,7 @@ THRESHOLDS: Mapping[Permission, Role] = MappingProxyType(_THRESHOLDS)
 
 @dataclass(frozen=True)
 class GroupMembership:
-    """A principal's standing in one group. `role` is the standing, not a grant."""
+    """A principal's standing in one group — not a grant on a resource."""
     id: int
     group_name: str
     role: Role
@@ -76,11 +73,10 @@ class GroupMembership:
 
 @dataclass(frozen=True)
 class Principal:
-    """Everything an authorization decision needs about the caller.
+    """The caller, as an authorization decision sees them.
 
-    Replaces the anonymous `(orcid, [CachedGroup])` tuple that 106 routes
-    currently destructure. Frozen and free of ORM objects, so it is safe to
-    cache across threads and a test can build one without a database.
+    Frozen and ORM-free: safe to share across threads via the auth cache, and
+    constructible in a test without a database.
     """
     user_id: str
     platform_role: PlatformRole = PlatformRole.NONE
@@ -98,21 +94,16 @@ class Principal:
         return None
 
     def group_ids_at_or_above(self, role: Role) -> list[int]:
-        """Group ids where standing alone clears `role`.
+        """Group ids whose standing alone clears `role`.
 
-        This is the Python half of the list-query filter. Because
-        min(a, b) >= r is equivalent to a >= r and b >= r, filtering
-        memberships here lets the SQL side compare a single column instead of
-        joining useraccessgrouplink.
+        min(a,b) >= r iff a >= r and b >= r, so filtering here lets the SQL side
+        compare one column instead of joining useraccessgrouplink.
         """
         return [m.id for m in self.groups if m.role >= role]
 
     def real_group_names(self) -> list[str]:
-        """Group names excluding the virtual public group.
-
-        Anything answering "which projects am I in" must use this — the public
-        group is injected into every principal and is not a membership.
-        """
+        """Group names excluding the virtual public group, which is injected into
+        every principal and is not a real membership."""
         return [m.group_name for m in self.groups if m.group_name != PUBLIC_GROUP_NAME]
 
 
@@ -122,16 +113,13 @@ def effective_role(
 ) -> Optional[Role]:
     """MAX over the principal's groups of MIN(standing, grant).
 
-    `acl_rows` is (accessgroup_id, granted_role) for one resource. Returns None
-    when no group of the principal's has an entry, which means no access rather
-    than a low role — there is no rung below viewer.
+    `acl_rows` is (accessgroup_id, granted_role) for one resource. None means no
+    access — there is no rung below viewer.
 
-    The MIN is what makes sharing safe: everyone holds `owner` in their own
-    ORCID group, so without it "share with Alice as viewer" would hand Alice
-    delete. The MAX is what makes ownership survive leaving a project.
-
-    Deliberately does not consider platform admin. Bypass is never expressed as
-    an effective role; require_permission applies it before calling this.
+    MIN keeps sharing safe (everyone is `owner` of their own ORCID group, so a
+    viewer share must cap). MAX makes ownership survive leaving a project.
+    Platform admin is deliberately not considered here — bypass is never an
+    effective role.
     """
     grants: dict[int, Role] = {}
     for group_id, granted in acl_rows:
@@ -162,11 +150,8 @@ def has_permission(
     acl_rows: Iterable[tuple[int, Role]],
     permission: Permission,
 ) -> bool:
-    """Whether the principal may perform `permission` on the resource.
-
-    Platform admins bypass before any ACL is consulted, which is why an admin
-    needs no ACL rows and can reach resources that do not exist yet.
-    """
+    """Whether the principal may perform `permission`. Platform admins bypass
+    before any ACL is consulted, so they need no rows."""
     if principal.is_platform_admin:
         return True
     role = effective_role(principal, acl_rows)
@@ -178,21 +163,12 @@ def can_grant(
     target_role: Role,
     current_role: Optional[Role] = None,
 ) -> bool:
-    """Whether someone at `actor_role` may set an entry to `target_role`.
+    """Whether `actor_role` may set an entry to `target_role`, replacing
+    `current_role`.
 
-    The cap rule, applied identically to ACL entries and project membership,
-    and it binds on *both* ends:
-
-    - `target_role` at or below your own, so an admin cannot mint an owner.
-    - `current_role` at or below your own, so an admin cannot *overwrite* an
-      owner's entry either. Pass the role being replaced whenever one exists;
-      omitting it checks only the creation direction.
-
-    The second half is what the design means by "an owner's ACL entry cannot be
-    modified by an admin". Without it a project admin could demote the lead to
-    viewer, since viewer clears the target check on its own. Removal is the
-    same operation as assignment for this purpose — pass `current_role` and
-    whatever the entry would become.
+    The cap binds on both ends: an admin can neither mint an owner nor
+    overwrite one. Omitting `current_role` checks only the creation direction,
+    which would let an admin demote a lead to viewer.
     """
     if actor_role is None:
         return False

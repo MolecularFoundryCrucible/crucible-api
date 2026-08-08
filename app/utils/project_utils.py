@@ -20,23 +20,11 @@ RESERVED_PROJECT_IDS = frozenset({"admin", "read_only", "public"})
 
 
 def validate_project_id(project_id: str) -> str:
-    """Check a project_id is well-formed and not a reserved name.
+    """Check a project_id is well-formed and not a reserved group name.
 
-    The reserved check matters more than it looks. `create_project` derives the
-    project's access group from this value via add_or_update, which **reuses**
-    an existing group instead of rejecting the name. So a project called
-    `admin` attaches itself to the admin access group and appends its lead to
-    it — a one-request path from any authenticated user to platform
-    administrator. `public` is the mirror image: the project's resources become
-    readable by every principal, since the public group is injected into all of
-    them.
-
-    Case-insensitive, because `PUBLIC` creating a group distinct from `public`
-    is confusing even where it is not exploitable.
-
-    This is a guard, not the fix. The real fix is naming groups after MFIDs so
-    a caller-supplied string can never land in the group namespace at all —
-    see docs/permission_system_plan.md.
+    create_project reuses an existing access group of the same name, so
+    project_id='admin' would add the lead to the admin group. Case-insensitive.
+    A guard only; the fix is MFID-named groups (see the plan).
     """
     if not isinstance(project_id, str) or not _PROJECT_ID_RE.match(project_id):
         raise ValueError(
@@ -52,16 +40,11 @@ def validate_project_id(project_id: str) -> str:
 
 
 def assert_project_id_available(session, project_id: str) -> None:
-    """Raise 409 if this project_id would collide with an existing access group.
+    """Raise 409 if project_id collides with an existing access group.
 
-    Call after the duplicate-project check. At that point the project itself
-    does not exist, so any access group already holding this name belongs to
-    something else — a user's ORCID group, an instrument, a reserved group, or
-    a typo-created orphan. Reusing it would silently merge two unrelated
-    things.
-
-    One check covers every case, which is why it is a group lookup rather than
-    a list of entity types to exclude.
+    Call after the duplicate-project check: the project does not exist by then,
+    so any group holding the name belongs to something else — an ORCID group,
+    an instrument, a reserved group, an orphan. One lookup covers all of them.
     """
     existing = session.exec(
         select(AccessGroup).where(AccessGroup.group_name == project_id)

@@ -1,26 +1,15 @@
-"""Shadow-mode validation for the permission migration.
+"""Shadow-mode validation for the permission migration (phase 3).
 
-Phase 3 of docs/permission_system_plan.md. Runs the new permission check
-alongside the old one on real traffic, acts on the **old** answer, and logs
-where they differ.
+Runs the new permission check alongside the old one, acts on the old answer,
+logs where they differ. Safe because the new result is discarded, every call is
+wrapped in its own try/except, and the whole thing is behind SHADOW_MODE.
 
-Three properties keep it safe:
+The principal arrives via ContextVar because the pre-role helpers take `ag_ids`,
+not a Principal; threading one through would mean editing ~37 call sites during
+a phase meant to change nothing. Removed at cutover.
 
-- the new result is discarded, so a bug in it cannot affect any request
-- every call is wrapped in its own try/except, so unfinished code cannot take
-  down a working route
-- it is behind SHADOW_MODE, so it can be switched off without a deploy
-
-The principal reaches this module through a ContextVar rather than a function
-argument. The pre-role helpers take `ag_ids` (a list of ints), not a Principal,
-and threading one through would mean editing ~37 call sites during a phase
-whose whole point is changing nothing. The ContextVar is set by authorize_user
-and disappears at cutover, when those signatures change properly anyway.
-
-Note on cost: the plan claimed the ACL rows would already be in hand from the
-old check. They are not — the old check is an EXISTS and returns no rows — so
-this issues one extra small indexed query per check. That is acceptable behind
-a flag and is the reason the flag exists.
+Costs one extra indexed query per check — contrary to the plan, the old check is
+an EXISTS and leaves no rows in hand. Hence the flag.
 """
 import logging
 import os
@@ -34,9 +23,8 @@ logger = logging.getLogger(__name__)
 
 SHADOW_MODE = os.environ.get("PERMISSION_SHADOW_MODE", "").lower() in ("1", "true", "yes")
 
-# How often to emit the running per-check summary. Match counts are the exit
-# criterion for the cutover — "no mismatches" is indistinguishable from "this
-# route was never exercised" without them.
+# Match counts are the cutover gate: "no mismatches" is indistinguishable from
+# "never exercised" without them.
 SUMMARY_EVERY = int(os.environ.get("PERMISSION_SHADOW_SUMMARY_EVERY", "500"))
 
 current_principal: ContextVar[Optional[Principal]] = ContextVar(
@@ -73,7 +61,7 @@ def _log_summary(snapshot) -> None:
 
 
 def report() -> dict:
-    """Current counts, for a diagnostic route or a test."""
+    """Current counts, keyed "check/permission"."""
     with _lock:
         return {f"{c}/{p}": dict(b) for (c, p), b in _counts.items()}
 
@@ -96,19 +84,16 @@ def _fetch_acl(session, mfid):
 
 def compare(session, check: str, mfid: str, permission: Permission,
             allowed_old: bool) -> None:
-    """Compute the new answer, compare, log. Never raises.
+    """Compare the new answer against `allowed_old` and log any difference.
 
-    `allowed_old` is what the caller is about to act on. Nothing here changes
-    that — the only output is a log line and a counter.
+    Never raises, never influences the caller. Output is a log line and a counter.
     """
     if not SHADOW_MODE:
         return
     try:
         principal = current_principal.get()
         if principal is None:
-            # No authenticated principal in this context (a background task, or
-            # a helper called outside a request). Nothing to compare against.
-            return
+            return  # background task or non-request caller
 
         acl_rows = _fetch_acl(session, mfid)
         allowed_new = has_permission(principal, acl_rows, permission)

@@ -53,12 +53,8 @@ _PUBLIC_GROUP_ID = _UNSET
 
 
 def _standing(value) -> Role:
-    """Group standing from the database, failing closed.
-
-    A null means the phase 1 backfill has not reached this row, so the least
-    privileged answer is the only safe one. Nothing consults standing until the
-    cutover, so this is inert until then.
-    """
+    """Group standing from the database, failing closed to viewer on null or
+    garbage. Null means the backfill has not reached this row."""
     if value is None:
         return Role.VIEWER
     try:
@@ -231,11 +227,8 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
 
 
 def load_principal(session, orcid: str) -> Principal:
-    """Build a Principal for `orcid` from the database.
-
-    Split out of authorize_user so it can be exercised without an API key or a
-    live request — the query is the part that can break.
-    """
+    """Build a Principal from the database. Split out of authorize_user so the
+    query is testable without an API key or a live request."""
     from app.models.core_models import AccessGroup, User, UserAccessGroupLink
 
     user = session.exec(select(User).where(User.unique_id == orcid)).first()
@@ -280,12 +273,8 @@ def load_principal(session, orcid: str) -> Principal:
 
 
 def _public_group_id(session) -> Optional[int]:
-    """Id of the virtual public group, cached for the process.
-
-    The row is created by the phase 1 migration and never changes. Returns None
-    before that migration has run, which makes injection a no-op rather than an
-    error on an un-migrated database.
-    """
+    """Id of the virtual public group, cached for the process. None before the
+    phase 1 migration, making injection a no-op rather than an error."""
     global _PUBLIC_GROUP_ID
     if _PUBLIC_GROUP_ID is _UNSET:
         from app.models.core_models import AccessGroup
@@ -298,9 +287,8 @@ def _public_group_id(session) -> Optional[int]:
 def _admin_group_predicate(ag_ids):
     """SQL predicate: is any of `ag_ids` the `admin` group?
 
-    Resolved by the database rather than a cached id, because these helpers are
-    called with sessions bound to whichever engine the caller has — a
-    process-global id silently answers for the wrong database.
+    Resolved per-query rather than from a cached id, which would answer for
+    whichever database the process started against.
     """
     from sqlalchemy import exists
     from app.models.core_models import AccessGroup
@@ -311,17 +299,12 @@ def _admin_group_predicate(ag_ids):
 
 
 def _is_admin_by_group(session, ag_ids) -> bool:
-    """Transitional bypass, removed together with these helpers at cutover.
+    """Transitional bypass; removed with these helpers at cutover.
 
-    `create_standard_acls` writes an `admin` ACL row on every resource, so
-    admin-group members currently reach everything through ~360k rows that all
-    say the same thing. Honouring the membership directly makes those rows dead
-    weight, which is what lets the migration delete them without cutting off
-    the service accounts living in that group — on production, none of whom
-    belong to any group but `admin` and their own ORCID one.
-
-    This grants access to exactly the set that already has it. After cutover
-    the same job is done by `platform_role` in `require_permission`.
+    Admin-group members currently reach everything through ~360k identical ACL
+    rows. Honouring the membership directly makes those rows deletable without
+    cutting off the service accounts that live in that group. Grants access to
+    exactly the set that already has it.
     """
     from sqlalchemy import select as sa_select
     if not ag_ids:

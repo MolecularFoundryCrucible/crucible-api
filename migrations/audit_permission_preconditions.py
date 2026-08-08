@@ -34,10 +34,10 @@ def _rows(session, sql):
 
 
 def check_public_disagreement(session):
-    """Dataset.public vs Resource.public. The plan takes Dataset.public as
-    authoritative for datasets and Resource.public for samples, but every
-    disagreeing row is a resource whose visibility depends on which route you
-    ask - each one wants a decision before it is frozen into an ACL entry."""
+    """Count datasets where Dataset.public and Resource.public disagree.
+
+    Each one is a resource whose visibility depends on which route you ask.
+    """
     print("\n[1] public-column disagreement (dataset.public vs idtype.public)")
 
     total = _rows(session, """
@@ -77,9 +77,10 @@ def check_public_disagreement(session):
 
 
 def check_dangling_sample_projects(session):
-    """Sample.project_id has no FK (docs/schema_hygiene.md item 2), so it can
-    name a project that does not exist. Such a sample looks filed but appears
-    in no project listing. Must be zero before the FK is added."""
+    """Count samples naming a project that does not exist.
+
+    Sample.project_id has no FK. Must be zero before one can be added.
+    """
     print("\n[2] dangling Sample.project_id (no FK constraint on this column)")
 
     total = _rows(session, """
@@ -108,10 +109,12 @@ def check_dangling_sample_projects(session):
 
 
 def check_acl_read_write_mix(session):
-    """The plan's backfill is a uniform assignment only if every row is
-    (read=t, write=t) apart from read_only rows, which are being deleted.
-    Manually created entries via POST /resources/{mfid}/access_groups take
-    caller-supplied read/write, so this confirms the set is what we assume."""
+    """Check the read/write distribution.
+
+    The backfill is a uniform assignment only if every row is (t,t) apart from
+    read_only. POST /resources/{mfid}/access_groups takes caller-supplied
+    values, so this confirms nothing else got in.
+    """
     print("\n[3] resourceacl read/write distribution")
 
     rows = _rows(session, """
@@ -139,9 +142,8 @@ def check_acl_read_write_mix(session):
 
 
 def check_duplicate_group_owners(session):
-    """one_owner_per_group is a partial unique index added at the end of the
-    backfill. Any group with two members destined for `owner` breaks it. The
-    likely source is a user added to someone else's ORCID group."""
+    """Find ORCID groups with more than one member — each would get two `owner`
+    standings and break one_owner_per_group."""
     print("\n[4] groups that would end up with more than one owner")
 
     # User.unique_id is the Python attribute; the column is literally `orcid`

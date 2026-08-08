@@ -40,8 +40,10 @@ REASON = "dangling project_id; confirmed disposable by project lead"
 
 
 def find_dangling(session):
-    """Samples whose project_id matches no project. Materialised up front —
-    the set is defined by a join that the deletions themselves change."""
+    """Samples whose project_id matches no project.
+
+    Materialised up front: the deletions change the join that defines the set.
+    """
     return session.execute(text("""
         SELECT s.unique_id, s.sample_name, s.project_id, s.owner_orcid
         FROM sample s

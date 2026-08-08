@@ -25,21 +25,12 @@ def is_valid_mfid(val):
 
 
 def blank_to_none(val):
-    """Normalise an empty or whitespace-only string to None.
+    """Normalise a blank string to None for optional identifier fields.
 
-    For optional identifier fields, "" and None mean the same thing — "not
-    provided" — but only None behaves that way. An empty string is a real
-    value: it matches a real row, satisfies a foreign key, and creates a real
-    access group.
-
-    That is not hypothetical. Several uploaders send project_id="" instead of
-    omitting it, which produced a nameless project on production holding 1,292
-    datasets and 3 samples, plus an access group named "". See
-    ~/crucible-audits/empty-project-datasets/.
-
-    Coercion rather than rejection, because absent is a legitimate state here —
-    195,569 datasets have no project. Fields where the value IS the identity,
-    like Project.project_id, must reject instead.
+    "" is a real value: it matches rows, satisfies foreign keys, and creates
+    access groups. Uploaders sending project_id="" built a nameless project
+    holding 1,292 datasets. Coerced rather than rejected because absent is
+    legitimate here; fields where the value IS the identity must reject.
     """
     if isinstance(val, str) and not val.strip():
         return None

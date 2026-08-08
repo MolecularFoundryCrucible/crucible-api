@@ -73,20 +73,13 @@ def report_group_kinds(session):
 
 
 def backfill_standings(session):
-    """Every useraccessgrouplink row gets a standing.
+    """Assign a standing to every useraccessgrouplink row.
 
-    Single CASE rather than layered updates, so leads are not first set to
-    editor and then corrected — the value is computed once and re-running
-    produces the same result.
+    Members become `editor`, not `contributor`: the project group holds write on
+    every project resource today, so anything lower silently strips access.
+    Special and unclassified groups fall to `viewer`.
 
-    Existing project members become `editor`, not `contributor`, because today
-    the project group holds write on every project resource: backfilling lower
-    would silently strip access every member currently has.
-
-    Special and unclassified groups fall to `viewer`. Membership of the admin
-    group is inert once its ACL rows are gone and platform_role carries the
-    bypass, and an unclassified group is more likely a typo-created artifact
-    than something anyone should keep write access through. Step 0 prints them.
+    One CASE rather than layered updates, so re-running converges.
     """
     print("\n[1] standings on useraccessgrouplink")
     return step(session, "rows assigned a standing", f"""
@@ -120,10 +113,8 @@ def backfill_standings(session):
 def hijacked_project_mfids(session):
     """Projects whose project_id already names a resource of another type.
 
-    Nothing stops a project_id from equalling an existing dataset or sample
-    mfid, and staging has one: a project with project_id '' alongside a sample
-    with unique_id ''. Creating the project's ACL entry against that mfid would
-    grant the project's group `owner` on someone else's resource.
+    Granting the project's group `owner` on that mfid would hand it someone
+    else's resource.
     """
     return session.execute(text("""
         SELECT r.mfid, r.resource_type FROM idtype r
@@ -134,9 +125,8 @@ def hijacked_project_mfids(session):
 
 
 def create_project_resources(session):
-    """Projects become first-class resources: an idtype row plus a single ACL
-    entry granting their own group `owner`, so effective role on a project
-    equals standing in it."""
+    """Give each project an idtype row and one ACL entry — its own group at
+    `owner` — so effective role on a project equals standing in it."""
     print("\n[2] projects as resources")
 
     hijacked = hijacked_project_mfids(session)
@@ -169,9 +159,11 @@ def create_project_resources(session):
 
 
 def drop_bypass_acl_rows(session):
-    """read_only is unused and admin never consults the ACL, so both are dead
-    weight. Row deletions, not schema changes — safe in phase 1 because
-    nothing reads them once platform_role carries the bypass."""
+    """Delete the admin and read_only ACL rows.
+
+    Requires the admin-group bypass in auth_utils to be deployed first, or
+    admin-group members lose everything.
+    """
     print("\n[3] remove materialised bypass rows")
 
     admin_rows = step(session, "admin-group ACL rows deleted", """
@@ -186,13 +178,11 @@ def drop_bypass_acl_rows(session):
 
 
 def backfill_acl_grants(session):
-    """The grant is a ceiling, not an assignment: a project gets `admin` so
-    project roles apply at face value, an instrument `contributor` so a service
-    account cannot edit a researcher's data, an ORCID group `owner`.
+    """Assign a grant to every resourceacl row.
 
-    The target is computed once in a CTE and compared against itself, so the
-    row count reports only what actually changed on a re-run and there is no
-    second copy of the CASE to drift out of step with the first.
+    The grant is a ceiling, not an assignment: project `admin`, instrument
+    `contributor`, ORCID `owner`. Computed once in a CTE so the row count
+    reports only real changes on a re-run.
     """
     print("\n[4] grants on resourceacl")
     return step(session, "rows assigned a grant", f"""
@@ -223,10 +213,11 @@ def backfill_acl_grants(session):
 
 
 def migrate_public_flags(session):
-    """One ACL entry against the virtual public group replaces both boolean
-    columns. Dataset.public is authoritative for datasets (it is what the
-    routes write); Resource.public for samples, which have no column of their
-    own. Both columns stay in place until phase 5."""
+    """Replace both public booleans with an ACL entry against the public group.
+
+    Dataset.public is authoritative for datasets, Resource.public for samples.
+    Both columns stay until phase 5.
+    """
     print("\n[5] public flags become ACL entries")
 
     datasets = step(session, "public datasets", """
@@ -259,22 +250,10 @@ def migrate_public_flags(session):
 def set_platform_admins(session):
     """Promote every admin-group member to platform_role='admin'.
 
-    Service accounts included, deliberately and temporarily. They were put in
-    the admin group historically to work around one gated route, and on
-    production all 8 admin-group members are service accounts belonging to no
-    other group but their own ORCID one. Withholding platform_role from them
-    would mean they hold nothing the moment cutover switches authorization
-    over — every instrument stops writing.
-
-    Preserving what they have today is the priority; narrowing it is separate,
-    deliberate work with its own verification. See "Regressing service account
-    rights" in docs/permission_system_plan.md.
-
-    This is slightly broader than the access they have now: an admin ACL row
-    only exists on resources that have one, whereas platform_role bypasses
-    everything including resources with no ACL rows at all. In practice the
-    difference is invisible, because create_standard_acls writes an admin row
-    on every resource today.
+    Service accounts included, deliberately and temporarily: withholding it
+    means they hold nothing at cutover and every instrument stops writing.
+    Narrowing them is tracked separately — see "Regressing service account
+    rights" in the plan.
     """
     print("\n[6] platform_role")
 
@@ -320,9 +299,10 @@ def set_platform_admins(session):
 
 
 def scope_instrument_groups(session):
-    """An instrument group holds the machine's operational identity, so its
-    only member is the service account. Facility staff lose dataset access
-    here - this is the one step that removes access people have today."""
+    """Leave only the service account in each instrument group.
+
+    The one step that removes access people have today.
+    """
     print("\n[7] instrument groups become service-account only")
 
     at_risk = session.execute(text(f"""
@@ -364,8 +344,7 @@ def scope_instrument_groups(session):
 
 
 def verify(session):
-    """Nothing should be left without a role, and no group should end up with
-    two owners — the latter is what one_owner_per_group will enforce."""
+    """Check no row is left without a role and no group has two owners."""
     print("\n[8] verification")
 
     null_standings = session.execute(text(
@@ -394,8 +373,8 @@ def verify(session):
 
 
 def create_owner_index(session):
-    """Last, once every standing is assigned. A build failure here is
-    pre-existing duplicate-owner data, not a migration bug."""
+    """Build one_owner_per_group. A failure here is pre-existing duplicate-owner
+    data, not a migration bug."""
     print("\n[9] one_owner_per_group")
     session.execute(text("""
         CREATE UNIQUE INDEX IF NOT EXISTS one_owner_per_group
@@ -408,12 +387,10 @@ PRODUCTION_DB = "crucible"
 
 
 def confirm_target(session, allow_production: bool) -> str:
-    """Ask the server which database this actually is.
+    """Ask the server which database this is, and refuse production unless told.
 
-    Production and staging live on the same Cloud SQL instance as `crucible`
-    and `crucible-staging`, with the same user and the same host, so the only
-    thing separating them is one config value. Trusting DB_CONF_FILE is not
-    good enough for a script that deletes ACL rows.
+    Prod and staging share a Cloud SQL instance, host and user — only the
+    database name differs, so DB_CONF_FILE alone is not enough of a guard.
     """
     actual = session.execute(text("SELECT current_database()")).scalar()
     user = session.execute(text("SELECT current_user")).scalar()

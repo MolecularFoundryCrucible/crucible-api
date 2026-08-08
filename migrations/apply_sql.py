@@ -1,18 +1,13 @@
 """
 Apply a .sql migration file using the API's own database configuration.
 
-The .sql files in this directory have historically been applied by hand, which
-means finding the password that get_secret() already knows how to fetch. This
-runs them through get_engine() instead, so the connection is resolved exactly
-the way the application resolves it.
+Resolves the connection through get_engine(), so no hunting for the password
+that get_secret() already knows. Executes the file as one script rather than
+splitting on ';' — several migrations contain DO $$ ... $$ blocks with their
+own semicolons.
 
-The file is executed as a single script, not split on ';' — several migrations
-contain DO $$ ... $$ blocks whose bodies have their own semicolons, and any
-naive splitter corrupts them.
-
-Production and staging are the same Cloud SQL instance, differing only by
-database name, so the target is read back from the server and production is
-refused unless explicitly named.
+Prod and staging share a Cloud SQL instance, so the target is read back from
+the server and production is refused unless explicitly named.
 
 Usage:
     DB_CONF_FILE=.env python migrations/apply_sql.py migrations/add_permission_roles.sql

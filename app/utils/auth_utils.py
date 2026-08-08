@@ -14,6 +14,7 @@ from jose import jwt, JWTError
 logger = logging.getLogger(__name__)
 
 from fastapi import Depends,  HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -191,25 +192,27 @@ def find_key(credentials, engine):
     return(api_acct)
 
 
-def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+async def authorize_user(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+) -> Principal:
+    """Resolve the caller to a Principal. Raises 401 if the key is invalid.
+
+    Async purely so shadow.current_principal is set in the request's own
+    context: FastAPI runs a *sync* dependency in a threadpool with a copied
+    context, so a ContextVar set there never reaches the route handler. The
+    blocking work stays off the event loop via run_in_threadpool.
     """
-    Authorize a user based on their API credentials.
+    principal = await run_in_threadpool(_authorize_user, credentials)
+    shadow.current_principal.set(principal)
+    return principal
 
-    Args:
-        credentials: HTTPAuthorizationCredentials object containing the API token
 
-    Returns:
-        Principal — the caller's identity, platform role and group standings
-
-    Raises:
-        HTTPException: If the API key is invalid or expired
-    """
+def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
     apikey = credentials.credentials
     cache_key = _auth_cache_key(apikey)
     with _auth_cache_lock:
         cached = _auth_cache.get(cache_key)
     if cached is not None:
-        shadow.current_principal.set(cached)
         return cached
 
     api_acct = find_key(credentials, engine)  # raises 401 on invalid/expired
@@ -222,7 +225,6 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
 
     with _auth_cache_lock:
         _auth_cache[cache_key] = result
-    shadow.current_principal.set(result)
     return result
 
 
@@ -410,7 +412,7 @@ def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(securi
         
     This function validates the provided API credentials and checks if the user belongs to the 'admin' access group.
     """
-    principal = authorize_user(credentials)
+    principal = _authorize_user(credentials)
 
     if 'admin' in [ag.group_name for ag in principal.groups]:
         return('admin')

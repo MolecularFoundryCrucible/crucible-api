@@ -27,6 +27,13 @@ SHADOW_MODE = os.environ.get("PERMISSION_SHADOW_MODE", "").lower() in ("1", "tru
 # "never exercised" without them.
 SUMMARY_EVERY = int(os.environ.get("PERMISSION_SHADOW_SUMMARY_EVERY", "500"))
 
+if SHADOW_MODE:
+    # Otherwise "enabled and agreeing" looks exactly like "never switched on".
+    logger.warning(
+        "permission_shadow_enabled summary_every=%d — new checks run alongside "
+        "the old ones; the old answer is authoritative", SUMMARY_EVERY,
+    )
+
 current_principal: ContextVar[Optional[Principal]] = ContextVar(
     "current_principal", default=None
 )
@@ -42,7 +49,9 @@ def _bump(check: str, outcome: str, permission: str) -> None:
         bucket = _counts.setdefault((check, permission), {})
         bucket[outcome] = bucket.get(outcome, 0) + 1
         _total += 1
-        due = _total % SUMMARY_EVERY == 0
+        # Also on the very first check, so a low-traffic environment gets
+        # confirmation it is running without waiting for 500 of them.
+        due = _total == 1 or _total % SUMMARY_EVERY == 0
         snapshot = dict(_counts) if due else None
     if snapshot:
         _log_summary(snapshot)

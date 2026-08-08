@@ -66,7 +66,8 @@ class TestAgreement:
         with caplog.at_level(logging.WARNING):
             shadow.compare(session, "require_read_access", "mfid-1", Permission.READ, True)
         assert shadow.report() == {"require_read_access/read": {"match": 1}}
-        assert "mismatch" not in caplog.text
+        # The event, not the substring — the summary line contains "mismatch=0".
+        assert "permission_shadow_mismatch" not in caplog.text
 
     def test_mismatch_is_counted_and_logged(self, caplog):
         """Old said yes, the new model says no."""
@@ -133,6 +134,14 @@ class TestCounters:
         for _ in range(5):
             shadow.compare(session, "require_read_access", "m", Permission.READ, True)
         assert shadow.report()["require_read_access/read"]["match"] == 5
+
+    def test_first_check_emits_a_summary(self, caplog):
+        """Confirmation that it is running, without waiting for 500 checks."""
+        shadow.current_principal.set(principal(GroupMembership(PROJECT_GID, "p", Role.OWNER)))
+        session = FakeSession([(PROJECT_GID, "owner")])
+        with caplog.at_level(logging.WARNING):
+            shadow.compare(session, "require_read_access", "m", Permission.READ, True)
+        assert "permission_shadow_summary" in caplog.text
 
     def test_summary_is_emitted_periodically(self, caplog, monkeypatch):
         monkeypatch.setattr(shadow, "SUMMARY_EVERY", 3)

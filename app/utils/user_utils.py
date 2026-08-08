@@ -53,15 +53,35 @@ def resolve_user(session, orcid: Optional[str] = None, email: Optional[str] = No
     return user
 
 
-def sql_add_user_to_access_group(orcid, group_name, session):
-    """Add a user to an access group by ORCID. Creates the access group if it doesn't exist."""
+def sql_add_user_to_access_group(orcid, group_name, session, role=None):
+    """Add a user to an access group by ORCID, creating the group if needed.
+
+    `role` is the standing in that group, defaulting to contributor. Appending
+    via the relationship would leave it null, which fails closed to viewer —
+    so a newly added project member would land read-only.
+    """
+    from app.models.core_models import UserAccessGroupLink
+    from app.utils.permissions import Role
+
     user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
     ag = add_or_update(session,
                        AccessGroup,
                        AccessGroup.group_name == group_name,
                        group_name=group_name)
+    if user is None:
+        return ag
 
-    if user and not (user in ag.users):
-        ag.users.append(user)
-
+    session.flush()  # ag.id
+    link = session.exec(
+        select(UserAccessGroupLink)
+        .where(UserAccessGroupLink.user_id == user.id)
+        .where(UserAccessGroupLink.accessgroup_id == ag.id)
+    ).one_or_none()
+    if link is None:
+        session.add(UserAccessGroupLink(
+            user_id=user.id, accessgroup_id=ag.id,
+            role=(role or Role.CONTRIBUTOR).db_value))
+    elif link.role is None:
+        link.role = (role or Role.CONTRIBUTOR).db_value
+        session.add(link)
     return ag

@@ -520,3 +520,27 @@ def require_self_or_platform_admin(principal: Principal, orcid: str) -> None:
     if principal.user_id == orcid:
         return
     require_platform_admin(principal)
+
+
+def require_project_permission(session, principal: Principal, project_id: str,
+                               permission: Permission) -> None:
+    """Permission check against a project, which is itself a resource.
+
+    Falls back to the pre-role check where the project has no ACL entries.
+    Projects only gained them in the phase 1 backfill, so without this a deploy
+    that lands before the backfill locks every project route. Drop the fallback
+    in phase 5.
+    """
+    from app.utils.permissions import has_permission
+
+    acl_rows = fetch_acl_rows(session, project_id)
+    if acl_rows:
+        if principal.is_platform_admin or has_permission(principal, acl_rows, permission):
+            return
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    if principal.is_platform_admin:
+        return
+    if any(g.group_name in ("admin", project_id) for g in principal.groups):
+        return
+    raise HTTPException(status_code=403, detail="Not authorized")

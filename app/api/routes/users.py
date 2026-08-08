@@ -16,7 +16,7 @@ from app.models.core_models import (
     UserAccessGroupLink, UserProjectLink,
 )
 from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin, require_self_or_platform_admin
-from app.utils.permissions import Principal
+from app.utils.permissions import Principal, Role
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import assert_username_available, sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
@@ -297,7 +297,7 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
             
         user = add_or_update(session, User, User.unique_id == user_info.unique_id, **user_dict)
 
-        sql_add_user_to_access_group(user.unique_id, user.unique_id, session)
+        sql_add_user_to_access_group(user.unique_id, user.unique_id, session, role=Role.OWNER)
 
         # check if the user is in the MF Proposal Database and should be added to any proposals
         user_proposal_ids = find_mf_user_proposals(user.unique_id)

@@ -15,6 +15,7 @@ from app.api.dependencies import (
     get_orcid_client_id, get_orcid_client_secret, get_redirect_uri,
 )
 from app.models.core_models import AccessGroup, User
+from app.utils.permissions import Role
 from app.utils.auth_utils import find_or_add_api_access
 from app.utils.sql_utils import add_or_update
 from app.utils.user_utils import sql_add_user_to_access_group
@@ -130,7 +131,7 @@ def get_apikey(request: Request):
         )
 
         # add the user to their orcid access group
-        sql_add_user_to_access_group(orcid, orcid, session)
+        sql_add_user_to_access_group(orcid, orcid, session, role=Role.OWNER)
         session.commit()
 
         user_email = user.email

@@ -12,7 +12,8 @@ from app.models.core_models import (
     AccessGroup, Dataset, DeletionRequest, Resource, ResourceACL,
     DatasetLink, DatasetSampleLink, Sample, SampleLink,
 )
-from app.utils.auth_utils import authorize_user, read_access_filter_list
+from app.utils.auth_utils import authorize_user, permission_filter, require_permission
+from app.utils.sql_utils import deletion_filter_for
 from app.utils.permissions import Principal
 
 router = APIRouter(tags=["entities"])
@@ -31,12 +32,12 @@ def entity_graph(entity_id: str, auth_res: Annotated[Principal, Depends(authoriz
     of broad queries, builds the combined graph in Python, then returns the weakly
     connected component containing the root entity.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        ds_auth, ds_del = read_access_filter_list(Dataset, ag_ids)
-        s_auth, s_del = read_access_filter_list(Sample, ag_ids)
+        ds_auth = permission_filter(auth_res, Dataset)
+        ds_del = deletion_filter_for(Dataset)
+        s_auth = permission_filter(auth_res, Sample)
+        s_del = deletion_filter_for(Sample)
 
         # Identify root entity type, enforce auth, and determine project scope
         sample_target = session.exec(
@@ -164,12 +165,12 @@ def entity_graph_bfs(entity_id: str, auth_res: Annotated[Principal, Depends(auth
     associations. entity_id may be a sample or dataset unique_id.
     Nodes carry entity_type ('sample' or 'dataset') and name attributes.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        ds_auth, ds_del = read_access_filter_list(Dataset, ag_ids)
-        s_auth, s_del = read_access_filter_list(Sample, ag_ids)
+        ds_auth = permission_filter(auth_res, Dataset)
+        ds_del = deletion_filter_for(Dataset)
+        s_auth = permission_filter(auth_res, Sample)
+        s_del = deletion_filter_for(Sample)
 
         # Identify root entity type and enforce auth before traversal
         sample_target = session.exec(
@@ -652,8 +653,6 @@ def entity_graph_cte(
     and cross-linked entities). Pass recursive=true for the full connected component.
     Use /project_graph/{project_id} to get all entities in a project.
     """
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         # --- Auth + identify root (1 query) ---
@@ -662,20 +661,13 @@ def entity_graph_cte(
         ).one_or_none()
 
         if sample_target is not None:
-            acl_ok = session.exec(
-                select(ResourceACL)
-                .where(ResourceACL.mfid == entity_id)
-                .where(ResourceACL.accessgroup_id.in_(ag_ids))
-            ).first()
-            if acl_ok is None:
-                raise HTTPException(status_code=403, detail="Access denied")
+            require_permission(session, auth_res, entity_id, Permission.READ)
             seed_id = sample_target.id
             sql = _SAMPLE_SEED_GRAPH_SQL if recursive else _SAMPLE_SEED_1HOP_SQL
         else:
-            auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+            auth_filter = permission_filter(auth_res, Dataset, Permission.READ)
             dataset_target = session.exec(
                 select(Dataset)
-                .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
                 .filter(auth_filter)
                 .where(Dataset.unique_id == entity_id)
             ).first()
@@ -703,18 +695,15 @@ def project_graph(
     Returns all samples and authorized datasets belonging to project_id
     as a single node-link graph.
     """
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         sample_ids = set(
             session.exec(select(Sample.id).where(Sample.project_id == project_id)).all()
         )
-        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter = permission_filter(auth_res, Dataset, Permission.READ)
         dataset_ids = set(
             session.exec(
                 select(Dataset.id)
-                .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
                 .filter(auth_filter)
                 .where(Dataset.project_id == project_id)
             ).unique().all()

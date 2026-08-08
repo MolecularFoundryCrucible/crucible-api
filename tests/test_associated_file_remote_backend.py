@@ -1,11 +1,34 @@
 from unittest.mock import patch
-from sqlmodel import Session
+from sqlmodel import Session, select
 from app.utils.permissions import PUBLIC_GROUP_NAME, Role
 from app.models.core_models import Resource, Dataset, AssociatedFile, AccessGroup, ResourceACL
 from app.models.datasets import AssociatedFileCreate, AssociatedFileRead, AssociatedFileUpdate
 
 
+def grant_public(session, mfid):
+    """Make a resource publicly readable and return the public group's id.
+
+    Public is an ACL grant against the virtual group now, not just the
+    Resource.public boolean. The caller also needs the group id: load_principal
+    injects public-group membership into every principal in production, but the
+    auth_as fixture does not.
+    """
+    pub = session.exec(
+        select(AccessGroup).where(AccessGroup.group_name == PUBLIC_GROUP_NAME)
+    ).one_or_none()
+    if pub is None:
+        pub = AccessGroup(group_name=PUBLIC_GROUP_NAME)
+        session.add(pub)
+        session.commit()
+        session.refresh(pub)
+    session.add(ResourceACL(mfid=mfid, accessgroup_id=pub.id,
+                            read=True, write=False, role="viewer"))
+    session.commit()
+    return pub.id
+
+
 def _make_public_dataset_with_file(db_engine, dsid, storage_path="mf-storage-prod/x/f.txt"):
+    """Returns (file_mfid, public_group_id)."""
     with Session(db_engine) as session:
         session.add(Resource(mfid=dsid, resource_type="dataset", public=True))
         ds = Dataset(unique_id=dsid, dataset_name="test", public=True, owner_orcid="0000-0000-0000-0001")
@@ -19,12 +42,12 @@ def _make_public_dataset_with_file(db_engine, dsid, storage_path="mf-storage-pro
         session.add(af)
         session.commit()
         session.refresh(af)
-        return af.mfid
+        return af.mfid, grant_public(session, dsid)
 
 
 def test_gcs_backend_download_link_still_calls_generate_signed_url(client, db_engine, auth_as):
-    file_mfid = _make_public_dataset_with_file(db_engine, "ds_pub_1")
-    auth_as("0000-0000-0000-0001")
+    file_mfid, public_gid = _make_public_dataset_with_file(db_engine, "ds_pub_1")
+    auth_as("0000-0000-0000-0001", groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
 
     with patch(
         "app.api.routes.files._generate_signed_url_link",
@@ -149,8 +172,10 @@ def test_non_gcs_single_file_download_link_returns_null_without_calling_gcs(clie
         session.commit()
         session.refresh(af)
         file_mfid = af.mfid
+        public_gid = grant_public(session, "ds_pub_2")
 
-    auth_as("0000-0000-0000-0001")
+    auth_as("0000-0000-0000-0001",
+            groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
 
     with patch("app.api.routes.files._generate_signed_url_link") as mock_sign, \
          patch("app.api.routes.files._ensure_storage_path") as mock_ensure:
@@ -222,8 +247,10 @@ def test_ingest_rejects_non_gcs_file(client, db_engine, auth_as):
         session.commit()
         session.refresh(af)
         file_mfid = af.mfid
+        public_gid = grant_public(session, "ds_pub_4")
 
-    auth_as("0000-0000-0000-0001")
+    auth_as("0000-0000-0000-0001",
+            groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
 
     resp = client.post(f"/files/{file_mfid}/ingest")
 

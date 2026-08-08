@@ -472,8 +472,23 @@ def permission_filter(principal: Principal, resource_model,
     if not group_ids:
         return false()
 
-    return exists().where(
-        ResourceACL.mfid == resource_model.unique_id,
-        ResourceACL.accessgroup_id.in_(group_ids),
-        ResourceACL.role >= threshold.db_value,
+    # Set membership, not `role >= threshold`. The column is declared str so
+    # SQLite can create the table, and there `>=` compares alphabetically —
+    # 'owner' >= 'viewer' is false — so a range comparison is right on Postgres
+    # and silently wrong everywhere else. With at most five roles the IN list
+    # is trivially indexable and depends on no enum ordering at all.
+    allowed = [r.db_value for r in Role if r >= threshold]
+
+    # correlate() pins the subquery to the outer model. Without it SQLAlchemy
+    # auto-correlates ResourceACL too and the EXISTS ends up with no FROM
+    # clause wherever the outer query already mentions that table.
+    return (
+        exists()
+        .where(
+            ResourceACL.mfid == resource_model.unique_id,
+            ResourceACL.accessgroup_id.in_(group_ids),
+            ResourceACL.role.in_(allowed),
+        )
+        .select_from(ResourceACL)
+        .correlate(resource_model)
     )

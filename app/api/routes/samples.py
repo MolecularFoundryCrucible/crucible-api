@@ -21,8 +21,8 @@ from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
-from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
-from app.utils.permissions import Principal, Role
+from app.utils.auth_utils import authorize_user, permission_filter, require_groups, require_permission
+from app.utils.permissions import Principal, Role, Permission
 from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.models.users import UserPublicRead
@@ -35,11 +35,13 @@ API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 @router.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model=SampleLink)
 def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        require_write_access(session, ag_ids, [parent_sample_id, child_sample_id])
+        # Both, not either: the pre-role check passed on any one.
+
+        require_permission(session, auth_res, parent_sample_id, Permission.EDIT)
+
+        require_permission(session, auth_res, child_sample_id, Permission.EDIT)
 
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()
         if not parent_sample:
@@ -64,11 +66,13 @@ def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annota
 
 @router.delete("/samples/{parent_sample_id}/children/{child_sample_id}")
 def unlink_sample_parent_child(parent_sample_id: str, child_sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        require_write_access(session, ag_ids, [parent_sample_id, child_sample_id])
+        # Both, not either: the pre-role check passed on any one.
+
+        require_permission(session, auth_res, parent_sample_id, Permission.EDIT)
+
+        require_permission(session, auth_res, child_sample_id, Permission.EDIT)
 
         parent = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
         if not parent:
@@ -98,15 +102,14 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
     '''
     Partially update a sample record. Only provided fields are modified.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
+    user_unique_id = auth_res.user_id
 
     with Session(engine) as session:
         sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
         if not sample:
             raise HTTPException(status_code=404, detail='Sample not found')
 
-        require_write_access(session, ag_ids, [sample_id])
+        require_permission(session, auth_res, sample_id, Permission.EDIT)
 
         update_dict = updated_sample.model_dump(exclude_unset=True)
         new_public = update_dict.pop('public', None)
@@ -149,8 +152,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
     Create a new sample. If a sample with the same project_id and sample_name already
     exists, the existing record is returned without modification.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
+    user_unique_id = auth_res.user_id
 
     if not S.sample_name.strip():
         raise HTTPException(status_code=400, detail="sample_name must not be empty.")
@@ -252,8 +254,6 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
         warnings.warn("include_datasets is deprecated, use include_links=true instead", DeprecationWarning)
         include_links = True
 
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     params_dict = dict(request.query_params)
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
@@ -261,7 +261,8 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
         params_dict.pop(k, None)
 
     with Session(engine) as session:
-        auth_filter, deletion_filter = read_access_filter_list(Sample, ag_ids)
+        auth_filter = permission_filter(auth_res, Sample)
+        deletion_filter = deletion_filter_for(Sample)
 
         def apply_filters(q):
             q = q.where(auth_filter).where(deletion_filter)
@@ -381,9 +382,10 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
         return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
 
 
-def _sample_base_query(ag_ids: list):
+def _sample_base_query(principal):
     """Auth-scoped, deletion-filtered base query for samples. Caller adds ordering and pagination."""
-    auth_filter, deletion_filter = read_access_filter_list(Sample, ag_ids)
+    auth_filter = permission_filter(auth_res, Sample)
+    deletion_filter = deletion_filter_for(Sample)
     return (
         select(Sample, Resource.creation_time, Resource.modification_time, Resource.public)
         .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
@@ -403,12 +405,10 @@ def search_samples(
     Search samples by name. Returns results ordered by match quality (exact → prefix → substring).
     Optionally scope to a project with ?project_id=. Maximum 50 results.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
-        query = _sample_base_query(ag_ids)
+        query = _sample_base_query(auth_res)
         for token in q.lower().split():
             query = query.where(
                 Sample.sample_name.ilike(f"{token}%") |
@@ -433,8 +433,6 @@ def read_sample(sample_id: str, auth_res: Annotated[Principal, Depends(authorize
     Returns the sample for the provided ID.
     Pass include_links=true to include parent, child, and associated resources.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         # get with metadata or not
         resource_opts = (
@@ -458,7 +456,7 @@ def read_sample(sample_id: str, auth_res: Annotated[Principal, Depends(authorize
             raise HTTPException(status_code=404, detail="Sample not found")
 
         # check that requester has read access
-        require_read_access(session, sample_id, ag_ids)
+        require_permission(session, auth_res, sample_id, Permission.READ)
 
         # check deletion request
         deletion_req = get_active_deletion_request(session, sample_id)
@@ -496,8 +494,6 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[Principal, Depends(
     '''
     Returns a list of all datasets linked to a given sample
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop("keyword", None)
@@ -509,7 +505,7 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[Principal, Depends(
         if sample is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter = permission_filter(auth_res, Dataset, Permission.READ)
         if include_metadata:
             query = (
                     select(Dataset, ScientificMetadataBinary.scientific_metadata)
@@ -609,8 +605,6 @@ def sample_graph(sample_id: str, auth_res: Annotated[Principal, Depends(authoriz
     relationships) to the given sample. Loads all samples in the project and
     returns the directed lineage subgraph (ancestors + descendants) of the target.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         target = session.exec(
@@ -620,13 +614,7 @@ def sample_graph(sample_id: str, auth_res: Annotated[Principal, Depends(authoriz
         if target is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        acl_ok = session.exec(
-            select(ResourceACL)
-            .where(ResourceACL.mfid == sample_id)
-            .where(ResourceACL.accessgroup_id.in_(ag_ids))
-        ).first()
-        if acl_ok is None:
-            raise HTTPException(status_code=403, detail="Access denied")
+        require_permission(session, auth_res, sample_id, Permission.READ)
 
         samp_list = session.exec(
             select(Sample)
@@ -662,8 +650,6 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[Principal, Depends(auth
     Returns a NetworkX node-link graph of all samples connected (via parent/child
     relationships) to the given sample, i.e. its full lineage subgraph.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         target = session.exec(
@@ -673,13 +659,7 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[Principal, Depends(auth
         if target is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        acl_ok = session.exec(
-            select(ResourceACL)
-            .where(ResourceACL.mfid == sample_id)
-            .where(ResourceACL.accessgroup_id.in_(ag_ids))
-        ).first()
-        if acl_ok is None:
-            raise HTTPException(status_code=403, detail="Access denied")
+        require_permission(session, auth_res, sample_id, Permission.READ)
 
         # Two recursive CTEs — one walking up (ancestors), one walking down
         # (descendants). PostgreSQL only allows a single UNION between the

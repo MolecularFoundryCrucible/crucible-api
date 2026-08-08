@@ -26,8 +26,8 @@ from app.models.samples import SampleResponse
 from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, require_groups, require_read_access, require_write_access
-from app.utils.permissions import Principal
+from app.utils.auth_utils import authorize_user, permission_filter, require_groups, require_permission
+from app.utils.permissions import Principal, Permission
 from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
 
@@ -98,8 +98,6 @@ def search_resource_metadata_v2(
     Search resources by scientific metadata content using full-text search.
     Returns a unified structure compatible with other search endpoints, including scientific_metadata.
     """
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     search_query = func.plainto_tsquery('english', q)
     metadata_vector = func.to_tsvector(
@@ -108,10 +106,7 @@ def search_resource_metadata_v2(
     )
     rank_expr = func.ts_rank_cd(metadata_vector, search_query)
 
-    acl_subquery = exists().where(
-        ResourceACL.mfid == ScientificMetadataBinary.unique_id,
-        ResourceACL.accessgroup_id.in_(ag_ids)
-    )
+    acl_subquery = permission_filter(auth_res, ScientificMetadataBinary, Permission.READ)
 
     active_deletion = exists().where(
         DeletionRequest.resource_id == ScientificMetadataBinary.unique_id,
@@ -183,8 +178,6 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
     Pass include_metadata=true to include scientific metadata.
     Pass include_links=true to include parent/child/associated resources (datasets and samples only).
     """
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         resource = session.exec(
@@ -193,7 +186,7 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
 
-        require_read_access(session, resource_id, ag_ids)
+        require_permission(session, auth_res, resource_id, Permission.READ)
 
         deletion_req = get_active_deletion_request(session, resource_id)
 
@@ -289,8 +282,6 @@ def get_resource_links(resource_id: str, auth_res: Annotated[Principal, Depends(
     Returns the immediate links for a resource (dataset or sample):
     parent/child via lineage and associated resources.
     """
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         resource = session.exec(
@@ -299,7 +290,7 @@ def get_resource_links(resource_id: str, auth_res: Annotated[Principal, Depends(
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
 
-        require_read_access(session, resource_id, ag_ids)
+        require_permission(session, auth_res, resource_id, Permission.READ)
 
         if resource.resource_type == "dataset":
             entity = session.exec(select(Dataset).where(Dataset.unique_id == resource_id)).one_or_none()
@@ -317,8 +308,6 @@ def get_resource_links(resource_id: str, auth_res: Annotated[Principal, Depends(
 
 @router.get("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
 def read_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: str):
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         resource = session.exec(
             select(Resource)
@@ -329,7 +318,7 @@ def read_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
 
-        require_read_access(session, unique_id, ag_ids)
+        require_permission(session, auth_res, unique_id, Permission.READ)
 
         if resource.scientific_metadata is None:
             return ScientificMetadataBinaryRead(unique_id=unique_id, scientific_metadata={})
@@ -339,8 +328,7 @@ def read_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user
 @router.post("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
 def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: str, scientific_md: dict,
                              background_tasks: BackgroundTasks, overwrite: bool = False):
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
+    user_unique_id = auth_res.user_id
 
     with Session(engine) as session:
         resource = session.exec(
@@ -350,7 +338,7 @@ def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
 
-        require_write_access(session, ag_ids, [unique_id])
+        require_permission(session, auth_res, unique_id, Permission.EDIT)
 
         if not overwrite:
             existing = session.exec(
@@ -381,8 +369,7 @@ def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
 @router.patch("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
 def update_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: str, scientific_md_updates: dict,
                              background_tasks: BackgroundTasks):
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
+    user_unique_id = auth_res.user_id
 
     with Session(engine) as session:
         resource = session.exec(
@@ -392,7 +379,7 @@ def update_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
 
-        require_write_access(session, ag_ids, [unique_id])
+        require_permission(session, auth_res, unique_id, Permission.EDIT)
 
         stored_md = session.exec(
             select(ScientificMetadataBinary).where(ScientificMetadataBinary.unique_id == unique_id)

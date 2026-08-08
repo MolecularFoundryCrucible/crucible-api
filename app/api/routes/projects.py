@@ -13,7 +13,7 @@ from app.models.core_models import (
     AccessGroup, Project, Resource, Sample, User, UserProjectLink, UserAccessGroupLink,
     ResourceACL, Dataset, DatasetSampleLink,
 )
-from app.utils.auth_utils import authorize_user, require_groups
+from app.utils.auth_utils import authorize_user, require_groups, require_platform_admin
 from app.utils.permissions import Principal
 from app.utils.sql_utils import add_or_update, touch_resource_modification_time
 from app.utils.user_utils import resolve_user
@@ -81,7 +81,7 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
     '''
     Returns a paginated list of projects the user is authorized to see, including the resolved project lead.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
+    user_unique_id = auth_res.user_id
     if include_metadata:
         loader_opts = [selectinload(Project.resource).selectinload(Resource.scientific_metadata)]
     else:
@@ -98,7 +98,7 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
                 .where(UserProjectLink.user_id == user.id)
             )
         else:
-            require_groups(ag_list)
+            require_platform_admin(auth_res)
             base = select(Project)
 
         total = session.exec(select(func.count()).select_from(base.subquery())).one()

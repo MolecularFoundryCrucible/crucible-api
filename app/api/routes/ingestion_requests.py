@@ -12,7 +12,7 @@ from app.models.core_models import (
     ResourceACL,
 )
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, require_admin, require_groups
+from app.utils.auth_utils import authorize_user, require_platform_admin
 from app.utils.permissions import Principal
 from app.utils.sql_utils import only_update
 
@@ -122,8 +122,7 @@ def patch_ingestion_request(
     ing_req: IngestionRequest,
 ):
     '''Updates an ingestion request. Admin/group access only.'''
-    ag_list = auth_res.groups
-    require_groups(ag_list)
+    require_platform_admin(auth_res)
 
     if ing_req.id and ing_req.id != reqid:
         raise HTTPException(status_code=400, detail="Request body ID does not match URL")

@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 from app.api.dependencies import get_engine
 from app.models.core_models import AccessGroup, User, UserAccessGroupLink
 from app.models.users import ServiceAccountCreate, ServiceAccountRead
-from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_admin
+from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin
 from app.utils.permissions import Principal
 from app.utils.sql_utils import add_or_update
 from app.utils.user_utils import assert_username_available
@@ -26,8 +26,7 @@ def create_service_account(
     unique_id is optional; if omitted the server generates an mfid.
     Admin only.
     '''
-    ag_list = auth_res.groups
-    require_admin(ag_list)
+    require_platform_admin(auth_res)
 
     with Session(engine) as session:
         # Username must be unique across all users
@@ -81,8 +80,7 @@ def rotate_service_account_key(
     The new key is only returned once — store it securely.
     Admin only.
     '''
-    ag_list = auth_res.groups
-    require_admin(ag_list)
+    require_platform_admin(auth_res)
 
     with Session(engine) as session:
         user = session.exec(

@@ -12,7 +12,7 @@ from app.api.dependencies import get_engine
 from app.models.core_models import Dataset, DeletionAuditLog, DeletionRequest, Resource, Sample
 from app.models.deletion import DeletionAuditLogRead, DeletionRequestRead
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, require_admin, require_groups
+from app.utils.auth_utils import authorize_user, require_platform_admin
 from app.utils.permissions import Principal
 from app.utils.sql_utils import touch_resource_modification_time
 from app.general_utils import get_utc_isoformat
@@ -192,8 +192,8 @@ def hard_delete_resource_route(
     Hard-delete a resource and all related data. Admin only.
     Requires an approved deletion request unless ?force=true.
     """
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    require_admin(ag_list)
+    user_unique_id = auth_res.user_id
+    require_platform_admin(auth_res)
 
     with Session(engine) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == resource_id)).one_or_none()
@@ -257,8 +257,7 @@ def list_deletion_audit(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ):
-    ag_list = auth_res.groups
-    require_admin(ag_list)
+    require_platform_admin(auth_res)
     with Session(engine) as session:
         count_query = select(func.count(DeletionAuditLog.id))
         data_query = select(DeletionAuditLog)
@@ -287,8 +286,7 @@ def get_deletion_audit(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     audit_id: int,
 ):
-    ag_list = auth_res.groups
-    require_admin(ag_list)
+    require_platform_admin(auth_res)
     with Session(engine) as session:
         entry = session.exec(
             select(DeletionAuditLog).where(DeletionAuditLog.id == audit_id)

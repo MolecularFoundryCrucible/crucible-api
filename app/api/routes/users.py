@@ -15,7 +15,7 @@ from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, Project, Sample, User,
     UserAccessGroupLink, UserProjectLink,
 )
-from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_admin, require_groups
+from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_groups, require_platform_admin
 from app.utils.permissions import Principal
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import assert_username_available, sql_add_user_to_access_group
@@ -194,9 +194,9 @@ def read_user(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)
     '''
     Returns the User object associated with the provided ORCID if found. Otherwise returns None.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
+    user_unique_id = auth_res.user_id
     if user_unique_id != orcid:
-        require_admin(ag_list)
+        require_platform_admin(auth_res)
 
     with Session(engine) as session:
         users = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
@@ -206,8 +206,7 @@ def read_user(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)
 @router.post("/users/{orcid}/apikey", response_model=ApiKeyRead)
 def get_or_provision_user_apikey(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.'''
-    ag_list = auth_res.groups
-    require_admin(ag_list)
+    require_platform_admin(auth_res)
 
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
@@ -220,8 +219,7 @@ def get_or_provision_user_apikey(orcid: str, auth_res: Annotated[Principal, Depe
 @router.get("/users/{orcid}/apikey/verify", response_model=ApiKeyVerify)
 def verify_user_apikey(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Returns validity and expiry info for the given user's API key. Admin only.'''
-    ag_list = auth_res.groups
-    require_admin(ag_list)
+    require_platform_admin(auth_res)
 
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
@@ -273,8 +271,7 @@ def find_mf_user_proposals(orcid):
 
 @router.post("/users", response_model=UserRead)
 def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_info: UserCreate, project_ids: List[str] = Body(...)):
-    ag_list = auth_res.groups
-    require_admin(ag_list)
+    require_platform_admin(auth_res)
 
     # Validate required fields
     missing_fields = []
@@ -434,8 +431,7 @@ def read_user_access_to_dataset(dsid: str, orcid: str, auth_res: Annotated[Princ
 
 @router.post("/users/{orcid}/access_groups/{group_name}", response_model=AccessGroupRead)
 def add_user_to_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], orcid: str, group_name: str):
-    ag_list = auth_res.groups
-    require_admin(ag_list)
+    require_platform_admin(auth_res)
     with Session(engine) as session:
         ag = sql_add_user_to_access_group(orcid, group_name, session)
         session.commit()
@@ -464,8 +460,7 @@ def list_user_access_groups(auth_res: Annotated[Principal, Depends(authorize_use
 @router.delete("/users/{orcid}/access_groups/{group_name}")
 def remove_user_from_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], orcid: str, group_name: str):
     '''Remove a user from an access group.'''
-    ag_list = auth_res.groups
-    require_admin(ag_list)
+    require_platform_admin(auth_res)
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
         if user is None:

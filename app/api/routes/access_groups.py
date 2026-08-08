@@ -11,7 +11,7 @@ from app.models.access_groups import AccessGroupCreate, AccessGroupRead
 from app.models.join_requests import JoinRequestCreate, JoinRequestRead, JoinRequestReview
 from app.models.pagination import PaginatedResponse
 from app.models.users import UserRead
-from app.utils.auth_utils import authorize_user, require_admin, require_groups
+from app.utils.auth_utils import authorize_user, require_platform_admin
 from app.utils.permissions import Principal
 from app.utils.project_utils import sql_add_user_to_project
 
@@ -34,8 +34,7 @@ def _led_group_names(user_unique_id: str, session: Session) -> List[str]:
 
 @router.post("/access_groups", response_model=AccessGroupRead)
 def create_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], ag: AccessGroupCreate):
-    ag_list = auth_res.groups
-    require_groups(ag_list)
+    require_platform_admin(auth_res)
     if not ag.group_name.strip():
         raise HTTPException(status_code=400, detail="group_name must not be empty.")
 
@@ -49,8 +48,7 @@ def create_access_group(auth_res: Annotated[Principal, Depends(authorize_user)],
 
 @router.get("/access_groups/{group_name}", response_model=Union[None, AccessGroupRead])
 def read_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], group_name: str):
-    ag_list = auth_res.groups
-    require_groups(ag_list)
+    require_platform_admin(auth_res)
     with Session(engine) as session:
         return session.exec(
             select(AccessGroup).where(AccessGroup.group_name == group_name)
@@ -60,8 +58,7 @@ def read_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], g
 @router.get("/access_groups/{group_name}/users", response_model=List[UserRead])
 def list_access_group_users(auth_res: Annotated[Principal, Depends(authorize_user)], group_name: str):
     '''List all users who are members of the given access group. Admin only.'''
-    ag_list = auth_res.groups
-    require_admin(ag_list)
+    require_platform_admin(auth_res)
 
     with Session(engine) as session:
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()

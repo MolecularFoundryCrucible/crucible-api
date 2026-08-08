@@ -492,3 +492,18 @@ def permission_filter(principal: Principal, resource_model,
         .select_from(ResourceACL)
         .correlate(resource_model)
     )
+
+
+def require_platform_admin(principal: Principal) -> None:
+    """Raise 403 unless the caller has platform-wide bypass.
+
+    Accepts admin-group membership as well as platform_role for now. On a
+    database where the phase 1 backfill has not run, platform_role is 'none'
+    for everyone, and checking it alone would lock every admin route with no
+    recovery short of direct database access. Drop the group arm in phase 5.
+    """
+    if principal.is_platform_admin:
+        return
+    if any(g.group_name == "admin" for g in principal.groups):
+        return
+    raise HTTPException(status_code=403, detail="Not authorized")

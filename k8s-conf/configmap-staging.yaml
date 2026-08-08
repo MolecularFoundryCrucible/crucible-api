@@ -22,6 +22,9 @@ data:
   # Runs the new permission check alongside the old one, acts on the old
   # answer, logs disagreements. Set to "0" to switch off without a deploy.
   PERMISSION_SHADOW_MODE: "1"
+  # Summary line after every N checks. Low while a single person is testing;
+  # raise it well before production, where it would be one line per request.
+  PERMISSION_SHADOW_SUMMARY_EVERY: "5"
 
   # database
   db_type: "postgresql"

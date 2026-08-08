@@ -89,6 +89,11 @@ spec:
             configMapKeyRef:
               key: PERMISSION_SHADOW_MODE
               name: crucible-api-config-staging
+        - name: "PERMISSION_SHADOW_SUMMARY_EVERY"
+          valueFrom:
+            configMapKeyRef:
+              key: PERMISSION_SHADOW_SUMMARY_EVERY
+              name: crucible-api-config-staging
         image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-staging:latest"
         imagePullPolicy: Always
         name: "crucible-api-container"

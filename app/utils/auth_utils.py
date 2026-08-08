@@ -22,7 +22,8 @@ from app.general_utils import  get_secret
 from app.api.dependencies import get_engine, get_api_path, get_api_url
 from app.models.core_models import ApiToken
 from app.utils.permissions import (
-    PUBLIC_GROUP_NAME, GroupMembership, Permission, PlatformRole, Principal, Role)
+    PUBLIC_GROUP_NAME, THRESHOLDS, GroupMembership, Permission, PlatformRole,
+    Principal, Role, effective_role)
 from app.utils import shadow
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
@@ -417,3 +418,62 @@ def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(securi
     if 'admin' in [ag.group_name for ag in principal.groups]:
         return('admin')
 
+
+
+# ====== Role-based checks (phase 4)
+# These replace require_read_access / require_write_access /
+# read_access_filter_list / require_groups / require_admin at cutover.
+
+def fetch_acl_rows(session, mfid: str):
+    """(accessgroup_id, role) for one resource."""
+    from app.models.core_models import ResourceACL
+    rows = session.exec(
+        select(ResourceACL.accessgroup_id, ResourceACL.role)
+        .where(ResourceACL.mfid == mfid)
+    ).all()
+    return [(gid, Role.from_db(r)) for gid, r in rows if r is not None]
+
+
+def require_permission(session, principal: Principal, mfid: str,
+                       permission: Permission) -> Optional[Role]:
+    """Raise 403 unless `principal` may perform `permission` on `mfid`.
+
+    Returns the effective role, so a caller that needs to branch further does
+    not have to recompute it. None means the caller is a platform admin, whose
+    access does not come from an ACL entry.
+    """
+    from app.utils.permissions import has_permission
+
+    if principal.is_platform_admin:
+        return None
+
+    acl_rows = fetch_acl_rows(session, mfid)
+    if not has_permission(principal, acl_rows, permission):
+        raise HTTPException(status_code=403, detail="Access denied")
+    return effective_role(principal, acl_rows)
+
+
+def permission_filter(principal: Principal, resource_model,
+                      permission: Permission = Permission.READ):
+    """SQL filter restricting a list query to resources the caller may reach.
+
+    Relies on min(a,b) >= r being equivalent to a >= r and b >= r: the standing
+    side is filtered in Python, so only a single column comparison reaches SQL
+    and useraccessgrouplink never has to be joined.
+    """
+    from sqlalchemy import exists, false, true
+    from app.models.core_models import ResourceACL
+
+    if principal.is_platform_admin:
+        return true()
+
+    threshold = THRESHOLDS[permission]
+    group_ids = principal.group_ids_at_or_above(threshold)
+    if not group_ids:
+        return false()
+
+    return exists().where(
+        ResourceACL.mfid == resource_model.unique_id,
+        ResourceACL.accessgroup_id.in_(group_ids),
+        ResourceACL.role >= threshold.db_value,
+    )

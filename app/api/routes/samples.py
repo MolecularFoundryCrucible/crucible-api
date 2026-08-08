@@ -22,8 +22,8 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
-from app.utils.permissions import Principal
-from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time
+from app.utils.permissions import Principal, Role
+from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.models.users import UserPublicRead
 
@@ -118,14 +118,17 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
             ri.modification_time = get_utc_isoformat()
             if new_public is not None:
                 ri.public = new_public
+                set_public(session, sample_id, bool(new_public))
 
         if 'owner_orcid' in update_dict:
             owner_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.owner_orcid)).one_or_none()
-            sql_create_resource_acl(owner_ag, sample_id, read=True, write=True, session=session)
+            sql_create_resource_acl(owner_ag, sample_id, read=True, write=True,
+                                    session=session, role=Role.OWNER)
 
         if 'project_id' in update_dict:
             proj_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.project_id)).one_or_none()
-            sql_create_resource_acl(proj_ag, sample_id, read=True, write=True, session=session)
+            sql_create_resource_acl(proj_ag, sample_id, read=True, write=True,
+                                    session=session, role=Role.ADMIN)
 
         session.add(sample)
         session.commit()
@@ -197,6 +200,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
             ri.creation_time = now
         ri.modification_time = now
         ri.public = S.public
+        set_public(session, S.unique_id, bool(S.public))
         session.commit()
 
         create_standard_acls(session, sample.unique_id,

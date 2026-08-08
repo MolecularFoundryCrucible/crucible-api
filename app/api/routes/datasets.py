@@ -43,10 +43,10 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
-from app.utils.auth_utils import authorize_user, require_write_access, require_read_access, read_access_filter_list
-from app.utils.permissions import Principal
+from app.utils.auth_utils import authorize_user, require_permission, permission_filter
+from app.utils.permissions import Permission, Principal, Role
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
-from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time
+from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, deletion_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
@@ -146,7 +146,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
     
     logger.info(f"Creating dataset: {dataset.unique_id}")
     dataset_details = dataset.model_dump(exclude_unset=True)
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
+    user_unique_id = auth_res.user_id
     with Session(engine) as session:
         if dataset_details.get('unique_id'):
             existing = session.exec(select(Dataset).where(Dataset.unique_id == dataset_details['unique_id'])).one_or_none()
@@ -183,6 +183,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         ri.created_with_api_version = API_VERSION
         ri.api_version_githash = API_VERSION_GITHASH
         ri.public = ds.public
+        set_public(session, ds.unique_id, bool(ds.public))
         
         session.flush()
 
@@ -199,7 +200,8 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                                         AccessGroup,
                                         AccessGroup.group_name == dataset_details['instrument_name'].lower(),
                                         group_name=dataset_details['instrument_name'].lower())
-            sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True, session=session)
+            sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True,
+                                    session=session, role=Role.CONTRIBUTOR)
 
         session.commit()
         session.refresh(ds)
@@ -218,15 +220,14 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
     '''
     Partially update a dataset record. Only provided fields are modified.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
+    user_unique_id = auth_res.user_id
 
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        require_write_access(session, ag_ids, [dsid])
+        require_permission(session, auth_res, dsid, Permission.EDIT)
 
         upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **updated_dataset.model_dump(exclude_unset=True))
 
@@ -234,22 +235,26 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
         if ri:
             ri.modification_time = get_utc_isoformat()
             ri.public = upds.public
+            set_public(session, upds.unique_id, bool(upds.public))
 
         if upds.owner_orcid is not None:
             new_owner = session.exec(select(User).where(User.unique_id == upds.owner_orcid)).one_or_none()
             if new_owner:
                 upds.owner_user_id = new_owner.id
             user_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == upds.owner_orcid)).one_or_none()
-            sql_create_resource_acl(user_ag, upds.unique_id, read=True, write=True, session=session)
+            sql_create_resource_acl(user_ag, upds.unique_id, read=True, write=True,
+                                    session=session, role=Role.OWNER)
 
         if upds.project_id is not None:
             prop_name = session.exec(select(Project.project_id).where(Project.project_id == upds.project_id)).one_or_none()
             prop_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == prop_name)).one_or_none()
-            sql_create_resource_acl(prop_ag, upds.unique_id, read=True, write=True, session=session)
+            sql_create_resource_acl(prop_ag, upds.unique_id, read=True, write=True,
+                                    session=session, role=Role.ADMIN)
 
         if upds.instrument_name is not None:
             inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == upds.instrument_name.lower())).one_or_none()
-            sql_create_resource_acl(inst_ag, upds.unique_id, read=True, write=True, session=session)
+            sql_create_resource_acl(inst_ag, upds.unique_id, read=True, write=True,
+                                    session=session, role=Role.CONTRIBUTOR)
 
         session.commit()
         session.refresh(upds)
@@ -287,8 +292,6 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
     result sets, since deep offsets are slower.
     Pass include_links=true to include parent, child, and associated resources for each dataset.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
 
@@ -298,7 +301,8 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
         params_dict.pop(k, None)
 
     with Session(engine) as session:
-        auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
+        auth_filter = permission_filter(auth_res, Dataset)
+        deletion_filter = deletion_filter_for(Dataset)
 
         # Base filters shared between count and data queries
         def apply_filters(q):
@@ -420,9 +424,10 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
         return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
 
 
-def _dataset_base_query(ag_ids: list):
+def _dataset_base_query(principal):
     """Auth-scoped, deletion-filtered base query for datasets. Caller adds ordering and pagination."""
-    auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
+    auth_filter = permission_filter(principal, Dataset)
+    deletion_filter = deletion_filter_for(Dataset)
     return (
         select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public)
         .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
@@ -442,12 +447,10 @@ def search_datasets(
     Search datasets by name. Returns results ordered by match quality (exact → prefix → substring).
     Optionally scope to a project with ?project_id=. Maximum 50 results.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
-        query = _dataset_base_query(ag_ids)
+        query = _dataset_base_query(auth_res)
         for token in q.lower().split():
             query = query.where(
                 Dataset.dataset_name.ilike(f"{token}%") |
@@ -475,8 +478,6 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: 
     Pass include_links=true to include parent, child, and associated resources.
     Pass include_owner=true to resolve owner_orcid to a user object.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         
@@ -502,7 +503,7 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: 
             raise HTTPException(status_code=404, detail="Dataset not found")
 
         # check that requester has read access
-        require_read_access(session, dsid, ag_ids)
+        require_permission(session, auth_res, dsid, Permission.READ)
 
         # check deletion request
         deletion_req = get_active_deletion_request(session, dsid)
@@ -539,8 +540,6 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: 
 
 @router.post("/datasets/{parent_dataset_id}/children/{child_dataset_id}", response_model=DatasetLink)
 def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).first()
@@ -550,7 +549,16 @@ def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Ann
         if not child:
             raise HTTPException(status_code=404, detail="Child dataset not found")
 
-        require_write_access(session, ag_ids, [parent_dataset_id, child_dataset_id])
+        # Both, not either: the pre-role check passed if any one was
+
+
+        # writable, so a link could be made to a resource you cannot edit.
+
+
+        require_permission(session, auth_res, parent_dataset_id, Permission.EDIT)
+
+
+        require_permission(session, auth_res, child_dataset_id, Permission.EDIT)
 
         link = add_or_update(session,
                      DatasetLink,
@@ -568,8 +576,6 @@ def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Ann
 
 @router.delete("/datasets/{parent_dataset_id}/children/{child_dataset_id}")
 def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
@@ -579,7 +585,16 @@ def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, a
         if not child:
             raise HTTPException(status_code=404, detail="Child dataset not found")
 
-        require_write_access(session, ag_ids, [parent_dataset_id, child_dataset_id])
+        # Both, not either: the pre-role check passed if any one was
+
+
+        # writable, so a link could be made to a resource you cannot edit.
+
+
+        require_permission(session, auth_res, parent_dataset_id, Permission.EDIT)
+
+
+        require_permission(session, auth_res, child_dataset_id, Permission.EDIT)
 
         link = session.exec(
             select(DatasetLink).where(
@@ -603,15 +618,15 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[Principal, D
     '''
     Returns a paginated list of parent datasets for a given dataset.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         child = session.exec(select(Dataset).where(Dataset.unique_id == child_dataset_id)).one_or_none()
         if child is None:
             raise HTTPException(status_code=404, detail="Child dataset not found")
-        require_read_access(session, child_dataset_id, ag_ids)
+        require_permission(session, auth_res, child_dataset_id, Permission.READ)
 
-        auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
+        auth_filter = permission_filter(auth_res, Dataset)
+
+        deletion_filter = deletion_filter_for(Dataset)
         query = (
             select(Dataset)
             .join(DatasetLink, DatasetLink.parent_dataset_id == Dataset.id)
@@ -631,15 +646,15 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[Principal, D
     '''
     Returns a paginated list of child datasets for a given parent dataset.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
         if parent is None:
             raise HTTPException(status_code=404, detail="Parent dataset not found")
-        require_read_access(session, parent_dataset_id, ag_ids)
+        require_permission(session, auth_res, parent_dataset_id, Permission.READ)
 
-        auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
+        auth_filter = permission_filter(auth_res, Dataset)
+
+        deletion_filter = deletion_filter_for(Dataset)
         query = (
             select(Dataset)
             .join(DatasetLink, DatasetLink.child_dataset_id == Dataset.id)
@@ -656,8 +671,6 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[Principal, D
 
 @router.delete('/datasets/{dsid}/samples/{sample_id}')
 def unlink_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, sample_id: str):
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
@@ -667,7 +680,16 @@ def unlink_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)
         if samp is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        require_write_access(session, ag_ids, [dsid, sample_id])
+        # Both, not either: the pre-role check passed if any one was
+
+
+        # writable, so a link could be made to a resource you cannot edit.
+
+
+        require_permission(session, auth_res, dsid, Permission.EDIT)
+
+
+        require_permission(session, auth_res, sample_id, Permission.EDIT)
 
         link = session.exec(
             select(DatasetSampleLink).where(
@@ -690,10 +712,10 @@ def read_thumbnails(auth_res: Annotated[Principal, Depends(authorize_user)], dsi
     '''
     Returns a list of thumbnail objects associated with the dataset ID provided
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
+        ds_cmd = (select(Dataset)
+                  .where(Dataset.unique_id == dsid)
+                  .where(permission_filter(auth_res, Dataset, Permission.READ)))
         ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:
@@ -715,11 +737,9 @@ def get_first_thumbnails(
 
     Intended for bulk thumbnail fetching after an entity_graph call.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter = permission_filter(auth_res, Dataset, Permission.READ)
 
         authorized_ds = session.exec(
             select(Dataset)
@@ -771,8 +791,6 @@ def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
     Raises:
         HTTPException: If required thumbnail fields are missing or dataset not found
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     # Validate required fields
     missing_fields = []
@@ -800,7 +818,9 @@ def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image data: {e}")
 
-    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
+    ds_cmd = (select(Dataset)
+              .where(Dataset.unique_id == dsid)
+              .where(permission_filter(auth_res, Dataset, Permission.EDIT)))
 
     with Session(engine) as session:
         ds = session.exec(ds_cmd).one_or_none()
@@ -829,15 +849,13 @@ def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
 @router.delete("/datasets/{dsid}/thumbnails/{thumbnail_id}")
 def delete_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, thumbnail_id: int):
     '''Removes a thumbnail from a dataset and deletes it.'''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        require_write_access(session, ag_ids, [dsid])
+        require_permission(session, auth_res, dsid, Permission.EDIT)
 
         tn = session.exec(
             select(Thumbnail).where(Thumbnail.id == thumbnail_id, Thumbnail.dataset_id == ds.id)
@@ -860,14 +878,12 @@ def generate_dataset_download_links(
     Returns signed GCS download URLs (1-hour expiry) for all files in the dataset,
     keyed by AssociatedFile mfid. Backfills missing storage_path records on the fly.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        require_read_access(session, dsid, ag_ids)
+        require_permission(session, auth_res, dsid, Permission.READ)
 
         af_records = session.exec(
             select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)
@@ -903,14 +919,12 @@ def read_associated_files(auth_res: Annotated[Principal, Depends(authorize_user)
     '''
     Returns a list of the files associated with the dataset ID provided.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        require_read_access(session, dsid, ag_ids)
+        require_permission(session, auth_res, dsid, Permission.READ)
 
         files = session.exec(
             select(AssociatedFile)
@@ -929,14 +943,12 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
     Creates the record if one with the same sha256_hash and dataset does not already exist.
     Use POST /datasets/{dsid}/files/{file_id}/ingest to trigger ingestion.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        require_write_access(session, ag_ids, [dsid])
+        require_permission(session, auth_res, dsid, Permission.EDIT)
 
         af_obj = add_or_update(session,
                                AssociatedFile,
@@ -970,8 +982,6 @@ def create_ds_file_ingestion_request(
     Returns error if the dataset associated with the file is not found, or the user does not have access.
     Requires write access to the dataset.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
     from app.api.routes.files import create_file_ingestion_request
     return create_file_ingestion_request(auth_res, file_id, ingestion_class)
 
@@ -979,11 +989,11 @@ def create_ds_file_ingestion_request(
 @router.get("/datasets/{dsid}/keywords", response_model=List[Keyword])
 def list_keywords_for_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str):
 
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
+        ds_cmd = (select(Dataset)
+                  .where(Dataset.unique_id == dsid)
+                  .where(permission_filter(auth_res, Dataset, Permission.READ)))
         ds = session.exec(ds_cmd).one_or_none()
 
         if ds is None:
@@ -999,9 +1009,9 @@ def add_keyword(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: s
     Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object.
     Otherwise, the keyword will be created and then added to the dataset.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
-    ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
+    ds_cmd = (select(Dataset)
+              .where(Dataset.unique_id == dsid)
+              .where(permission_filter(auth_res, Dataset, Permission.EDIT)))
 
     with Session(engine) as session:
         kw_obj = add_or_update(session, Keyword, where=(Keyword.keyword == keyword), keyword=keyword)
@@ -1028,11 +1038,15 @@ def add_keyword(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: s
 
 @router.post("/datasets/{dsid}/samples/{sample_id}", response_model=DatasetSampleLinkResponse)
 def link_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, sample_id: str):
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        require_write_access(session, ag_ids, [dsid, sample_id])
+        # Both, not either: the pre-role check passed if any one was
+
+        # writable, so a link could be made to a resource you cannot edit.
+
+        require_permission(session, auth_res, dsid, Permission.EDIT)
+
+        require_permission(session, auth_res, sample_id, Permission.EDIT)
 
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
@@ -1060,15 +1074,11 @@ def read_samples_in_dataset(dsid: str, auth_res: Annotated[Principal, Depends(au
     '''
     Returns a paginated list of samples associated with the dataset ID provided.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         ds = session.exec(
             select(Dataset)
-            .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
             .where(Dataset.unique_id == dsid)
-            .filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True))
-            .distinct()
+            .where(permission_filter(auth_res, Dataset, Permission.READ))
         ).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found or access denied")
@@ -1089,11 +1099,10 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[Principal, Depends(author
     relationships) to the given dataset. Loads all authorized datasets in the
     project and returns the directed lineage subgraph (ancestors + descendants) of the target.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
+        auth_filter = permission_filter(auth_res, Dataset)
+        deletion_filter = deletion_filter_for(Dataset)
 
         target = session.exec(
             select(Dataset)
@@ -1141,11 +1150,10 @@ def dataset_graph_cte(dataset_id: str, auth_res: Annotated[Principal, Depends(au
     Returns a NetworkX node-link graph of all datasets connected (via parent/child
     relationships) to the given dataset, i.e. its full lineage subgraph.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        auth_filter, deletion_filter = read_access_filter_list(Dataset, ag_ids)
+        auth_filter = permission_filter(auth_res, Dataset)
+        deletion_filter = deletion_filter_for(Dataset)
 
         target = session.exec(
             select(Dataset)

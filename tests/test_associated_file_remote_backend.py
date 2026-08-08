@@ -1,5 +1,6 @@
 from unittest.mock import patch
 from sqlmodel import Session
+from app.utils.permissions import PUBLIC_GROUP_NAME, Role
 from app.models.core_models import Resource, Dataset, AssociatedFile, AccessGroup, ResourceACL
 from app.models.datasets import AssociatedFileCreate, AssociatedFileRead, AssociatedFileUpdate
 
@@ -95,7 +96,9 @@ def _grant_write_access(db_engine, dsid, user_id):
         session.add(ag)
         session.commit()
         session.refresh(ag)
-        session.add(ResourceACL(mfid=dsid, accessgroup_id=ag.id, read=True, write=True))
+        # role, not just read/write: the checks read the role column now.
+        session.add(ResourceACL(mfid=dsid, accessgroup_id=ag.id, read=True, write=True,
+                                role="owner"))
         session.commit()
         return ag.id
 
@@ -164,7 +167,15 @@ def test_non_gcs_file_in_batch_download_links_is_null(client, db_engine, auth_as
         session.add(Resource(mfid="ds_pub_3", resource_type="dataset", public=True))
         ds = Dataset(unique_id="ds_pub_3", dataset_name="test", public=True, owner_orcid="0000-0000-0000-0001")
         session.add(ds)
+        # Public is an ACL grant now, not just the boolean.
+        pub = AccessGroup(group_name=PUBLIC_GROUP_NAME)
+        session.add(pub)
         session.commit()
+        session.refresh(pub)
+        session.add(ResourceACL(mfid="ds_pub_3", accessgroup_id=pub.id,
+                                read=True, write=False, role="viewer"))
+        session.commit()
+        public_gid = pub.id
         session.refresh(ds)
         gcs_af = AssociatedFile(
             filename="local.txt", storage_path="mf-storage-prod/ds_pub_3/local.txt",
@@ -180,7 +191,9 @@ def test_non_gcs_file_in_batch_download_links_is_null(client, db_engine, auth_as
         session.refresh(remote_af)
         gcs_mfid, remote_mfid = gcs_af.mfid, remote_af.mfid
 
-    auth_as("0000-0000-0000-0001")
+    # load_principal injects the public group into every principal; the fixture
+    # does not, so a test exercising public access has to say so.
+    auth_as("0000-0000-0000-0001", groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
 
     with patch(
         "app.api.routes.datasets._generate_signed_url_link",

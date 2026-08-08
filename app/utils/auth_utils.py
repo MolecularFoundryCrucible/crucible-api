@@ -507,3 +507,16 @@ def require_platform_admin(principal: Principal) -> None:
     if any(g.group_name == "admin" for g in principal.groups):
         return
     raise HTTPException(status_code=403, detail="Not authorized")
+
+
+def require_self_or_platform_admin(principal: Principal, orcid: str) -> None:
+    """Raise 403 unless the caller IS `orcid`, or is a platform admin.
+
+    Replaces require_groups(ag_list, {'admin', orcid}), which inferred identity
+    from membership of the group named after that ORCID. Nothing enforces those
+    groups having one member, so anyone added to yours could read your data and
+    edit your profile. principal.user_id is the ORCID directly.
+    """
+    if principal.user_id == orcid:
+        return
+    require_platform_admin(principal)

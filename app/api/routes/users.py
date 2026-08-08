@@ -15,7 +15,7 @@ from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, Project, Sample, User,
     UserAccessGroupLink, UserProjectLink,
 )
-from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_groups, require_platform_admin
+from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin, require_self_or_platform_admin
 from app.utils.permissions import Principal
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import assert_username_available, sql_add_user_to_access_group
@@ -335,8 +335,7 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
 @router.patch("/users/{orcid}", response_model=UserRead)
 def update_user(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)], user_update: UserUpdate):
     '''Partially update a user record. Only fields provided in the request body are modified.'''
-    ag_list = auth_res.groups
-    require_groups(ag_list, {'admin', orcid})
+    require_self_or_platform_admin(auth_res, orcid)
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
 
@@ -360,8 +359,7 @@ def read_user_datasets(orcid: str, auth_res: Annotated[Principal, Depends(author
     '''
     Returns a list of all the datasets the user has access to based on the ORCID provided.
     '''
-    ag_list = auth_res.groups
-    require_groups(ag_list, {'admin', orcid})
+    require_self_or_platform_admin(auth_res, orcid)
     with Session(engine) as session:
         # Verify user exists
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
@@ -383,8 +381,7 @@ def read_user_datasets(orcid: str, auth_res: Annotated[Principal, Depends(author
 @router.get("/users/{orcid}/samples", response_model=List[str])
 def read_user_samples(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Returns a list of sample MFIDs the user has access to via their access groups.'''
-    ag_list = auth_res.groups
-    require_groups(ag_list, {'admin', orcid})
+    require_self_or_platform_admin(auth_res, orcid)
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
         if user is None:
@@ -409,8 +406,7 @@ def read_user_access_to_dataset(dsid: str, orcid: str, auth_res: Annotated[Princ
     '''
     Returns boolean: True is user with provided ORCID has access to the provided dataset ID, False if no access or dataset does not exist.
     '''
-    ag_list = auth_res.groups
-    require_groups(ag_list, {'admin', orcid})
+    require_self_or_platform_admin(auth_res, orcid)
     with Session(engine) as session:
         ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.unique_id == orcid)).all()
         ag_ids = [x.accessgroup_id for x in ag]
@@ -441,8 +437,7 @@ def add_user_to_access_group(auth_res: Annotated[Principal, Depends(authorize_us
 
 @router.get("/users/{orcid}/access_groups", response_model=List[str])
 def list_user_access_groups(auth_res: Annotated[Principal, Depends(authorize_user)], orcid: str):
-    ag_list = auth_res.groups
-    require_groups(ag_list, {'admin', orcid})
+    require_self_or_platform_admin(auth_res, orcid)
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
 
@@ -492,8 +487,7 @@ def read_projects_for_user(orcid: str, auth_res: Annotated[Principal, Depends(au
     '''
     Returns a paginated list of the projects that this User is associated with, including the resolved project lead.
     '''
-    ag_list = auth_res.groups
-    require_groups(ag_list, {'admin', orcid})
+    require_self_or_platform_admin(auth_res, orcid)
 
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()

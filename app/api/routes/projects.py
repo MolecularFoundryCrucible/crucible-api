@@ -17,7 +17,8 @@ from app.utils.auth_utils import authorize_user, require_groups
 from app.utils.permissions import Principal
 from app.utils.sql_utils import add_or_update, touch_resource_modification_time
 from app.utils.user_utils import resolve_user
-from app.utils.project_utils import sql_add_user_to_project, sql_get_projects_for_user
+from app.utils.project_utils import (
+    assert_project_id_available, sql_add_user_to_project, sql_get_projects_for_user)
 from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
 from app.models.users import UserPublicRead, UserRead
@@ -40,6 +41,10 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
         existing = session.exec(select(Project).where(Project.project_id == P.project_id)).one_or_none()
         if existing is not None:
             raise HTTPException(status_code=409, detail=f"Project '{P.project_id}' already exists. Use PATCH to update it.")
+
+        # The project does not exist, so any access group already holding this
+        # name belongs to something else. add_or_update below would reuse it.
+        assert_project_id_available(session, P.project_id)
 
         project_lead = resolve_user(session, orcid=P.project_lead_orcid, email=P.project_lead_email, username=P.project_lead_username)
 

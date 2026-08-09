@@ -28,7 +28,7 @@ from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import (
-    authorize_user, fetch_acl_rows, permission_filter, require_groups, require_permission)
+    authorize_user, fetch_acl_rows, permission_filter, require_permission, require_platform_admin)
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, set_public, sql_create_resource_acl, touch_resource_modification_time
@@ -468,8 +468,7 @@ def create_deletion_request(
 
 @router.get("/resources/{mfid}/access_groups", response_model=List[AccessGroupRead])
 def read_resource_acl(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    ag_list = auth_res.groups
-    require_groups(ag_list)
+    require_platform_admin(auth_res)
     with Session(engine) as session:
         # Verify resource exists
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
@@ -489,8 +488,7 @@ def read_resource_acl(mfid: str, auth_res: Annotated[Principal, Depends(authoriz
 
 @router.post("/resources/{mfid}/access_groups", response_model=ResourceACL)
 def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    ag_list = auth_res.groups
-    require_groups(ag_list)
+    require_platform_admin(auth_res)
     with Session(engine) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:

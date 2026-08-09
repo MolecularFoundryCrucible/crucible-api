@@ -9,11 +9,12 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import Dataset, DeletionAuditLog, DeletionRequest, Resource, Sample
+from app.models.core_models import (
+    Dataset, DeletionAuditLog, DeletionRequest, Resource, ResourceACL, Sample)
 from app.models.deletion import DeletionAuditLogRead, DeletionRequestRead
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, require_platform_admin
-from app.utils.permissions import Principal
+from app.utils.auth_utils import authorize_user, require_permission, require_platform_admin
+from app.utils.permissions import Permission, Principal, Role, THRESHOLDS
 from app.utils.sql_utils import touch_resource_modification_time
 from app.general_utils import get_utc_isoformat
 
@@ -52,14 +53,30 @@ def list_deletion_requests(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ):
-    ag_list = auth_res.groups
-    require_groups(ag_list)
     with Session(engine) as session:
         count_query = select(func.count(DeletionRequest.id))
         data_query = select(DeletionRequest).options(selectinload(DeletionRequest.resource))
         if status is not None:
             count_query = count_query.where(DeletionRequest.status == status)
             data_query = data_query.where(DeletionRequest.status == status)
+
+        # Scoped, not admin-only: you see requests you raised, plus any on a
+        # resource you administer. Platform admins see everything.
+        if not auth_res.is_platform_admin:
+            visible = (
+                (DeletionRequest.requester_id == auth_res.user_id)
+                | DeletionRequest.resource_id.in_(
+                    select(ResourceACL.mfid).where(
+                        ResourceACL.accessgroup_id.in_(
+                            auth_res.group_ids_at_or_above(THRESHOLDS[Permission.DELETE])),
+                        ResourceACL.role.in_(
+                            [r.db_value for r in Role
+                             if r >= THRESHOLDS[Permission.DELETE]]),
+                    )
+                )
+            )
+            count_query = count_query.where(visible)
+            data_query = data_query.where(visible)
         total = session.exec(count_query).one()
         items = [_to_read(req, session) for req in session.exec(
             data_query.order_by(DeletionRequest.request_time.desc()).offset(offset).limit(limit)
@@ -76,8 +93,6 @@ def get_deletion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     request_id: int,
 ):
-    ag_list = auth_res.groups
-    require_groups(ag_list)
     with Session(engine) as session:
         req = session.exec(
             select(DeletionRequest)
@@ -86,6 +101,8 @@ def get_deletion_request(
         ).one_or_none()
         if req is None:
             raise HTTPException(status_code=404, detail="Deletion request not found.")
+        # Reviewing a deletion sits at the same bar as performing one.
+        require_permission(session, auth_res, req.resource_id, Permission.DELETE)
         return _to_read(req, session)
 
 
@@ -101,7 +118,6 @@ def review_deletion_request(
     reviewer_notes: Optional[str] = None,
 ):
     user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    require_groups(ag_list)
     if status not in ("approved", "rejected"):
         raise HTTPException(status_code=422, detail="status must be 'approved' or 'rejected'.")
 
@@ -123,6 +139,10 @@ def review_deletion_request(
                 status_code=409,
                 detail="Request is already approved.",
             )
+
+        # Approving a deletion is the deletion decision, so it sits at the same
+        # bar as performing one: admin on the resource, or platform admin.
+        require_permission(session, auth_res, req.resource_id, Permission.DELETE)
 
         # Update the request record.
         req.status = status

@@ -7,7 +7,7 @@ from sqlalchemy.sql import and_, exists, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_utc_isoformat
+from app.general_utils import get_utc_isoformat, is_orcid, is_valid_mfid
 from app.models.core_models import (
     AccessGroup,
     Dataset, DatasetLink, DatasetSampleLink,
@@ -16,6 +16,7 @@ from app.models.core_models import (
     ResourceACL, Sample, SampleLink,
     ScientificMetadataBinary, User,
 )
+from app.models.access import AccessGrantRead, AccessGrantWrite
 from app.models.access_groups import AccessGroupRead
 from app.models.datasets import DatasetRead, DatasetResponse, ScientificMetadataBinaryRead
 from app.models.deletion import DeletionRequestRead
@@ -26,10 +27,13 @@ from app.models.samples import SampleResponse
 from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, permission_filter, require_groups, require_permission
-from app.utils.permissions import Principal, Permission
-from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, sql_create_resource_acl, touch_resource_modification_time
+from app.utils.auth_utils import (
+    authorize_user, fetch_acl_rows, permission_filter, require_groups, require_permission)
+from app.utils.permissions import (
+    PUBLIC_GROUP_NAME, Permission, Principal, Role, can_grant, effective_role)
+from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, set_public, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
+from app.utils.user_utils import resolve_user
 
 
 router = APIRouter(tags=["resources"])
@@ -499,3 +503,237 @@ def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, aut
         session.commit()
         session.refresh(acl)
     return acl
+
+
+# ---------------------------------------------------------------------------
+# Resource access grants
+#
+# Replaces the /access_groups pair, which could grant but never revoke, showed
+# group names without their roles, and required callers to know the internal
+# group naming — which is due to change to MFIDs. Those routes are kept.
+#
+# Principals are addressed as a caller thinks of them (a person, a project,
+# `public`), typed by path segment so that a username cannot be mistaken for a
+# project id.
+# ---------------------------------------------------------------------------
+
+def _group_kind(session, group_name: str) -> str:
+    from app.models.core_models import Instrument
+    if group_name == PUBLIC_GROUP_NAME:
+        return "public"
+    if group_name in ("admin", "read_only"):
+        return "system"
+    user = session.exec(select(User).where(User.unique_id == group_name)).one_or_none()
+    if user is not None:
+        return "service_account" if user.is_service_account else "user"
+    if session.exec(select(Project).where(Project.project_id == group_name)).one_or_none():
+        return "project"
+    if session.exec(select(Instrument).where(
+            func.lower(Instrument.instrument_name) == group_name)).one_or_none():
+        return "instrument"
+    return "unknown"
+
+
+def _resolve_grantee(session, kind: str, principal: str):
+    """(AccessGroup, canonical principal) for a typed path segment."""
+    if kind == "public":
+        ag = session.exec(select(AccessGroup).where(
+            AccessGroup.group_name == PUBLIC_GROUP_NAME)).one_or_none()
+        if ag is None:
+            raise HTTPException(status_code=409,
+                                detail="No public access group — has the migration run?")
+        return ag, PUBLIC_GROUP_NAME
+
+    if kind == "users":
+        # A service account's unique_id is an mfid, stored in the same column as
+        # an ORCID — so both are looked up as the identity, and anything else is
+        # treated as a username.
+        by_id = is_orcid(principal) or is_valid_mfid(principal)
+        user = resolve_user(session,
+                            orcid=principal if by_id else None,
+                            username=None if by_id else principal)
+        group_name = user.unique_id
+    elif kind == "projects":
+        proj = session.exec(select(Project).where(
+            Project.project_id == principal)).one_or_none()
+        if proj is None:
+            raise HTTPException(status_code=404, detail=f"Project '{principal}' not found")
+        group_name = proj.project_id
+    else:
+        raise HTTPException(status_code=404, detail=f"Unknown principal kind '{kind}'")
+
+    ag = session.exec(select(AccessGroup).where(
+        AccessGroup.group_name == group_name)).one_or_none()
+    if ag is None:
+        raise HTTPException(status_code=404,
+                            detail=f"No access group for '{principal}'")
+    return ag, group_name
+
+
+def _require_manage_acl(session, principal: Principal, mfid: str, target: Role,
+                        current: Optional[Role] = None):
+    if principal.is_platform_admin:
+        return
+    require_permission(session, principal, mfid, Permission.MANAGE_ACL)
+    actor = effective_role(principal, fetch_acl_rows(session, mfid))
+    if not can_grant(actor, target, current):
+        raise HTTPException(
+            status_code=403,
+            detail=(f"You hold {actor.name.lower() if actor else 'no role'} on this "
+                    f"resource and cannot grant {target.name.lower()}"))
+
+
+@router.get("/resources/{mfid}/access", response_model=List[AccessGrantRead])
+def list_resource_access(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Who can reach this resource, and at what role.
+
+    Requires read access: if you can see the resource you can see who else can.
+    """
+    with Session(engine) as session:
+        resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+        require_permission(session, auth_res, mfid, Permission.READ)
+
+        rows = session.exec(
+            select(ResourceACL, AccessGroup)
+            .join(AccessGroup, AccessGroup.id == ResourceACL.accessgroup_id)
+            .where(ResourceACL.mfid == mfid)
+        ).all()
+
+        out = []
+        for acl, ag in rows:
+            kind = _group_kind(session, ag.group_name)
+            display = None
+            if kind in ("user", "service_account"):
+                u = session.exec(select(User).where(
+                    User.unique_id == ag.group_name)).one_or_none()
+                display = u.username or f"{u.first_name} {u.last_name}".strip() if u else None
+            out.append(AccessGrantRead(
+                principal=ag.group_name, kind=kind,
+                role=acl.role or "unknown", display_name=display,
+                group_name=ag.group_name, group_id=ag.id))
+        return out
+
+
+@router.put("/resources/{mfid}/access/{kind}/{principal}", response_model=AccessGrantRead)
+def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantWrite,
+                        auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Grant or change a principal's access. Idempotent.
+
+    `kind` is `users` or `projects`. Requires admin on the resource, and you
+    may not grant above your own role nor overwrite a grant above it.
+    """
+    if kind not in ("users", "projects"):
+        raise HTTPException(status_code=404,
+                            detail="kind must be 'users' or 'projects'; use /access/public for public")
+    try:
+        target = Role.from_db(body.role)
+    except KeyError:
+        raise HTTPException(status_code=422,
+                            detail=f"role must be one of {[r.db_value for r in Role]}")
+
+    with Session(engine) as session:
+        resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+
+        ag, canonical = _resolve_grantee(session, kind, principal)
+        existing = session.exec(
+            select(ResourceACL).where(ResourceACL.mfid == mfid)
+            .where(ResourceACL.accessgroup_id == ag.id)).one_or_none()
+        current = Role.from_db(existing.role) if existing and existing.role else None
+
+        _require_manage_acl(session, auth_res, mfid, target, current)
+
+        if existing is None:
+            existing = ResourceACL(mfid=mfid, accessgroup_id=ag.id,
+                                   read=True, write=target >= Role.EDITOR,
+                                   role=target.db_value)
+        else:
+            existing.role = target.db_value
+            existing.write = target >= Role.EDITOR
+        session.add(existing)
+        touch_resource_modification_time(session, mfid)
+        session.commit()
+
+        return AccessGrantRead(principal=canonical,
+                               kind=_group_kind(session, ag.group_name),
+                               role=target.db_value, group_name=ag.group_name, group_id=ag.id)
+
+
+@router.delete("/resources/{mfid}/access/{kind}/{principal}")
+def revoke_resource_access(mfid: str, kind: str, principal: str,
+                           auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Revoke a principal's access.
+
+    Refuses to remove an `owner` grant: that would leave the resource with
+    nobody able to transfer it or manage its ACL again. Use transfer_ownership.
+    """
+    if kind not in ("users", "projects"):
+        raise HTTPException(status_code=404, detail="kind must be 'users' or 'projects'")
+
+    with Session(engine) as session:
+        ag, canonical = _resolve_grantee(session, kind, principal)
+        existing = session.exec(
+            select(ResourceACL).where(ResourceACL.mfid == mfid)
+            .where(ResourceACL.accessgroup_id == ag.id)).one_or_none()
+        if existing is None:
+            raise HTTPException(status_code=404,
+                                detail=f"'{canonical}' has no access to this resource")
+
+        current = Role.from_db(existing.role) if existing.role else None
+        if current is Role.OWNER:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot revoke the owner's access; transfer ownership instead")
+
+        _require_manage_acl(session, auth_res, mfid, current or Role.VIEWER, current)
+
+        session.delete(existing)
+        touch_resource_modification_time(session, mfid)
+        session.commit()
+    return {"detail": f"Access revoked for {canonical}"}
+
+
+@router.put("/resources/{mfid}/access/public", response_model=AccessGrantRead)
+def publish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Make a resource publicly readable.
+
+    No role parameter: standing in the public group is viewer, so min() caps
+    any grant there. A world-writable resource is unrepresentable, and offering
+    a role would invent an error case the model does not have.
+    """
+    with Session(engine) as session:
+        resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+        _require_manage_acl(session, auth_res, mfid, Role.VIEWER)
+
+        set_public(session, mfid, True)
+        resource.public = True
+        session.add(resource)
+        touch_resource_modification_time(session, mfid)
+        session.commit()
+
+        ag, _ = _resolve_grantee(session, "public", PUBLIC_GROUP_NAME)
+        return AccessGrantRead(principal=PUBLIC_GROUP_NAME, kind="public",
+                               role=Role.VIEWER.db_value,
+                               group_name=ag.group_name, group_id=ag.id)
+
+
+@router.delete("/resources/{mfid}/access/public")
+def unpublish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Withdraw public access."""
+    with Session(engine) as session:
+        resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+        _require_manage_acl(session, auth_res, mfid, Role.VIEWER)
+
+        set_public(session, mfid, False)
+        resource.public = False
+        session.add(resource)
+        touch_resource_modification_time(session, mfid)
+        session.commit()
+    return {"detail": "Public access withdrawn"}

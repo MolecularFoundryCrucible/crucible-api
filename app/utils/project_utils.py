@@ -58,14 +58,14 @@ def assert_project_id_available(session, project_id: str) -> None:
         )
 
 
-def sql_add_user_to_project(user: User, proj_id: str, session):
+def sql_add_user_to_project(user: User, proj_id: str, session, role=None):
     """Add a user to a project's membership and access group. Idempotent."""
     add_or_update(session,
                   UserProjectLink,
                   where=(and_(UserProjectLink.user_id == user.id, UserProjectLink.project_id == proj_id)),
                   user_id=user.id,
                   project_id=proj_id)
-    sql_add_user_to_access_group(user.unique_id, proj_id, session)
+    sql_add_user_to_access_group(user.unique_id, proj_id, session, role=role)
     touch_resource_modification_time(session, proj_id)
 
 

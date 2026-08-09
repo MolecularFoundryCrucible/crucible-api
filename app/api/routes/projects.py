@@ -13,10 +13,12 @@ from app.models.core_models import (
     AccessGroup, Project, Resource, Sample, User, UserProjectLink, UserAccessGroupLink,
     ResourceACL, Dataset, DatasetSampleLink,
 )
-from app.utils.auth_utils import authorize_user, require_groups, require_platform_admin
-from app.utils.permissions import Principal
+from app.utils.auth_utils import (
+    authorize_user, fetch_acl_rows, require_platform_admin, require_project_permission)
+from app.utils.permissions import (
+    Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, touch_resource_modification_time
-from app.utils.user_utils import resolve_user
+from app.utils.user_utils import resolve_user, sql_add_user_to_access_group
 from app.utils.project_utils import (
     assert_project_id_available, sql_add_user_to_project, sql_get_projects_for_user)
 from app.models.pagination import PaginatedResponse
@@ -58,13 +60,12 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
         )
         session.add(prop)
 
-        ag = add_or_update(session,
-                           AccessGroup,
-                           AccessGroup.group_name == P.project_id,
-                           group_name=P.project_id)
+        # Not ag.users.append: that inserts a link row with no role, which
+        # fails closed to viewer — the lead would land unable to edit their
+        # own project.
+        sql_add_user_to_access_group(project_lead.unique_id, P.project_id,
+                                     session, role=Role.OWNER)
 
-        if project_lead not in ag.users:
-            ag.users.append(project_lead)
         if prop not in project_lead.projects:
             project_lead.projects.append(prop)
 
@@ -265,6 +266,26 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[Principal, Depends(a
         return PaginatedResponse(total=len(all_users), limit=limit, offset=offset, items=all_users[offset:offset + limit])
 
 
+def _require_can_grant(session, principal, proj_id, target: Role,
+                       current: Optional[Role] = None):
+    """Raise 403 unless the caller may hand out `target`, replacing `current`.
+
+    Platform admins bypass. Everyone else is capped at their own standing in
+    the project.
+    """
+    if principal.is_platform_admin:
+        return
+    actor = effective_role(principal, fetch_acl_rows(session, proj_id))
+    # Editor floor, not admin: membership is bounded by the project, unlike
+    # an ACL entry which can share data outward without limit.
+    if not can_grant(actor, target, current, floor=Role.EDITOR):
+        raise HTTPException(
+            status_code=403,
+            detail=(f"You hold {actor.name.lower() if actor else 'no role'} in this "
+                    f"project and cannot grant {target.name.lower()}"),
+        )
+
+
 @router.post("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
 def add_users_to_project(
     proj_id: str,
@@ -272,13 +293,17 @@ def add_users_to_project(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     email: Optional[str] = None,
     username: Optional[str] = None,
+    role: Role = Role.CONTRIBUTOR,
 ):
     '''
-    Add a user to a project. Provide ?email= or ?username= to resolve the user instead of
-    the orcid path parameter. Only admins or project members can add users.
+    Add a user to a project at `role`, defaulting to contributor.
+
+    Requires editor or above in the project, and you may only grant a role at
+    or below your own — so an editor can seat a contributor but never an admin.
     '''
     with Session(engine) as session:
         require_project_permission(session, auth_res, proj_id, Permission.EDIT)
+        _require_can_grant(session, auth_res, proj_id, role)
 
         user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
 
@@ -286,7 +311,49 @@ def add_users_to_project(
         if proj is None:
             raise HTTPException(status_code=404, detail=f'Project {proj_id} not found')
 
-        sql_add_user_to_project(user, proj_id, session)
+        sql_add_user_to_project(user, proj_id, session, role=role)
+        session.commit()
+
+        return _get_project_users(proj_id, session)
+
+
+@router.patch("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
+def set_project_user_role(
+    proj_id: str,
+    orcid: str,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    role: Role,
+):
+    '''
+    Change a member's role in a project.
+
+    The cap binds on both ends: you may not grant a role above your own, nor
+    change a member who already holds one above your own. That is what stops a
+    project admin demoting the owner.
+    '''
+    with Session(engine) as session:
+        require_project_permission(session, auth_res, proj_id, Permission.EDIT)
+
+        user = resolve_user(session, orcid=orcid)
+        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj_id)).one_or_none()
+        if ag is None:
+            raise HTTPException(status_code=404, detail=f'Project {proj_id} not found')
+
+        link = session.exec(
+            select(UserAccessGroupLink)
+            .where(UserAccessGroupLink.user_id == user.id)
+            .where(UserAccessGroupLink.accessgroup_id == ag.id)
+        ).one_or_none()
+        if link is None:
+            raise HTTPException(status_code=404,
+                                detail=f'{orcid} is not a member of {proj_id}')
+
+        current = Role.from_db(link.role) if link.role else None
+        _require_can_grant(session, auth_res, proj_id, role, current)
+
+        link.role = role.db_value
+        session.add(link)
+        touch_resource_modification_time(session, proj_id)
         session.commit()
 
         return _get_project_users(proj_id, session)

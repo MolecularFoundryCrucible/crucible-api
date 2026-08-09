@@ -119,3 +119,64 @@ def test_new_members_get_contributor_not_null(session):
 
     link = session.exec(select(UserAccessGroupLink)).first()
     assert link.role == Role.CONTRIBUTOR.db_value
+
+
+class TestGrantCap:
+    """You may only seat someone at or below your own role, and may not touch
+    a member who already holds one above yours."""
+
+    def _actor(self, session, role):
+        migrated(session)
+        return member(role)
+
+    @pytest.mark.parametrize("actor,target,allowed", [
+        (Role.EDITOR, Role.VIEWER, True),
+        (Role.EDITOR, Role.CONTRIBUTOR, True),
+        (Role.EDITOR, Role.EDITOR, True),
+        (Role.EDITOR, Role.ADMIN, False),
+        (Role.EDITOR, Role.OWNER, False),
+        (Role.ADMIN, Role.ADMIN, True),
+        (Role.ADMIN, Role.OWNER, False),
+        (Role.OWNER, Role.OWNER, True),
+    ])
+    def test_cannot_grant_above_own_role(self, session, actor, target, allowed):
+        from app.api.routes.projects import _require_can_grant
+        p = self._actor(session, actor)
+        if allowed:
+            _require_can_grant(session, p, PROJ, target)
+        else:
+            with pytest.raises(HTTPException) as exc:
+                _require_can_grant(session, p, PROJ, target)
+            assert exc.value.status_code == 403
+
+    def test_admin_cannot_demote_the_owner(self, session):
+        """The reason the cap binds on the current role too."""
+        from app.api.routes.projects import _require_can_grant
+        p = self._actor(session, Role.ADMIN)
+        with pytest.raises(HTTPException):
+            _require_can_grant(session, p, PROJ, Role.VIEWER, current=Role.OWNER)
+
+    def test_owner_may_demote_an_admin(self, session):
+        from app.api.routes.projects import _require_can_grant
+        p = self._actor(session, Role.OWNER)
+        _require_can_grant(session, p, PROJ, Role.VIEWER, current=Role.ADMIN)
+
+    def test_platform_admin_bypasses_the_cap(self, session):
+        from app.api.routes.projects import _require_can_grant
+        migrated(session)
+        admin = Principal(user_id="a", platform_role=PlatformRole.ADMIN)
+        _require_can_grant(session, admin, PROJ, Role.OWNER, current=Role.OWNER)
+
+
+def test_project_lead_owns_their_own_project(session):
+    """create_project used ag.users.append, leaving role null — the lead would
+    have landed as viewer, unable to edit the project they just made."""
+    from app.utils.user_utils import sql_add_user_to_access_group
+
+    session.add(User(first_name="L", last_name="P", email="l@x", unique_id="0000-0003"))
+    session.commit()
+    sql_add_user_to_access_group("0000-0003", PROJ, session, role=Role.OWNER)
+    session.commit()
+
+    link = session.exec(select(UserAccessGroupLink)).first()
+    assert link.role == Role.OWNER.db_value

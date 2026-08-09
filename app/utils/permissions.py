@@ -162,6 +162,7 @@ def can_grant(
     actor_role: Optional[Role],
     target_role: Role,
     current_role: Optional[Role] = None,
+    floor: Role = Role.ADMIN,
 ) -> bool:
     """Whether `actor_role` may set an entry to `target_role`, replacing
     `current_role`.
@@ -169,10 +170,14 @@ def can_grant(
     The cap binds on both ends: an admin can neither mint an owner nor
     overwrite one. Omitting `current_role` checks only the creation direction,
     which would let an admin demote a lead to viewer.
+
+    `floor` is the minimum role that may manage at all, and differs by what is
+    being managed: `admin` for ACL entries, which share data outward without
+    bound, `editor` for project membership, which is bounded by the project.
     """
     if actor_role is None:
         return False
-    if actor_role < THRESHOLDS[Permission.MANAGE_ACL]:
+    if actor_role < floor:
         return False
     if target_role > actor_role:
         return False

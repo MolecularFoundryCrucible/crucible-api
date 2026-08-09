@@ -412,3 +412,30 @@ class TestPrincipalIsAValue:
         assert p.is_service_account is False
         assert p.groups == ()
         assert effective_role(p, [(PROJECT_GID, Role.OWNER)]) is None
+
+
+class TestGrantFloor:
+    """The floor differs by what is being managed: ACL entries share data
+    outward without bound and need `admin`; project membership is bounded by
+    the project and needs only `editor`."""
+
+    def test_editor_cannot_manage_acl_entries(self):
+        for target in ALL_ROLES:
+            assert not can_grant(Role.EDITOR, target)          # default floor = admin
+
+    @pytest.mark.parametrize("target", [Role.VIEWER, Role.CONTRIBUTOR, Role.EDITOR])
+    def test_editor_can_seat_members_at_or_below(self, target):
+        assert can_grant(Role.EDITOR, target, floor=Role.EDITOR)
+
+    @pytest.mark.parametrize("target", [Role.ADMIN, Role.OWNER])
+    def test_editor_still_cannot_seat_above_itself(self, target):
+        assert not can_grant(Role.EDITOR, target, floor=Role.EDITOR)
+
+    def test_contributor_cannot_seat_anyone(self):
+        for target in ALL_ROLES:
+            assert not can_grant(Role.CONTRIBUTOR, target, floor=Role.EDITOR)
+
+    def test_lowering_the_floor_does_not_lift_the_cap(self):
+        """The two are independent — floor gates who may act, cap gates how high."""
+        assert not can_grant(Role.EDITOR, Role.OWNER, floor=Role.VIEWER)
+        assert not can_grant(Role.ADMIN, Role.OWNER, floor=Role.VIEWER)

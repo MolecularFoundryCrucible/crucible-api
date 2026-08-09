@@ -384,7 +384,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
 
 def _sample_base_query(principal):
     """Auth-scoped, deletion-filtered base query for samples. Caller adds ordering and pagination."""
-    auth_filter = permission_filter(auth_res, Sample)
+    auth_filter = permission_filter(principal, Sample)
     deletion_filter = deletion_filter_for(Sample)
     return (
         select(Sample, Resource.creation_time, Resource.modification_time, Resource.public)

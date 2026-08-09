@@ -352,6 +352,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "pyflakes" },
     { name = "pytest" },
 ]
 
@@ -391,7 +392,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.1.1" }]
+dev = [
+    { name = "pyflakes", specifier = ">=3.2.0" },
+    { name = "pytest", specifier = ">=9.1.1" },
+]
 
 [[package]]
 name = "debugpy"
@@ -1624,6 +1628,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/10/92/7e0e1bd9ca3c68305db037560ca2876f89b2647deb2f8b6319005de37505/pydantic_core-2.46.3-pp311-pypy311_pp73-musllinux_1_1_armv7l.whl", hash = "sha256:e61ea8e9fff9606d09178f577ff8ccdd7206ff73d6552bcec18e1033c4254b85", size = 2315886, upload-time = "2026-04-20T14:44:04.826Z" },
     { url = "https://files.pythonhosted.org/packages/b8/d8/101655f27eaf3e44558ead736b2795d12500598beed4683f279396fa186e/pydantic_core-2.46.3-pp311-pypy311_pp73-musllinux_1_1_x86_64.whl", hash = "sha256:b504bda01bafc69b6d3c7a0c7f039dcf60f47fab70e06fe23f57b5c75bdc82b8", size = 2360528, upload-time = "2026-04-20T14:40:47.431Z" },
     { url = "https://files.pythonhosted.org/packages/07/0f/1c34a74c8d07136f0d729ffe5e1fdab04fbdaa7684f61a92f92511a84a15/pydantic_core-2.46.3-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:b00b76f7142fc60c762ce579bd29c8fa44aaa56592dd3c54fab3928d0d4ca6ff", size = 2184144, upload-time = "2026-04-20T14:42:57Z" },
+]
+
+[[package]]
+name = "pyflakes"
+version = "3.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/45/dc/fd034dc20b4b264b3d015808458391acbf9df40b1e54750ef175d39180b1/pyflakes-3.4.0.tar.gz", hash = "sha256:b24f96fafb7d2ab0ec5075b7350b3d2d2218eab42003821c06344973d3ea2f58", size = 64669, upload-time = "2025-06-20T18:45:27.834Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c2/2f/81d580a0fb83baeb066698975cb14a618bdbed7720678566f1b046a95fe8/pyflakes-3.4.0-py2.py3-none-any.whl", hash = "sha256:f742a7dbd0d9cb9ea41e9a24a918996e8170c799fa528688d40dd582c8265f4f", size = 63551, upload-time = "2025-06-20T18:45:26.937Z" },
 ]
 
 [[package]]

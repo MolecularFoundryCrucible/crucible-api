@@ -14,7 +14,8 @@ from app.models.core_models import (
     ResourceACL, Dataset, DatasetSampleLink,
 )
 from app.utils.auth_utils import (
-    authorize_user, require_grant, require_permission, require_platform_admin)
+    authorize_user, permission_filter, require_grant, require_permission,
+    require_platform_admin)
 from app.utils.permissions import (
     Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, touch_resource_modification_time
@@ -465,12 +466,11 @@ def project_entity_graph(project_id: str, auth_res: Annotated[Principal, Depends
         samp_list = session.exec(samp_cmd).unique().all()
 
         # Load all authorized datasets in the project with parent relationships
-        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
         ds_list = session.exec(
             select(Dataset)
             .options(joinedload(Dataset.parents))
             .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
-            .filter(auth_filter)
+            .filter(permission_filter(auth_res, Dataset))
             .where(Dataset.project_id == project_id)
         ).unique().all()
 

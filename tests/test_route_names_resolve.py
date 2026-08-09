@@ -1,68 +1,64 @@
-"""Every name a route handler calls must exist.
+"""Every name a route handler uses must actually be defined there.
 
-A refactor that renames or removes a helper can leave a call site behind. The
-module still imports, the app still starts, and the route raises NameError the
-first time someone hits it — which unit tests that import helpers directly will
-never notice. This walks the AST of each route module and checks that every
-global name a handler references is actually resolvable.
+A refactor that renames a parameter or drops a setup line can leave a call
+site behind. The module still imports, the app still starts, and the route
+raises NameError the first time someone hits it — which unit tests that
+import helpers directly never notice.
 
-Written after a consolidation left two calls to a deleted `_require_manage_acl`
-in resources.py, with a green suite.
+Written after a consolidation left calls to a deleted `_require_manage_acl`
+in resources.py, with a green suite. A first version of this file walked the
+AST collecting module-wide bound names, which is too coarse: it treats a name
+bound as a parameter of *one* function as defined everywhere in the module.
+That version passed while `_sample_base_query(principal)` used `auth_res` in
+its body and every `GET /samples` call was a NameError. pyflakes does the
+scope analysis properly, so use it rather than re-deriving it here.
 """
-import ast
-import builtins
-import importlib
 import pathlib
 
 import pytest
 
-ROUTE_FILES = sorted(pathlib.Path("app/api/routes").glob("*.py"))
-BUILTINS = set(dir(builtins))
+pyflakes_api = pytest.importorskip(
+    "pyflakes.api", reason="pyflakes is a dev dependency; see pyproject.toml")
+from pyflakes.reporter import Reporter  # noqa: E402
+
+CHECKED_DIRS = ["app/api/routes", "app/utils", "app/models"]
+FILES = sorted(p for d in CHECKED_DIRS for p in pathlib.Path(d).glob("*.py"))
+
+# Unused imports and star-import noise are style, not breakage. Only names
+# that do not resolve, and syntax errors, can fail a request at runtime.
+FATAL = ("undefined name", "invalid syntax", "syntax error")
+
+# app/models/core_models.py imports Column twice. Pre-existing on main, and
+# harmless — both names refer to the same object.
+KNOWN = {("app/models/core_models.py", "redefinition of unused 'Column'")}
 
 
-def _global_names_used(tree):
-    """Names loaded at module scope or inside functions, minus locals."""
-    used = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-            used.add(node.id)
-    bound = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-            bound.add(node.id)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            bound.add(node.name)
-            for a in node.args.args + node.args.kwonlyargs + node.args.posonlyargs:
-                bound.add(a.arg)
-            if node.args.vararg:
-                bound.add(node.args.vararg.arg)
-            if node.args.kwarg:
-                bound.add(node.args.kwarg.arg)
-        elif isinstance(node, ast.ClassDef):
-            bound.add(node.name)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                bound.add((alias.asname or alias.name).split(".")[0])
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            bound.add(node.name)
-        elif isinstance(node, (ast.comprehension,)):
-            for n in ast.walk(node.target):
-                if isinstance(n, ast.Name):
-                    bound.add(n.id)
-    return used - bound - BUILTINS
+class _Collect:
+    def __init__(self):
+        self.messages = []
+
+    def unexpectedError(self, filename, msg):
+        self.messages.append(f"{filename}: {msg}")
+
+    def syntaxError(self, filename, msg, lineno, offset, text):
+        self.messages.append(f"{filename}:{lineno}: {msg}")
+
+    def flake(self, message):
+        self.messages.append(str(message))
 
 
-@pytest.mark.parametrize("path", ROUTE_FILES, ids=lambda p: p.name)
-def test_every_referenced_name_resolves(path):
-    tree = ast.parse(path.read_text())
-    module = importlib.import_module(
-        str(path.with_suffix("")).replace("/", "."))
+@pytest.mark.parametrize("path", FILES, ids=lambda p: f"{p.parent.name}/{p.name}")
+def test_no_undefined_names(path):
+    reporter = _Collect()
+    pyflakes_api.checkPath(str(path), reporter)
 
-    missing = sorted(
-        n for n in _global_names_used(tree)
-        if not hasattr(module, n) and n not in BUILTINS
-    )
-    assert not missing, (
-        f"{path.name} references names that do not exist: {missing}. "
-        f"A route calling one of these raises NameError at request time."
+    fatal = [
+        m for m in reporter.messages
+        if any(f in m.lower() for f in FATAL)
+        and not any(f in m and k in m for f, k in KNOWN)
+    ]
+    assert not fatal, (
+        f"{path} uses names that are not defined in scope:\n  "
+        + "\n  ".join(fatal)
+        + "\nA route hitting one of these raises NameError at request time."
     )

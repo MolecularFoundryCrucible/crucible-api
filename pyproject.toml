@@ -44,4 +44,5 @@ nano-crucible = { git = "https://github.com/MolecularFoundryCrucible/nano-crucib
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pyflakes>=3.2.0",
 ]

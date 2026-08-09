@@ -49,3 +49,4 @@ class InstrumentResponse(InstrumentRead):
     creation_time: Optional[str] = None
     modification_time: Optional[str] = None
     scientific_metadata: Optional[dict] = None
+    status: Optional[str] = None

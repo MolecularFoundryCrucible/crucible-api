@@ -109,42 +109,42 @@ class TestResolveGrantee:
 
 class TestManageAclCap:
     def test_owner_may_grant_anything_up_to_owner(self, session):
-        from app.api.routes.resources import _require_manage_acl
-        _require_manage_acl(session, owner(session), MFID, Role.EDITOR)
-        _require_manage_acl(session, owner(session), MFID, Role.OWNER)
+        from app.utils.auth_utils import require_grant
+        require_grant(session, owner(session), MFID, Role.EDITOR)
+        require_grant(session, owner(session), MFID, Role.OWNER)
 
     def test_admin_cannot_mint_an_owner(self, session):
-        from app.api.routes.resources import _require_manage_acl
+        from app.utils.auth_utils import require_grant
         session.add(ResourceACL(mfid=MFID, accessgroup_id=gid(session, PROJ),
                                 read=True, write=True, role=Role.ADMIN.db_value))
         session.commit()
         p = Principal(user_id="x",
                       groups=(GroupMembership(gid(session, PROJ), PROJ, Role.ADMIN),))
-        _require_manage_acl(session, p, MFID, Role.EDITOR)      # fine
+        require_grant(session, p, MFID, Role.EDITOR)      # fine
         with pytest.raises(HTTPException):
-            _require_manage_acl(session, p, MFID, Role.OWNER)
+            require_grant(session, p, MFID, Role.OWNER)
 
     def test_admin_cannot_overwrite_an_owner_grant(self, session):
-        from app.api.routes.resources import _require_manage_acl
+        from app.utils.auth_utils import require_grant
         session.add(ResourceACL(mfid=MFID, accessgroup_id=gid(session, PROJ),
                                 read=True, write=True, role=Role.ADMIN.db_value))
         session.commit()
         p = Principal(user_id="x",
                       groups=(GroupMembership(gid(session, PROJ), PROJ, Role.ADMIN),))
         with pytest.raises(HTTPException):
-            _require_manage_acl(session, p, MFID, Role.VIEWER, current=Role.OWNER)
+            require_grant(session, p, MFID, Role.VIEWER, current=Role.OWNER)
 
     def test_a_mere_editor_cannot_manage_acls_at_all(self, session):
-        from app.api.routes.resources import _require_manage_acl
+        from app.utils.auth_utils import require_grant
         session.add(ResourceACL(mfid=MFID, accessgroup_id=gid(session, PROJ),
                                 read=True, write=True, role=Role.EDITOR.db_value))
         session.commit()
         p = Principal(user_id="x",
                       groups=(GroupMembership(gid(session, PROJ), PROJ, Role.EDITOR),))
         with pytest.raises(HTTPException):
-            _require_manage_acl(session, p, MFID, Role.VIEWER)
+            require_grant(session, p, MFID, Role.VIEWER)
 
     def test_platform_admin_bypasses(self, session):
-        from app.api.routes.resources import _require_manage_acl
+        from app.utils.auth_utils import require_grant
         admin = Principal(user_id="a", platform_role=PlatformRole.ADMIN)
-        _require_manage_acl(session, admin, MFID, Role.OWNER, current=Role.OWNER)
+        require_grant(session, admin, MFID, Role.OWNER, current=Role.OWNER)

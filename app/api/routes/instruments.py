@@ -10,9 +10,9 @@ from app.general_utils import get_utc_isoformat
 from app.models.core_models import Instrument, Resource, ScientificMetadataBinary
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user
-from app.utils.permissions import Principal
-from app.utils.sql_utils import add_or_update
+from app.utils.auth_utils import authorize_user, require_permission, require_platform_admin
+from app.utils.permissions import Permission, Principal
+from app.utils.sql_utils import add_or_update, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_record, instrument_record
 
 router = APIRouter(tags=["instruments"])
@@ -162,8 +162,9 @@ def read_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], ins
 def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], instrument: InstrumentCreate,
                       background_tasks: BackgroundTasks):
     '''
-    Register a new instrument in the database.
+    Register a new instrument in the database. Platform admin only.
     '''
+    require_platform_admin(auth_res)
     user_unique_id = auth_res.user_id
     with Session(engine) as session:
         db_instrument = Instrument(**instrument.model_dump())
@@ -209,6 +210,11 @@ def update_instrument(
         if instrument is None:
             raise HTTPException(status_code=404, detail="Instrument not found")
 
+        # Editor on the instrument record. legacy_group covers instruments that
+        # have no ACL rows yet: their group is named after the instrument name.
+        require_permission(session, auth_res, instrument_unique_id, Permission.EDIT,
+                           legacy_group=(instrument.instrument_name or "").lower())
+
         update_data = instrument_update.model_dump(exclude_unset=True)
         if "instrument_name" in update_data:
             update_data["instrument_name"] = update_data["instrument_name"].lower()
@@ -224,6 +230,53 @@ def update_instrument(
         session.commit()
         session.refresh(instrument)
         background_tasks.add_task(write_record, instrument.unique_id, instrument_record(instrument, ri), user_unique_id, "update")
+        return InstrumentResponse.model_validate({
+            **instrument.model_dump(),
+            "creation_time": ri.creation_time if ri else None,
+            "modification_time": ri.modification_time if ri else None,
+        })
+
+
+VALID_INSTRUMENT_STATUSES = ("active", "maintenance", "decommissioned")
+
+
+@router.post("/instruments/{instrument_unique_id}/status", response_model=InstrumentResponse)
+def set_instrument_status(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    instrument_unique_id: str,
+    status: str,
+):
+    """Change an instrument's lifecycle status.
+
+    Its own route rather than a field on PATCH: decommissioning is a lifecycle
+    transition, not a metadata edit, and carries a higher bar. Instruments are
+    never deleted, so this is how one is retired.
+    """
+    if status not in VALID_INSTRUMENT_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"status must be one of {list(VALID_INSTRUMENT_STATUSES)}")
+
+    with Session(engine) as session:
+        instrument = session.exec(
+            select(Instrument).where(Instrument.unique_id == instrument_unique_id)
+        ).one_or_none()
+        if instrument is None:
+            raise HTTPException(status_code=404, detail="Instrument not found")
+
+        # admin, not editor: retiring a machine is not a metadata edit, and the
+        # instrument's own service account holds only editor.
+        require_permission(session, auth_res, instrument_unique_id, Permission.DELETE,
+                           legacy_group=(instrument.instrument_name or "").lower())
+
+        instrument.status = status
+        session.add(instrument)
+        touch_resource_modification_time(session, instrument_unique_id)
+        session.commit()
+        session.refresh(instrument)
+
+        ri = session.exec(select(Resource).where(
+            Resource.mfid == instrument_unique_id)).one_or_none()
         return InstrumentResponse.model_validate({
             **instrument.model_dump(),
             "creation_time": ri.creation_time if ri else None,

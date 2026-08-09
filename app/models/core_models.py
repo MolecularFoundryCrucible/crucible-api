@@ -341,6 +341,10 @@ class Instrument(SQLModel, table=True):
     location: str
     description: Optional[str]
     instrument_type: Optional[str]
+    # Instruments are not deleted; status tracks lifecycle. Changed through
+    # POST /instruments/{id}/status, not PATCH — it is a lifecycle transition
+    # with a higher bar than a metadata edit.
+    status: Optional[str] = Field(default="active")
 
 
 # --- Task tracking ---

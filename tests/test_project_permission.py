@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.models.core_models import (
     AccessGroup, Project, Resource, ResourceACL, User, UserAccessGroupLink)
-from app.utils.auth_utils import require_project_permission
+from app.utils.auth_utils import require_permission
 from app.utils.permissions import GroupMembership, Permission, PlatformRole, Principal, Role
 
 PROJ = "proj_x"
@@ -63,29 +63,29 @@ class TestAfterMigration:
     def test_standing_decides(self, session, standing, permission, allowed):
         migrated(session)
         if allowed:
-            require_project_permission(session, member(standing), PROJ, permission)
+            require_permission(session, member(standing), PROJ, permission, legacy_group=PROJ)
         else:
             with pytest.raises(HTTPException):
-                require_project_permission(session, member(standing), PROJ, permission)
+                require_permission(session, member(standing), PROJ, permission, legacy_group=PROJ)
 
     def test_a_viewer_can_read_but_not_add_members(self, session):
         """The tightening: today any project member can add anyone."""
         migrated(session)
-        require_project_permission(session, member(Role.VIEWER), PROJ, Permission.READ)
+        require_permission(session, member(Role.VIEWER), PROJ, Permission.READ, legacy_group=PROJ)
         with pytest.raises(HTTPException):
-            require_project_permission(session, member(Role.VIEWER), PROJ, Permission.EDIT)
+            require_permission(session, member(Role.VIEWER), PROJ, Permission.EDIT, legacy_group=PROJ)
 
     def test_non_member_is_denied(self, session):
         migrated(session)
         outsider = Principal(user_id="0000-0009",
                              groups=(GroupMembership(99, "other", Role.OWNER),))
         with pytest.raises(HTTPException):
-            require_project_permission(session, outsider, PROJ, Permission.READ)
+            require_permission(session, outsider, PROJ, Permission.READ, legacy_group=PROJ)
 
     def test_platform_admin_always_passes(self, session):
         migrated(session)
         admin = Principal(user_id="a", platform_role=PlatformRole.ADMIN)
-        require_project_permission(session, admin, PROJ, Permission.TRANSFER)
+        require_permission(session, admin, PROJ, Permission.TRANSFER, legacy_group=PROJ)
 
 
 class TestBeforeMigration:
@@ -93,18 +93,18 @@ class TestBeforeMigration:
     every project route."""
 
     def test_group_member_still_allowed(self, session):
-        require_project_permission(session, member(Role.VIEWER), PROJ, Permission.EDIT)
+        require_permission(session, member(Role.VIEWER), PROJ, Permission.EDIT, legacy_group=PROJ)
 
     def test_admin_group_still_allowed(self, session):
         p = Principal(user_id="0000-0001",
                       groups=(GroupMembership(2, "admin", Role.VIEWER),))
-        require_project_permission(session, p, PROJ, Permission.EDIT)
+        require_permission(session, p, PROJ, Permission.EDIT, legacy_group=PROJ)
 
     def test_outsider_still_denied(self, session):
         outsider = Principal(user_id="0000-0009",
                              groups=(GroupMembership(99, "other", Role.OWNER),))
         with pytest.raises(HTTPException):
-            require_project_permission(session, outsider, PROJ, Permission.READ)
+            require_permission(session, outsider, PROJ, Permission.READ, legacy_group=PROJ)
 
 
 def test_new_members_get_contributor_not_null(session):
@@ -140,32 +140,32 @@ class TestGrantCap:
         (Role.OWNER, Role.OWNER, True),
     ])
     def test_cannot_grant_above_own_role(self, session, actor, target, allowed):
-        from app.api.routes.projects import _require_can_grant
+        from app.utils.auth_utils import require_grant
         p = self._actor(session, actor)
         if allowed:
-            _require_can_grant(session, p, PROJ, target)
+            require_grant(session, p, PROJ, target, floor=Role.EDITOR)
         else:
             with pytest.raises(HTTPException) as exc:
-                _require_can_grant(session, p, PROJ, target)
+                require_grant(session, p, PROJ, target, floor=Role.EDITOR)
             assert exc.value.status_code == 403
 
     def test_admin_cannot_demote_the_owner(self, session):
         """The reason the cap binds on the current role too."""
-        from app.api.routes.projects import _require_can_grant
+        from app.utils.auth_utils import require_grant
         p = self._actor(session, Role.ADMIN)
         with pytest.raises(HTTPException):
-            _require_can_grant(session, p, PROJ, Role.VIEWER, current=Role.OWNER)
+            require_grant(session, p, PROJ, Role.VIEWER, current=Role.OWNER, floor=Role.EDITOR)
 
     def test_owner_may_demote_an_admin(self, session):
-        from app.api.routes.projects import _require_can_grant
+        from app.utils.auth_utils import require_grant
         p = self._actor(session, Role.OWNER)
-        _require_can_grant(session, p, PROJ, Role.VIEWER, current=Role.ADMIN)
+        require_grant(session, p, PROJ, Role.VIEWER, current=Role.ADMIN, floor=Role.EDITOR)
 
     def test_platform_admin_bypasses_the_cap(self, session):
-        from app.api.routes.projects import _require_can_grant
+        from app.utils.auth_utils import require_grant
         migrated(session)
         admin = Principal(user_id="a", platform_role=PlatformRole.ADMIN)
-        _require_can_grant(session, admin, PROJ, Role.OWNER, current=Role.OWNER)
+        require_grant(session, admin, PROJ, Role.OWNER, current=Role.OWNER, floor=Role.EDITOR)
 
 
 def test_project_lead_owns_their_own_project(session):

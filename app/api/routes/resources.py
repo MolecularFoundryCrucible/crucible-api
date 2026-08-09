@@ -28,7 +28,7 @@ from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import (
-    authorize_user, fetch_acl_rows, permission_filter, require_permission, require_platform_admin)
+    authorize_user, require_grant, permission_filter, require_permission, require_platform_admin)
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, set_public, sql_create_resource_acl, touch_resource_modification_time
@@ -568,19 +568,6 @@ def _resolve_grantee(session, kind: str, principal: str):
     return ag, group_name
 
 
-def _require_manage_acl(session, principal: Principal, mfid: str, target: Role,
-                        current: Optional[Role] = None):
-    if principal.is_platform_admin:
-        return
-    require_permission(session, principal, mfid, Permission.MANAGE_ACL)
-    actor = effective_role(principal, fetch_acl_rows(session, mfid))
-    if not can_grant(actor, target, current):
-        raise HTTPException(
-            status_code=403,
-            detail=(f"You hold {actor.name.lower() if actor else 'no role'} on this "
-                    f"resource and cannot grant {target.name.lower()}"))
-
-
 @router.get("/resources/{mfid}/access", response_model=List[AccessGrantRead])
 def list_resource_access(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Who can reach this resource, and at what role.
@@ -706,7 +693,8 @@ def publish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
-        _require_manage_acl(session, auth_res, mfid, Role.VIEWER)
+        require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
+        require_grant(session, auth_res, mfid, Role.VIEWER)
 
         set_public(session, mfid, True)
         resource.public = True
@@ -727,7 +715,8 @@ def unpublish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authori
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
-        _require_manage_acl(session, auth_res, mfid, Role.VIEWER)
+        require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
+        require_grant(session, auth_res, mfid, Role.VIEWER)
 
         set_public(session, mfid, False)
         resource.public = False

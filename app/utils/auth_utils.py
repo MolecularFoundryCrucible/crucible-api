@@ -435,12 +435,19 @@ def fetch_acl_rows(session, mfid: str):
 
 
 def require_permission(session, principal: Principal, mfid: str,
-                       permission: Permission) -> Optional[Role]:
+                       permission: Permission,
+                       legacy_group: Optional[str] = None) -> Optional[Role]:
     """Raise 403 unless `principal` may perform `permission` on `mfid`.
 
-    Returns the effective role, so a caller that needs to branch further does
-    not have to recompute it. None means the caller is a platform admin, whose
-    access does not come from an ACL entry.
+    Returns the effective role, so a caller needing to branch further does not
+    recompute it. None means a platform admin, whose access comes from bypass
+    rather than an ACL entry.
+
+    `legacy_group` names the pre-role group for resource types that only gained
+    ACL entries in the phase 1 backfill — projects and instruments. Where the
+    resource has no ACL rows at all, membership of that group is honoured
+    instead, so deploying before the backfill does not lock the routes out.
+    Drop it in phase 5.
     """
     from app.utils.permissions import has_permission
 
@@ -448,9 +455,36 @@ def require_permission(session, principal: Principal, mfid: str,
         return None
 
     acl_rows = fetch_acl_rows(session, mfid)
+
+    if not acl_rows and legacy_group is not None:
+        if any(g.group_name in ("admin", legacy_group) for g in principal.groups):
+            return None
+        raise HTTPException(status_code=403, detail="Not authorized")
+
     if not has_permission(principal, acl_rows, permission):
         raise HTTPException(status_code=403, detail="Access denied")
     return effective_role(principal, acl_rows)
+
+
+def require_grant(session, principal: Principal, mfid: str, target: Role,
+                  current: Optional[Role] = None, floor: Role = Role.ADMIN) -> None:
+    """Raise 403 unless `principal` may set a grant on `mfid` to `target`.
+
+    The cap binds on both ends — you may not grant above your own role, nor
+    overwrite one above it. `floor` is the minimum role that may manage at all:
+    admin for ACL entries, editor for project membership.
+    """
+    from app.utils.permissions import can_grant
+
+    if principal.is_platform_admin:
+        return
+
+    actor = effective_role(principal, fetch_acl_rows(session, mfid))
+    if not can_grant(actor, target, current, floor=floor):
+        raise HTTPException(
+            status_code=403,
+            detail=(f"You hold {actor.name.lower() if actor else 'no role'} here "
+                    f"and cannot grant {target.name.lower()}"))
 
 
 def permission_filter(principal: Principal, resource_model,
@@ -520,27 +554,3 @@ def require_self_or_platform_admin(principal: Principal, orcid: str) -> None:
     if principal.user_id == orcid:
         return
     require_platform_admin(principal)
-
-
-def require_project_permission(session, principal: Principal, project_id: str,
-                               permission: Permission) -> None:
-    """Permission check against a project, which is itself a resource.
-
-    Falls back to the pre-role check where the project has no ACL entries.
-    Projects only gained them in the phase 1 backfill, so without this a deploy
-    that lands before the backfill locks every project route. Drop the fallback
-    in phase 5.
-    """
-    from app.utils.permissions import has_permission
-
-    acl_rows = fetch_acl_rows(session, project_id)
-    if acl_rows:
-        if principal.is_platform_admin or has_permission(principal, acl_rows, permission):
-            return
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    if principal.is_platform_admin:
-        return
-    if any(g.group_name in ("admin", project_id) for g in principal.groups):
-        return
-    raise HTTPException(status_code=403, detail="Not authorized")

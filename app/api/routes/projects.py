@@ -14,7 +14,7 @@ from app.models.core_models import (
     ResourceACL, Dataset, DatasetSampleLink,
 )
 from app.utils.auth_utils import (
-    authorize_user, fetch_acl_rows, require_platform_admin, require_project_permission)
+    authorize_user, require_grant, require_permission, require_platform_admin)
 from app.utils.permissions import (
     Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, touch_resource_modification_time
@@ -203,7 +203,7 @@ def update_project(proj_id: str, auth_res: Annotated[Principal, Depends(authoriz
     If project_lead_orcid or project_lead_email is provided, it must correspond to an existing user.
     '''
     with Session(engine) as session:
-        require_project_permission(session, auth_res, proj_id, Permission.EDIT)
+        require_permission(session, auth_res, proj_id, Permission.EDIT, legacy_group=proj_id)
 
         project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
 
@@ -256,7 +256,7 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[Principal, Depends(a
     Accessible by admins and members of the project.
     '''
     with Session(engine) as session:
-        require_project_permission(session, auth_res, proj_id, Permission.READ)
+        require_permission(session, auth_res, proj_id, Permission.READ, legacy_group=proj_id)
 
         project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if project is None:
@@ -264,26 +264,6 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[Principal, Depends(a
 
         all_users = _get_project_users(proj_id, session)
         return PaginatedResponse(total=len(all_users), limit=limit, offset=offset, items=all_users[offset:offset + limit])
-
-
-def _require_can_grant(session, principal, proj_id, target: Role,
-                       current: Optional[Role] = None):
-    """Raise 403 unless the caller may hand out `target`, replacing `current`.
-
-    Platform admins bypass. Everyone else is capped at their own standing in
-    the project.
-    """
-    if principal.is_platform_admin:
-        return
-    actor = effective_role(principal, fetch_acl_rows(session, proj_id))
-    # Editor floor, not admin: membership is bounded by the project, unlike
-    # an ACL entry which can share data outward without limit.
-    if not can_grant(actor, target, current, floor=Role.EDITOR):
-        raise HTTPException(
-            status_code=403,
-            detail=(f"You hold {actor.name.lower() if actor else 'no role'} in this "
-                    f"project and cannot grant {target.name.lower()}"),
-        )
 
 
 @router.post("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
@@ -302,8 +282,8 @@ def add_users_to_project(
     or below your own — so an editor can seat a contributor but never an admin.
     '''
     with Session(engine) as session:
-        require_project_permission(session, auth_res, proj_id, Permission.EDIT)
-        _require_can_grant(session, auth_res, proj_id, role)
+        require_permission(session, auth_res, proj_id, Permission.EDIT, legacy_group=proj_id)
+        require_grant(session, auth_res, proj_id, role, floor=Role.EDITOR)
 
         user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
 
@@ -332,7 +312,7 @@ def set_project_user_role(
     project admin demoting the owner.
     '''
     with Session(engine) as session:
-        require_project_permission(session, auth_res, proj_id, Permission.EDIT)
+        require_permission(session, auth_res, proj_id, Permission.EDIT, legacy_group=proj_id)
 
         user = resolve_user(session, orcid=orcid)
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj_id)).one_or_none()
@@ -349,7 +329,7 @@ def set_project_user_role(
                                 detail=f'{orcid} is not a member of {proj_id}')
 
         current = Role.from_db(link.role) if link.role else None
-        _require_can_grant(session, auth_res, proj_id, role, current)
+        require_grant(session, auth_res, proj_id, role, current=current, floor=Role.EDITOR)
 
         link.role = role.db_value
         session.add(link)
@@ -418,7 +398,7 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[Princ
 def project_sample_graph(project_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
     with Session(engine) as session:
-        require_project_permission(session, auth_res, project_id, Permission.READ)
+        require_permission(session, auth_res, project_id, Permission.READ, legacy_group=project_id)
 
         samp_cmd = select(Sample).options(joinedload(Sample.parents))
 
@@ -478,7 +458,7 @@ def project_entity_graph(project_id: str, auth_res: Annotated[Principal, Depends
     associations. Nodes carry entity_type ('sample' or 'dataset') and name.
     '''
     with Session(engine) as session:
-        require_project_permission(session, auth_res, project_id, Permission.READ)
+        require_permission(session, auth_res, project_id, Permission.READ, legacy_group=project_id)
 
         # Load all samples in the project with parent relationships
         samp_cmd = select(Sample).options(joinedload(Sample.parents)).where(Sample.project_id == project_id)

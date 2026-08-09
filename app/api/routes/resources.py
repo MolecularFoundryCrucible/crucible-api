@@ -629,7 +629,8 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
             .where(ResourceACL.accessgroup_id == ag.id)).one_or_none()
         current = Role.from_db(existing.role) if existing and existing.role else None
 
-        _require_manage_acl(session, auth_res, mfid, target, current)
+        require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
+        require_grant(session, auth_res, mfid, target, current=current)
 
         if existing is None:
             existing = ResourceACL(mfid=mfid, accessgroup_id=ag.id,
@@ -673,7 +674,8 @@ def revoke_resource_access(mfid: str, kind: str, principal: str,
                 status_code=409,
                 detail="Cannot revoke the owner's access; transfer ownership instead")
 
-        _require_manage_acl(session, auth_res, mfid, current or Role.VIEWER, current)
+        require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
+        require_grant(session, auth_res, mfid, current or Role.VIEWER, current=current)
 
         session.delete(existing)
         touch_resource_modification_time(session, mfid)

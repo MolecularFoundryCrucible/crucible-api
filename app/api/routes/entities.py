@@ -14,7 +14,7 @@ from app.models.core_models import (
 )
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.sql_utils import deletion_filter_for
-from app.utils.permissions import Principal
+from app.utils.permissions import Principal, Permission
 
 router = APIRouter(tags=["entities"])
 engine = get_engine()

@@ -457,27 +457,60 @@ This adds one ACL entry pointing at the recipient's ORCID group at the named rol
 
 An instrument is a resource with an MFID, an owner, and ACL entries, plus an instrument group holding the machine's operational identity.
 
-### The instrument group contains only the service account
+### Two concerns, two groups
 
-A group is a set of principals that should have **the same** access. The service account and the humans who look after the instrument do not: the SA needs to write the datasets the machine produces, while the registrar and facility staff need to manage the hardware record. Putting all three in one group and then trying to separate them is not expressible — standing is a single value per `(user, group)`, and there is no role below `viewer`, so a member of a group holding an ACL entry always gets at least read.
+An instrument is two different things to the permission model, and conflating them is what made earlier drafts of this section awkward:
 
-So the boundary is drawn where it actually falls:
+| Concern | Subject | Grant lives on |
+|---|---|---|
+| The machine writes data and must reach its own output | its **operator group** — service accounts only | the **datasets** |
+| Humans curate the machine's record: name, status, location, calibration | its **manager group** — people | the **instrument resource** |
 
-| Principal | Reached via | Standing | Grant on the instrument resource | Grant on the machine's datasets |
+These are not the same set of principals and never were. A group is a set of principals that should have the *same* access, and standing is a single value per `(user, group)` with no rung below `viewer` — so one group holding both cannot give them different access. Two concerns, two groups.
+
+| Principal | Group | Standing | On the instrument record | On the machine's datasets |
 |---|---|---|---|---|
-| Service account | `instrument-{mfid}` group | `admin` | `editor` | `contributor` |
+| Service account | `instrument-{mfid}` (operators) | `admin` | `editor` | `contributor` |
+| Instrument manager | manager group — *deferred* | `admin` | `admin` | **none** |
 | Registrar | own ORCID group | `owner` | `owner` | none |
-| Facility staff | *staff group — deferred, see below* | `admin` | `admin` | none |
 
-The SA's grant on the instrument resource is `editor`, not `admin`: it can update metadata programmatically but cannot delete the instrument, change its status, or manage its ACL entries. That falls out of the role table rather than needing a service-account exception in code.
+The SA's grant on the instrument record is `editor`, not `admin`: it updates metadata programmatically but cannot delete the instrument, change its status, or manage its ACL entries. That falls out of the role table rather than a service-account exception in code.
 
-Facility staff get **no instrument-derived access to datasets**. Not by exception — they simply are not in the group that holds the dataset grant. If a staff member needs a project's data, they join the project or receive a share, like anyone else.
+#### The dataset grant records provenance, not current configuration
 
-What they do keep is `viewer` on *public* datasets, through the virtual public group every principal holds. So the loss is real but narrower than "no access": private data from their beamline becomes unreachable, public data stays readable exactly as it is for everyone else. The agreement tests pin both halves.
+**This is the point that resolves a problem earlier drafts could not.** The grant on a dataset means *"this machine's operators produced this"* — a historical fact, written once at creation. It is **not** derived from `dataset.instrument_id`.
 
-> **Defer the staff group.** Do not create a second group per instrument in phase 1. Instrument records are managed today by people who are already platform admins, so they keep managing them through admin bypass and the instrument group is SA-only from day one. Add `instrument-{mfid}-staff` when a beamline scientist actually needs to edit instrument metadata without being a platform admin. This also makes the migration subtractive: existing instrument groups have their human members removed, rather than a new group being backfilled.
+That distinction matters because the alternative — treating the grant as a projection of the instrument field — creates two copies of one fact that can disagree:
 
-> **This tightens what staff can see.** Today anyone in an instrument group can read every dataset that machine has ever produced. Afterwards they see nothing unless they are a project member. That is the intended reduction, but it is the kind of change a beamline scientist notices the same week — worth announcing rather than shipping quietly.
+- change a dataset's instrument, and the old grant is stale
+- correct a mistyped instrument name, and the grant is wrong
+- edit the grant directly, and the instrument field says otherwise
+
+Reading it as provenance removes the duplication. Correcting a dataset's instrument later does not touch its ACL, because who produced it did not change. There is nothing to keep in sync, and the entry appears in `GET /resources/{mfid}/access` as an ordinary grant rather than something read-only that the API has to explain.
+
+#### Why a group rather than the service account directly
+
+One SA per instrument makes the operator group look redundant with that SA's own personal group. It is not, and the difference shows up at credential rotation: grant to the group and a replacement SA inherits access to everything the machine has produced; grant to the individual and the successor starts blind.
+
+Same reason permissions attach to roles rather than people. It also covers a control PC driving several detectors, and an overlap window where two credentials are live.
+
+#### Instrument managers do not get the datasets
+
+A manager can curate the hardware record and read nothing the machine produced. To reach the data they join the project or receive a share, like anyone else.
+
+**Decided, revisit later.** The alternative — managers get `viewer` on their machine's output — is defensible for troubleshooting, and can be added by granting the manager group on datasets. Starting closed and widening on evidence is the cheaper direction.
+
+What managers keep regardless is `viewer` on *public* datasets, through the virtual public group every principal holds. So the loss is narrower than "no access": private data from their beamline becomes unreachable, public data stays exactly as readable as before. The agreement tests pin both halves.
+
+> **Defer the manager group.** Instrument records are managed today by people who are already platform admins, so they keep working through admin bypass and the operator group is SA-only from day one. Add `instrument-{mfid}-managers` when a beamline scientist needs to edit instrument metadata without being a platform admin. This keeps the migration subtractive: existing instrument groups have their human members removed rather than a new group backfilled.
+
+> **This tightens what staff can see.** Today anyone in an instrument group reads every dataset that machine has produced. Afterwards they see nothing unless they are a project member. Intended, but the kind of change a beamline scientist notices the same week — worth announcing rather than shipping quietly.
+
+#### Creating an instrument does not mint a credential
+
+`POST /instruments` creates the instrument, its resource row and its operator group. It does **not** create a service account.
+
+Minting one is a deliberate second step, so a live credential exists only where something is actually writing rather than for every instrument anyone ever registered. `POST /instruments?create_service_account=true` keeps the one-call ergonomics available for the common case without leaving unused keys lying around by default.
 
 ### Status lifecycle
 
@@ -1027,9 +1060,17 @@ On performance, the join is roughly a wash rather than a regression, provided th
 
 ### Deriving the instrument grant instead of storing it
 
-`Dataset.instrument_id` already records which machine produced a dataset, so the per-dataset instrument ACL row is in principle redundant: the read filter could carry `OR dataset.instrument_id IN (<caller's instrument groups>)` and the row could be dropped entirely. At one row per dataset, that is a real saving at the volumes discussed under Indexing.
+**Superseded.** This entry argued for computing the instrument grant from
+`Dataset.instrument_id` at check time rather than storing an ACL row, and
+rejected it on the grounds that it "breaks the invariant that the ACL table is
+the single source of truth".
 
-Not done, because it introduces a second permission path alongside `resourceacl`. It works only for datasets — samples and any later resource type would still need rows — and it breaks the invariant that the ACL table is the single source of truth, which is what makes the shadow-mode comparison in the migration tractable. Revisit as a targeted optimization once the ACL model is in production and the row count is measured rather than estimated.
+That reasoning was backwards. It assumed the grant means *"belongs to
+instrument X"*, in which case the stored row is a cached projection of the
+instrument column and the two can drift. Under the corrected reading — the
+grant records **who produced the dataset**, fixed at creation (see Instruments)
+— there is nothing to derive and nothing to drift. The row is authored state,
+not a copy of anything.
 
 ### Delegated authority beyond creation
 

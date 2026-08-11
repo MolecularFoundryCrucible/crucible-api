@@ -22,7 +22,7 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, require_groups, require_write_access, require_read_access, read_access_filter_list
-from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time
+from app.utils.sql_utils import add_or_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.models.users import UserPublicRead
 
@@ -142,8 +142,9 @@ def update_sample(auth_res: Annotated[tuple, Depends(authorize_user)], sample_id
 def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: SampleCreate,
                   background_tasks: BackgroundTasks):
     '''
-    Create a new sample. If a sample with the same project_id and sample_name already
-    exists, the existing record is returned without modification.
+    Create a new sample. Sample names are not unique within a project — repeating one
+    creates a second sample. Clients that want to warn the user about an accidental
+    duplicate should pre-check with GET /samples?sample_name=&project_id=.
     '''
     user_unique_id, ag_list = auth_res
     ag_ids = [ag.id for ag in ag_list]
@@ -155,20 +156,6 @@ def create_sample(auth_res: Annotated[tuple, Depends(authorize_user)], S: Sample
         if S.unique_id:
             if session.exec(select(Sample).where(Sample.unique_id == S.unique_id)).one_or_none():
                 raise HTTPException(status_code=409, detail=f"Sample '{S.unique_id}' already exists. Use PATCH to update it.")
-
-        if session.exec(
-            select(Sample).where(
-                and_(
-                    Sample.project_id == S.project_id,
-                    Sample.sample_name == S.sample_name,
-                    deletion_filter_for(Sample),
-                )
-            )
-        ).one_or_none():
-            raise HTTPException(
-                status_code=409,
-                detail=f"A sample named '{S.sample_name}' already exists in project '{S.project_id}'.",
-            )
 
         sample = Sample(**S.model_dump(exclude_unset=True))
         session.add(sample)

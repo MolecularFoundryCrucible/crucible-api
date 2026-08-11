@@ -52,3 +52,10 @@ class ApiKeyVerify(BaseModel):
     valid: bool
     created_at: str
     expires_at: str
+
+
+class ProjectSyncResult(BaseModel):
+    orcid: str
+    projects_added: List[str] = []
+    projects_already_member: List[str] = []
+    projects_not_found: List[str] = []

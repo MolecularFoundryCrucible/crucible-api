@@ -10,14 +10,17 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select, col
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.general_utils import is_orcid, get_secret
+from app.general_utils import is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, Project, Sample, User,
     UserAccessGroupLink, UserProjectLink,
 )
 from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_admin, require_groups
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
-from app.utils.user_utils import assert_username_available, sql_add_user_to_access_group
+from app.utils.user_utils import (
+    assert_username_available, assign_projects_to_user, find_mf_user_proposals,
+    sql_add_user_to_access_group,
+)
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.models.users import AccountProfileUpdate, UserCreate, UserPublicRead, UserRead, UserUpdate
@@ -250,27 +253,6 @@ def verify_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_
             expires_at=expires_dt.date().isoformat(),
         )
 
-def find_mf_user_proposals(orcid):
-    import requests
-
-    mf_user_db_url = "https://foundry-admin.lbl.gov/api/JSON/sciCat-GetUser.aspx?"
-    apikey = get_secret("PROPDB_APIKEY", "propdb-apikey/versions/1")
-    request_url = f"{mf_user_db_url}key={apikey}&orcid={orcid}"
-    assert apikey is not None
-    print(f"{mf_user_db_url}key=****&orcid={orcid}")
-    response = requests.request(method="get", url=request_url)
-
-    found_proposals = []
-    if len(response.json()) > 0 and response.status_code == 200:
-        logger.info(f'{response.json()=}')
-        for u in response.json():
-            found_proposals += u.get('proposals', [])
-        
-        found_proposals = list(set(found_proposals))
-        
-    return found_proposals
-
-
 @router.post("/users", response_model=UserRead)
 def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: UserCreate, project_ids: List[str] = Body(...)):
     _, ag_list = auth_res
@@ -291,41 +273,22 @@ def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: 
             detail=f"Missing required user information: {', '.join(missing_fields)}. Please provide all required fields: first_name, last_name, and unique_id."
         )
 
+    # Queried before opening the session so the external call doesn't hold a transaction.
+    proposal_ids = find_mf_user_proposals(user_info.unique_id)
+
     with Session(engine) as session:
         if user_info.username:
             assert_username_available(session, user_info.username, exclude_orcid=user_info.unique_id)
         user_dict = table_obj_to_dict(user_info)
         if user_dict.get('email', None) is not None:
             user_dict['email'] = user_dict['email'].lower().strip()
-            
+
         user = add_or_update(session, User, User.unique_id == user_info.unique_id, **user_dict)
 
         sql_add_user_to_access_group(user.unique_id, user.unique_id, session)
 
-        # check if the user is in the MF Proposal Database and should be added to any proposals
-        user_proposal_ids = find_mf_user_proposals(user.unique_id)
-        project_ids.append(user_proposal_ids)
+        assign_projects_to_user(session, user.unique_id, list(project_ids) + proposal_ids)
 
-        # for each project that the user is a USER on:
-        # 1. get the project object from the database
-        # 2. add the project to the user object
-        # 3. add an access group for the project, named by the project and add the user to the access group
-        for pname in project_ids:
-            props = session.exec(select(Project).where(Project.project_id == pname)).all()
-            if len(props) != 1:
-                logger.warning(f"Projects found for {pname}: {props} — skipping. Please ensure a project exists with a unique name.")
-                continue
-
-            prop = props[-1]
-
-            # add project to user
-            if prop not in user.projects:
-                user.projects.append(prop)
-
-            # add user to access group
-            sql_add_user_to_access_group(user.unique_id, pname, session)
-
-        session.add(user)
         session.commit()
         session.refresh(user)
 

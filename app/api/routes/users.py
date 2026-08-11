@@ -16,6 +16,7 @@ from app.models.core_models import (
     UserAccessGroupLink, UserProjectLink,
 )
 from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_admin, require_groups
+from app.utils.permissions import Principal
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import assert_username_available, sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
@@ -31,14 +32,14 @@ engine = get_engine()
 
 
 @router.get("/users", response_model=PaginatedResponse[UserRead])
-def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
+def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
                permissive: bool = True,
+               is_service_account: Optional[bool] = None,
                limit: int = Query(default=100, ge=1, le=1000),
                offset: int = Query(default=0, ge=0)):
-    _, ag_list = auth_res
-
+    ag_list = auth_res.groups
     params_dict = dict(request.query_params)
-    for k in ('permissive', 'limit', 'offset'):
+    for k in ('permissive', 'limit', 'offset', 'is_service_account'):
         params_dict.pop(k, None)
 
     search_cmd = select(User)
@@ -50,6 +51,9 @@ def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Req
         for k, v in params_dict.items():
             if hasattr(User, k):
                 search_cmd = search_cmd.where(getattr(User, k) == v)
+
+    if is_service_account is not None:
+        search_cmd = search_cmd.where(User.is_service_account == is_service_account)
 
     # Admins see all users; non-admins are scoped to users who share an access
     # group with them (each user has a personal access group, so this includes
@@ -72,49 +76,47 @@ def list_users(auth_res: Annotated[tuple, Depends(authorize_user)], request: Req
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.post("/users/resolve", response_model=Dict[str, UserRead])
+@router.post("/users/resolve", response_model=Dict[str, UserPublicRead])
 def resolve_users(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     orcids: Optional[List[str]] = Body(default=None),
     usernames: Optional[List[str]] = Body(default=None),
     emails: Optional[List[str]] = Body(default=None),
 ):
     '''
     Batch-resolve users by any mix of ORCIDs, usernames, or emails.
-    Returns a dict keyed by ORCID: {orcid: UserRead}.
+    Returns a dict keyed by ORCID: {orcid: UserPublicRead}. No email included.
+    Any authenticated user can call this. Admins needing email should use GET /users/{orcid}.
     '''
-    _, ag_list = auth_res
-    require_admin(ag_list)
-
     if not orcids and not usernames and not emails:
         return {}
 
     with Session(engine) as session:
-        results: Dict[str, UserRead] = {}
+        results: Dict[str, UserPublicRead] = {}
 
         if orcids:
             for user in session.exec(select(User).where(User.unique_id.in_(orcids))).all():
-                results[user.unique_id] = user
+                results[user.unique_id] = UserPublicRead.model_validate(user)
 
         if usernames:
             normalized_usernames = [u.lower() for u in usernames]
             for user in session.exec(select(User).where(User.username.in_(normalized_usernames))).all():
                 if user.unique_id not in results:
-                    results[user.unique_id] = user
+                    results[user.unique_id] = UserPublicRead.model_validate(user)
 
         if emails:
             normalized_emails = [e.lower() for e in emails]
             for user in session.exec(select(User).where(func.lower(User.email).in_(normalized_emails))).all():
                 if user.unique_id not in results:
-                    results[user.unique_id] = user
+                    results[user.unique_id] = UserPublicRead.model_validate(user)
 
         return results
 
 
 @router.get("/users/me", response_model=UserRead, deprecated=True, include_in_schema=True)
-def get_current_user(auth_res: Annotated[tuple, Depends(authorize_user)]):
+def get_current_user(auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Deprecated: use GET /account/profile.'''
-    user_unique_id, _ = auth_res
+    user_unique_id = auth_res.user_id
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         if user is None:
@@ -123,9 +125,9 @@ def get_current_user(auth_res: Annotated[tuple, Depends(authorize_user)]):
 
 
 @router.patch("/users/me", response_model=UserRead, deprecated=True, include_in_schema=True)
-def update_current_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_update: AccountProfileUpdate):
+def update_current_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_update: AccountProfileUpdate):
     '''Deprecated: use PATCH /account/profile.'''
-    user_unique_id, _ = auth_res
+    user_unique_id = auth_res.user_id
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         if user is None:
@@ -143,7 +145,7 @@ def update_current_user(auth_res: Annotated[tuple, Depends(authorize_user)], use
 
 @router.get("/users/search", response_model=List[UserPublicRead])
 def search_users(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     q: str = Query(min_length=3, description="Search term matched against username, first name, and last name."),
     limit: int = Query(default=20, ge=1, le=50),
 ):
@@ -153,18 +155,23 @@ def search_users(
     '''
     with Session(engine) as session:
         session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
-        results = session.exec(
-            select(User)
-            .where(
-                literal(q).op("<<%")(User.first_name) |
-                literal(q).op("<<%")(User.last_name) |
-                literal(q).op("<<%")(User.username)
+        tokens = q.lower().split()
+        query = select(User)
+        for token in tokens:
+            query = query.where(
+                User.first_name.ilike(f"{token}%") |
+                User.last_name.ilike(f"{token}%") |
+                User.username.ilike(f"{token}%") |
+                literal(token).op("<%")(User.first_name) |
+                literal(token).op("<%")(User.last_name) |
+                literal(token).op("<%")(User.username)
             )
-            .order_by(
+        results = session.exec(
+            query.order_by(
                 func.greatest(
-                    func.strict_word_similarity(q, User.first_name),
-                    func.strict_word_similarity(q, User.last_name),
-                    func.coalesce(func.strict_word_similarity(q, User.username), 0),
+                    func.word_similarity(q, User.first_name),
+                    func.word_similarity(q, User.last_name),
+                    func.coalesce(func.word_similarity(q, User.username), 0),
                 ).desc()
             )
             .limit(limit)
@@ -172,28 +179,22 @@ def search_users(
     return results
 
 
-@router.get("/users/by-username/{username}", response_model=UserRead)
-def get_user_by_username(username: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    '''Look up a user by username. Admin or the matched user themselves.'''
-    user_unique_id, ag_list = auth_res
-
+@router.get("/users/by-username/{username}", response_model=UserPublicRead)
+def get_user_by_username(username: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    '''Look up a user by username. Returns public profile (no email). Any authenticated user.'''
     with Session(engine) as session:
         user = session.exec(select(User).where(User.username == username.lower())).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-
-        if user_unique_id != user.unique_id:
-            require_admin(ag_list)
-
-        return user
+        return UserPublicRead.model_validate(user)
 
 
 @router.get("/users/{orcid}", response_model=Union[None, UserRead])
-def read_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def read_user(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     Returns the User object associated with the provided ORCID if found. Otherwise returns None.
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     if user_unique_id != orcid:
         require_admin(ag_list)
 
@@ -203,9 +204,9 @@ def read_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
 
 
 @router.post("/users/{orcid}/apikey", response_model=ApiKeyRead)
-def get_or_provision_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def get_or_provision_user_apikey(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.'''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_admin(ag_list)
 
     with Session(engine) as session:
@@ -217,9 +218,9 @@ def get_or_provision_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(
 
 
 @router.get("/users/{orcid}/apikey/verify", response_model=ApiKeyVerify)
-def verify_user_apikey(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def verify_user_apikey(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Returns validity and expiry info for the given user's API key. Admin only.'''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_admin(ag_list)
 
     with Session(engine) as session:
@@ -271,8 +272,8 @@ def find_mf_user_proposals(orcid):
 
 
 @router.post("/users", response_model=UserRead)
-def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: UserCreate, project_ids: List[str] = Body(...)):
-    _, ag_list = auth_res
+def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_info: UserCreate, project_ids: List[str] = Body(...)):
+    ag_list = auth_res.groups
     require_admin(ag_list)
 
     # Validate required fields
@@ -335,9 +336,9 @@ def create_user(auth_res: Annotated[tuple, Depends(authorize_user)], user_info: 
 
 
 @router.patch("/users/{orcid}", response_model=UserRead)
-def update_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)], user_update: UserUpdate):
+def update_user(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)], user_update: UserUpdate):
     '''Partially update a user record. Only fields provided in the request body are modified.'''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_groups(ag_list, {'admin', orcid})
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
@@ -358,11 +359,11 @@ def update_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)],
 
 
 @router.get("/users/{orcid}/datasets", response_model=List[str])
-def read_user_datasets(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def read_user_datasets(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     Returns a list of all the datasets the user has access to based on the ORCID provided.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_groups(ag_list, {'admin', orcid})
     with Session(engine) as session:
         # Verify user exists
@@ -383,9 +384,9 @@ def read_user_datasets(orcid: str, auth_res: Annotated[tuple, Depends(authorize_
 
 
 @router.get("/users/{orcid}/samples", response_model=List[str])
-def read_user_samples(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def read_user_samples(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Returns a list of sample MFIDs the user has access to via their access groups.'''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_groups(ag_list, {'admin', orcid})
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
@@ -407,11 +408,11 @@ def read_user_samples(orcid: str, auth_res: Annotated[tuple, Depends(authorize_u
 
 
 @router.get("/users/{orcid}/datasets/{dsid}", response_model=Dict)
-def read_user_access_to_dataset(dsid: str, orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def read_user_access_to_dataset(dsid: str, orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     Returns boolean: True is user with provided ORCID has access to the provided dataset ID, False if no access or dataset does not exist.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_groups(ag_list, {'admin', orcid})
     with Session(engine) as session:
         ag = session.exec(select(UserAccessGroupLink).select_from(join(UserAccessGroupLink, User, User.id == UserAccessGroupLink.user_id)).where(User.unique_id == orcid)).all()
@@ -432,8 +433,8 @@ def read_user_access_to_dataset(dsid: str, orcid: str, auth_res: Annotated[tuple
 
 
 @router.post("/users/{orcid}/access_groups/{group_name}", response_model=AccessGroupRead)
-def add_user_to_access_group(auth_res: Annotated[tuple, Depends(authorize_user)], orcid: str, group_name: str):
-    _, ag_list = auth_res
+def add_user_to_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], orcid: str, group_name: str):
+    ag_list = auth_res.groups
     require_admin(ag_list)
     with Session(engine) as session:
         ag = sql_add_user_to_access_group(orcid, group_name, session)
@@ -443,8 +444,8 @@ def add_user_to_access_group(auth_res: Annotated[tuple, Depends(authorize_user)]
 
 
 @router.get("/users/{orcid}/access_groups", response_model=List[str])
-def list_user_access_groups(auth_res: Annotated[tuple, Depends(authorize_user)], orcid: str):
-    _, ag_list = auth_res
+def list_user_access_groups(auth_res: Annotated[Principal, Depends(authorize_user)], orcid: str):
+    ag_list = auth_res.groups
     require_groups(ag_list, {'admin', orcid})
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
@@ -461,9 +462,9 @@ def list_user_access_groups(auth_res: Annotated[tuple, Depends(authorize_user)],
 
 
 @router.delete("/users/{orcid}/access_groups/{group_name}")
-def remove_user_from_access_group(auth_res: Annotated[tuple, Depends(authorize_user)], orcid: str, group_name: str):
+def remove_user_from_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], orcid: str, group_name: str):
     '''Remove a user from an access group.'''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_admin(ag_list)
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
@@ -490,13 +491,13 @@ def remove_user_from_access_group(auth_res: Annotated[tuple, Depends(authorize_u
 
 
 @router.get("/users/{orcid}/projects", response_model=PaginatedResponse[ProjectWithLead])
-def read_projects_for_user(orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+def read_projects_for_user(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                            limit: int = Query(default=100, ge=1, le=1000),
                            offset: int = Query(default=0, ge=0)):
     '''
     Returns a paginated list of the projects that this User is associated with, including the resolved project lead.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_groups(ag_list, {'admin', orcid})
 
     with Session(engine) as session:

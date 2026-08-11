@@ -3,7 +3,7 @@ from typing import Annotated, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, join, literal, text
 from sqlalchemy.orm import joinedload, selectinload
-from sqlmodel import and_, or_, Session, select, col
+from sqlmodel import Session, select, col
 import networkx as nx
 from networkx.readwrite import json_graph
 
@@ -14,19 +14,21 @@ from app.models.core_models import (
     ResourceACL, Dataset, DatasetSampleLink,
 )
 from app.utils.auth_utils import authorize_user, require_groups
-from app.utils.sql_utils import add_or_update
-from app.utils.user_utils import sql_add_user_to_access_group, resolve_user
-from app.utils.project_utils import sql_get_projects_for_user
+from app.utils.permissions import Principal
+from app.utils.sql_utils import add_or_update, touch_resource_modification_time
+from app.utils.user_utils import resolve_user
+from app.utils.project_utils import (
+    assert_project_id_available, sql_add_user_to_project, sql_get_projects_for_user)
 from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
-from app.models.users import UserRead
+from app.models.users import UserPublicRead, UserRead
 
 router = APIRouter(tags=["projects"])
 engine = get_engine()
 
 
 @router.post("/projects", response_model=ProjectRead)
-def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: ProjectCreate):
+def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: ProjectCreate):
     """
     Create a new project. Either project_lead_orcid or project_lead_email must be
     provided and must correspond to an existing user. The resolved ORCID is stored on the project.
@@ -39,6 +41,10 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
         existing = session.exec(select(Project).where(Project.project_id == P.project_id)).one_or_none()
         if existing is not None:
             raise HTTPException(status_code=409, detail=f"Project '{P.project_id}' already exists. Use PATCH to update it.")
+
+        # The project does not exist, so any access group already holding this
+        # name belongs to something else. add_or_update below would reuse it.
+        assert_project_id_available(session, P.project_id)
 
         project_lead = resolve_user(session, orcid=P.project_lead_orcid, email=P.project_lead_email, username=P.project_lead_username)
 
@@ -68,15 +74,14 @@ def create_project(auth_res: Annotated[tuple, Depends(authorize_user)], P: Proje
 
 
 @router.get("/projects", response_model=PaginatedResponse[ProjectWithLead])
-def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)],
+def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
                   include_metadata: bool = False,
                   limit: int = Query(default=100, ge=1, le=1000),
                   offset: int = Query(default=0, ge=0)):
     '''
     Returns a paginated list of projects the user is authorized to see, including the resolved project lead.
     '''
-    user_unique_id, ag_list = auth_res
-
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     if include_metadata:
         loader_opts = [selectinload(Project.resource).selectinload(Resource.scientific_metadata)]
     else:
@@ -118,47 +123,36 @@ def list_projects(auth_res: Annotated[tuple, Depends(authorize_user)],
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-def _project_base_query(user_unique_id: str, ag_list: list, session):
-    """Return a base select for projects visible to the user (same scoping as list_projects)."""
-    if is_orcid(user_unique_id):
-        user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-        if user is None:
-            return None
-        return (
-            select(Project)
-            .join(UserProjectLink, Project.project_id == UserProjectLink.project_id)
-            .where(UserProjectLink.user_id == user.id)
-        )
-    else:
-        require_groups(ag_list)
-        return select(Project)
-
-
 @router.get("/projects/search", response_model=PaginatedResponse[ProjectRead])
 def search_projects(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     q: str = Query(min_length=3, description="Search term matched against project title and project_id."),
     limit: int = Query(default=20, ge=1, le=50),
 ):
     '''
-    Search projects by title or project_id. Returns results ordered by match quality.
-    Scoped to projects the caller is a member of. Maximum 50 results.
+    Search projects by title or project_id across all projects, not just ones the
+    caller is a member of — this is how a user discovers a project to request to
+    join via POST /access_groups/{group_name}/join. Returns results ordered by
+    match quality. Maximum 50 results.
+
+    Note: ProjectRead has no lead/scientific_metadata fields, so this is safe to
+    open regardless of membership — see GET /projects/{proj_id} for the fields
+    that stay member-only.
     '''
-    user_unique_id, ag_list = auth_res
-
     with Session(engine) as session:
-        base = _project_base_query(user_unique_id, ag_list, session)
-        if base is None:
-            return PaginatedResponse(limit=limit, items=[])
-
         session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
-        query = base.where(
-            literal(q).op("<<%")(Project.project_id) |
-            literal(q).op("<<%")(Project.title)
-        ).order_by(
+        tokens = q.lower().split()
+        query = select(Project)
+        for token in tokens:
+            query = query.where(
+                Project.project_id.ilike(f"{token}%") |
+                literal(token).op("<%")(Project.project_id) |
+                literal(token).op("<%")(Project.title)
+            )
+        query = query.order_by(
             func.greatest(
-                func.strict_word_similarity(q, Project.project_id),
-                func.coalesce(func.strict_word_similarity(q, Project.title), 0),
+                func.word_similarity(q, Project.project_id),
+                func.coalesce(func.word_similarity(q, Project.title), 0),
             ).desc()
         ).limit(limit)
 
@@ -167,24 +161,30 @@ def search_projects(
 
 
 @router.get("/projects/{proj_id}", response_model=ProjectWithLead)
-def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], include_metadata: bool = False):
+def read_project(proj_id: str, auth_res: Annotated[Principal, Depends(authorize_user)], include_metadata: bool = False):
     '''
     Returns the project object for the provided ID, including the resolved project lead.
+    Any authenticated user can read basic project info (project_id, organization,
+    status, title) to support discovery for join requests. Members and admins
+    additionally get the lead's email (UserRead) and scientific_metadata; non-members
+    get the lead as UserPublicRead (no email) and scientific_metadata is always null,
+    regardless of ?include_metadata=.
     '''
-    user_unique_id, ag_list = auth_res
-    require_groups(ag_list, {'admin', proj_id})
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
+    is_member = any(ag.group_name in ('admin', proj_id) for ag in ag_list)
 
     with Session(engine) as session:
         query = select(Project).where(Project.project_id == proj_id)
-        if include_metadata:
+        if include_metadata and is_member:
             query = query.options(selectinload(Project.resource).selectinload(Resource.scientific_metadata))
         else:
             query = query.options(selectinload(Project.resource))
         prop = session.exec(query).one_or_none()
         if prop is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        lead = session.exec(select(User).where(User.unique_id == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
-        resource_md = prop.resource.scientific_metadata if prop.resource else None
+        lead_user = session.exec(select(User).where(User.unique_id == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
+        lead = (UserRead.model_validate(lead_user) if is_member else UserPublicRead.model_validate(lead_user)) if lead_user else None
+        resource_md = prop.resource.scientific_metadata if (prop.resource and is_member) else None
         return ProjectWithLead(
             **prop.model_dump(),
             lead=lead,
@@ -195,13 +195,13 @@ def read_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user
 
 
 @router.patch("/projects/{proj_id}", response_model=ProjectWithLead)
-def update_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)], project_update: ProjectUpdate):
+def update_project(proj_id: str, auth_res: Annotated[Principal, Depends(authorize_user)], project_update: ProjectUpdate):
     '''
     Partially update a project record. Only fields provided in the request body are modified.
     Accessible by admins and the project lead.
     If project_lead_orcid or project_lead_email is provided, it must correspond to an existing user.
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     require_groups(ag_list, {'admin', proj_id})
 
     with Session(engine) as session:
@@ -225,6 +225,7 @@ def update_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_us
             setattr(project, key, value)
 
         session.add(project)
+        touch_resource_modification_time(session, proj_id)
         session.commit()
         session.refresh(project)
         lead = session.exec(select(User).where(User.unique_id == project.project_lead_orcid)).one_or_none() if project.project_lead_orcid else None
@@ -247,15 +248,14 @@ def _get_project_users(proj_id: str, session) -> List[User]:
 
 
 @router.get("/projects/{proj_id}/users", response_model=PaginatedResponse[UserRead])
-def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+def read_users_on_project(proj_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                           limit: int = Query(default=100, ge=1, le=1000),
                           offset: int = Query(default=0, ge=0)):
     '''
     Returns a paginated list of users associated with the project ID.
     Accessible by admins and members of the project.
     '''
-    _, ag_list = auth_res
-
+    ag_list = auth_res.groups
     require_groups(ag_list, {'admin', proj_id})
 
     with Session(engine) as session:
@@ -271,7 +271,7 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[tuple, Depends(autho
 def add_users_to_project(
     proj_id: str,
     orcid: str,
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     email: Optional[str] = None,
     username: Optional[str] = None,
 ):
@@ -279,7 +279,7 @@ def add_users_to_project(
     Add a user to a project. Provide ?email= or ?username= to resolve the user instead of
     the orcid path parameter. Only admins or project members can add users.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_groups(ag_list, {'admin', proj_id})
 
     with Session(engine) as session:
@@ -289,34 +289,38 @@ def add_users_to_project(
         if proj is None:
             raise HTTPException(status_code=404, detail=f'Project {proj_id} not found')
 
-        add_or_update(session,
-                      UserProjectLink,
-                      where=(and_(UserProjectLink.user_id == user.id, UserProjectLink.project_id == proj_id)),
-                      user_id=user.id,
-                      project_id=proj_id)
-
-        sql_add_user_to_access_group(user.unique_id, proj_id, session)
+        sql_add_user_to_project(user, proj_id, session)
         session.commit()
 
         return _get_project_users(proj_id, session)
 
 
 @router.delete("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
-def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                              email: Optional[str] = None, username: Optional[str] = None):
     '''
     Remove a user from a project and its associated access group.
-    Only admins or the project lead can remove users.
+    Admins or the project lead can remove any member. A member can also
+    remove themselves (leave the project), but the project lead cannot
+    remove themselves — transfer leadership first.
     Provide ?email= or ?username= to look up the user instead of the orcid path parameter.
     '''
-    _, ag_list = auth_res
-    require_groups(ag_list, {'admin', proj_id})
-    with Session(engine) as session:
-        user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
+    is_admin = any(ag.group_name == 'admin' for ag in ag_list)
 
+    with Session(engine) as session:
         proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project {proj_id} not found")
+
+        is_self = user_unique_id == orcid and not email and not username
+        if not is_admin and user_unique_id != proj.project_lead_orcid and not is_self:
+            raise HTTPException(status_code=403, detail="Only platform admins, the project lead, or the member themselves can remove a member.")
+
+        if is_self and user_unique_id == proj.project_lead_orcid:
+            raise HTTPException(status_code=409, detail="The project lead cannot remove themselves. Transfer leadership first.")
+
+        user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
 
         # Remove the user-project link
         link = session.exec(
@@ -341,14 +345,15 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[tuple
             if ag_link:
                 session.delete(ag_link)
 
+        touch_resource_modification_time(session, proj_id)
         session.commit()
         return _get_project_users(proj_id, session)
 
 
 @router.get("/projects/{project_id}/sample_graph")
-def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def project_sample_graph(project_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_groups(ag_list, {'admin', project_id})
 
     with Session(engine) as session:
@@ -371,9 +376,9 @@ def project_sample_graph(project_id: str, auth_res: Annotated[tuple, Depends(aut
         return json_graph.node_link_data(G)
 
 @router.get("/projects/{project_id}/dataset_graph")
-def project_dataset_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def project_dataset_graph(project_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -403,13 +408,13 @@ def project_dataset_graph(project_id: str, auth_res: Annotated[tuple, Depends(au
 
 
 @router.get("/projects/{project_id}/entity_graph")
-def project_entity_graph(project_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def project_entity_graph(project_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     Returns a NetworkX node-link graph of all samples and datasets in the
     project, connected via sample lineage, dataset lineage, and sample-dataset
     associations. Nodes carry entity_type ('sample' or 'dataset') and name.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
     require_groups(ag_list, {'admin', project_id})
 

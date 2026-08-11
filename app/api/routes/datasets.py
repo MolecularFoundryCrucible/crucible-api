@@ -42,9 +42,11 @@ from app.models.datasets import (
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
+from app.models.users import UserPublicRead
 from app.utils.auth_utils import authorize_user, require_write_access, require_read_access, read_access_filter_list
+from app.utils.permissions import Principal
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
-from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request
+from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
@@ -64,7 +66,7 @@ API_VERSION_GITHASH = os.getenv("GITHASH", None)
 RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
 
 @router.post("/datasets/{dsid}/carrier_segmentation")
-def request_carrier_segmentation(dsid, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def request_carrier_segmentation(dsid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
     msg = {
         "dsid": dsid,
@@ -80,7 +82,7 @@ def request_carrier_segmentation(dsid, auth_res: Annotated[tuple, Depends(author
     return
 
 @router.post("/datasets/{dsid}/insitu_spec_aggregation")
-def request_insitu_aggregation(dsid, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def request_insitu_aggregation(dsid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
     msg = {
         "dsid": dsid,
@@ -96,7 +98,7 @@ def request_insitu_aggregation(dsid, auth_res: Annotated[tuple, Depends(authoriz
     return
 
 @router.post("/datasets/{dsid}/rga_analysis")
-def request_rga_analysis(dsid, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def request_rga_analysis(dsid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
     if dataset is None:
@@ -117,7 +119,7 @@ def request_rga_analysis(dsid, auth_res: Annotated[tuple, Depends(authorize_user
     return
 
 @router.post("/datasets/{dsid}/mosaic_stitch")
-def request_mosaic_stitch(dsid, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def request_mosaic_stitch(dsid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
     if dataset is None:
@@ -138,14 +140,13 @@ def request_mosaic_stitch(dsid, auth_res: Annotated[tuple, Depends(authorize_use
     return
 
 @router.post("/datasets", response_model=DatasetResponse)
-async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
+async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
                          dataset: DatasetCreate,
                          background_tasks: BackgroundTasks):
     
     logger.info(f"Creating dataset: {dataset.unique_id}")
     dataset_details = dataset.model_dump(exclude_unset=True)
-    user_unique_id, ag_list = auth_res
-    
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     with Session(engine) as session:
         if dataset_details.get('unique_id'):
             existing = session.exec(select(Dataset).where(Dataset.unique_id == dataset_details['unique_id'])).one_or_none()
@@ -212,12 +213,12 @@ async def create_dataset(auth_res: Annotated[tuple, Depends(authorize_user)],
 
 
 @router.patch("/datasets/{dsid}", response_model=DatasetResponse)
-def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, updated_dataset: DatasetUpdate,
+def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, updated_dataset: DatasetUpdate,
                    background_tasks: BackgroundTasks):
     '''
     Partially update a dataset record. Only provided fields are modified.
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -262,9 +263,10 @@ def update_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: st
 
 
 @router.get("/datasets", response_model=PaginatedResponse[DatasetResponse])
-def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
+def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
                   include_metadata: bool = False,
                   include_links: bool = False,
+                  include_owner: bool = False,
                   limit: int = Query(default=100, ge=1, le=1000),
                   cursor: Optional[str] = None,
                   offset: int = Query(default=0, ge=0),
@@ -285,14 +287,14 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
     result sets, since deep offsets are slower.
     Pass include_links=true to include parent, child, and associated resources for each dataset.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
 
     # extract parameters from filters
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
-              'modification_time_lte', 'include_metadata', 'include_links', 'limit', 'cursor', 'offset'):
+              'modification_time_lte', 'include_metadata', 'include_links', 'include_owner', 'limit', 'cursor', 'offset'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -382,6 +384,14 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                         LinkedResource(unique_id=samp.unique_id, resource_type="sample", name=samp.sample_name, relationship="associated")
                     )
 
+        # Batch-resolve owners if requested
+        owners_by_orcid = {}
+        if include_owner:
+            orcids = {row[0].owner_orcid for row in results if row[0].owner_orcid}
+            if orcids:
+                for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all():
+                    owners_by_orcid[u.unique_id] = UserPublicRead.model_validate(u)
+
         items = []
         for row in results:
             if include_metadata:
@@ -403,6 +413,7 @@ def list_datasets(auth_res: Annotated[tuple, Depends(authorize_user)], request: 
                 "modification_time": modification_time,
                 "scientific_metadata": sci_md,
                 "links": links,
+                "owner": owners_by_orcid.get(dataset.owner_orcid),
             }))
         next_cursor = results[-1][0].unique_id if len(results) == limit else None
         resp_offset = offset if (cursor is None and offset) else None
@@ -422,7 +433,7 @@ def _dataset_base_query(ag_ids: list):
 
 @router.get("/datasets/search", response_model=PaginatedResponse[DatasetResponse])
 def search_datasets(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     q: str = Query(min_length=3, description="Search term matched against dataset_name."),
     project_id: Optional[str] = None,
     limit: int = Query(default=20, ge=1, le=50),
@@ -431,16 +442,20 @@ def search_datasets(
     Search datasets by name. Returns results ordered by match quality (exact → prefix → substring).
     Optionally scope to a project with ?project_id=. Maximum 50 results.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
         query = _dataset_base_query(ag_ids)
-        query = query.where(literal(q).op("<<%")(Dataset.dataset_name))
+        for token in q.lower().split():
+            query = query.where(
+                Dataset.dataset_name.ilike(f"{token}%") |
+                literal(token).op("<%")(Dataset.dataset_name)
+            )
         if project_id:
             query = query.where(Dataset.project_id == project_id)
-        query = query.order_by(func.strict_word_similarity(q, Dataset.dataset_name).desc()).limit(limit)
+        query = query.order_by(func.word_similarity(q, Dataset.dataset_name).desc()).limit(limit)
         results = session.exec(query).all()
         items = [DatasetResponse.model_validate({
             **dataset.model_dump(),
@@ -452,13 +467,15 @@ def search_datasets(
 
 
 @router.get("/datasets/{dsid}", response_model=DatasetResponse)
-def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
-                 include_metadata: bool = False, include_links: bool = False):
+def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str,
+                 include_metadata: bool = False, include_links: bool = False,
+                 include_owner: bool = False):
     '''
     Returns a dataset found with the provided unique ID.
     Pass include_links=true to include parent, child, and associated resources.
+    Pass include_owner=true to resolve owner_orcid to a user object.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -503,6 +520,11 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
             )
 
         resource_md = ds.resource.scientific_metadata if ds.resource else None
+        owner = None
+        if include_owner and ds.owner_orcid:
+            owner_user = session.exec(select(User).where(User.unique_id == ds.owner_orcid)).one_or_none()
+            if owner_user:
+                owner = UserPublicRead.model_validate(owner_user)
         return DatasetResponse.model_validate({
             **ds.model_dump(),
             "public": ds.resource.public if ds.resource else ds.public,
@@ -511,12 +533,13 @@ def read_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str,
             "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
             "deletion_request": deletion_req.model_dump() if deletion_req else None,
             "links": links,
+            "owner": owner,
         })
 
 
 @router.post("/datasets/{parent_dataset_id}/children/{child_dataset_id}", response_model=DatasetLink)
-def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    _, ag_list = auth_res
+def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -535,14 +558,17 @@ def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Ann
                      parent_dataset_id=parent.id,
                      child_dataset_id=child.id)
 
+        touch_resource_modification_time(session, parent_dataset_id)
+        touch_resource_modification_time(session, child_dataset_id)
+
         session.commit()
         session.refresh(link)
         return link
 
 
 @router.delete("/datasets/{parent_dataset_id}/children/{child_dataset_id}")
-def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
-    _, ag_list = auth_res
+def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -564,18 +590,20 @@ def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, a
             raise HTTPException(status_code=404, detail="No link found between these datasets")
 
         session.delete(link)
+        touch_resource_modification_time(session, parent_dataset_id)
+        touch_resource_modification_time(session, child_dataset_id)
         session.commit()
         return {"message": f"Successfully unlinked {parent_dataset_id} -> {child_dataset_id}"}
 
 
 @router.get("/datasets/{child_dataset_id}/parents", response_model=PaginatedResponse[DatasetRead])
-def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                          limit: int = Query(default=100, ge=1, le=1000),
                          offset: int = Query(default=0, ge=0)):
     '''
     Returns a paginated list of parent datasets for a given dataset.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         child = session.exec(select(Dataset).where(Dataset.unique_id == child_dataset_id)).one_or_none()
@@ -597,13 +625,13 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[tuple, Depen
 
 
 @router.get("/datasets/{parent_dataset_id}/children", response_model=PaginatedResponse[DatasetRead])
-def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                         limit: int = Query(default=100, ge=1, le=1000),
                         offset: int = Query(default=0, ge=0)):
     '''
     Returns a paginated list of child datasets for a given parent dataset.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
@@ -627,8 +655,8 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[tuple, Depen
 
 
 @router.delete('/datasets/{dsid}/samples/{sample_id}')
-def unlink_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, sample_id: str):
-    _, ag_list = auth_res
+def unlink_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, sample_id: str):
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -650,17 +678,19 @@ def unlink_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], d
             raise HTTPException(status_code=404, detail=f"No link found between dataset {dsid} and sample {sample_id}")
 
         session.delete(link)
+        touch_resource_modification_time(session, dsid)
+        touch_resource_modification_time(session, sample_id)
         session.commit()
         return {"message": f"Successfully unlinked dataset {dsid} and sample {sample_id}"}
 
 
 
 @router.get("/datasets/{dsid}/thumbnails", response_model=List[ThumbnailRead])
-def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
+def read_thumbnails(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of thumbnail objects associated with the dataset ID provided
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)).where(Dataset.unique_id == dsid).filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)).distinct()
@@ -675,7 +705,7 @@ def read_thumbnails(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: s
 
 @router.post("/datasets/first_thumbnails")
 def get_first_thumbnails(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     dataset_ids: List[str] = Body(...),
 ):
     '''
@@ -685,7 +715,7 @@ def get_first_thumbnails(
 
     Intended for bulk thumbnail fetching after an entity_graph call.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -731,7 +761,7 @@ def get_first_thumbnails(
         }
     
 @router.post("/datasets/{dsid}/thumbnails", response_model=ThumbnailRead)
-def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
+def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
                   dsid: str,
                   thumbnail: ThumbnailCreate):
     '''
@@ -741,7 +771,7 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
     Raises:
         HTTPException: If required thumbnail fields are missing or dataset not found
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     # Validate required fields
@@ -797,9 +827,9 @@ def add_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)],
 
 
 @router.delete("/datasets/{dsid}/thumbnails/{thumbnail_id}")
-def delete_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, thumbnail_id: int):
+def delete_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, thumbnail_id: int):
     '''Removes a thumbnail from a dataset and deletes it.'''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -816,20 +846,21 @@ def delete_thumbnail(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: 
             raise HTTPException(status_code=404, detail="Thumbnail not found")
 
         session.delete(tn)
+        touch_resource_modification_time(session, dsid)
         session.commit()
         return {"message": f"Thumbnail {thumbnail_id} deleted from dataset {dsid}"}
 
 
 @router.get("/datasets/{dsid}/download_links")
 def generate_dataset_download_links(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: str,
 ):
     '''
     Returns signed GCS download URLs (1-hour expiry) for all files in the dataset,
     keyed by AssociatedFile mfid. Backfills missing storage_path records on the fly.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -842,23 +873,37 @@ def generate_dataset_download_links(
             select(AssociatedFile).where(AssociatedFile.dataset_id == ds.id)
         ).all()
 
-        mfid_to_path = {af.mfid: _ensure_storage_path(af, dsid, session) for af in af_records}
+        mfid_to_path = {}
+        for af in af_records:
+            if af.storage_backend != "gcs":
+                mfid_to_path[af.mfid] = None
+                continue
+            try:
+                mfid_to_path[af.mfid] = _ensure_storage_path(af, dsid, session)
+            except HTTPException:
+                mfid_to_path[af.mfid] = None
         session.commit()
 
-    # Generate signed URLs outside the DB session
+    # Generate signed URLs outside the DB session; null for missing blobs
     result = {}
     for mfid, storage_path in mfid_to_path.items():
-        url, _ = _generate_signed_url_link(storage_path)
-        result[mfid] = url
+        if storage_path is None:
+            result[mfid] = None
+            continue
+        try:
+            url, _ = _generate_signed_url_link(storage_path)
+            result[mfid] = url
+        except HTTPException:
+            result[mfid] = None
     return result
 
 
 @router.get("/datasets/{dsid}/files", response_model=List[AssociatedFileRead])
-def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
+def read_associated_files(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str):
     '''
     Returns a list of the files associated with the dataset ID provided.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -876,7 +921,7 @@ def read_associated_files(auth_res: Annotated[tuple, Depends(authorize_user)], d
 
 
 @router.post("/datasets/{dsid}/files", response_model=AssociatedFileRead)
-def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
+def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
                         dsid: str,
                         associated_file: AssociatedFileCreate):
     '''
@@ -884,7 +929,7 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
     Creates the record if one with the same sha256_hash and dataset does not already exist.
     Use POST /datasets/{dsid}/files/{file_id}/ingest to trigger ingestion.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -915,7 +960,7 @@ def add_associated_file(auth_res: Annotated[tuple, Depends(authorize_user)],
 
 @router.post("/datasets/{dsid}/files/{file_id}/ingest", response_model=IngestionRequest, deprecated = True)
 def create_ds_file_ingestion_request(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: str,
     file_id: str,
     ingestion_class: Optional[str] = None,
@@ -925,16 +970,16 @@ def create_ds_file_ingestion_request(
     Returns error if the dataset associated with the file is not found, or the user does not have access.
     Requires write access to the dataset.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
     from app.api.routes.files import create_file_ingestion_request
     return create_file_ingestion_request(auth_res, file_id, ingestion_class)
 
 
 @router.get("/datasets/{dsid}/keywords", response_model=List[Keyword])
-def list_keywords_for_dataset(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str):
+def list_keywords_for_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str):
 
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -949,12 +994,12 @@ def list_keywords_for_dataset(auth_res: Annotated[tuple, Depends(authorize_user)
 
 
 @router.post("/datasets/{dsid}/keywords", response_model=Keyword)
-def add_keyword(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, keyword: str):
+def add_keyword(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, keyword: str):
     '''
     Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object.
     Otherwise, the keyword will be created and then added to the dataset.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
     ds_cmd = select(Dataset).select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id)).where(Dataset.unique_id == dsid).filter(ResourceACL.accessgroup_id.in_(ag_ids)).distinct()
 
@@ -975,14 +1020,15 @@ def add_keyword(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, 
         kw_obj.num_datasets = count
         session.add(kw_obj)
         session.add(ds)
+        touch_resource_modification_time(session, dsid)
         session.commit()
         session.refresh(kw_obj)
         return(kw_obj)
 
 
 @router.post("/datasets/{dsid}/samples/{sample_id}", response_model=DatasetSampleLinkResponse)
-def link_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], dsid: str, sample_id: str):
-    _, ag_list = auth_res
+def link_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, sample_id: str):
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -1001,18 +1047,20 @@ def link_dataset_sample(auth_res: Annotated[tuple, Depends(authorize_user)], dsi
                       sample_id=samp.id,
                       dataset_id=ds.id)
 
+        touch_resource_modification_time(session, dsid)
+        touch_resource_modification_time(session, sample_id)
         session.commit()
         return DatasetSampleLinkResponse(dataset_id=ds.unique_id, dataset_name=ds.dataset_name, sample_id=samp.unique_id, sample_type=samp.sample_type, sample_name=samp.sample_name)
 
 
 @router.get("/datasets/{dsid}/samples", response_model=PaginatedResponse[SampleRead])
-def read_samples_in_dataset(dsid: str, auth_res: Annotated[tuple, Depends(authorize_user)],
+def read_samples_in_dataset(dsid: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                             limit: int = Query(default=100, ge=1, le=1000),
                             offset: int = Query(default=0, ge=0)):
     '''
     Returns a paginated list of samples associated with the dataset ID provided.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         ds = session.exec(
@@ -1035,13 +1083,13 @@ def read_samples_in_dataset(dsid: str, auth_res: Annotated[tuple, Depends(author
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=samples)
 
 @router.get("/datasets/{dataset_id}/dataset_graph")
-def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def dataset_graph(dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     Returns a NetworkX node-link graph of all datasets connected (via parent/child
     relationships) to the given dataset. Loads all authorized datasets in the
     project and returns the directed lineage subgraph (ancestors + descendants) of the target.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -1087,13 +1135,13 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_
 
 
 @router.get("/datasets/{dataset_id}/dataset_graph_cte")
-def dataset_graph_cte(dataset_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def dataset_graph_cte(dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     CTE-based implementation (kept for reference). Prefer /dataset_graph.
     Returns a NetworkX node-link graph of all datasets connected (via parent/child
     relationships) to the given dataset, i.e. its full lineage subgraph.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:

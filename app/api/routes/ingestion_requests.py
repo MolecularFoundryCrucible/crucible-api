@@ -13,6 +13,7 @@ from app.models.core_models import (
 )
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_admin, require_groups
+from app.utils.permissions import Principal
 from app.utils.sql_utils import only_update
 
 router = APIRouter(tags=["ingestion_requests"])
@@ -41,7 +42,7 @@ def _get_ir_with_read_access(session: Session, reqid: int, ag_ids: list) -> Inge
 
 @router.get("/ingestion_requests", response_model=PaginatedResponse[IngestionRequest])
 def list_ingestion_requests(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: Optional[str] = None,
     dataset_id: Optional[str] = None,
     limit: int = Query(default=100, ge=1, le=1000),
@@ -51,7 +52,7 @@ def list_ingestion_requests(
     List ingestion requests, paginated. Requires file_id or dataset_id for non-admins.
     Admins may omit both filters to list all ingestion requests.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
     is_admin = any(ag.group_name == "admin" for ag in ag_list)
 
@@ -103,11 +104,11 @@ def list_ingestion_requests(
 
 @router.get("/ingestion_requests/{reqid}", response_model=IngestionRequest)
 def get_ingestion_request(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     reqid: int,
 ):
     '''Returns a specific ingestion request. Requires read access to the parent dataset.'''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -116,12 +117,12 @@ def get_ingestion_request(
 
 @router.patch("/ingestion_requests/{reqid}", response_model=IngestionRequest)
 def patch_ingestion_request(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     reqid: int,
     ing_req: IngestionRequest,
 ):
     '''Updates an ingestion request. Admin/group access only.'''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     require_groups(ag_list)
 
     if ing_req.id and ing_req.id != reqid:

@@ -15,6 +15,26 @@ def is_orcid(val):
         return True
     else:
         return False
+
+_MFID_PATTERN = re.compile(r"^[0-9a-hjkmnp-tv-z]{26}$")
+
+def is_valid_mfid(val):
+    """Check that val matches the mfid format: 26-character lowercase
+    Crockford's Base32 (excludes i, l, o, u to avoid visual ambiguity)."""
+    return bool(_MFID_PATTERN.match(val))
+
+
+def blank_to_none(val):
+    """Normalise a blank string to None for optional identifier fields.
+
+    "" is a real value: it matches rows, satisfies foreign keys, and creates
+    access groups. Uploaders sending project_id="" built a nameless project
+    holding 1,292 datasets. Coerced rather than rejected because absent is
+    legitimate here; fields where the value IS the identity must reject.
+    """
+    if isinstance(val, str) and not val.strip():
+        return None
+    return val
     
 def run_shell(cmd, checkflag = True, background = False):
     if background:

@@ -1,14 +1,18 @@
 from datetime import timedelta, datetime
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import ApiToken, User
+from app.models.core_models import AccessGroupJoinRequest, ApiToken, User
+from app.models.join_requests import JoinRequestRead
+from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import AccountInfo, ApiKeyRead, ApiKeyVerify
 from app.models.users import AccountProfileUpdate, UserRead
 from app.utils.auth_utils import authorize_user
+from app.utils.permissions import Principal
 from app.utils.user_utils import assert_username_available
 
 router = APIRouter(tags=["account"])
@@ -16,9 +20,9 @@ engine = get_engine()
 
 
 @router.get("/account", response_model=AccountInfo)
-def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
+def get_account_info(auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Return auth context for the authenticated caller: ORCID, access groups, and profile."""
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
@@ -27,9 +31,9 @@ def get_account_info(auth_res: Annotated[tuple, Depends(authorize_user)]):
 
 
 @router.get("/account/profile", response_model=UserRead)
-def get_account_profile(auth_res: Annotated[tuple, Depends(authorize_user)]):
+def get_account_profile(auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Return the authenticated caller's user profile."""
-    user_unique_id, _ = auth_res
+    user_unique_id = auth_res.user_id
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         if user is None:
@@ -38,9 +42,9 @@ def get_account_profile(auth_res: Annotated[tuple, Depends(authorize_user)]):
 
 
 @router.patch("/account/profile", response_model=UserRead)
-def update_account_profile(auth_res: Annotated[tuple, Depends(authorize_user)], user_update: AccountProfileUpdate):
+def update_account_profile(auth_res: Annotated[Principal, Depends(authorize_user)], user_update: AccountProfileUpdate):
     """Partially update the authenticated caller's own profile."""
-    user_unique_id, _ = auth_res
+    user_unique_id = auth_res.user_id
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         if user is None:
@@ -56,10 +60,32 @@ def update_account_profile(auth_res: Annotated[tuple, Depends(authorize_user)], 
         return user
 
 
+@router.get("/account/join_requests", response_model=PaginatedResponse[JoinRequestRead])
+def get_account_join_requests(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    status: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    """Return the authenticated caller's own join request history across all groups.
+    Filter by ?status=pending|approved|rejected."""
+    user_unique_id = auth_res.user_id
+    with Session(engine) as session:
+        query = select(AccessGroupJoinRequest).where(AccessGroupJoinRequest.requester_id == user_unique_id)
+        if status:
+            query = query.where(AccessGroupJoinRequest.status == status)
+
+        total = session.exec(select(func.count()).select_from(query.subquery())).one()
+        items = session.exec(
+            query.order_by(AccessGroupJoinRequest.id.desc()).offset(offset).limit(limit)
+        ).all()
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+
+
 @router.get("/account/apikey", response_model=ApiKeyRead)
-def get_account_apikey(auth_res: Annotated[tuple, Depends(authorize_user)]):
+def get_account_apikey(auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Return the authenticated caller's current API key."""
-    user_unique_id, _ = auth_res
+    user_unique_id = auth_res.user_id
     with Session(engine) as session:
         token = session.exec(
             select(ApiToken).where(ApiToken.user_unique_id == user_unique_id)
@@ -71,12 +97,12 @@ def get_account_apikey(auth_res: Annotated[tuple, Depends(authorize_user)]):
 
 
 @router.get("/account/verify", response_model=ApiKeyVerify)
-def verify_account_apikey(auth_res: Annotated[tuple, Depends(authorize_user)]):
+def verify_account_apikey(auth_res: Annotated[Principal, Depends(authorize_user)]):
     """
     Verify the caller's API key and return its validity and expiry date.
     Returns 401 for invalid or expired keys (handled by authorize_user before this runs).
     """
-    user_unique_id, _ = auth_res
+    user_unique_id = auth_res.user_id
     with Session(engine) as session:
         token = session.exec(
             select(ApiToken).where(ApiToken.user_unique_id == user_unique_id)

@@ -40,7 +40,9 @@ class AssociatedFile(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     mfid: str = Field(default_factory=get_mfid_value, unique=True, index=True)
     filename: str                        # relative path within the dataset: "{safe_filename}"
-    storage_path: Optional[str] = None  # full GCS path: "mf-storage-prod/{dsid}/{safe_filename}"
+    storage_path: Optional[str] = None  # GCS bucket/blob path when storage_backend="gcs"; a backend-specific location string otherwise
+    storage_backend: str = Field(default="gcs")  # "gcs" triggers signed-URL generation; any other value is catalog-only
+    access_note: Optional[str] = None    # how to access this file when there's no self-service path (non-gcs backends)
     size: int = Field(sa_column=Column(BigInteger()))
     sha256_hash: str
     dataset_id: int = Field(foreign_key="dataset.id")
@@ -162,6 +164,10 @@ class ResourceACL(SQLModel, table=True):
     )
     read: bool = Field(index=True)
     write: bool = Field(index=True)
+    # Postgres enum resource_role; declared as str so SQLite-backed tests can
+    # still create the table. Converted with Role.from_db on read.
+    # read/write stay until phase 5 — see docs/permission_system_plan.md.
+    role: Optional[str] = Field(default=None)
 
     accessgroup: "AccessGroup" = Relationship(back_populates="acl")
 
@@ -173,6 +179,8 @@ class UserAccessGroupLink(SQLModel, table=True):
     accessgroup_id: Optional[int] = Field(
         default=None, foreign_key="accessgroup.id", primary_key=True
     )
+    # Standing in the group, not a grant. Postgres enum resource_role.
+    role: Optional[str] = Field(default=None)
 
 
 class AccessGroup(SQLModel, table=True):
@@ -199,6 +207,8 @@ class User(SQLModel, table=True):
     unique_id: str = Field(sa_column=Column("orcid", String, index=True, unique=True))
     is_service_account: Optional[bool] = Field(default=False)
     username: Optional[str] = Field(default=None, max_length=32, index=True)
+    # Platform-wide bypass, deliberately not a group. Postgres enum platform_role.
+    platform_role: Optional[str] = Field(default="none")
     projects: List["Project"] = Relationship(back_populates="users", link_model=UserProjectLink)
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
 
@@ -284,6 +294,20 @@ class DeletionRequest(SQLModel, table=True):
     request_time: Optional[str] = Field(default_factory=get_utc_isoformat)
     review_time: Optional[str] = Field(default=None)
     reviewer_id: Optional[str] = Field(default=None)
+    reviewer_notes: Optional[str] = Field(default=None)
+
+
+class AccessGroupJoinRequest(SQLModel, table=True):
+    """Tracks a request to join an access group. Currently only used for projects,
+    but modeled generically since any access group could support this in the future."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    group_name: str = Field(foreign_key="accessgroup.group_name", index=True)
+    requester_id: str = Field(foreign_key="user.orcid", index=True)
+    reason: Optional[str] = Field(default=None)
+    status: str = Field(default="pending", index=True)
+    request_time: Optional[str] = Field(default_factory=get_utc_isoformat)
+    review_time: Optional[str] = Field(default=None)
+    reviewer_id: Optional[str] = Field(default=None, foreign_key="user.orcid")
     reviewer_notes: Optional[str] = Field(default=None)
 
 

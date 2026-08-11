@@ -13,13 +13,14 @@ from app.models.core_models import (
     DatasetLink, DatasetSampleLink, Sample, SampleLink,
 )
 from app.utils.auth_utils import authorize_user, read_access_filter_list
+from app.utils.permissions import Principal
 
 router = APIRouter(tags=["entities"])
 engine = get_engine()
 
 
 @router.get("/entity_graph/{entity_id}")
-def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def entity_graph(entity_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     Returns a NetworkX node-link graph of all samples and datasets connected to
     the given entity via sample lineage, dataset lineage, and sample-dataset
@@ -30,7 +31,7 @@ def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_us
     of broad queries, builds the combined graph in Python, then returns the weakly
     connected component containing the root entity.
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -155,7 +156,7 @@ def entity_graph(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_us
 
 
 @router.get("/entity_graph_bfs/{entity_id}")
-def entity_graph_bfs(entity_id: str, auth_res: Annotated[tuple, Depends(authorize_user)]):
+def entity_graph_bfs(entity_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     BFS-based implementation (kept for reference). Prefer /entity_graph/{entity_id}.
     Returns a NetworkX node-link graph of all samples and datasets connected to
@@ -163,7 +164,7 @@ def entity_graph_bfs(entity_id: str, auth_res: Annotated[tuple, Depends(authoriz
     associations. entity_id may be a sample or dataset unique_id.
     Nodes carry entity_type ('sample' or 'dataset') and name attributes.
     '''
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -642,7 +643,7 @@ def _parse_graph_rows(rows) -> dict:
 @router.get("/entity_graph_cte/{entity_id}")
 def entity_graph_cte(
     entity_id: str,
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     recursive: bool = False,
 ):
     """
@@ -651,7 +652,7 @@ def entity_graph_cte(
     and cross-linked entities). Pass recursive=true for the full connected component.
     Use /project_graph/{project_id} to get all entities in a project.
     """
-    user_unique_id, ag_list = auth_res
+    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -696,13 +697,13 @@ def entity_graph_cte(
 @router.get("/project_graph/{project_id}")
 def project_graph(
     project_id: str,
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
     """
     Returns all samples and authorized datasets belonging to project_id
     as a single node-link graph.
     """
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:

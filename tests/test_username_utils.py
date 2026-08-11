@@ -23,9 +23,8 @@ class TestValidateUsernameFormat:
         with pytest.raises(ValueError, match="username must"):
             validate_username_format("_abc")
 
-    def test_invalid_uppercase(self):
-        with pytest.raises(ValueError, match="username must"):
-            validate_username_format("Fabrice")
+    def test_uppercase_is_normalised_not_rejected(self):
+        assert validate_username_format("Fabrice") == "fabrice"
 
     def test_invalid_too_short(self):
         with pytest.raises(ValueError, match="username must"):

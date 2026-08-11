@@ -20,11 +20,13 @@ from app.models.core_models import (
 )
 from app.general_utils import get_secret, get_utc_isoformat
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
+from app.utils.sql_utils import touch_resource_modification_time
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.pagination import PaginatedResponse
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
 from app.utils.auth_utils import authorize_user, require_write_access
+from app.utils.permissions import Principal
 
 router = APIRouter(tags=["files"])
 engine = get_engine()
@@ -50,13 +52,13 @@ def _get_af_with_read_access(session: Session, file_id: str, ag_ids: list) -> tu
 
 @router.get("/files", response_model=PaginatedResponse[AssociatedFileRead])
 def list_files(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     sha256_hash: Optional[str] = Query(default=None),
 ):
     '''Returns a paginated list of files the requesting user is authorized to view.'''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -80,9 +82,9 @@ def list_files(
 
 
 @router.get("/files/{file_id}", response_model=AssociatedFileRead)
-def get_file(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: str):
+def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
     '''Returns a single file by its MFID.'''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -91,13 +93,17 @@ def get_file(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: str):
 
 
 @router.get("/files/{file_id}/download_link")
-def get_file_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: str):
-    '''Returns a signed GCS download URL (1-hour expiry) for a single file.'''
-    _, ag_list = auth_res
+def get_file_download_link(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
+    '''Returns a signed GCS download URL (1-hour expiry) for a single file.
+    Returns url=None for files whose storage_backend is not "gcs" (catalog-only).'''
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, ag_ids)
+
+        if af.storage_backend != "gcs":
+            return {"url": None, "expires_in": None}
 
         storage_path = _ensure_storage_path(af, ds.unique_id, session)
         session.commit()
@@ -108,12 +114,12 @@ def get_file_download_link(auth_res: Annotated[tuple, Depends(authorize_user)], 
 
 @router.patch("/files/{file_id}", response_model=AssociatedFileRead)
 def update_file(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
     updates: AssociatedFileUpdate,
 ):
     '''Partially updates a file record. Requires write access to the parent dataset.'''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -123,15 +129,16 @@ def update_file(
         for field, value in updates.model_dump(exclude_unset=True).items():
             setattr(af, field, value)
         session.add(af)
+        touch_resource_modification_time(session, ds.unique_id)
         session.commit()
         session.refresh(af)
         return AssociatedFileRead.model_validate(af, update={"dataset_mfid": af.dataset.unique_id})
 
 
 @router.delete("/files/{file_id}")
-def delete_file(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: str):
+def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
     '''Deletes a file and its ingestion requests. Requires write access to the parent dataset.'''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
@@ -144,6 +151,7 @@ def delete_file(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: st
             session.delete(ir)
 
         session.delete(af)
+        touch_resource_modification_time(session, ds.unique_id)
         session.commit()
         return {"message": f"File {file_id} deleted"}
 
@@ -151,7 +159,7 @@ def delete_file(auth_res: Annotated[tuple, Depends(authorize_user)], file_id: st
 # ingestion
 @router.post("/files/{file_id}/ingest", response_model=IngestionRequest)
 def create_file_ingestion_request(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
     ingestion_class: Optional[str] = None,
 ):
@@ -160,11 +168,18 @@ def create_file_ingestion_request(
     Returns error if the dataset associated with the file is not found, or the user does not have access.
     Requires write access to the dataset.
     '''
-    _, ag_list = auth_res
+    ag_list = auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, ag_ids)
+
+        if af.storage_backend != "gcs":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ingestion is not supported for storage_backend='{af.storage_backend}' files.",
+            )
+
         RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
         ingestion_request = IngestionRequest(
             dataset_mfid=ds.unique_id,

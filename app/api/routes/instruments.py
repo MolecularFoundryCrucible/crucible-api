@@ -11,6 +11,7 @@ from app.models.core_models import Instrument, Resource, ScientificMetadataBinar
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user
+from app.utils.permissions import Principal
 from app.utils.sql_utils import add_or_update
 from app.utils.gcs_record_utils import write_record, instrument_record
 
@@ -21,7 +22,7 @@ API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 @router.get("/instruments", response_model=PaginatedResponse[InstrumentResponse])
-def list_instruments(auth_res: Annotated[tuple, Depends(authorize_user)], request: Request,
+def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
                      include_metadata: bool = False,
                      limit: int = Query(default=100, ge=1, le=1000),
                      offset: int = Query(default=0, ge=0)):
@@ -79,7 +80,7 @@ def list_instruments(auth_res: Annotated[tuple, Depends(authorize_user)], reques
 
 @router.get("/instruments/search", response_model=PaginatedResponse[InstrumentResponse])
 def search_instruments(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     q: str = Query(min_length=3, description="Search term matched against instrument_name, instrument_type, and manufacturer."),
     limit: int = Query(default=20, ge=1, le=50),
 ):
@@ -89,23 +90,24 @@ def search_instruments(
     '''
     with Session(engine) as session:
         session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
-        statement = (
+        base = (
             select(Instrument, Resource)
             .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
-            .where(
-                literal(q).op("<<%")(Instrument.instrument_name) |
-                literal(q).op("<<%")(Instrument.instrument_type) |
-                literal(q).op("<<%")(Instrument.manufacturer)
-            )
-            .order_by(
-                func.greatest(
-                    func.strict_word_similarity(q, Instrument.instrument_name),
-                    func.coalesce(func.strict_word_similarity(q, Instrument.instrument_type), 0),
-                    func.coalesce(func.strict_word_similarity(q, Instrument.manufacturer), 0),
-                ).desc()
-            )
-            .limit(limit)
         )
+        for token in q.lower().split():
+            base = base.where(
+                Instrument.instrument_name.ilike(f"{token}%") |
+                literal(token).op("<%")(Instrument.instrument_name) |
+                literal(token).op("<%")(Instrument.instrument_type) |
+                literal(token).op("<%")(Instrument.manufacturer)
+            )
+        statement = base.order_by(
+            func.greatest(
+                func.word_similarity(q, Instrument.instrument_name),
+                func.coalesce(func.word_similarity(q, Instrument.instrument_type), 0),
+                func.coalesce(func.word_similarity(q, Instrument.manufacturer), 0),
+            ).desc()
+        ).limit(limit)
         rows = session.exec(statement).all()
         items = [
             InstrumentResponse.model_validate({
@@ -119,7 +121,7 @@ def search_instruments(
 
 
 @router.get("/instruments/{instrument_unique_id}", response_model=InstrumentResponse)
-def read_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instrument_unique_id: str, include_metadata: bool = False):
+def read_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], instrument_unique_id: str, include_metadata: bool = False):
     '''
     Returns the instrument with the provided unique ID, or 404 if not found.
     '''
@@ -157,12 +159,12 @@ def read_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instrum
 
 
 @router.post("/instruments", response_model=InstrumentResponse)
-def create_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instrument: InstrumentCreate,
+def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], instrument: InstrumentCreate,
                       background_tasks: BackgroundTasks):
     '''
     Register a new instrument in the database.
     '''
-    user_unique_id, _ = auth_res
+    user_unique_id = auth_res.user_id
     with Session(engine) as session:
         db_instrument = Instrument(**instrument.model_dump())
         db_instrument.instrument_name = db_instrument.instrument_name.lower()
@@ -190,7 +192,7 @@ def create_instrument(auth_res: Annotated[tuple, Depends(authorize_user)], instr
 
 @router.patch("/instruments/{instrument_unique_id}", response_model=InstrumentResponse)
 def update_instrument(
-    auth_res: Annotated[tuple, Depends(authorize_user)],
+    auth_res: Annotated[Principal, Depends(authorize_user)],
     instrument_unique_id: str,
     instrument_update: InstrumentUpdate,
     background_tasks: BackgroundTasks,
@@ -198,7 +200,7 @@ def update_instrument(
     '''
     Partially update an instrument record. Only provided fields are modified.
     '''
-    user_unique_id, _ = auth_res
+    user_unique_id = auth_res.user_id
     with Session(engine) as session:
         instrument = session.exec(
             select(Instrument).where(Instrument.unique_id == instrument_unique_id)

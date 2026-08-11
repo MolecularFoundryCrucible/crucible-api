@@ -9,24 +9,16 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(scope="module")
 def app():
-    mock_config = {
-        'hostname': 'test.example.com',
-        'api_path': 'api',
-        'orcid_client_id': 'test_client_id',
-    }
+    # Import normally and neutralise the module-level engine afterwards, rather
+    # than purging sys.modules to re-import under patches. The purge re-registered
+    # every SQLModel table against a MetaData that survives it, so this file could
+    # not coexist with any other test that imports the app first.
+    from app.api.routes import gcs_storage
 
-    # Clear any partially imported app modules so patches take effect cleanly.
-    for key in list(sys.modules):
-        if key.startswith('app.'):
-            del sys.modules[key]
-
-    with patch('app.api.dependencies.get_api_config', return_value=mock_config), \
-         patch('app.api.dependencies.get_engine', return_value=MagicMock()), \
-         patch('app.general_utils.get_secret', return_value='test_secret'):
-        from app.api.routes.gcs_storage import router
+    gcs_storage.engine = MagicMock()
 
     test_app = FastAPI()
-    test_app.include_router(router, prefix="/api")
+    test_app.include_router(gcs_storage.router, prefix="/api")
     return test_app
 
 
@@ -44,8 +36,12 @@ def _make_mock_dataset(dsid="ds-001"):
 
 
 def _fake_auth():
-    """Dependency override: skip real auth, return a test user."""
-    return ('user-orcid-001', [MagicMock(id=1)])
+    """Dependency override: skip real auth, return a test principal."""
+    from app.utils.permissions import GroupMembership, Principal, Role
+    return Principal(
+        user_id='user-orcid-001',
+        groups=(GroupMembership(id=1, group_name='test_group', role=Role.OWNER),),
+    )
 
 
 class TestInitiateMultipartUpload:
@@ -101,6 +97,8 @@ class TestInitiateMultipartUpload:
         existing_af.storage_path = "mf-storage-prod/ds-001/data.h5"
         existing_af.size = 1024
         existing_af.sha256_hash = "abc123"
+        existing_af.storage_backend = "gcs"
+        existing_af.access_note = None
         existing_af.dataset.unique_id = "ds-001"
 
         exec_result = MagicMock()

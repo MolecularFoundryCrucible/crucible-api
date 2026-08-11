@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Optional
 import logging
 import re
 import os
@@ -14,12 +14,16 @@ from jose import jwt, JWTError
 logger = logging.getLogger(__name__)
 
 from fastapi import Depends,  HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.general_utils import  get_secret
 from app.api.dependencies import get_engine, get_api_path, get_api_url
 from app.models.core_models import ApiToken
+from app.utils.permissions import (
+    PUBLIC_GROUP_NAME, GroupMembership, Permission, PlatformRole, Principal, Role)
+from app.utils import shadow
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import join
@@ -35,13 +39,40 @@ api_path = get_api_path()
 api_url = get_api_url()
 
 # ====== Auth cache
-# Positive-only cache of validated tokens -> (user_unique_id, [CachedGroup]).
+# Positive-only cache of validated tokens -> Principal.
 # Per-worker and per-pod: a revoked/rotated key stays valid for up to the TTL.
-CachedGroup = namedtuple("CachedGroup", ["id", "group_name"])
 _AUTH_CACHE_TTL = int(os.environ.get("AUTH_CACHE_TTL", "60"))
 _AUTH_CACHE_MAXSIZE = int(os.environ.get("AUTH_CACHE_MAXSIZE", "10000"))
 _auth_cache = TTLCache(maxsize=_AUTH_CACHE_MAXSIZE, ttl=_AUTH_CACHE_TTL)
 _auth_cache_lock = threading.Lock()
+
+
+# Resolved once per process: the public group row is created by the phase 1
+# migration and never changes.
+_UNSET = object()
+_PUBLIC_GROUP_ID = _UNSET
+
+
+def _standing(value) -> Role:
+    """Group standing from the database, failing closed to viewer on null or
+    garbage. Null means the backfill has not reached this row."""
+    if value is None:
+        return Role.VIEWER
+    try:
+        return Role.from_db(value)
+    except KeyError:
+        logger.warning("Unknown role %r on useraccessgrouplink; treating as viewer", value)
+        return Role.VIEWER
+
+
+def _platform_role(value) -> PlatformRole:
+    if value is None:
+        return PlatformRole.NONE
+    try:
+        return PlatformRole(value)
+    except ValueError:
+        logger.warning("Unknown platform_role %r; treating as none", value)
+        return PlatformRole.NONE
 
 
 def _auth_cache_key(apikey: str) -> str:
@@ -161,21 +192,22 @@ def find_key(credentials, engine):
     return(api_acct)
 
 
-def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+async def authorize_user(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+) -> Principal:
+    """Resolve the caller to a Principal. Raises 401 if the key is invalid.
+
+    Async purely so shadow.current_principal is set in the request's own
+    context: FastAPI runs a *sync* dependency in a threadpool with a copied
+    context, so a ContextVar set there never reaches the route handler. The
+    blocking work stays off the event loop via run_in_threadpool.
     """
-    Authorize a user based on their API credentials.
+    principal = await run_in_threadpool(_authorize_user, credentials)
+    shadow.current_principal.set(principal)
+    return principal
 
-    Args:
-        credentials: HTTPAuthorizationCredentials object containing the API token
 
-    Returns:
-        Tuple of (user_unique_id, list of AccessGroup objects the user belongs to)
-
-    Raises:
-        HTTPException: If the API key is invalid or expired
-    """
-    from app.models.core_models import User
-
+def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
     apikey = credentials.credentials
     cache_key = _auth_cache_key(apikey)
     with _auth_cache_lock:
@@ -189,16 +221,97 @@ def authorize_user(credentials:  Annotated[HTTPAuthorizationCredentials, Depends
         raise HTTPException(status_code=401, detail="Invalid or expired API key.")
 
     with Session(engine) as session:
-        user = session.exec(
-            select(User).where(User.unique_id == api_acct.user_unique_id)).first()
-        # Materialize to plain, immutable data so the cached value is safe to
-        # share across threads and doesn't depend on the closed session.
-        ag = [CachedGroup(id=g.id, group_name=g.group_name) for g in user.accessgroups]
+        result = load_principal(session, api_acct.user_unique_id)
 
-    result = (api_acct.user_unique_id, ag)
     with _auth_cache_lock:
         _auth_cache[cache_key] = result
     return result
+
+
+def load_principal(session, orcid: str) -> Principal:
+    """Build a Principal from the database. Split out of authorize_user so the
+    query is testable without an API key or a live request."""
+    from app.models.core_models import AccessGroup, User, UserAccessGroupLink
+
+    user = session.exec(select(User).where(User.unique_id == orcid)).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired API key.")
+
+    # One query against the link rows rather than user.accessgroups, because the
+    # standing lives on the link, not on the group.
+    rows = session.exec(
+        select(AccessGroup.id, AccessGroup.group_name, UserAccessGroupLink.role)
+        .join(UserAccessGroupLink,
+              UserAccessGroupLink.accessgroup_id == AccessGroup.id)
+        .where(UserAccessGroupLink.user_id == user.id)
+    ).all()
+
+    groups = [
+        GroupMembership(id=gid, group_name=name, role=_standing(role))
+        for gid, name, role in rows
+    ]
+
+    # Inject the virtual public group. Membership is never stored — every
+    # principal is in it, always at viewer, so min() caps any grant at viewer
+    # and world-writable stays unrepresentable.
+    #
+    # This is what preserves the old `Resource.public == True` shortcut: the
+    # pre-role check granted read to anyone on a public resource, and without
+    # this injection everyone would lose that at cutover. Anything enumerating
+    # "which groups am I in" must use Principal.real_group_names().
+    public_id = _public_group_id(session)
+    if public_id is not None and not any(g.id == public_id for g in groups):
+        groups.append(GroupMembership(id=public_id, group_name=PUBLIC_GROUP_NAME,
+                                      role=Role.VIEWER))
+
+    # Materialize to plain, immutable data so the cached value is safe to share
+    # across threads and doesn't depend on the closed session.
+    return Principal(
+        user_id=orcid,
+        platform_role=_platform_role(user.platform_role),
+        is_service_account=bool(user.is_service_account),
+        groups=tuple(groups),
+    )
+
+
+def _public_group_id(session) -> Optional[int]:
+    """Id of the virtual public group, cached for the process. None before the
+    phase 1 migration, making injection a no-op rather than an error."""
+    global _PUBLIC_GROUP_ID
+    if _PUBLIC_GROUP_ID is _UNSET:
+        from app.models.core_models import AccessGroup
+        _PUBLIC_GROUP_ID = session.exec(
+            select(AccessGroup.id).where(AccessGroup.group_name == PUBLIC_GROUP_NAME)
+        ).first()
+    return _PUBLIC_GROUP_ID
+
+
+def _admin_group_predicate(ag_ids):
+    """SQL predicate: is any of `ag_ids` the `admin` group?
+
+    Resolved per-query rather than from a cached id, which would answer for
+    whichever database the process started against.
+    """
+    from sqlalchemy import exists
+    from app.models.core_models import AccessGroup
+    return exists().where(
+        AccessGroup.id.in_(ag_ids),
+        AccessGroup.group_name == 'admin',
+    )
+
+
+def _is_admin_by_group(session, ag_ids) -> bool:
+    """Transitional bypass; removed with these helpers at cutover.
+
+    Admin-group members currently reach everything through ~360k identical ACL
+    rows. Honouring the membership directly makes those rows deletable without
+    cutting off the service accounts that live in that group. Grants access to
+    exactly the set that already has it.
+    """
+    from sqlalchemy import select as sa_select
+    if not ag_ids:
+        return False
+    return bool(session.execute(sa_select(_admin_group_predicate(ag_ids))).scalar())
 
 
 def require_read_access(session, mfid: str, ag_ids: list):
@@ -210,6 +323,10 @@ def require_read_access(session, mfid: str, ag_ids: list):
     from sqlalchemy import exists, select
     from app.models.core_models import Resource, ResourceACL
 
+    if _is_admin_by_group(session, ag_ids):
+        shadow.compare(session, "require_read_access", mfid, Permission.READ, True)
+        return
+
     acl_ok = session.exec(
         select(Resource).where(Resource.mfid == mfid).where(
             (Resource.public == True) |
@@ -219,6 +336,7 @@ def require_read_access(session, mfid: str, ag_ids: list):
             )
         )
     ).first()
+    shadow.compare(session, "require_read_access", mfid, Permission.READ, bool(acl_ok))
     if not acl_ok:
         raise HTTPException(status_code=403, detail="Access denied")
 
@@ -239,7 +357,11 @@ def read_access_filter_list(resource_model, ag_ids: list):
         ResourceACL.mfid == resource_model.unique_id,
         ResourceACL.accessgroup_id.in_(ag_ids)
     )
-    auth_filter = (Resource.public == True) | acl_subquery
+    # Admin-group membership short-circuits, evaluated by the database so no
+    # cached group id can answer for the wrong one. See _is_admin_by_group.
+    auth_filter = (
+        _admin_group_predicate(ag_ids) | (Resource.public == True) | acl_subquery
+    )
     return auth_filter, deletion_filter_for(resource_model)
 
 
@@ -247,6 +369,12 @@ def require_write_access(session, ag_ids: list, mfids: list):
     """Raise 403 if the user has no write ACL on any of the given MFIDs."""
     from app.models.core_models import ResourceACL
     from sqlmodel import select
+
+    if _is_admin_by_group(session, ag_ids):
+        for m in mfids:
+            shadow.compare(session, "require_write_access", m, Permission.EDIT, True)
+        return
+
     acl_ok = session.exec(
         select(ResourceACL).where(
             ResourceACL.mfid.in_(mfids),
@@ -254,6 +382,11 @@ def require_write_access(session, ag_ids: list, mfids: list):
             ResourceACL.write == True
         )
     ).first()
+    # The old check passes if ANY mfid is writable, so the comparison is per
+    # resource against that same aggregate answer — a per-mfid mismatch here
+    # means the new model disagrees about that specific resource.
+    for m in mfids:
+        shadow.compare(session, "require_write_access", m, Permission.EDIT, bool(acl_ok))
     if not acl_ok:
         raise HTTPException(status_code=403, detail="Write access required to at least one of the resources")
 
@@ -279,8 +412,8 @@ def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(securi
         
     This function validates the provided API credentials and checks if the user belongs to the 'admin' access group.
     """
-    _, aglist = authorize_user(credentials)
-    
-    if 'admin' in [ag.group_name for ag in aglist]:
+    principal = _authorize_user(credentials)
+
+    if 'admin' in [ag.group_name for ag in principal.groups]:
         return('admin')
 

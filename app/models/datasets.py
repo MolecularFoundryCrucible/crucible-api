@@ -24,6 +24,7 @@ class DatasetCreate(SQLModel):
     project_id: Optional[str] = None
     source_folder: Optional[str] = None
     instrument_name: Optional[str] = None
+    instrument_id: Optional[str] = None  # instrument's validated slug; preferred over instrument_name when given
     data_format: Optional[str] = None
     measurement: Optional[str] = None
     data_type: Optional[str] = None
@@ -49,6 +50,7 @@ class DatasetUpdate(SQLModel):
 
     dataset_name: Optional[str] = None
     instrument_name: Optional[str] = None
+    instrument_id: Optional[str] = None
     data_format: Optional[str] = None
     measurement: Optional[str] = None
     data_type: Optional[str] = None
@@ -66,6 +68,7 @@ class DatasetRead(SQLModel):
     project_id: Optional[str] = None
     source_folder: Optional[str] = None
     instrument_name: Optional[str] = None
+    instrument_id: Optional[str] = None  # instrument's validated slug, resolved server-side
     timestamp: Optional[str] = None
     size: Optional[int] = None
     data_format: Optional[str] = None

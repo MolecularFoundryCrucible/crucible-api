@@ -27,7 +27,7 @@ def validate_project_id(project_id: str) -> str:
     project_id='admin' would add the lead to the admin group. Case-insensitive.
     A guard only; the fix is MFID-named groups (see the plan).
     """
-    if not isinstance(project_id, str) or not _PROJECT_ID_RE.match(project_id):
+    if not isinstance(project_id, str) or not _PROJECT_ID_RE.fullmatch(project_id):
         raise ValueError(
             "project_id must be 2-64 chars, start with a letter or digit, "
             "and contain only letters, digits, underscores, hyphens"
@@ -70,20 +70,27 @@ def assert_project_id_available(session, project_id: str) -> None:
         )
 
 
-def _project_group_name(proj_id: str, session) -> "str | None":
-    """Resolve proj_id to its access group's name — the project's MFID
-    (Project.unique_id), not project_id itself. None if proj_id does not name
-    a real project, or that project has no unique_id yet (pre-backfill).
-
-    CUTOVER DEPENDENCY: every function below assumes every real project has
-    a populated unique_id and its access group is already named after it.
-    Both must be true in the target database before this code is deployed —
-    see migrations/data/20260810_backfill_project_unique_id.py and the (not
-    yet written) group-rename backfill. Until then this silently returns None
-    for every project, which reads as "not a member of anything."
+def resolve_project_id_to_mfid(proj_id: str, session) -> "str | None":
+    """Resolve a project_id label to its Project.unique_id (MFID). None if
+    proj_id does not name a real project, or that project has no unique_id
+    yet. Used both for access-group-name resolution and, since it does the
+    same lookup, for repointing Dataset/Sample FKs onto the MFID.
     """
     project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
     return project.unique_id if project else None
+
+
+def resolve_project_mfids_to_ids(mfids, session) -> dict:
+    """Batch mfid -> project_id, for response serialization. One query
+    regardless of how many rows are being resolved — never loop-and-query
+    per row."""
+    mfid_set = {m for m in mfids if m}
+    if not mfid_set:
+        return {}
+    rows = session.exec(
+        select(Project.unique_id, Project.project_id).where(Project.unique_id.in_(mfid_set))
+    ).all()
+    return dict(rows)
 
 
 def sql_add_user_to_project(user: User, proj_id: str, session, role=None):
@@ -95,7 +102,7 @@ def sql_add_user_to_project(user: User, proj_id: str, session, role=None):
     existing readers of UserProjectLink are not broken before its phase-5
     drop — see docs/permission_system_plan.md.
     """
-    group_name = _project_group_name(proj_id, session)
+    group_name = resolve_project_id_to_mfid(proj_id, session)
     if group_name is None:
         raise HTTPException(status_code=404, detail=f"Project '{proj_id}' not found or not yet provisioned")
     add_or_update(session,
@@ -127,7 +134,7 @@ def is_project_member(user_id: int, proj_id: str, session) -> bool:
     touch it), so anything gating on "is a member" must ask the table
     authorization itself reads.
     """
-    group_name = _project_group_name(proj_id, session)
+    group_name = resolve_project_id_to_mfid(proj_id, session)
     if group_name is None:
         return False
     return session.exec(
@@ -149,7 +156,7 @@ def is_project_owner(user_unique_id: str, proj_id: str, session) -> bool:
     everyone is always owner) would otherwise trivially pass for a
     non-project name.
     """
-    group_name = _project_group_name(proj_id, session)
+    group_name = resolve_project_id_to_mfid(proj_id, session)
     if group_name is None:
         return False
     return session.exec(
@@ -165,7 +172,7 @@ def is_project_owner(user_unique_id: str, proj_id: str, session) -> bool:
 
 
 def project_standing(orcid: str, proj_id: str, session) -> "Role | None":
-    group_name = _project_group_name(proj_id, session)
+    group_name = resolve_project_id_to_mfid(proj_id, session)
     if group_name is None:
         return None
     row = session.exec(

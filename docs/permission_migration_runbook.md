@@ -325,6 +325,50 @@ SELECT count(*) FROM accessgroup WHERE owner_orcid IS NOT NULL
 
 ---
 
+## Project/instrument identity rollout (staging)
+
+Repoints `Dataset.project_id`/`Sample.project_id` and `Dataset.instrument_name`
+onto `Project.unique_id`/`Instrument.unique_id` (real FKs, `project_mfid`/
+`instrument_mfid` columns), instead of the mutable human labels. Same
+expand-only discipline as Group C: old columns stay, nothing is dropped.
+Depends on Group C above already being live (project/instrument `unique_id`
+must be populated and their groups already renamed).
+
+```bash
+# 1. schema: adds dataset.project_mfid, sample.project_mfid, dataset.instrument_mfid
+DB_CONF_FILE=.env alembic upgrade head
+
+# 2. project_mfid backfill (dataset + sample) - dangling project_id values are
+#    expected (a known pre-existing data-quality issue for Sample.project_id,
+#    which never had a real FK before) and are logged, not treated as errors
+DB_CONF_FILE=.env python migrations/data/20260811_backfill_project_mfid.py
+DB_CONF_FILE=.env python migrations/data/20260811_backfill_project_mfid.py --commit
+
+# 3. instrument_mfid backfill (dataset only)
+DB_CONF_FILE=.env python migrations/data/20260811_backfill_instrument_mfid.py
+DB_CONF_FILE=.env python migrations/data/20260811_backfill_instrument_mfid.py --commit
+
+# 4. only now, deploy
+git push origin <branch>:staging
+```
+
+Dry run (no `--commit`) before each `--commit` line above. Both scripts print
+progress every 500 rows and a final resolved/dangling count. A dangling row
+(project_id or instrument_id with no match) is left `NULL`, not blocked.
+
+Verify:
+
+```sql
+SELECT count(*) FROM dataset WHERE project_id IS NOT NULL AND project_mfid IS NULL;      -- expected dangling count from step 2, not 0
+SELECT count(*) FROM sample WHERE project_id IS NOT NULL AND project_mfid IS NULL;        -- same
+SELECT count(*) FROM dataset WHERE instrument_id IS NOT NULL AND instrument_mfid IS NULL; -- expected dangling count from step 3
+```
+
+Re-run steps 2 and 3 after the code deploys (both are idempotent) to pick up
+anything created in the gap between the backfill and the deploy landing.
+
+---
+
 ## Before cutover (phase 4)
 
 Not optional. Cutover switches authorization to `platform_role` and

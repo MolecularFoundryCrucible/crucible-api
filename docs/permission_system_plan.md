@@ -1165,28 +1165,27 @@ Platform-admin bypass and ACL modifications are currently indistinguishable from
 
 ### Project identity: mfid vs `project_id`
 
-> **Partly superseded.** The four-identifier model is now decided (Core Concepts → Identifiers) and MFID-named groups moved into scope, because `project_id` sharing a namespace with `admin` is a live escalation. What remains deferred is only the last step: repointing the data foreign keys and adding a rename route.
+> **Mostly done.** MFID-named groups shipped (Group C). `Dataset.project_id`/`Sample.project_id` and `Dataset`'s instrument reference now also resolve through the mfid (see below) — added as parallel `project_mfid`/`instrument_mfid` columns rather than repointing the existing ones, so nothing broke mid-migration. What remains deferred: dropping the old `project_id`/`instrument_name`-as-FK columns once the new path has been live long enough to trust, a rename route, and the project's own `idtype.mfid` (still `project_id`, not `unique_id` — see below).
 
-`project_id` currently does two jobs at once — it is the stable identity that every foreign key points at, *and* the human-readable label that appears in URLs and UI. Those pull in opposite directions the moment an admin wants to rename a project, and the model already solves this correctly one table over: `User` separates `unique_id` (ORCID, stable, what FKs reference) from `username` (mutable, unique, what people type). Projects should follow the same split.
+`project_id` did two jobs at once — the stable identity every foreign key pointed at, *and* the human-readable label in URLs and UI. Those pull in opposite directions the moment a project needs to be renamed. The model already solved this correctly one table over: `User` separates `unique_id` (ORCID, stable, what FKs reference) from `username` (mutable, unique, what people type). Projects and instruments now follow the same split for their *data* foreign keys.
 
-**Partly done.** `Project.unique_id` exists now — a real, independently-generated MFID, additive and not yet read anywhere (`migrations/versions/20260810_..._add_project_unique_id.py`). It is not what `idtype.mfid` uses for a project today; that's still `project_id` itself, from the phase 1 backfill. What stays deferred: pointing `idtype.mfid`/`AccessGroup.group_name` at the real `unique_id`, repointing the *data* foreign keys — `Dataset.project_id`, `Sample.project_id`, `UserProjectLink.project_id` — and adding a rename path. Until those move, `project_id` must still be treated as immutable in practice.
+**What actually moved (this session):**
 
-The same split applies to instruments, which need a validated `instrument_id` handle so that `instrument_name` can go back to being free text.
+| Reference | Now |
+|---|---|
+| `Dataset.project_mfid`, `Sample.project_mfid` (new) | FK → `project.unique_id`, populated at create/reassign time |
+| `Dataset.instrument_mfid` (new) | FK → `instrument.unique_id`, populated at create/update time |
+| `Dataset.project_id`, `Sample.project_id` (old) | **kept**, still written in parallel — still what list/search/graph queries filter and display on |
+| `Dataset.instrument_id` (int, internal), `instrument_name` (free text) | **unchanged** — `instrument_mfid` is a new column alongside, not a replacement |
+| API surface (`DatasetCreate`/`Read`, `SampleCreate`/`Read`) | unchanged for `project_id`; `Dataset` gains an optional `instrument_id` (the validated slug) as an alternative to `instrument_name`, resolved server-side either way |
+| `ResourceACL` | unaffected — already keyed on `accessgroup.id` (int), not a label |
 
-What a rename would touch, once identity moves to the mfid:
+Resolution helpers: `resolve_project_id_to_mfid`/`resolve_project_mfids_to_ids` (`app/utils/project_utils.py`), `resolve_instrument_id_to_mfid`/`resolve_instrument_mfids_to_ids` (`app/utils/instrument_utils.py`) — single lookup for writes, batched for anything returning multiple rows (never one query per row).
 
-| Reference | Today | After |
-|---|---|---|
-| `Dataset.project_id`, `Sample.project_id` | FK → `project.project_id` | FK → `project.unique_id` |
-| `UserProjectLink.project_id` | FK → `project.project_id` | FK → `project.unique_id` |
-| `AccessGroup.group_name` for project groups | equals `project_id` | equals the project mfid |
-| `AccessGroupJoinRequest.group_name` | FK → `accessgroup.group_name` | unchanged, follows the group |
-| `ResourceACL` | references `accessgroup.id` (int) | **unaffected** — already stable |
+**Still deferred:**
 
-`ResourceACL` needing no change is the useful part: ACL rows point at `accessgroup.id`, so renames never touch the permission data itself.
-
-Naming project access groups after the mfid rather than the label is what makes renaming free, but it also means every `require_groups(ag_list, {'admin', proj_id})` comparison changes shape. Those call sites are being rewritten for `require_permission` anyway, so the two migrations should be sequenced together rather than done twice.
-
-One open question worth settling before implementation: **what do routes take?** `/projects/{mfid}` is stable but unreadable; `/projects/{project_id}` stays readable but breaks bookmarks on rename. The `User` precedent suggests offering both — a canonical path on the stable id plus a lookup route on the label, mirroring `GET /users/by-username/{username}`. Renames would also want the old label to 404 rather than silently resolve to a different project, which argues for never reusing a retired `project_id`.
-
-Until this lands, `project_id` must be treated as immutable in practice — there is no rename path today, and adding one before identity is separated would break every foreign key pointing at it.
+- **The project's own `idtype.mfid`.** `create_project` still does `Resource(mfid=P.project_id, ...)` — the project's own resource identity is `project_id`, not `unique_id`. Changing it means repointing an *existing* row's primary-key-equivalent value, cascading into any `ResourceACL` granted directly on the project resource — a materially bigger, separate migration. Not blocking: the project's access group is already MFID-named independently of this.
+- **`UserProjectLink`.** Confirmed dead (zero reads, already marked for a "phase-5 drop" in its own docstring) but left alone — dropping a table is destructive and unrelated to this migration's actual ask.
+- **Dropping the old `project_id`/`instrument_name`-as-FK columns.** Expand-only for now, matching this repo's own migration discipline (see the runbook's ordering rules) — the drop is a later, separate "contract" step once the new columns have been live long enough to trust.
+- **A dedicated rename route** and the `/projects/{mfid}` vs `/projects/{project_id}` routing question. Not needed yet: no client-facing surface exposes a project's raw MFID today, so there's nothing to resolve *from* until a rename capability actually exists.
+- **Generalizing this pattern onto `idtype` itself** (a shared `human_readable_id` column, unifying the project/instrument resolution helpers into one and closing the gap where a new `instrument_id` and an existing `project_id` could theoretically collide with each other) — raised, has real merit, deliberately out of scope here. Would mean either duplicating `project_id`/`instrument_id` onto a second table or moving them off `Project`/`Instrument` entirely.

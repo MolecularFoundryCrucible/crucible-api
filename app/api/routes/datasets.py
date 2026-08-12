@@ -44,7 +44,8 @@ from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
 from app.utils.auth_utils import authorize_user, require_permission, permission_filter
 from app.utils.permissions import Permission, Principal, Role
-from app.utils.project_utils import project_standing
+from app.utils.project_utils import project_standing, resolve_project_id_to_mfid
+from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
@@ -177,8 +178,20 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
             user = session.exec(select(User).where(User.unique_id == dataset_details['owner_orcid'])).one_or_none()
             dataset_details['owner_user_id'] = user.id if user else None
 
+        if dataset_details.get('project_id', None):
+            mfid = resolve_project_id_to_mfid(dataset_details['project_id'], session)
+            if mfid is None:
+                raise HTTPException(status_code=404, detail=f"Project '{dataset_details['project_id']}' not found")
+            dataset_details['project_mfid'] = mfid
+
         instrument = None
-        if dataset_details.get('instrument_name', None):
+        instrument_id_slug = dataset_details.pop('instrument_id', None)
+        if instrument_id_slug:
+            instrument = session.exec(select(Instrument).where(Instrument.instrument_id == instrument_id_slug)).one_or_none()
+            if instrument is None:
+                raise HTTPException(status_code=400, detail=f"Instrument '{instrument_id_slug}' is not registered")
+            dataset_details['instrument_name'] = instrument.instrument_name
+        elif dataset_details.get('instrument_name', None):
             instrument = session.exec(
                 select(Instrument).where(func.lower(Instrument.instrument_name) == dataset_details['instrument_name'].lower())
             ).one_or_none()
@@ -186,7 +199,9 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                 raise HTTPException(
                     status_code=400,
                     detail=f"Instrument '{dataset_details['instrument_name']}' is not registered")
+        if instrument is not None:
             dataset_details['instrument_id'] = instrument.id
+            dataset_details['instrument_mfid'] = instrument.unique_id
 
         ds = Dataset(**dataset_details)
         session.add(ds)
@@ -230,6 +245,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri), user_unique_id, "create")
         return DatasetResponse.model_validate({
             **ds.model_dump(),
+            "instrument_id": instrument.instrument_id if instrument else None,
             "public": ri.public,
             "creation_time": ri.creation_time,
             "modification_time": ri.modification_time,
@@ -253,7 +269,27 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
 
         require_permission(session, auth_res, dsid, Permission.EDIT)
 
-        upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **updated_dataset.model_dump(exclude_unset=True))
+        update_dict = updated_dataset.model_dump(exclude_unset=True)
+        instrument = None
+        instrument_id_slug = update_dict.pop('instrument_id', None)
+        if instrument_id_slug:
+            instrument = session.exec(select(Instrument).where(Instrument.instrument_id == instrument_id_slug)).one_or_none()
+            if instrument is None:
+                raise HTTPException(status_code=400, detail=f"Instrument '{instrument_id_slug}' is not registered")
+            update_dict['instrument_name'] = instrument.instrument_name
+        elif update_dict.get('instrument_name', None):
+            instrument = session.exec(
+                select(Instrument).where(func.lower(Instrument.instrument_name) == update_dict['instrument_name'].lower())
+            ).one_or_none()
+            if instrument is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Instrument '{update_dict['instrument_name']}' is not registered")
+        if instrument is not None:
+            update_dict['instrument_id'] = instrument.id
+            update_dict['instrument_mfid'] = instrument.unique_id
+
+        upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **update_dict)
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
@@ -261,14 +297,7 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
             ri.public = upds.public
             set_public(session, upds.unique_id, bool(upds.public))
 
-        if upds.instrument_name is not None:
-            instrument = session.exec(
-                select(Instrument).where(func.lower(Instrument.instrument_name) == upds.instrument_name.lower())
-            ).one_or_none()
-            if instrument is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Instrument '{upds.instrument_name}' is not registered")
+        if instrument is not None:
             inst_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == instrument.unique_id)).one_or_none()
             if inst_ag is None:
                 raise HTTPException(
@@ -280,8 +309,10 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
         session.commit()
         session.refresh(upds)
         background_tasks.add_task(write_record, upds.unique_id, dataset_record(upds, ri), user_unique_id, "update")
+        instrument_ids = resolve_instrument_mfids_to_ids([upds.instrument_mfid], session)
         return DatasetResponse.model_validate({
             **upds.model_dump(),
+            "instrument_id": instrument_ids.get(upds.instrument_mfid),
             "public": ri.public if ri else upds.public,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
@@ -422,6 +453,9 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all():
                     owners_by_orcid[u.unique_id] = UserPublicRead.model_validate(u)
 
+        instrument_ids_by_mfid = resolve_instrument_mfids_to_ids(
+            (row[0].instrument_mfid for row in results), session)
+
         items = []
         for row in results:
             if include_metadata:
@@ -438,6 +472,7 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 )
             items.append(DatasetResponse.model_validate({
                 **dataset.model_dump(),
+                "instrument_id": instrument_ids_by_mfid.get(dataset.instrument_mfid),
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
@@ -486,8 +521,11 @@ def search_datasets(
             query = query.where(Dataset.project_id == project_id)
         query = query.order_by(func.word_similarity(q, Dataset.dataset_name).desc()).limit(limit)
         results = session.exec(query).all()
+        instrument_ids_by_mfid = resolve_instrument_mfids_to_ids(
+            (dataset.instrument_mfid for dataset, *_ in results), session)
         items = [DatasetResponse.model_validate({
             **dataset.model_dump(),
+            "instrument_id": instrument_ids_by_mfid.get(dataset.instrument_mfid),
             "public": public if public is not None else False,
             "creation_time": creation_time,
             "modification_time": modification_time,
@@ -552,8 +590,10 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: 
             owner_user = session.exec(select(User).where(User.unique_id == ds.owner_orcid)).one_or_none()
             if owner_user:
                 owner = UserPublicRead.model_validate(owner_user)
+        instrument_ids = resolve_instrument_mfids_to_ids([ds.instrument_mfid], session)
         return DatasetResponse.model_validate({
             **ds.model_dump(),
+            "instrument_id": instrument_ids.get(ds.instrument_mfid),
             "public": ds.resource.public if ds.resource else ds.public,
             "creation_time": ds.resource.creation_time if ds.resource else None,
             "modification_time": ds.resource.modification_time if ds.resource else None,

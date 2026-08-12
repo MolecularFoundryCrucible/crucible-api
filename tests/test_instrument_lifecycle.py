@@ -7,7 +7,7 @@ group at admin standing.
 """
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Dataset, Instrument, ResourceACL, User
+from app.models.core_models import AccessGroup, Dataset, Instrument, Project, ResourceACL, User, UserAccessGroupLink
 from app.utils.permissions import PlatformRole, Role
 
 
@@ -169,3 +169,113 @@ class TestDatasetInstrumentResolution:
 
         resp = client.patch(f"/datasets/{dsid}", json={"instrument_name": "no-such-instrument"})
         assert resp.status_code == 400
+
+
+class TestInstrumentIdOnDataset:
+    """POST/PATCH /datasets accept the validated instrument_id slug as an
+    alternative to free-text instrument_name; responses resolve back to it."""
+
+    def _register(self, client, auth_as):
+        auth_as("admin-id-1", groups=[], platform_role=PlatformRole.ADMIN)
+        resp = client.post("/instruments", json={
+            "instrument_id": "xrd-id-1", "instrument_name": "XRD ID 1", "owner": "facility", "location": "b30",
+        })
+        return resp.json()
+
+    def test_create_dataset_with_instrument_id_resolves_and_echoes_it(self, client, db_engine, auth_as):
+        self._register(client, auth_as)
+
+        auth_as("0000-0010", groups=[])
+        resp = client.post("/datasets", json={"dataset_name": "d5", "instrument_id": "xrd-id-1"})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["instrument_id"] == "xrd-id-1"
+        assert body["instrument_name"] == "xrd id 1"
+
+        with Session(db_engine) as session:
+            ds = session.exec(select(Dataset).where(Dataset.dataset_name == "d5")).one()
+            inst = session.exec(select(Instrument).where(Instrument.instrument_id == "xrd-id-1")).one()
+            assert ds.instrument_mfid == inst.unique_id
+
+    def test_create_dataset_with_unregistered_instrument_id_is_400(self, client, db_engine, auth_as):
+        auth_as("0000-0011", groups=[])
+        resp = client.post("/datasets", json={"dataset_name": "d6", "instrument_id": "no-such-slug"})
+        assert resp.status_code == 400
+
+    def test_create_dataset_via_instrument_name_still_echoes_instrument_id(self, client, db_engine, auth_as):
+        """A dataset created the legacy way (free-text instrument_name) still
+        gets instrument_id resolved in the response, for clients that adopt it."""
+        self._register(client, auth_as)
+
+        auth_as("0000-0012", groups=[])
+        resp = client.post("/datasets", json={"dataset_name": "d7", "instrument_name": "XRD ID 1"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["instrument_id"] == "xrd-id-1"
+
+    def test_patch_dataset_with_instrument_id(self, client, db_engine, auth_as):
+        self._register(client, auth_as)
+        with Session(db_engine) as session:
+            _user(session, "0000-0013")
+            ag = AccessGroup(group_name="0000-0013")
+            session.add(ag)
+            session.commit()
+            session.refresh(ag)
+            ag_id = ag.id
+
+        auth_as("0000-0013", groups=[("0000-0013", ag_id, Role.OWNER)])
+        resp = client.post("/datasets", json={"dataset_name": "d8"})
+        dsid = resp.json()["unique_id"]
+
+        resp = client.patch(f"/datasets/{dsid}", json={"instrument_id": "xrd-id-1"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["instrument_id"] == "xrd-id-1"
+
+    def test_patch_dataset_with_unregistered_instrument_id_is_400(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "0000-0014")
+            ag = AccessGroup(group_name="0000-0014")
+            session.add(ag)
+            session.commit()
+            session.refresh(ag)
+            ag_id = ag.id
+
+        auth_as("0000-0014", groups=[("0000-0014", ag_id, Role.OWNER)])
+        resp = client.post("/datasets", json={"dataset_name": "d9"})
+        dsid = resp.json()["unique_id"]
+
+        resp = client.patch(f"/datasets/{dsid}", json={"instrument_id": "no-such-slug"})
+        assert resp.status_code == 400
+
+
+class TestProjectMfidOnDataset:
+    def test_create_dataset_with_project_id_sets_project_mfid(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            proj = Project(project_id="proj_mfid_1", organization="LBNL", project_lead_orcid="0000-0015")
+            session.add(proj)
+            session.commit()
+            session.refresh(proj)
+            ag = AccessGroup(group_name=proj.unique_id)
+            session.add(ag)
+            user = _user(session, "0000-0015")
+            session.commit()
+            session.refresh(ag)
+            session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=ag.id, role="contributor"))
+            session.commit()
+
+        auth_as("0000-0015", groups=[])
+        resp = client.post("/datasets", json={"dataset_name": "d10", "project_id": "proj_mfid_1"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["project_id"] == "proj_mfid_1"
+
+        with Session(db_engine) as session:
+            ds = session.exec(select(Dataset).where(Dataset.dataset_name == "d10")).one()
+            proj = session.exec(select(Project).where(Project.project_id == "proj_mfid_1")).one()
+            assert ds.project_mfid == proj.unique_id
+
+    def test_create_dataset_with_nonexistent_project_id_is_403_for_a_regular_user(self, client, db_engine, auth_as):
+        """A non-admin caller with no standing in a nonexistent project hits
+        the standing check first — 403, not 404 (see test_create_on_behalf.py
+        for the platform-admin case, which does reach the 404)."""
+        auth_as("0000-0016", groups=[])
+        resp = client.post("/datasets", json={"dataset_name": "d11", "project_id": "no-such-project"})
+        assert resp.status_code == 403

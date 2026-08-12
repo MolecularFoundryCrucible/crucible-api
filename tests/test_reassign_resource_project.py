@@ -82,6 +82,19 @@ def test_confirm_moves_the_acl_row_and_syncs_project_id(client, db_engine, auth_
         assert ds.project_id == "proj_new"
 
 
+def test_confirm_updates_project_mfid_too(client, db_engine, auth_as):
+    old_ag_id, new_ag_id = _setup(db_engine)
+    auth_as("0000-0031", groups=[("proj_old", old_ag_id, Role.ADMIN), ("proj_new", new_ag_id, Role.CONTRIBUTOR)])
+
+    resp = client.post("/resources/ds_1/project?confirm=true", json={"project_id": "proj_new"})
+    assert resp.status_code == 200, resp.text
+
+    with Session(db_engine) as session:
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == "ds_1")).one()
+        proj_new = session.exec(select(Project).where(Project.project_id == "proj_new")).one()
+        assert ds.project_mfid == proj_new.unique_id
+
+
 def test_requires_admin_on_resource(client, db_engine, auth_as):
     old_ag_id, new_ag_id = _setup(db_engine)
     auth_as("0000-0031", groups=[("proj_old", old_ag_id, Role.EDITOR), ("proj_new", new_ag_id, Role.CONTRIBUTOR)])

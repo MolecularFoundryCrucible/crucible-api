@@ -963,6 +963,7 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
         entity = session.exec(select(entity_model).where(entity_model.unique_id == mfid)).one_or_none()
         if entity is not None:
             entity.project_id = body.project_id
+            entity.project_mfid = new_proj.unique_id
             session.add(entity)
 
         touch_resource_modification_time(session, mfid)

@@ -41,6 +41,7 @@ MALFORMED = [
     ("_leading", "leading underscore"),
     ("has/slash", "slash"),
     ("x" * 65, "too long"),
+    ("proj_x\n", "trailing newline"),
 ]
 
 

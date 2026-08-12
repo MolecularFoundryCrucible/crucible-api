@@ -86,6 +86,7 @@ class Sample(SQLModel, table = True):
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     timestamp: Optional[str] = Field(default_factory=get_utc_isoformat, alias="date_created")
     project_id: Optional[str] = None
+    project_mfid: Optional[str] = Field(default=None, index=True, foreign_key="project.unique_id")
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
     resource: Optional["Resource"] = Relationship(
@@ -123,8 +124,10 @@ class Dataset(SQLModel, table=True):
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     owner_orcid: Optional[str] = Field(default = None)
     project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")
+    project_mfid: Optional[str] = Field(default=None, index=True, foreign_key="project.unique_id")
     instrument_id: Optional[int]  = Field(default = None, index = True, foreign_key = "instrument.id")
-    source_folder: Optional[str] 
+    instrument_mfid: Optional[str] = Field(default=None, index=True, foreign_key="instrument.unique_id")
+    source_folder: Optional[str]
     instrument_name: Optional[str]
     timestamp: Optional[str] = Field(default_factory=get_utc_isoformat)
     size: Optional[int] = Field(sa_column=Column(BigInteger())) 

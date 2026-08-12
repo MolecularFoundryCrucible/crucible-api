@@ -23,7 +23,7 @@ from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, permission_filter, require_groups, require_permission
 from app.utils.permissions import Principal, Permission, Role
-from app.utils.project_utils import project_standing
+from app.utils.project_utils import project_standing, resolve_project_id_to_mfid
 from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.models.users import UserPublicRead
@@ -184,7 +184,14 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
                 if session.exec(select(User).where(User.unique_id == owner_orcid)).one_or_none() is None:
                     raise HTTPException(status_code=404, detail=f"Owner '{owner_orcid}' not found")
 
-        sample = Sample(**S.model_dump(exclude_unset=True))
+        sample_details = S.model_dump(exclude_unset=True)
+        if sample_details.get('project_id', None):
+            mfid = resolve_project_id_to_mfid(sample_details['project_id'], session)
+            if mfid is None:
+                raise HTTPException(status_code=404, detail=f"Project '{sample_details['project_id']}' not found")
+            sample_details['project_mfid'] = mfid
+
+        sample = Sample(**sample_details)
         session.add(sample)
         session.commit()
         session.refresh(sample)

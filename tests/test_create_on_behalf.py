@@ -99,14 +99,29 @@ class TestCreateDataset:
         assert resp.status_code == 200, resp.text
 
     def test_platform_admin_bypasses_the_check(self, client, db_engine, auth_as):
+        """The admin bypass is for standing verification, not referential
+        integrity — the named project still has to be real."""
         with Session(db_engine) as session:
             _user(session, "0000-0007")
+            _project_with_group(session, "proj_admin_bypass", "0000-0007")
 
         auth_as("sa-admin", groups=[], platform_role=PlatformRole.ADMIN)
         resp = client.post("/datasets", json={
-            "dataset_name": "d7", "project_id": "no_such_project", "owner_orcid": "0000-0007",
+            "dataset_name": "d7", "project_id": "proj_admin_bypass", "owner_orcid": "0000-0007",
         })
         assert resp.status_code == 200, resp.text
+
+    def test_nonexistent_project_id_is_404_even_for_platform_admin(self, client, db_engine, auth_as):
+        """project_mfid is a real FK now — a bogus project_id can't slip
+        through even under the admin standing-check bypass."""
+        with Session(db_engine) as session:
+            _user(session, "0000-0008x")
+
+        auth_as("sa-admin-2", groups=[], platform_role=PlatformRole.ADMIN)
+        resp = client.post("/datasets", json={
+            "dataset_name": "d7b", "project_id": "no_such_project", "owner_orcid": "0000-0008x",
+        })
+        assert resp.status_code == 404
 
     def test_service_account_no_project_and_different_owner_is_allowed(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
@@ -154,6 +169,27 @@ class TestCreateSample:
         with Session(db_engine) as session:
             samp = session.exec(select(Sample).where(Sample.sample_name == "s2")).one()
             assert samp.owner_orcid == "0000-0012"
+
+    def test_create_sample_with_project_id_sets_project_mfid(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            researcher = _user(session, "0000-0012b")
+            ag = _project_with_group(session, "proj_mfid_s", "0000-0012b")
+            session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
+            session.commit()
+
+        auth_as("0000-0012b", groups=[])
+        resp = client.post("/samples", json={"sample_name": "s2b", "project_id": "proj_mfid_s"})
+        assert resp.status_code == 200, resp.text
+
+        with Session(db_engine) as session:
+            samp = session.exec(select(Sample).where(Sample.sample_name == "s2b")).one()
+            proj = session.exec(select(Project).where(Project.project_id == "proj_mfid_s")).one()
+            assert samp.project_mfid == proj.unique_id
+
+    def test_create_sample_with_nonexistent_project_id_is_404_for_platform_admin(self, client, db_engine, auth_as):
+        auth_as("sa-admin-3", groups=[], platform_role=PlatformRole.ADMIN)
+        resp = client.post("/samples", json={"sample_name": "s2c", "project_id": "no-such-project"})
+        assert resp.status_code == 404
 
     def test_no_project_and_different_owner_is_rejected(self, client, db_engine, auth_as):
         with Session(db_engine) as session:

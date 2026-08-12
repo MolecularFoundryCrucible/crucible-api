@@ -134,6 +134,29 @@ class TestCollisionWithExistingGroups:
             assert_project_id_available(session, "0000-0002-9999-0000")
 
 
+class TestCollisionIsCaseInsensitive:
+    def test_group_name_collision_ignores_case(self, session):
+        session.add(AccessGroup(group_name="xrd-1"))
+        session.commit()
+        with pytest.raises(HTTPException):
+            assert_project_id_available(session, "XRD-1")
+
+    def test_instrument_name_collision_is_rejected_even_with_no_group_yet(self, session):
+        """An instrument with no dataset filed against it yet has no
+        AccessGroup row — must still be caught by checking Instrument directly."""
+        session.add(Instrument(instrument_name="xrd-2", owner="lab", location="b30"))
+        session.commit()
+        with pytest.raises(HTTPException) as exc:
+            assert_project_id_available(session, "xrd-2")
+        assert exc.value.status_code == 409
+
+    def test_instrument_name_collision_ignores_case(self, session):
+        session.add(Instrument(instrument_name="xrd-3", owner="lab", location="b30"))
+        session.commit()
+        with pytest.raises(HTTPException):
+            assert_project_id_available(session, "XRD-3")
+
+
 def test_grammar_and_collision_are_separate_layers(session):
     """A well-formed name can still collide, so both checks are needed."""
     validate_project_id("xrd-1")  # grammar is fine

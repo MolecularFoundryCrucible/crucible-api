@@ -1,5 +1,12 @@
 import pytest
-from app.utils.user_utils import validate_username_format, sanitize_username_from_email
+from sqlmodel import Session, SQLModel, create_engine
+from sqlalchemy.pool import StaticPool
+
+from app.models.core_models import User
+from app.utils.user_utils import (
+    assert_username_available, generate_unique_username, is_username_available,
+    sanitize_username_from_email, sanitize_username_from_name, validate_username_format,
+)
 
 
 class TestValidateUsernameFormat:
@@ -66,6 +73,12 @@ class TestValidateUsernameFormat:
         with pytest.raises(ValueError, match="username must"):
             validate_username_format("ab-_cd")
 
+    def test_invalid_trailing_newline(self):
+        """$ matches before a trailing newline in Python regex, not strictly
+        end-of-string — fullmatch() is what actually closes this."""
+        with pytest.raises(ValueError, match="username must"):
+            validate_username_format("abcde\n")
+
     def test_a_service_account_mfid_can_never_pass_as_a_username(self):
         """26 chars always exceeds the 24-char cap — the collision this
         length limit exists to rule out by construction."""
@@ -126,3 +139,90 @@ class TestSanitizeUsernameFromEmail:
             candidate = sanitize_username_from_email(email)
             if len(candidate) >= 3:
                 assert validate_username_format(candidate) == candidate
+
+
+@pytest.fixture
+def session():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine, tables=[User.__table__])
+    with Session(engine) as s:
+        yield s
+
+
+def _user(session, orcid, username):
+    u = User(first_name="T", last_name="U", email=f"{orcid}@x.com", unique_id=orcid, username=username)
+    session.add(u)
+    session.commit()
+    session.refresh(u)
+    return u
+
+
+class TestAssertUsernameAvailable:
+    def test_free_username_is_allowed(self, session):
+        assert_username_available(session, "brandnew")
+
+    def test_taken_username_is_rejected(self, session):
+        _user(session, "0000-0001", "johndoe")
+        with pytest.raises(Exception) as exc:
+            assert_username_available(session, "johndoe")
+        assert exc.value.status_code == 409
+
+    @pytest.mark.parametrize("candidate", ["JohnDoe", "John_Doe", "John-Doe", "john_doe", "john-doe"])
+    def test_separator_and_case_variants_collide_with_johndoe(self, session, candidate):
+        _user(session, "0000-0002", "johndoe")
+        with pytest.raises(Exception) as exc:
+            assert_username_available(session, candidate)
+        assert exc.value.status_code == 409
+
+    def test_genuinely_different_username_is_not_a_false_positive(self, session):
+        _user(session, "0000-0003", "johndoe")
+        assert_username_available(session, "janedoe")
+
+    def test_excluding_self_allows_unchanged_username(self, session):
+        _user(session, "0000-0004", "johndoe")
+        assert_username_available(session, "john_doe", exclude_orcid="0000-0004")
+
+
+class TestSanitizeUsernameFromName:
+    def test_simple_name(self):
+        assert sanitize_username_from_name("Fabrice", "Roncoroni") == "fabrice_roncoroni"
+
+    def test_truncates_to_24(self):
+        result = sanitize_username_from_name("A" * 20, "B" * 20)
+        assert len(result) == 24
+
+    def test_output_satisfies_validate_username_format(self):
+        for first, last in [("Fabrice", "Roncoroni"), ("Jean-Paul", "O'Brien"), ("", ""), ("Al", "Xu")]:
+            candidate = sanitize_username_from_name(first, last)
+            if len(candidate) >= 3:
+                assert validate_username_format(candidate) == candidate
+
+
+class TestGenerateUniqueUsername:
+    def test_generates_from_name_when_free(self, session):
+        assert generate_unique_username(session, "Fabrice", "Roncoroni") == "fabrice_roncoroni"
+
+    def test_appends_numeric_suffix_on_collision(self, session):
+        _user(session, "0000-0005", "fabrice_roncoroni")
+        assert generate_unique_username(session, "Fabrice", "Roncoroni") == "fabrice_roncoroni_2"
+
+    def test_keeps_incrementing_past_multiple_collisions(self, session):
+        _user(session, "0000-0006", "fabrice_roncoroni")
+        _user(session, "0000-0007", "fabrice_roncoroni_2")
+        assert generate_unique_username(session, "Fabrice", "Roncoroni") == "fabrice_roncoroni_3"
+
+    def test_suffix_respects_separator_insensitive_collision(self, session):
+        """A collision on fabrice-roncoroni (hyphen) must still be caught,
+        since it's the same username as fabrice_roncoroni for our purposes."""
+        _user(session, "0000-0008", "fabrice-roncoroni")
+        assert generate_unique_username(session, "Fabrice", "Roncoroni") == "fabrice_roncoroni_2"
+
+    def test_falls_back_to_generic_prefix_when_name_has_no_letters(self, session):
+        result = generate_unique_username(session, "", "")
+        assert result.startswith("user")
+        assert is_username_available(session, result) is True  # not yet persisted, just generated
+
+    def test_result_always_passes_validate_username_format(self, session):
+        _user(session, "0000-0009", "a" * 24)
+        result = generate_unique_username(session, "A" * 24, "")
+        assert validate_username_format(result) == result

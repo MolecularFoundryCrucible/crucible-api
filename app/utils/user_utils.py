@@ -19,7 +19,7 @@ _USERNAME_MAX = 24
 
 def validate_username_format(username: str) -> str:
     username = username.lower()
-    if not (3 <= len(username) <= _USERNAME_MAX) or not _USERNAME_RE.match(username):
+    if not (3 <= len(username) <= _USERNAME_MAX) or not _USERNAME_RE.fullmatch(username):
         raise ValueError(
             f"username must be 3-{_USERNAME_MAX} chars, start with a letter, contain only "
             "lowercase letters, digits, underscores, hyphens, and never have "
@@ -28,26 +28,81 @@ def validate_username_format(username: str) -> str:
     return username
 
 
-def sanitize_username_from_email(email: str) -> str:
-    """Derive a candidate username from an email's local part. Satisfies
-    validate_username_format's rules by construction — callers that skip
-    re-validating (the backfill script does) rely on that. May still come out
-    empty or under 3 chars; the caller checks length before use."""
-    prefix = email.split('@')[0].lower()
-    sanitized = re.sub(r'[^a-z0-9_-]', '_', prefix)
+def _sanitize_username_candidate(raw: str) -> str:
+    """Shared cleanup: satisfies validate_username_format's rules by
+    construction — callers that skip re-validating (the backfill script
+    does) rely on that. May still come out empty or under 3 chars; the
+    caller checks length before use."""
+    sanitized = re.sub(r'[^a-z0-9_-]', '_', raw.lower())
     sanitized = re.sub(r'[_-]{2,}', '_', sanitized)
     sanitized = re.sub(r'^[^a-z]+', '', sanitized)
     sanitized = sanitized[:_USERNAME_MAX]
     return sanitized.rstrip('_-')
 
 
+def sanitize_username_from_email(email: str) -> str:
+    """Derive a candidate username from an email's local part."""
+    return _sanitize_username_candidate(email.split('@')[0])
+
+
+def sanitize_username_from_name(first_name: str, last_name: str) -> str:
+    """Derive a candidate username from first/last name — used at login,
+    where email isn't reliably available yet (ORCID doesn't always return
+    one), but first/last name always are."""
+    return _sanitize_username_candidate(f"{first_name}.{last_name}")
+
+
+def _username_collision_key(username: str) -> str:
+    """Separator-insensitive normalization: johndoe, john_doe, and john-doe
+    are the same username for collision purposes — distinct only by
+    separator placement is exactly the kind of lookalike confusion usernames
+    should not allow."""
+    return re.sub(r'[_-]', '', username.lower())
+
+
 def assert_username_available(session, username: str, exclude_orcid: Optional[str] = None) -> None:
-    """Raise 409 if username is already taken by a different user."""
-    q = select(User).where(User.username == username.lower())
+    """Raise 409 if username is already taken by a different user — case-
+    and separator-insensitive, so johndoe/john_doe/john-doe collide as one
+    username. One query: the DB does the normalization, not a full-table
+    scan pulled into Python."""
+    collision_expr = func.lower(func.replace(func.replace(User.username, '_', ''), '-', ''))
+    q = select(User).where(collision_expr == _username_collision_key(username))
     if exclude_orcid:
         q = q.where(User.unique_id != exclude_orcid)
     if session.exec(q).one_or_none() is not None:
         raise HTTPException(status_code=409, detail="Username already taken")
+
+
+def is_username_available(session, username: str) -> bool:
+    """Boolean form of assert_username_available, for generate-and-retry
+    loops rather than request validation."""
+    collision_expr = func.lower(func.replace(func.replace(User.username, '_', ''), '-', ''))
+    q = select(User).where(collision_expr == _username_collision_key(username))
+    return session.exec(q).one_or_none() is None
+
+
+def generate_unique_username(session, first_name: str, last_name: str) -> str:
+    """A memorable username for a user who doesn't have one yet (e.g. first
+    login, before username was required) — derived from their name, with a
+    numeric suffix (_2, _3, ...) on collision. Same deconflict shape as
+    migrations/data/20260603_backfill_username_from_email.py, generalized to
+    the separator-insensitive collision check.
+
+    Falls back to a generic prefix if name sanitizes to nothing usable
+    (e.g. a name with no ASCII letters) — this must always return something
+    valid, since it exists specifically to make username non-optional.
+    """
+    base = sanitize_username_from_name(first_name, last_name)
+    if len(base) < 3:
+        base = "user"
+
+    candidate = base
+    n = 2
+    while not is_username_available(session, candidate):
+        suffix = f"_{n}"
+        candidate = f"{base[:_USERNAME_MAX - len(suffix)]}{suffix}"
+        n += 1
+    return candidate
 
 
 def resolve_user(session, orcid: Optional[str] = None, email: Optional[str] = None, username: Optional[str] = None) -> User:

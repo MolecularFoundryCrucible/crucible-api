@@ -343,7 +343,7 @@ class DeletionAuditLog(SQLModel, table=True):
 
 class Instrument(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
-    unique_id: Optional[str] = Field(default_factory=get_mfid_value)
+    unique_id: Optional[str] = Field(default_factory=get_mfid_value, index=True, unique=True)
     instrument_id: Optional[str] = Field(default=None, index=True, unique=True)
     other_id: Optional[str]
     other_id_source: Optional[str]

@@ -3,11 +3,11 @@ Backfill storage_path for AssociatedFile rows where storage_path is NULL.
 Checks mf-storage-prod/{dsid}/{basename} for each file.
 
 Usage (from inside the pod):
-    /root/.venv/bin/python migrations/backfill_storage_path.py
+    /root/.venv/bin/python migrations/data/20260512_backfill_storage_path.py
 """
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sqlmodel import Session, select
 from app.api.dependencies import get_engine

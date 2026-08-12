@@ -16,15 +16,15 @@ rows, and on production all 8 of them are service accounts with no other group.
 Dry run by default.
 
 Usage:
-    DB_CONF_FILE=.env python migrations/delete_bypass_acl_rows.py
-    DB_CONF_FILE=.env python migrations/delete_bypass_acl_rows.py --commit
+    DB_CONF_FILE=.env python migrations/data/20260807_delete_bypass_acl_rows.py
+    DB_CONF_FILE=.env python migrations/data/20260807_delete_bypass_acl_rows.py --commit
 """
 import argparse
 import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sqlalchemy import text
 from sqlmodel import Session

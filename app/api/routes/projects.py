@@ -1,7 +1,8 @@
+import os
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, join, literal, text
+from sqlalchemy import and_, func, join, literal, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import Session, select, col
 import networkx as nx
@@ -18,16 +19,21 @@ from app.utils.auth_utils import (
     require_platform_admin)
 from app.utils.permissions import (
     Permission, Principal, Role, can_grant, effective_role)
-from app.utils.sql_utils import add_or_update, touch_resource_modification_time
+from app.utils.sql_utils import add_or_update, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.user_utils import resolve_user, sql_add_user_to_access_group
 from app.utils.project_utils import (
-    assert_project_id_available, sql_add_user_to_project, sql_get_projects_for_user)
+    assert_project_id_available, is_project_owner, sql_add_user_to_project,
+    sql_get_projects_for_user)
+from app.models.access_groups import AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
 from app.models.users import UserPublicRead, UserRead
 
 router = APIRouter(tags=["projects"])
 engine = get_engine()
+
+API_VERSION = os.getenv('API_VERSION', None)
+API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 
 @router.post("/projects", response_model=ProjectRead)
@@ -61,11 +67,22 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
         )
         session.add(prop)
 
-        # Not ag.users.append: that inserts a link row with no role, which
-        # fails closed to viewer — the lead would land unable to edit their
-        # own project.
-        sql_add_user_to_access_group(project_lead.unique_id, P.project_id,
-                                     session, role=Role.OWNER)
+        # ag.users.append would insert a link row with no role, failing closed to viewer.
+        # Group is keyed by the project's MFID (unique_id), not project_id — see
+        # docs/permission_system_plan.md, "Groups" / the MFID-named-groups rename.
+        ag = sql_add_user_to_access_group(project_lead.unique_id, prop.unique_id,
+                                          session, role=Role.OWNER)
+        if ag.owner_orcid is None and ag.resource_mfid is None:
+            ag.resource_mfid = P.project_id
+
+        add_or_update(session, Resource,
+                      where=(Resource.mfid == P.project_id),
+                      mfid=P.project_id,
+                      resource_type="project",
+                      created_with_api_version=API_VERSION,
+                      api_version_githash=API_VERSION_GITHASH)
+        sql_create_resource_acl(ag, P.project_id, read=True, write=True,
+                                session=session, role=Role.OWNER)
 
         if prop not in project_lead.projects:
             project_lead.projects.append(prop)
@@ -96,8 +113,11 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
                 return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
             base = (
                 select(Project)
-                .join(UserProjectLink, Project.project_id == UserProjectLink.project_id)
-                .where(UserProjectLink.user_id == user.id)
+                .join(AccessGroup, AccessGroup.group_name == Project.unique_id)
+                .join(UserAccessGroupLink, and_(
+                    UserAccessGroupLink.accessgroup_id == AccessGroup.id,
+                    UserAccessGroupLink.user_id == user.id,
+                ))
             )
         else:
             require_platform_admin(auth_res)
@@ -201,26 +221,19 @@ def update_project(proj_id: str, auth_res: Annotated[Principal, Depends(authoriz
     '''
     Partially update a project record. Only fields provided in the request body are modified.
     Accessible by admins and the project lead.
-    If project_lead_orcid or project_lead_email is provided, it must correspond to an existing user.
+    Leadership is not a field here — ProjectUpdate has no project_lead_*
+    fields (extra="forbid" 422s if you send one). Use
+    POST /resources/{proj_id}/transfer_ownership instead.
     '''
     with Session(engine) as session:
-        require_permission(session, auth_res, proj_id, Permission.EDIT, legacy_group=proj_id)
-
         project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
 
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        
+
+        require_permission(session, auth_res, proj_id, Permission.EDIT, legacy_group=project.unique_id)
+
         update_data = project_update.model_dump(exclude_unset=True)
-
-        lead_orcid = update_data.pop("project_lead_orcid", None)
-        lead_email = update_data.pop("project_lead_email", None)
-        lead_username = update_data.pop("project_lead_username", None)
-
-        if any([lead_orcid, lead_email, lead_username]):
-            lead = resolve_user(session, orcid=lead_orcid, email=lead_email, username=lead_username)
-            update_data["project_lead_orcid"] = lead.unique_id
-            update_data["project_lead_email"] = lead.email
 
         for key, value in update_data.items():
             setattr(project, key, value)
@@ -239,16 +252,24 @@ def update_project(proj_id: str, auth_res: Annotated[Principal, Depends(authoriz
         )
 
 
-def _get_project_users(proj_id: str, session) -> List[User]:
-    '''Query project members directly — no auth check, for internal use only.'''
-    return session.exec(
-        select(User)
-        .select_from(join(User, UserProjectLink, UserProjectLink.user_id == User.id))
-        .where(UserProjectLink.project_id == proj_id)
+def _get_project_users(proj_id: str, session) -> List[AccessGroupMemberRead]:
+    '''Query project members and their role from the project's own access
+    group — the authoritative membership record, not UserProjectLink (see
+    is_project_member). No auth check, for internal use only.'''
+    rows = session.exec(
+        select(User, UserAccessGroupLink.role)
+        .select_from(join(AccessGroup, UserAccessGroupLink, UserAccessGroupLink.accessgroup_id == AccessGroup.id))
+        .join(User, User.id == UserAccessGroupLink.user_id)
+        .join(Project, Project.unique_id == AccessGroup.group_name)
+        .where(Project.project_id == proj_id)
     ).all()
+    return [
+        AccessGroupMemberRead.model_validate(user, update={"role": role or "unknown"})
+        for user, role in rows
+    ]
 
 
-@router.get("/projects/{proj_id}/users", response_model=PaginatedResponse[UserRead])
+@router.get("/projects/{proj_id}/users", response_model=PaginatedResponse[AccessGroupMemberRead])
 def read_users_on_project(proj_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                           limit: int = Query(default=100, ge=1, le=1000),
                           offset: int = Query(default=0, ge=0)):
@@ -257,17 +278,17 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[Principal, Depends(a
     Accessible by admins and members of the project.
     '''
     with Session(engine) as session:
-        require_permission(session, auth_res, proj_id, Permission.READ, legacy_group=proj_id)
-
         project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
+
+        require_permission(session, auth_res, proj_id, Permission.READ, legacy_group=project.unique_id)
 
         all_users = _get_project_users(proj_id, session)
         return PaginatedResponse(total=len(all_users), limit=limit, offset=offset, items=all_users[offset:offset + limit])
 
 
-@router.post("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
+@router.post("/projects/{proj_id}/users/{orcid}", response_model=List[AccessGroupMemberRead])
 def add_users_to_project(
     proj_id: str,
     orcid: str,
@@ -283,14 +304,14 @@ def add_users_to_project(
     or below your own — so an editor can seat a contributor but never an admin.
     '''
     with Session(engine) as session:
-        require_permission(session, auth_res, proj_id, Permission.EDIT, legacy_group=proj_id)
-        require_grant(session, auth_res, proj_id, role, floor=Role.EDITOR)
-
-        user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
-
         proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if proj is None:
             raise HTTPException(status_code=404, detail=f'Project {proj_id} not found')
+
+        require_permission(session, auth_res, proj_id, Permission.EDIT, legacy_group=proj.unique_id)
+        require_grant(session, auth_res, proj_id, role, floor=Role.EDITOR)
+
+        user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
 
         sql_add_user_to_project(user, proj_id, session, role=role)
         session.commit()
@@ -298,7 +319,7 @@ def add_users_to_project(
         return _get_project_users(proj_id, session)
 
 
-@router.patch("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
+@router.patch("/projects/{proj_id}/users/{orcid}", response_model=List[AccessGroupMemberRead])
 def set_project_user_role(
     proj_id: str,
     orcid: str,
@@ -313,10 +334,14 @@ def set_project_user_role(
     project admin demoting the owner.
     '''
     with Session(engine) as session:
-        require_permission(session, auth_res, proj_id, Permission.EDIT, legacy_group=proj_id)
+        proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
+        if proj is None:
+            raise HTTPException(status_code=404, detail=f'Project {proj_id} not found')
+
+        require_permission(session, auth_res, proj_id, Permission.EDIT, legacy_group=proj.unique_id)
 
         user = resolve_user(session, orcid=orcid)
-        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj_id)).one_or_none()
+        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)).one_or_none()
         if ag is None:
             raise HTTPException(status_code=404, detail=f'Project {proj_id} not found')
 
@@ -340,7 +365,7 @@ def set_project_user_role(
         return _get_project_users(proj_id, session)
 
 
-@router.delete("/projects/{proj_id}/users/{orcid}", response_model=List[UserRead])
+@router.delete("/projects/{proj_id}/users/{orcid}", response_model=List[AccessGroupMemberRead])
 def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                              email: Optional[str] = None, username: Optional[str] = None):
     '''
@@ -359,36 +384,38 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[Princ
             raise HTTPException(status_code=404, detail=f"Project {proj_id} not found")
 
         is_self = user_unique_id == orcid and not email and not username
-        if not is_admin and user_unique_id != proj.project_lead_orcid and not is_self:
+        caller_is_owner = is_project_owner(user_unique_id, proj_id, session)
+        if not is_admin and not caller_is_owner and not is_self:
             raise HTTPException(status_code=403, detail="Only platform admins, the project lead, or the member themselves can remove a member.")
 
-        if is_self and user_unique_id == proj.project_lead_orcid:
+        if is_self and caller_is_owner:
             raise HTTPException(status_code=409, detail="The project lead cannot remove themselves. Transfer leadership first.")
 
         user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
 
-        # Remove the user-project link
+        # The access-group standing is the real membership record — see
+        # is_project_member. A missing UserAccessGroupLink means the user has
+        # no actual access regardless of what UserProjectLink says.
+        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)).one_or_none()
+        ag_link = session.exec(
+            select(UserAccessGroupLink).where(
+                UserAccessGroupLink.user_id == user.id,
+                UserAccessGroupLink.accessgroup_id == ag.id,
+            )
+        ).one_or_none() if ag else None
+        if ag_link is None:
+            raise HTTPException(status_code=404, detail=f"User {user.unique_id} is not a member of project {proj_id}")
+        session.delete(ag_link)
+
+        # Best-effort cleanup of the legacy link table; its absence is not an error.
         link = session.exec(
             select(UserProjectLink).where(
                 UserProjectLink.user_id == user.id,
                 UserProjectLink.project_id == proj_id
             )
         ).one_or_none()
-        if link is None:
-            raise HTTPException(status_code=404, detail=f"User {user.unique_id} is not a member of project {proj_id}")
-        session.delete(link)
-
-        # Remove user from the project's access group
-        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj_id)).one_or_none()
-        if ag:
-            ag_link = session.exec(
-                select(UserAccessGroupLink).where(
-                    UserAccessGroupLink.user_id == user.id,
-                    UserAccessGroupLink.accessgroup_id == ag.id
-                )
-            ).one_or_none()
-            if ag_link:
-                session.delete(ag_link)
+        if link is not None:
+            session.delete(link)
 
         touch_resource_modification_time(session, proj_id)
         session.commit()
@@ -399,7 +426,9 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[Princ
 def project_sample_graph(project_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
     with Session(engine) as session:
-        require_permission(session, auth_res, project_id, Permission.READ, legacy_group=project_id)
+        proj = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
+        require_permission(session, auth_res, project_id, Permission.READ,
+                           legacy_group=proj.unique_id if proj else None)
 
         samp_cmd = select(Sample).options(joinedload(Sample.parents))
 
@@ -459,7 +488,9 @@ def project_entity_graph(project_id: str, auth_res: Annotated[Principal, Depends
     associations. Nodes carry entity_type ('sample' or 'dataset') and name.
     '''
     with Session(engine) as session:
-        require_permission(session, auth_res, project_id, Permission.READ, legacy_group=project_id)
+        proj = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
+        require_permission(session, auth_res, project_id, Permission.READ,
+                           legacy_group=proj.unique_id if proj else None)
 
         # Load all samples in the project with parent relationships
         samp_cmd = select(Sample).options(joinedload(Sample.parents)).where(Sample.project_id == project_id)

@@ -10,15 +10,15 @@ Prod and staging share a Cloud SQL instance, so the target is read back from
 the server and production is refused unless explicitly named.
 
 Usage:
-    DB_CONF_FILE=.env python migrations/apply_sql.py migrations/add_permission_roles.sql
-    DB_CONF_FILE=.env python migrations/apply_sql.py <file> --yes-this-is-production
+    DB_CONF_FILE=.env python migrations/data/20260806_apply_sql.py migrations/data/20260806_add_permission_roles.sql
+    DB_CONF_FILE=.env python migrations/data/20260806_apply_sql.py <file> --yes-this-is-production
 """
 import argparse
 import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sqlalchemy import text
 from sqlmodel import Session

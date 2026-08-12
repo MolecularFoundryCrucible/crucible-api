@@ -7,11 +7,11 @@ of it. This group is normally created during the ORCID OAuth login flow
 DB may be missing it, causing 500 errors on dataset creation.
 
 Usage (from inside the API pod):
-    /root/.venv/bin/python migrations/backfill_user_access_groups.py
+    /root/.venv/bin/python migrations/data/20260608_backfill_user_access_groups.py
 """
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sqlmodel import Session, select
 from app.api.dependencies import get_engine

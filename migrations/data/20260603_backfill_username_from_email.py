@@ -4,11 +4,11 @@ Derives username from the email prefix (part before '@'), sanitizes it,
 and deconflicts by appending _2, _3, ... on collision.
 
 Usage (from inside the API pod):
-    /root/.venv/bin/python migrations/backfill_username_from_email.py
+    /root/.venv/bin/python migrations/data/20260603_backfill_username_from_email.py
 """
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sqlmodel import Session, select
 from app.api.dependencies import get_engine

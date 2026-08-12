@@ -16,8 +16,8 @@ rots the moment a table is added.
 Dry run by default. Refuses to touch production without --yes-this-is-production.
 
 Usage:
-    DB_CONF_FILE=.env python migrations/delete_dangling_project_samples.py
-    DB_CONF_FILE=.env python migrations/delete_dangling_project_samples.py --commit
+    DB_CONF_FILE=.env python migrations/data/20260807_delete_dangling_project_samples.py
+    DB_CONF_FILE=.env python migrations/data/20260807_delete_dangling_project_samples.py --commit
 """
 import argparse
 import csv
@@ -25,7 +25,7 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sqlalchemy import text
 from sqlmodel import Session, select

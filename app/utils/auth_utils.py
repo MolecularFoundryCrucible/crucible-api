@@ -554,3 +554,17 @@ def require_self_or_platform_admin(principal: Principal, orcid: str) -> None:
     if principal.user_id == orcid:
         return
     require_platform_admin(principal)
+
+
+def is_instrument_group_member(principal: Principal, session) -> bool:
+    """Whether the caller holds standing in any registered instrument's
+    operator group — named after the instrument's MFID (unique_id).
+    """
+    from app.models.core_models import Instrument
+
+    if not principal.groups:
+        return False
+    group_names = {g.group_name for g in principal.groups}
+    return session.exec(
+        select(Instrument).where(Instrument.unique_id.in_(group_names))
+    ).first() is not None

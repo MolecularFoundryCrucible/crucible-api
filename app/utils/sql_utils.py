@@ -132,7 +132,7 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None)
     No requestor row either. The creator reaches the resource through the
     project group; a row per creator per resource expresses nothing.
     '''
-    from app.models.core_models import AccessGroup
+    from app.models.core_models import AccessGroup, Project
     from app.utils.permissions import Role
     from sqlmodel import select
 
@@ -145,7 +145,11 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None)
                                     session=session, role=Role.OWNER)
 
     if project_id:
-        proj_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == project_id)).one_or_none()
+        project = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
+        proj_ag = (
+            session.exec(select(AccessGroup).where(AccessGroup.group_name == project.unique_id)).one_or_none()
+            if project else None
+        )
         if proj_ag is None:
             logger.warning("create_standard_acls: no AccessGroup for project '%s' — skipping project ACL for resource '%s'", project_id, mfid)
         else:
@@ -210,6 +214,27 @@ def deletion_filter_for(resource_model):
         DeletionRequest.resource_id == resource_model.unique_id,
         DeletionRequest.status.in_(["pending", "approved"])
     )
+
+
+def visibility_filter_for(resource_model, visibility: str):
+    """
+    Returns a SQLAlchemy filter narrowing to public or private resources.
+    `visibility` is 'public' or 'private'; callers skip this entirely for 'all'.
+
+    Public means an ACL entry exists for the virtual public group — the ACL
+    entry is authoritative, not the legacy `public` column that phase 5 drops.
+    """
+    from sqlalchemy import exists
+    from app.models.core_models import AccessGroup, ResourceACL
+    from app.utils.permissions import PUBLIC_GROUP_NAME
+
+    is_public = exists().where(
+        ResourceACL.mfid == resource_model.unique_id,
+        ResourceACL.accessgroup_id == (
+            select(AccessGroup.id).where(AccessGroup.group_name == PUBLIC_GROUP_NAME).scalar_subquery()
+        ),
+    )
+    return is_public if visibility == "public" else ~is_public
 
 
 

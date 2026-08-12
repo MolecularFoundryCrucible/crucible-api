@@ -70,6 +70,22 @@ def assert_project_id_available(session, project_id: str) -> None:
         )
 
 
+def _project_group_name(proj_id: str, session) -> "str | None":
+    """Resolve proj_id to its access group's name — the project's MFID
+    (Project.unique_id), not project_id itself. None if proj_id does not name
+    a real project, or that project has no unique_id yet (pre-backfill).
+
+    CUTOVER DEPENDENCY: every function below assumes every real project has
+    a populated unique_id and its access group is already named after it.
+    Both must be true in the target database before this code is deployed —
+    see migrations/data/20260810_backfill_project_unique_id.py and the (not
+    yet written) group-rename backfill. Until then this silently returns None
+    for every project, which reads as "not a member of anything."
+    """
+    project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
+    return project.unique_id if project else None
+
+
 def sql_add_user_to_project(user: User, proj_id: str, session, role=None):
     """Add a user to a project's membership and access group. Idempotent.
 
@@ -79,24 +95,28 @@ def sql_add_user_to_project(user: User, proj_id: str, session, role=None):
     existing readers of UserProjectLink are not broken before its phase-5
     drop — see docs/permission_system_plan.md.
     """
+    group_name = _project_group_name(proj_id, session)
+    if group_name is None:
+        raise HTTPException(status_code=404, detail=f"Project '{proj_id}' not found or not yet provisioned")
     add_or_update(session,
                   UserProjectLink,
                   where=(and_(UserProjectLink.user_id == user.id, UserProjectLink.project_id == proj_id)),
                   user_id=user.id,
                   project_id=proj_id)
-    sql_add_user_to_access_group(user.unique_id, proj_id, session, role=role)
+    sql_add_user_to_access_group(user.unique_id, group_name, session, role=role)
     touch_resource_modification_time(session, proj_id)
 
 
 def is_project_group(group_name: str, session) -> bool:
-    """Whether this group name is an existing project's access group.
+    """Whether this group name is an existing project's own access group —
+    named after the project's MFID (Project.unique_id), not its project_id.
 
     Used to keep the generic /users/{orcid}/access_groups/{group_name} routes
     from being a side door around /projects/{proj_id}/users/{orcid}, which
     knows the project's own authorization bar (editor+, capped at your own
     role) — the generic route only checks platform-admin.
     """
-    return session.exec(select(Project).where(Project.project_id == group_name)).first() is not None
+    return session.exec(select(Project).where(Project.unique_id == group_name)).first() is not None
 
 
 def is_project_member(user_id: int, proj_id: str, session) -> bool:
@@ -107,10 +127,13 @@ def is_project_member(user_id: int, proj_id: str, session) -> bool:
     touch it), so anything gating on "is a member" must ask the table
     authorization itself reads.
     """
+    group_name = _project_group_name(proj_id, session)
+    if group_name is None:
+        return False
     return session.exec(
         select(UserAccessGroupLink)
         .join(AccessGroup, AccessGroup.id == UserAccessGroupLink.accessgroup_id)
-        .where(AccessGroup.group_name == proj_id, UserAccessGroupLink.user_id == user_id)
+        .where(AccessGroup.group_name == group_name, UserAccessGroupLink.user_id == user_id)
     ).first() is not None
 
 
@@ -126,14 +149,15 @@ def is_project_owner(user_unique_id: str, proj_id: str, session) -> bool:
     everyone is always owner) would otherwise trivially pass for a
     non-project name.
     """
-    if not is_project_group(proj_id, session):
+    group_name = _project_group_name(proj_id, session)
+    if group_name is None:
         return False
     return session.exec(
         select(UserAccessGroupLink)
         .join(AccessGroup, AccessGroup.id == UserAccessGroupLink.accessgroup_id)
         .join(User, User.id == UserAccessGroupLink.user_id)
         .where(
-            AccessGroup.group_name == proj_id,
+            AccessGroup.group_name == group_name,
             User.unique_id == user_unique_id,
             UserAccessGroupLink.role == Role.OWNER.db_value,
         )
@@ -141,11 +165,14 @@ def is_project_owner(user_unique_id: str, proj_id: str, session) -> bool:
 
 
 def project_standing(orcid: str, proj_id: str, session) -> "Role | None":
+    group_name = _project_group_name(proj_id, session)
+    if group_name is None:
+        return None
     row = session.exec(
         select(UserAccessGroupLink.role)
         .join(AccessGroup, AccessGroup.id == UserAccessGroupLink.accessgroup_id)
         .join(User, User.id == UserAccessGroupLink.user_id)
-        .where(AccessGroup.group_name == proj_id, User.unique_id == orcid)
+        .where(AccessGroup.group_name == group_name, User.unique_id == orcid)
     ).one_or_none()
     return Role.from_db(row) if row else None
 
@@ -163,7 +190,7 @@ def sql_get_projects_for_user(orcid, session, options=None):
 
     query = (
         select(Project)
-        .join(AccessGroup, AccessGroup.group_name == Project.project_id)
+        .join(AccessGroup, AccessGroup.group_name == Project.unique_id)
         .join(UserAccessGroupLink, and_(
             UserAccessGroupLink.accessgroup_id == AccessGroup.id,
             UserAccessGroupLink.user_id == user.id,

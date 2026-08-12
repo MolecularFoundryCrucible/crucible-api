@@ -1,5 +1,5 @@
 from typing import Any, List, Optional
-from pydantic import field_validator
+from pydantic import ConfigDict, field_validator
 from sqlmodel import SQLModel
 from app.general_utils import blank_to_none, is_valid_mfid
 from app.models.links import LinkedResource
@@ -40,9 +40,14 @@ class DatasetCreate(SQLModel):
         return blank_to_none(v)
 
 class DatasetUpdate(SQLModel):
-    '''Partial update schema for Dataset. Only provided fields are modified.'''
+    '''Partial update schema for Dataset. Only provided fields are modified.
+
+    No project_id/owner_orcid — use POST /resources/{mfid}/project and
+    POST /resources/{mfid}/transfer_ownership.
+    '''
+    model_config = ConfigDict(extra="forbid")
+
     dataset_name: Optional[str] = None
-    project_id: Optional[str] = None
     instrument_name: Optional[str] = None
     data_format: Optional[str] = None
     measurement: Optional[str] = None
@@ -50,14 +55,6 @@ class DatasetUpdate(SQLModel):
     session_name: Optional[str] = None
     timestamp: Optional[str] = None
     public: Optional[bool] = None
-    owner_orcid: Optional[str] = None
-
-    @field_validator("project_id", "owner_orcid", mode="before", check_fields=False)
-    @classmethod
-    def blank_identifiers_to_none(cls, v):
-        """Uploaders that send "" instead of omitting the field would otherwise
-        attach the resource to a nameless project. See general_utils."""
-        return blank_to_none(v)
 
 class DatasetRead(SQLModel):
     '''Response model for Dataset. Includes all server-generated fields.'''

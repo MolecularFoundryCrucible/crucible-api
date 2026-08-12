@@ -1,6 +1,6 @@
 from typing import Optional, List
 from pydantic import ConfigDict
-from sqlalchemy import JSON, Column, BigInteger, func, Index, text, Text, String
+from sqlalchemy import JSON, CheckConstraint, Column, BigInteger, func, Index, text, Text, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel,Relationship, Column
 from mfid import mfid
@@ -184,8 +184,16 @@ class UserAccessGroupLink(SQLModel, table=True):
 
 
 class AccessGroup(SQLModel, table=True):
+    __table_args__ = (
+        CheckConstraint(
+            "NOT (owner_orcid IS NOT NULL AND resource_mfid IS NOT NULL)",
+            name="ck_accessgroup_kind_exclusive",
+        ),
+    )
     id: Optional[int] = Field(default=None, primary_key=True)
     group_name: str = Field(index=True, unique=True)
+    owner_orcid: Optional[str] = Field(default=None, foreign_key="user.orcid", index=True)
+    resource_mfid: Optional[str] = Field(default=None, foreign_key="idtype.mfid", index=True)
     users: List["User"] = Relationship(back_populates="accessgroups", link_model=UserAccessGroupLink)
     acl: List["ResourceACL"] = Relationship(back_populates="accessgroup")
 
@@ -222,11 +230,12 @@ class ApiToken(SQLModel, table = True):
 
 class Project(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    unique_id: Optional[str] = Field(default_factory=get_mfid_value, index=True, unique=True)
     project_id: str = Field(index=True, unique=True)
     organization: str
     status: Optional[str]
     title: Optional[str]
-    project_lead_orcid: str = Field(index=True)
+    project_lead_orcid: str = Field(foreign_key="user.orcid", index=True)
     project_lead_email: Optional[str] = None  # stored for old-API backward compat; not exposed in new response schemas
     users: List[User] = Relationship(back_populates="projects", link_model=UserProjectLink)
     resource: Optional["Resource"] = Relationship(
@@ -332,6 +341,7 @@ class DeletionAuditLog(SQLModel, table=True):
 class Instrument(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     unique_id: Optional[str] = Field(default_factory=get_mfid_value)
+    instrument_id: Optional[str] = Field(default=None, index=True, unique=True)
     other_id: Optional[str]
     other_id_source: Optional[str]
     instrument_name: str

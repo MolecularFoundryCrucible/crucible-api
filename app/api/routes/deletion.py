@@ -209,16 +209,17 @@ def hard_delete_resource_route(
     force: bool = False,
 ):
     """
-    Hard-delete a resource and all related data. Admin only.
+    Hard-delete a resource and all related data. Requires admin on the resource.
     Requires an approved deletion request unless ?force=true.
     """
     user_unique_id = auth_res.user_id
-    require_platform_admin(auth_res)
 
     with Session(engine) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == resource_id)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
+
+        require_permission(session, auth_res, resource_id, Permission.DELETE)
 
         if not force:
             approved = session.exec(

@@ -1,5 +1,5 @@
 from typing import Any, List, Optional
-from pydantic import field_validator
+from pydantic import ConfigDict, field_validator
 from sqlmodel import SQLModel
 
 from app.general_utils import blank_to_none, is_valid_mfid
@@ -38,20 +38,17 @@ class SampleCreate(SQLModel):
         return blank_to_none(v)
 
 class SampleUpdate(SQLModel):
-    '''Partial update schema for Sample. Only provided fields are modified.'''
+    '''Partial update schema for Sample. Only provided fields are modified.
+
+    No project_id — use POST /resources/{mfid}/project.
+    '''
+    model_config = ConfigDict(extra="forbid")
+
     sample_name: Optional[str] = None
     sample_type: Optional[str] = None
-    project_id: Optional[str] = None
     description: Optional[str] = None
     timestamp: Optional[str] = None
     public: Optional[bool] = None
-
-    @field_validator("project_id", "owner_orcid", mode="before", check_fields=False)
-    @classmethod
-    def blank_identifiers_to_none(cls, v):
-        """Uploaders that send "" instead of omitting the field would otherwise
-        attach the resource to a nameless project. See general_utils."""
-        return blank_to_none(v)
 
 class SampleRead(SQLModel):
     '''Response model for Sample. Includes server-generated fields.'''

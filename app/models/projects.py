@@ -1,6 +1,6 @@
 import warnings
 from typing import Optional, Union
-from pydantic import field_validator, model_validator
+from pydantic import ConfigDict, field_validator, model_validator
 from sqlmodel import SQLModel
 from app.models.users import UserPublicRead, UserRead
 
@@ -27,6 +27,7 @@ class ProjectCreate(SQLModel):
 class ProjectRead(SQLModel):
     '''Response model for Project.'''
     # id: int
+    unique_id: Optional[str] = None
     project_id: str
     organization: str
     project_lead_orcid: Optional[str] = None
@@ -50,12 +51,23 @@ class ProjectWithLead(ProjectRead):
     modification_time: Optional[str] = None
 
 
+class ProjectMinimalRead(SQLModel):
+    project_id: str
+    title: Optional[str] = None
+
+
 class ProjectUpdate(SQLModel):
     '''Partial update schema for Project. Only provided fields are modified.
-    Provide one of project_lead_orcid, project_lead_email, or project_lead_username to update the lead.'''
+
+    No project_lead_orcid/email/username: leadership changes only through
+    POST /resources/{proj_id}/transfer_ownership, which moves the owner
+    standing and the denormalized lead pointer atomically — a bare field
+    edit here never touched the actual owner standing at all. extra="forbid"
+    means sending one of those fields 422s at the schema layer rather than
+    being silently dropped or requiring a runtime check in the route.
+    '''
+    model_config = ConfigDict(extra="forbid")
+
     organization: Optional[str] = None
     status: Optional[str] = None
     title: Optional[str] = None
-    project_lead_orcid: Optional[str] = None
-    project_lead_email: Optional[str] = None
-    project_lead_username: Optional[str] = None

@@ -3,11 +3,11 @@ Backfill mfid for AssociatedFile rows that have NULL mfid.
 Run once inside the API pod after the mfid column was added.
 
 Usage (from inside the pod):
-    python migrations/backfill_associatedfile_mfid.py
+    python migrations/data/20260512_backfill_associatedfile_mfid.py
 """
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from mfid import mfid
 from sqlmodel import Session, select

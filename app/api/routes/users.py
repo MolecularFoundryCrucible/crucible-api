@@ -5,7 +5,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from sqlalchemy import func, join, literal, text
+from sqlalchemy import and_, func, join, literal, text
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select, col
 
@@ -13,18 +13,18 @@ from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import is_orcid, get_secret
 from app.models.core_models import (
     AccessGroup, Dataset, ResourceACL, Project, Sample, User,
-    UserAccessGroupLink, UserProjectLink,
+    UserAccessGroupLink,
 )
-from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin, require_self_or_platform_admin
+from app.utils.auth_utils import authorize_user, find_or_add_api_access, is_instrument_group_member, require_platform_admin, require_self_or_platform_admin
 from app.utils.permissions import Principal, Role
 from app.utils.sql_utils import add_or_update, table_obj_to_dict
 from app.utils.user_utils import assert_username_available, sql_add_user_to_access_group
-from app.utils.project_utils import sql_get_projects_for_user
+from app.utils.project_utils import is_project_group, sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.models.users import AccountProfileUpdate, UserCreate, UserPublicRead, UserRead, UserUpdate
 from app.models.response_schemas import ApiKeyRead, ApiKeyVerify
 from app.models.core_models import ApiToken
-from app.models.projects import ProjectWithLead
+from app.models.projects import ProjectMinimalRead, ProjectWithLead
 from app.models.access_groups import AccessGroupRead
 
 router = APIRouter(tags=["users"])
@@ -427,8 +427,15 @@ def read_user_access_to_dataset(dsid: str, orcid: str, auth_res: Annotated[Princ
 
 @router.post("/users/{orcid}/access_groups/{group_name}", response_model=AccessGroupRead)
 def add_user_to_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], orcid: str, group_name: str):
+    '''Add a user to an access group. Not for project groups — use
+    POST /projects/{proj_id}/users/{orcid}, which applies the project's own
+    role cap instead of platform-admin-only.'''
     require_platform_admin(auth_res)
     with Session(engine) as session:
+        if is_project_group(group_name, session):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{group_name}' is a project. Use POST /projects/{group_name}/users/{{orcid}} instead.")
         ag = sql_add_user_to_access_group(orcid, group_name, session)
         session.commit()
         session.refresh(ag)
@@ -454,9 +461,16 @@ def list_user_access_groups(auth_res: Annotated[Principal, Depends(authorize_use
 
 @router.delete("/users/{orcid}/access_groups/{group_name}")
 def remove_user_from_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], orcid: str, group_name: str):
-    '''Remove a user from an access group.'''
+    '''Remove a user from an access group. Not for project groups — use
+    DELETE /projects/{proj_id}/users/{orcid}, which keeps membership records
+    in step instead of only revoking access-group standing.'''
     require_platform_admin(auth_res)
     with Session(engine) as session:
+        if is_project_group(group_name, session):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{group_name}' is a project. Use DELETE /projects/{group_name}/users/{{orcid}} instead.")
+
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
@@ -480,24 +494,34 @@ def remove_user_from_access_group(auth_res: Annotated[Principal, Depends(authori
         return {"detail": f"User {orcid} removed from access group {group_name}"}
 
 
-@router.get("/users/{orcid}/projects", response_model=PaginatedResponse[ProjectWithLead])
+@router.get("/users/{orcid}/projects", response_model=PaginatedResponse[Union[ProjectWithLead, ProjectMinimalRead]])
 def read_projects_for_user(orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                            limit: int = Query(default=100, ge=1, le=1000),
                            offset: int = Query(default=0, ge=0)):
     '''
-    Returns a paginated list of the projects that this User is associated with, including the resolved project lead.
+    Returns a paginated list of the projects that this User is associated with.
+    Self or a platform admin gets full details including the resolved lead.
+    A caller with standing in any instrument group gets project_id and title
+    only, for rendering a project picker — nothing wider.
     '''
-    require_self_or_platform_admin(auth_res, orcid)
-
     with Session(engine) as session:
+        minimal = False
+        if auth_res.user_id != orcid and not auth_res.is_platform_admin:
+            if not is_instrument_group_member(auth_res, session):
+                raise HTTPException(status_code=403, detail="Not authorized")
+            minimal = True
+
         user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
         base = (
             select(Project)
-            .join(UserProjectLink, Project.project_id == UserProjectLink.project_id)
-            .where(UserProjectLink.user_id == user.id)
+            .join(AccessGroup, AccessGroup.group_name == Project.unique_id)
+            .join(UserAccessGroupLink, and_(
+                UserAccessGroupLink.accessgroup_id == AccessGroup.id,
+                UserAccessGroupLink.user_id == user.id,
+            ))
         )
         total = session.exec(select(func.count()).select_from(base.subquery())).one()
         projects = session.exec(
@@ -505,6 +529,10 @@ def read_projects_for_user(orcid: str, auth_res: Annotated[Principal, Depends(au
             .order_by(col(Project.project_id))
             .offset(offset).limit(limit)
         ).all()
+
+        if minimal:
+            items = [ProjectMinimalRead(project_id=p.project_id, title=p.title) for p in projects]
+            return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
         orcids = [p.project_lead_orcid for p in projects if p.project_lead_orcid]
         leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}

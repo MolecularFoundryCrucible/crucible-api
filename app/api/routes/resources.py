@@ -7,14 +7,14 @@ from sqlalchemy.sql import and_, exists, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_utc_isoformat, is_orcid, is_valid_mfid
+from app.general_utils import get_utc_isoformat
 from app.models.core_models import (
     AccessGroup,
     Dataset, DatasetLink, DatasetSampleLink,
     DeletionRequest,
     Instrument, Project, Resource,
     ResourceACL, Sample, SampleLink,
-    ScientificMetadataBinary, User,
+    ScientificMetadataBinary, User, UserAccessGroupLink,
 )
 from app.models.access import AccessGrantRead, AccessGrantWrite
 from app.models.access_groups import AccessGroupRead
@@ -23,6 +23,8 @@ from app.models.deletion import DeletionRequestRead
 from app.models.instrument import InstrumentResponse
 from app.models.links import LinkedResource
 from app.models.projects import ProjectWithLead
+from app.models.resource import (
+    ReassignProjectRead, ReassignProjectRequest, TransferOwnershipRead, TransferOwnershipRequest)
 from app.models.samples import SampleResponse
 from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
@@ -33,7 +35,8 @@ from app.utils.permissions import (
     PUBLIC_GROUP_NAME, Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, set_public, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
-from app.utils.user_utils import resolve_user
+from app.utils.project_utils import is_project_group
+from app.utils.user_utils import resolve_user_by_identifier
 
 
 router = APIRouter(tags=["resources"])
@@ -543,13 +546,8 @@ def _resolve_grantee(session, kind: str, principal: str):
         return ag, PUBLIC_GROUP_NAME
 
     if kind == "users":
-        # A service account's unique_id is an mfid, stored in the same column as
-        # an ORCID — so both are looked up as the identity, and anything else is
-        # treated as a username.
-        by_id = is_orcid(principal) or is_valid_mfid(principal)
-        user = resolve_user(session,
-                            orcid=principal if by_id else None,
-                            username=None if by_id else principal)
+        # Also accepts email now, via the same format-sniffing transfer_ownership uses.
+        user = resolve_user_by_identifier(session, principal)
         group_name = user.unique_id
     elif kind == "projects":
         proj = session.exec(select(Project).where(
@@ -726,3 +724,249 @@ def unpublish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authori
         touch_resource_modification_time(session, mfid)
         session.commit()
     return {"detail": "Public access withdrawn"}
+
+
+# ---------------------------------------------------------------------------
+# Ownership transfer
+#
+# "Owner" is not the same shape on every resource type, and neither is what
+# happens to the previous owner:
+#
+# - A project has exactly one ACL entry, permanently — its own group, at
+#   owner — so transferring leadership means changing who holds owner
+#   *standing* inside that one shared group. The previous lead is demoted to
+#   admin, not removed: they're still a real member of the same ongoing
+#   collaboration, just no longer in charge of it.
+# - A dataset/sample/instrument's owner grant lives on the owner's own
+#   *personal* ORCID group. Transferring moves the ACL row to the new
+#   owner's personal group, and the old grant is removed outright — leaving
+#   "Alice's personal group is admin here" behind after she no longer owns
+#   it doesn't fit what a personal group means. Whatever access she keeps
+#   should come from an actual standing elsewhere (e.g. project membership).
+#
+# See docs/permission_system_plan.md, Future Work -> Ownership transfer.
+# ---------------------------------------------------------------------------
+
+def _transfer_project_ownership(session, proj_id: str, new_owner: User) -> Optional[User]:
+    project = session.exec(select(Project).where(Project.project_id == proj_id)).one()
+    ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == project.unique_id)).one_or_none()
+    if ag is None:
+        raise HTTPException(status_code=409, detail=f"No access group for project '{proj_id}'")
+
+    previous_owner = None
+    old_owner_links = session.exec(
+        select(UserAccessGroupLink)
+        .where(UserAccessGroupLink.accessgroup_id == ag.id,
+              UserAccessGroupLink.role == Role.OWNER.db_value)
+    ).all()
+    for link in old_owner_links:
+        prev_user = session.exec(select(User).where(User.id == link.user_id)).one_or_none()
+        if prev_user is not None:
+            previous_owner = prev_user
+        link.role = Role.ADMIN.db_value
+        session.add(link)
+    session.flush()  # demote before promoting — one_owner_per_group must never see two at once
+
+    new_owner_link = session.exec(
+        select(UserAccessGroupLink)
+        .where(UserAccessGroupLink.user_id == new_owner.id, UserAccessGroupLink.accessgroup_id == ag.id)
+    ).one_or_none()
+    if new_owner_link is None:
+        session.add(UserAccessGroupLink(user_id=new_owner.id, accessgroup_id=ag.id,
+                                        role=Role.OWNER.db_value))
+    else:
+        new_owner_link.role = Role.OWNER.db_value
+        session.add(new_owner_link)
+
+    project.project_lead_orcid = new_owner.unique_id
+    project.project_lead_email = new_owner.email
+    session.add(project)
+    return previous_owner
+
+
+def _transfer_resource_owner_acl(session, resource: Resource, mfid: str, new_owner: User) -> Optional[User]:
+    """Unlike a project's shared group, this grant lives on the owner's own
+    personal ORCID group — so the old grant is removed outright, not
+    demoted. Leaving 'Alice's personal group is admin here' behind after she
+    no longer owns it doesn't fit what a personal group means; any access
+    she keeps should come from an actual standing (e.g. project membership),
+    not a leftover grant tied to her identity group specifically.
+    """
+    previous_owner = None
+    old_owner_acls = session.exec(
+        select(ResourceACL).where(ResourceACL.mfid == mfid, ResourceACL.role == Role.OWNER.db_value)
+    ).all()
+    for acl in old_owner_acls:
+        old_ag = session.exec(select(AccessGroup).where(AccessGroup.id == acl.accessgroup_id)).one()
+        prev_user = session.exec(select(User).where(User.unique_id == old_ag.group_name)).one_or_none()
+        if prev_user is not None:
+            previous_owner = prev_user
+        session.delete(acl)
+    session.flush()
+
+    new_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == new_owner.unique_id)).one_or_none()
+    if new_ag is None:
+        raise HTTPException(status_code=409,
+                            detail=f"New owner '{new_owner.unique_id}' has no personal access group")
+    new_owner_acl = session.exec(
+        select(ResourceACL).where(ResourceACL.mfid == mfid, ResourceACL.accessgroup_id == new_ag.id)
+    ).one_or_none()
+    if new_owner_acl is None:
+        session.add(ResourceACL(mfid=mfid, accessgroup_id=new_ag.id, read=True, write=True,
+                                role=Role.OWNER.db_value))
+    else:
+        new_owner_acl.role = Role.OWNER.db_value
+        new_owner_acl.write = True
+        session.add(new_owner_acl)
+
+    if resource.resource_type in ("dataset", "sample"):
+        entity_model = Dataset if resource.resource_type == "dataset" else Sample
+        entity = session.exec(select(entity_model).where(entity_model.unique_id == mfid)).one_or_none()
+        if entity is not None:
+            entity.owner_orcid = new_owner.unique_id
+            entity.owner_user_id = new_owner.id
+            session.add(entity)
+
+    return previous_owner
+
+
+def _current_owner(session, resource: Resource, mfid: str) -> Optional[User]:
+    """Who currently holds `owner` on this resource — read-only, for the
+    transfer_ownership preview. The real transfer's own demotion loop
+    re-derives this independently rather than reusing it, since execution
+    also has to defensively clean up more than one owner-role row if one
+    ever existed (see _transfer_resource_owner_acl)."""
+    if resource.resource_type == "project":
+        project = session.exec(select(Project).where(Project.project_id == mfid)).one_or_none()
+        ag = (
+            session.exec(select(AccessGroup).where(AccessGroup.group_name == project.unique_id)).one_or_none()
+            if project else None
+        )
+        if ag is None:
+            return None
+        link = session.exec(
+            select(UserAccessGroupLink)
+            .where(UserAccessGroupLink.accessgroup_id == ag.id,
+                  UserAccessGroupLink.role == Role.OWNER.db_value)
+        ).first()
+        return session.exec(select(User).where(User.id == link.user_id)).one_or_none() if link else None
+
+    acl = session.exec(
+        select(ResourceACL).where(ResourceACL.mfid == mfid, ResourceACL.role == Role.OWNER.db_value)
+    ).first()
+    if acl is None:
+        return None
+    ag = session.exec(select(AccessGroup).where(AccessGroup.id == acl.accessgroup_id)).one_or_none()
+    return session.exec(select(User).where(User.unique_id == ag.group_name)).one_or_none() if ag else None
+
+
+@router.post("/resources/{mfid}/transfer_ownership", response_model=TransferOwnershipRead)
+def transfer_ownership(mfid: str, body: TransferOwnershipRequest,
+                       auth_res: Annotated[Principal, Depends(authorize_user)],
+                       confirm: bool = False):
+    """Move ownership of a resource to another user. Requires owner.
+
+    Defaults to a preview: resolves new_owner and reports the current owner
+    without changing anything. Pass ?confirm=true to actually execute. This
+    is the safety net against a typo'd identifier resolving to some other
+    real person — worth having because whatever happens to the previous
+    owner (demoted for a project, removed outright for a dataset/sample —
+    see the module comment above), they lose the owner standing that would
+    let them undo it themselves. Recovery needs the (possibly wrong) new
+    owner's cooperation or a platform admin.
+
+    This is the only way to change who owns a project — PATCH /projects
+    rejects project_lead_orcid. The same PATCH rejection for owner_orcid on
+    datasets/samples is tracked separately and not yet in place.
+    """
+    with Session(engine) as session:
+        resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+
+        require_permission(session, auth_res, mfid, Permission.TRANSFER)
+
+        new_owner = resolve_user_by_identifier(session, body.new_owner)
+
+        if not confirm:
+            previous_owner = _current_owner(session, resource, mfid)
+            return TransferOwnershipRead(
+                resource_id=mfid,
+                previous_owner=UserPublicRead.model_validate(previous_owner) if previous_owner else None,
+                new_owner=UserPublicRead.model_validate(new_owner),
+            )
+
+        if resource.resource_type == "project":
+            previous_owner = _transfer_project_ownership(session, mfid, new_owner)
+        else:
+            previous_owner = _transfer_resource_owner_acl(session, resource, mfid, new_owner)
+
+        touch_resource_modification_time(session, mfid)
+        session.commit()
+
+        return TransferOwnershipRead(
+            resource_id=mfid,
+            previous_owner=UserPublicRead.model_validate(previous_owner) if previous_owner else None,
+            new_owner=UserPublicRead.model_validate(new_owner),
+        )
+
+
+def _current_project_grants(session, mfid: str) -> List[tuple]:
+    rows = session.exec(
+        select(ResourceACL, AccessGroup)
+        .join(AccessGroup, AccessGroup.id == ResourceACL.accessgroup_id)
+        .where(ResourceACL.mfid == mfid)
+    ).all()
+    return [(acl, ag) for acl, ag in rows if is_project_group(ag.group_name, session)]
+
+
+@router.post("/resources/{mfid}/project", response_model=ReassignProjectRead)
+def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
+                              auth_res: Annotated[Principal, Depends(authorize_user)],
+                              confirm: bool = False):
+    if body.project_id is None:
+        raise HTTPException(status_code=422, detail="project_id is required")
+
+    with Session(engine) as session:
+        resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+        if resource.resource_type not in ("dataset", "sample"):
+            raise HTTPException(status_code=400,
+                                detail=f"Cannot reassign project for resource_type={resource.resource_type!r}")
+
+        require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
+
+        new_proj = session.exec(select(Project).where(Project.project_id == body.project_id)).one_or_none()
+        if new_proj is None:
+            raise HTTPException(status_code=404, detail=f"Project '{body.project_id}' not found")
+        require_permission(session, auth_res, body.project_id, Permission.CREATE)
+
+        current_grants = _current_project_grants(session, mfid)
+        current_project_ids = [ag.resource_mfid for _, ag in current_grants]
+        previous_project_id = current_project_ids[0] if current_project_ids else None
+
+        if not confirm:
+            return ReassignProjectRead(resource_id=mfid, previous_project_id=previous_project_id,
+                                       new_project_id=body.project_id)
+
+        new_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == new_proj.unique_id)).one_or_none()
+        if new_ag is None:
+            raise HTTPException(status_code=409, detail=f"No access group for project '{body.project_id}'")
+
+        for acl, _ in current_grants:
+            session.delete(acl)
+        session.flush()
+        sql_create_resource_acl(new_ag, mfid, read=True, write=True, session=session, role=Role.ADMIN)
+
+        entity_model = Dataset if resource.resource_type == "dataset" else Sample
+        entity = session.exec(select(entity_model).where(entity_model.unique_id == mfid)).one_or_none()
+        if entity is not None:
+            entity.project_id = body.project_id
+            session.add(entity)
+
+        touch_resource_modification_time(session, mfid)
+        session.commit()
+
+        return ReassignProjectRead(resource_id=mfid, previous_project_id=previous_project_id,
+                                   new_project_id=body.project_id)

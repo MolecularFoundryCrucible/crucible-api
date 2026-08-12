@@ -1,4 +1,4 @@
-from typing import Annotated, List, Optional, Union
+from typing import Annotated, List, Literal, Optional, Union
 import logging
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,7 @@ from sqlmodel import and_, Session, select
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import get_utc_isoformat, is_orcid
 from app.models.core_models import (
-    AccessGroup, Dataset, ResourceACL, DatasetSampleLink,
+    Dataset, ResourceACL, DatasetSampleLink,
     DeletionRequest, Resource, Sample, SampleLink, ScientificMetadataBinary, User,
 )
 from app.models.datasets import DatasetRead
@@ -22,8 +22,9 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, permission_filter, require_groups, require_permission
-from app.utils.permissions import Principal, Role, Permission
-from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public
+from app.utils.permissions import Principal, Permission, Role
+from app.utils.project_utils import project_standing
+from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.models.users import UserPublicRead
 
@@ -101,6 +102,7 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
                   background_tasks: BackgroundTasks):
     '''
     Partially update a sample record. Only provided fields are modified.
+    No project_id — use POST /resources/{mfid}/project.
     '''
     user_unique_id = auth_res.user_id
 
@@ -122,16 +124,6 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
             if new_public is not None:
                 ri.public = new_public
                 set_public(session, sample_id, bool(new_public))
-
-        if 'owner_orcid' in update_dict:
-            owner_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.owner_orcid)).one_or_none()
-            sql_create_resource_acl(owner_ag, sample_id, read=True, write=True,
-                                    session=session, role=Role.OWNER)
-
-        if 'project_id' in update_dict:
-            proj_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sample.project_id)).one_or_none()
-            sql_create_resource_acl(proj_ag, sample_id, read=True, write=True,
-                                    session=session, role=Role.ADMIN)
 
         session.add(sample)
         session.commit()
@@ -175,6 +167,22 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
                 status_code=409,
                 detail=f"A sample named '{S.sample_name}' already exists in project '{S.project_id}'.",
             )
+
+        if not auth_res.is_platform_admin:
+            owner_orcid = S.owner_orcid or user_unique_id
+            if S.project_id:
+                standing = project_standing(owner_orcid, S.project_id, session)
+                if standing is None or standing < Role.CONTRIBUTOR:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"'{owner_orcid}' must be contributor or above in project '{S.project_id}' to create there")
+            elif owner_orcid != user_unique_id:
+                if not auth_res.is_service_account:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Creating on behalf of another user requires project_id, to verify their standing there")
+                if session.exec(select(User).where(User.unique_id == owner_orcid)).one_or_none() is None:
+                    raise HTTPException(status_code=404, detail=f"Owner '{owner_orcid}' not found")
 
         sample = Sample(**S.model_dump(exclude_unset=True))
         session.add(sample)
@@ -232,7 +240,8 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                  cursor: Optional[str] = None,
                  offset: int = Query(default=0, ge=0),
                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
-                 modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None):
+                 modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None,
+                 visibility: Literal["all", "public", "private"] = "all"):
     '''
     Returns a paginated list of samples the requesting user is authorized to view.
     Default limit is 100, max is 1000.
@@ -248,6 +257,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
     result sets, since deep offsets are slower.
     Pass include_links=true to include parent, child, and associated resources for each sample.
     include_datasets is deprecated — use include_links instead.
+    Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
     '''
     import warnings
     if include_datasets:
@@ -257,7 +267,8 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
 
     params_dict = dict(request.query_params)
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
-              'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets', 'include_owner', 'limit', 'cursor', 'offset'):
+              'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets',
+              'include_owner', 'limit', 'cursor', 'offset', 'visibility'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -266,6 +277,8 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
 
         def apply_filters(q):
             q = q.where(auth_filter).where(deletion_filter)
+            if visibility != "all":
+                q = q.where(visibility_filter_for(Sample, visibility))
             if creation_time_gte:
                 q = q.where(Resource.creation_time >= creation_time_gte)
             if creation_time_lte:

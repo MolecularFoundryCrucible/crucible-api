@@ -2,8 +2,8 @@
 Phase 1 backfill for the permission system redesign.
 See docs/permission_system_plan.md -> Migration path.
 
-Run AFTER migrations/add_permission_roles.sql, and after
-migrations/audit_permission_preconditions.py reports no blockers.
+Run AFTER migrations/data/20260806_add_permission_roles.sql, and after
+migrations/data/20260806_audit_permission_preconditions.py reports no blockers.
 
 Dry run by default — prints what every step would do and rolls back. Pass
 --commit to apply. Staging first, then production.
@@ -12,14 +12,14 @@ Every statement computes its final value directly rather than layering updates,
 so re-running is safe and converges to the same state.
 
 Usage (from inside the pod):
-    /root/.venv/bin/python migrations/backfill_permission_roles.py
-    /root/.venv/bin/python migrations/backfill_permission_roles.py --commit
+    /root/.venv/bin/python migrations/data/20260806_backfill_permission_roles.py
+    /root/.venv/bin/python migrations/data/20260806_backfill_permission_roles.py --commit
 """
 import argparse
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sqlalchemy import text
 from sqlmodel import Session

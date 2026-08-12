@@ -4,27 +4,41 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlmodel import select
+from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import AccessGroup, User
 from app.utils.sql_utils import add_or_update
 
-_USERNAME_RE = re.compile(r'^[a-z][a-z0-9_-]{2,31}$')
+# A separator (- or _) must always be followed by an alphanumeric run, which
+# structurally rules out leading, trailing, and consecutive separators in one
+# pattern. 24-char cap (not 32) is deliberate: it makes a 26-char MFID
+# (service account identity) provably unable to collide with a username by
+# format, rather than relying on lookup-order precedence to keep them apart.
+_USERNAME_RE = re.compile(r'^[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*$')
+_USERNAME_MAX = 24
 
 
 def validate_username_format(username: str) -> str:
     username = username.lower()
-    if not _USERNAME_RE.match(username):
+    if not (3 <= len(username) <= _USERNAME_MAX) or not _USERNAME_RE.match(username):
         raise ValueError(
-            "username must be 3-32 chars, start with a letter, "
-            "and contain only lowercase letters, digits, underscores, hyphens"
+            f"username must be 3-{_USERNAME_MAX} chars, start with a letter, contain only "
+            "lowercase letters, digits, underscores, hyphens, and never have "
+            "a leading, trailing, or repeated separator"
         )
     return username
 
 
 def sanitize_username_from_email(email: str) -> str:
+    """Derive a candidate username from an email's local part. Satisfies
+    validate_username_format's rules by construction — callers that skip
+    re-validating (the backfill script does) rely on that. May still come out
+    empty or under 3 chars; the caller checks length before use."""
     prefix = email.split('@')[0].lower()
     sanitized = re.sub(r'[^a-z0-9_-]', '_', prefix)
+    sanitized = re.sub(r'[_-]{2,}', '_', sanitized)
     sanitized = re.sub(r'^[^a-z]+', '', sanitized)
-    return sanitized[:32]
+    sanitized = sanitized[:_USERNAME_MAX]
+    return sanitized.rstrip('_-')
 
 
 def assert_username_available(session, username: str, exclude_orcid: Optional[str] = None) -> None:
@@ -53,6 +67,25 @@ def resolve_user(session, orcid: Optional[str] = None, email: Optional[str] = No
     return user
 
 
+def resolve_user_by_identifier(session, identifier: str) -> User:
+    """Resolve a user from a single string that may be an ORCID, a service
+    account's MFID, a username, or an email — distinguished by format rather
+    than requiring the caller to name which field they mean.
+
+    The four never collide: email always contains '@'; ORCID is a strict
+    case-sensitive NNNN-NNNN-NNNN-NNNN pattern; a service account's identity
+    (stored in the same column as an ORCID) is a 26-char MFID; and usernames
+    are capped at 24 chars and enforced lowercase, so an MFID can never
+    validate as one. Checking identity-shape before falling back to username
+    is what keeps that last pair apart in practice.
+    """
+    if "@" in identifier:
+        return resolve_user(session, email=identifier)
+    if is_orcid(identifier) or is_valid_mfid(identifier):
+        return resolve_user(session, orcid=identifier)
+    return resolve_user(session, username=identifier)
+
+
 def sql_add_user_to_access_group(orcid, group_name, session, role=None):
     """Add a user to an access group by ORCID, creating the group if needed.
 
@@ -68,6 +101,9 @@ def sql_add_user_to_access_group(orcid, group_name, session, role=None):
                        AccessGroup,
                        AccessGroup.group_name == group_name,
                        group_name=group_name)
+    if group_name == orcid and ag.owner_orcid is None and ag.resource_mfid is None:
+        ag.owner_orcid = orcid
+        session.add(ag)
     if user is None:
         return ag
 

@@ -10,6 +10,34 @@ ordering mistakes made along the way.
 
 ---
 
+## Schema migrations moved to Alembic (2026-08-10)
+
+Everything below this table predates it. `migrations/` used to be a flat
+folder of one-off `.sql` files and `apply_sql.py`; that history is unchanged
+in behavior but now lives in `migrations/data/`, renamed `YYYYMMDD_` by
+first-commit date so ordering doesn't require `git log`. Data backfills,
+audits, and cleanup scripts (the dry-run-by-default, production-guarded
+Python scripts) stay in `migrations/data/` going forward too — Alembic is for
+schema shape, not risky data mutation.
+
+New schema changes: `DB_CONF_FILE=.env alembic revision --autogenerate -m
+"..."`, review the generated file, `DB_CONF_FILE=.env alembic upgrade head`
+(staging first), then the same against production with
+`-x yes-this-is-production=true`.
+
+**Staging and production are NOT at the same schema state**, which matters
+for adopting Alembic cleanly: staging has already run
+`migrations/data/20260806_add_permission_roles.sql`; production hasn't
+(Phase 1a below is still open there). The baseline revision
+(`migrations/versions/20260810_fc9be1ddfb92_baseline_adopt_alembic_schema_as_of_.py`)
+is empty — it marks
+"schema as of 2026-08-10" and assumes that column already exists. So:
+
+- **Staging**: already at the baseline state. Run `alembic stamp head` now — no DDL, just marks the version table.
+- **Production**: run Phase 1a exactly as written below (the old, already-tested `apply_sql.py` path — this migration is mid-rollout and re-authoring it as a fresh Alembic revision would be untested on the one path that matters, the actual rollout). Only after that succeeds does production also get `alembic stamp head`, at which point both databases agree with the baseline and every subsequent schema change is a real Alembic revision.
+
+---
+
 ## Status
 
 | Phase | Staging | Production |
@@ -34,11 +62,11 @@ Test suite: 475 hermetic, 549 with a throwaway Postgres.
 | Pure permission model — `Role`, `Principal`, `effective_role`, `has_permission`, `can_grant` | `app/utils/permissions.py` |
 | Auth returns a `Principal`; admin-group bypass; public-group injection | `app/utils/auth_utils.py` |
 | Shadow mode | `app/utils/shadow.py` |
-| Precondition audit (read-only) | `migrations/audit_permission_preconditions.py` |
-| Additive schema | `migrations/add_permission_roles.sql` |
-| Backfill (dry-run default, idempotent, self-verifying) | `migrations/backfill_permission_roles.py` |
-| Batched delete of the 721k bypass rows | `migrations/delete_bypass_acl_rows.py` |
-| `.sql` runner using the app's own DB config | `migrations/apply_sql.py` |
+| Precondition audit (read-only) | `migrations/data/20260806_audit_permission_preconditions.py` |
+| Additive schema | `migrations/data/20260806_add_permission_roles.sql` |
+| Backfill (dry-run default, idempotent, self-verifying) | `migrations/data/20260806_backfill_permission_roles.py` |
+| Batched delete of the 721k bypass rows | `migrations/data/20260807_delete_bypass_acl_rows.py` |
+| `.sql` runner using the app's own DB config | `migrations/data/20260806_apply_sql.py` |
 | Exhaustive role matrix (221 assertions, no DB) | `tests/test_permissions.py` |
 | Agreement tests — old checks vs new, on real migrated data | `tests/test_permission_agreement.py` |
 | End-to-end migration test against real Postgres | `tests/test_migration_permission_roles.py` |
@@ -101,6 +129,18 @@ without them and the API 500s on essentially every authenticated request.
 Net ordering per environment: **migrate schema → deploy code (with bypass) →
 run backfill.** Not the order the plan's numbered list implies.
 
+**3. The project-group MFID rename has no admin-bypass equivalent — it is a
+hard cutover, not a staged one.**
+
+Group C's project half (`app/utils/project_utils.py` and friends resolving a
+project's access group via `Project.unique_id` instead of `project_id`) is
+written but not deployable yet. Unlike rule 1, there is no fallback path: the
+code looks a group up by MFID, and if `migrations/data/
+20260810_rename_project_groups_to_mfid.py` hasn't renamed it yet, every
+project route 403s or 404s, project-wide, the moment the code deploys.
+Required order: **`Project.unique_id` backfill → group-rename backfill →
+deploy the code.** See the two scripts' own docstrings for the same warning.
+
 ---
 
 ## Production prerequisites
@@ -160,7 +200,7 @@ fallback.
 ### Phase 0.5 — audit
 
 ```bash
-DB_CONF_FILE=.env python migrations/audit_permission_preconditions.py
+DB_CONF_FILE=.env python migrations/data/20260806_audit_permission_preconditions.py
 ```
 
 Read-only. Four counts: public-column drift, dangling `Sample.project_id`,
@@ -170,7 +210,7 @@ non-zero before continuing.
 ### Phase 1a — schema
 
 ```bash
-DB_CONF_FILE=.env python migrations/apply_sql.py migrations/add_permission_roles.sql
+DB_CONF_FILE=.env python migrations/data/20260806_apply_sql.py migrations/data/20260806_add_permission_roles.sql
 ```
 
 Additive only. Verify the columns are the enum types, not `varchar`:
@@ -196,8 +236,8 @@ Wait for the rollout. **This must land before the backfill** (ordering rule 1).
 ### Phase 1c — backfill
 
 ```bash
-DB_CONF_FILE=.env python migrations/backfill_permission_roles.py            # dry run
-DB_CONF_FILE=.env python migrations/backfill_permission_roles.py --commit
+DB_CONF_FILE=.env python migrations/data/20260806_backfill_permission_roles.py            # dry run
+DB_CONF_FILE=.env python migrations/data/20260806_backfill_permission_roles.py --commit
 ```
 
 Dry run first, always. It self-verifies and rolls back if anything is left
@@ -231,6 +271,56 @@ ordering rule 1 protects:
 
 ```python
 from app.utils.auth_utils import require_read_access   # must not raise
+```
+
+---
+
+## Group C rollout (staging)
+
+Instrument identity, instrument group lifecycle, `AccessGroup` kind columns,
+project-group MFID rename. Code is written; nothing below has run yet. Run
+every step in order — steps 2 and 5 are hard prerequisites for code already
+in the branch, not optional cleanup: deploying before them breaks dataset
+creation (step 2) or every project route (step 5).
+
+```bash
+# 1. schema
+DB_CONF_FILE=.env alembic upgrade head
+
+# 2. instrument operator groups — REQUIRED before deploy, or create_dataset
+#    500s for every existing instrument (no MFID-keyed group yet)
+DB_CONF_FILE=.env python migrations/data/20260810_provision_instrument_operator_groups.py
+DB_CONF_FILE=.env python migrations/data/20260810_provision_instrument_operator_groups.py --commit
+
+# 3. instrument_id slugs — additive, no ordering constraint
+DB_CONF_FILE=.env python migrations/data/20260810_backfill_instrument_id.py --commit
+
+# 4. accessgroup owner_orcid/resource_mfid — additive, no ordering constraint
+DB_CONF_FILE=.env python migrations/data/20260810_backfill_accessgroup_kind.py --commit
+
+# 5. project unique_id, then the group rename it unblocks — REQUIRED before
+#    deploy, or every project route 403s/404s (no fallback path, unlike rule 1)
+DB_CONF_FILE=.env python migrations/data/20260810_backfill_project_unique_id.py --commit
+DB_CONF_FILE=.env python migrations/data/20260810_rename_project_groups_to_mfid.py
+DB_CONF_FILE=.env python migrations/data/20260810_rename_project_groups_to_mfid.py --commit
+
+# 6. only now, deploy
+git push origin <branch>:staging
+```
+
+Dry run (no `--commit`) before every `--commit` line above — all five scripts
+default to dry-run and print what they'd do. Watch for `WARNING:` lines in
+steps 2 and 5: a legacy group name shared with something else (a user's
+ORCID, another project/instrument) is left untouched and needs a manual call,
+not a rerun.
+
+Verify:
+
+```sql
+SELECT count(*) FROM instrument WHERE instrument_id IS NULL;              -- 0
+SELECT count(*) FROM project WHERE unique_id IS NULL;                     -- 0
+SELECT count(*) FROM accessgroup WHERE owner_orcid IS NOT NULL
+  AND resource_mfid IS NOT NULL;                                          -- 0 (CHECK constraint backstops this)
 ```
 
 ---

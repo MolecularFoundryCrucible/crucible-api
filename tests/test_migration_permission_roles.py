@@ -18,7 +18,7 @@ from app.utils.permissions import (
 )
 from tests.pg_fixture import (
     LEAD, MEMBER, PLATFORM_ADMIN, PG_URL, SA, STAFF,
-    acl_for, build_migrated_engine, principal_for,
+    acl_for, build_migrated_engine, load_backfill_module, principal_for,
 )
 
 pytestmark = pytest.mark.skipif(not PG_URL, reason="CRUCIBLE_TEST_PG_URL not set")
@@ -300,7 +300,7 @@ class TestLoadPrincipal:
 def test_backfill_is_idempotent(migrated):
     """A second run must change nothing — the plan calls for re-running against
     a fresh clone, and a partially-converted state must converge."""
-    import migrations.backfill_permission_roles as backfill
+    backfill = load_backfill_module()
     with Session(migrated) as session:
         assert backfill.backfill_standings(session) == 0
         assert backfill.backfill_acl_grants(session) == 0

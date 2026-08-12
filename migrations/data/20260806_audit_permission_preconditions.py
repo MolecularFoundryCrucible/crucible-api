@@ -13,11 +13,11 @@ real migration. The staging clone drifts from the moment it is taken, so
 a clean staging result does not carry over.
 
 Usage (from inside the pod):
-    /root/.venv/bin/python migrations/audit_permission_preconditions.py
+    /root/.venv/bin/python migrations/data/20260806_audit_permission_preconditions.py
 """
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sqlalchemy import text
 from sqlmodel import Session

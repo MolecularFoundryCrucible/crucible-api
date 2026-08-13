@@ -15,7 +15,7 @@ from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import get_utc_isoformat, is_orcid
 from app.models.core_models import (
     Dataset, ResourceACL, DatasetSampleLink,
-    DeletionRequest, Resource, Sample, SampleLink, ScientificMetadataBinary, User,
+    DeletionRequest, Project, Resource, Sample, SampleLink, ScientificMetadataBinary, User,
 )
 from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
@@ -316,14 +316,18 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
 
         if include_metadata:
             samp_cmd = (
-                select(Sample, Resource.creation_time, Resource.modification_time, Resource.public, ScientificMetadataBinary.scientific_metadata)
+                select(Sample, Resource.creation_time, Resource.modification_time, Resource.public,
+                       ScientificMetadataBinary.scientific_metadata, Project.project_id)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
                 .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Sample.unique_id, isouter=True)
+                .outerjoin(Project, Project.unique_id == Sample.project_mfid)
             )
         else:
             samp_cmd = (
-                select(Sample, Resource.creation_time, Resource.modification_time, Resource.public)
+                select(Sample, Resource.creation_time, Resource.modification_time, Resource.public,
+                       Project.project_id)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+                .outerjoin(Project, Project.unique_id == Sample.project_mfid)
             )
 
         samp_cmd = apply_filters(samp_cmd)
@@ -385,14 +389,12 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                 for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all():
                     owners_by_orcid[u.unique_id] = UserPublicRead.model_validate(u)
 
-        project_ids_by_mfid = resolve_project_mfids_to_ids((row[0].project_mfid for row in rows), session)
-
         items = []
         for row in rows:
             if include_metadata:
-                samp, creation_time, modification_time, public, sci_md = row
+                samp, creation_time, modification_time, public, sci_md, resolved_project_id = row
             else:
-                samp, creation_time, modification_time, public = row
+                samp, creation_time, modification_time, public, resolved_project_id = row
                 sci_md = None
             links = None
             compat_datasets = None
@@ -406,7 +408,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     compat_datasets = dataset_reads_by_sample.get(samp.id, [])
             items.append(SampleResponse.model_validate({
                 **samp.model_dump(),
-                "project_id": project_ids_by_mfid.get(samp.project_mfid, samp.project_id),
+                "project_id": resolved_project_id if resolved_project_id is not None else samp.project_id,
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
@@ -421,12 +423,17 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
 
 
 def _sample_base_query(principal):
-    """Auth-scoped, deletion-filtered base query for samples. Caller adds ordering and pagination."""
+    """Auth-scoped, deletion-filtered base query for samples. Caller adds
+    ordering and pagination. Joins Project directly so callers get the
+    live-resolved project_id alongside each row, rather than a second
+    resolve query after the fact."""
     auth_filter = permission_filter(principal, Sample)
     deletion_filter = deletion_filter_for(Sample)
     return (
-        select(Sample, Resource.creation_time, Resource.modification_time, Resource.public)
+        select(Sample, Resource.creation_time, Resource.modification_time, Resource.public,
+               Project.project_id)
         .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
+        .outerjoin(Project, Project.unique_id == Sample.project_mfid)
         .where(auth_filter)
         .where(deletion_filter)
     )
@@ -456,14 +463,13 @@ def search_samples(
             query = query.where(Sample.project_mfid == resolve_project_id_to_mfid(project_id, session))
         query = query.order_by(func.word_similarity(q, Sample.sample_name).desc()).limit(limit)
         results = session.exec(query).all()
-        project_ids_by_mfid = resolve_project_mfids_to_ids((samp.project_mfid for samp, *_ in results), session)
         items = [SampleResponse.model_validate({
             **samp.model_dump(),
-            "project_id": project_ids_by_mfid.get(samp.project_mfid, samp.project_id),
+            "project_id": resolved_project_id if resolved_project_id is not None else samp.project_id,
             "public": public if public is not None else False,
             "creation_time": creation_time,
             "modification_time": modification_time,
-        }) for samp, creation_time, modification_time, public in results]
+        }) for samp, creation_time, modification_time, public, resolved_project_id in results]
         return PaginatedResponse(limit=limit, items=items)
 
 

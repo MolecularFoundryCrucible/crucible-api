@@ -26,6 +26,7 @@ from app.models.core_models import (
     DeletionRequest,
     Instrument,
     Keyword,
+    Project,
     Resource,
     Sample,
     ScientificMetadataBinary,
@@ -394,14 +395,20 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
         if include_metadata:
             query = (
                 select(Dataset, Resource.creation_time, Resource.modification_time,
-                       Resource.public, ScientificMetadataBinary.scientific_metadata)
+                       Resource.public, ScientificMetadataBinary.scientific_metadata,
+                       Project.project_id, Instrument.instrument_id)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
                 .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Dataset.unique_id, isouter=True)
+                .outerjoin(Project, Project.unique_id == Dataset.project_mfid)
+                .outerjoin(Instrument, Instrument.unique_id == Dataset.instrument_mfid)
             )
         else:
             query = (
-                select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public)
+                select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public,
+                       Project.project_id, Instrument.instrument_id)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+                .outerjoin(Project, Project.unique_id == Dataset.project_mfid)
+                .outerjoin(Instrument, Instrument.unique_id == Dataset.instrument_mfid)
             )
 
         query = apply_filters(query)
@@ -455,17 +462,12 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all():
                     owners_by_orcid[u.unique_id] = UserPublicRead.model_validate(u)
 
-        instrument_ids_by_mfid = resolve_instrument_mfids_to_ids(
-            (row[0].instrument_mfid for row in results), session)
-        project_ids_by_mfid = resolve_project_mfids_to_ids(
-            (row[0].project_mfid for row in results), session)
-
         items = []
         for row in results:
             if include_metadata:
-                dataset, creation_time, modification_time, public, sci_md = row
+                dataset, creation_time, modification_time, public, sci_md, resolved_project_id, resolved_instrument_id = row
             else:
-                dataset, creation_time, modification_time, public = row
+                dataset, creation_time, modification_time, public, resolved_project_id, resolved_instrument_id = row
                 sci_md = None
             links = None
             if include_links:
@@ -476,8 +478,8 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 )
             items.append(DatasetResponse.model_validate({
                 **dataset.model_dump(),
-                "instrument_id": instrument_ids_by_mfid.get(dataset.instrument_mfid),
-                "project_id": project_ids_by_mfid.get(dataset.project_mfid, dataset.project_id),
+                "instrument_id": resolved_instrument_id,
+                "project_id": resolved_project_id if resolved_project_id is not None else dataset.project_id,
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
@@ -491,12 +493,18 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
 
 
 def _dataset_base_query(principal):
-    """Auth-scoped, deletion-filtered base query for datasets. Caller adds ordering and pagination."""
+    """Auth-scoped, deletion-filtered base query for datasets. Caller adds
+    ordering and pagination. Joins Project/Instrument directly so callers get
+    the live-resolved project_id/instrument_id alongside each row, rather
+    than a second resolve query after the fact."""
     auth_filter = permission_filter(principal, Dataset)
     deletion_filter = deletion_filter_for(Dataset)
     return (
-        select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public)
+        select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public,
+               Project.project_id, Instrument.instrument_id)
         .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
+        .outerjoin(Project, Project.unique_id == Dataset.project_mfid)
+        .outerjoin(Instrument, Instrument.unique_id == Dataset.instrument_mfid)
         .where(auth_filter)
         .where(deletion_filter)
     )
@@ -526,18 +534,14 @@ def search_datasets(
             query = query.where(Dataset.project_mfid == resolve_project_id_to_mfid(project_id, session))
         query = query.order_by(func.word_similarity(q, Dataset.dataset_name).desc()).limit(limit)
         results = session.exec(query).all()
-        instrument_ids_by_mfid = resolve_instrument_mfids_to_ids(
-            (dataset.instrument_mfid for dataset, *_ in results), session)
-        project_ids_by_mfid = resolve_project_mfids_to_ids(
-            (dataset.project_mfid for dataset, *_ in results), session)
         items = [DatasetResponse.model_validate({
             **dataset.model_dump(),
-            "instrument_id": instrument_ids_by_mfid.get(dataset.instrument_mfid),
-            "project_id": project_ids_by_mfid.get(dataset.project_mfid, dataset.project_id),
+            "instrument_id": resolved_instrument_id,
+            "project_id": resolved_project_id if resolved_project_id is not None else dataset.project_id,
             "public": public if public is not None else False,
             "creation_time": creation_time,
             "modification_time": modification_time,
-        }) for dataset, creation_time, modification_time, public in results]
+        }) for dataset, creation_time, modification_time, public, resolved_project_id, resolved_instrument_id in results]
         return PaginatedResponse(limit=limit, items=items)
 
 

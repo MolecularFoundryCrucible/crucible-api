@@ -35,6 +35,7 @@ from app.utils.permissions import (
     PUBLIC_GROUP_NAME, Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, set_public, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
+from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
 from app.utils.project_utils import is_project_group
 from app.utils.user_utils import resolve_user_by_identifier
 
@@ -216,8 +217,10 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
             ).one_or_none()
             if ds is None:
                 raise HTTPException(status_code=404, detail="Dataset not found")
+            instrument_ids = resolve_instrument_mfids_to_ids([ds.instrument_mfid], session)
             return DatasetResponse.model_validate({
                 **ds.model_dump(),
+                "instrument_id": instrument_ids.get(ds.instrument_mfid),
                 "public": resource.public,
                 "creation_time": resource.creation_time,
                 "modification_time": resource.modification_time,
@@ -235,10 +238,15 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
             ).one_or_none()
             if samp is None:
                 raise HTTPException(status_code=404, detail="Sample not found")
+            instrument_ids = resolve_instrument_mfids_to_ids(
+                [ds.instrument_mfid for ds in samp.datasets], session)
             return SampleResponse.model_validate({
                 **samp.model_dump(),
                 "public": resource.public,
-                "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
+                "datasets": [DatasetRead.model_validate({
+                    **ds.model_dump(),
+                    "instrument_id": instrument_ids.get(ds.instrument_mfid),
+                }) for ds in samp.datasets],
                 "creation_time": resource.creation_time,
                 "modification_time": resource.modification_time,
                 "scientific_metadata": sci_md,
@@ -262,7 +270,7 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
 
         elif resource.resource_type == "project":
             proj = session.exec(
-                select(Project).where(Project.project_id == resource_id)
+                select(Project).where(Project.unique_id == resource_id)
             ).one_or_none()
             if proj is None:
                 raise HTTPException(status_code=404, detail="Project not found")
@@ -527,7 +535,7 @@ def _group_kind(session, group_name: str) -> str:
     user = session.exec(select(User).where(User.unique_id == group_name)).one_or_none()
     if user is not None:
         return "service_account" if user.is_service_account else "user"
-    if session.exec(select(Project).where(Project.project_id == group_name)).one_or_none():
+    if session.exec(select(Project).where(Project.unique_id == group_name)).one_or_none():
         return "project"
     if session.exec(select(Instrument).where(
             func.lower(Instrument.instrument_name) == group_name)).one_or_none():
@@ -554,7 +562,7 @@ def _resolve_grantee(session, kind: str, principal: str):
             Project.project_id == principal)).one_or_none()
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project '{principal}' not found")
-        group_name = proj.project_id
+        group_name = proj.unique_id
     else:
         raise HTTPException(status_code=404, detail=f"Unknown principal kind '{kind}'")
 
@@ -747,11 +755,11 @@ def unpublish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authori
 # See docs/permission_system_plan.md, Future Work -> Ownership transfer.
 # ---------------------------------------------------------------------------
 
-def _transfer_project_ownership(session, proj_id: str, new_owner: User) -> Optional[User]:
-    project = session.exec(select(Project).where(Project.project_id == proj_id)).one()
+def _transfer_project_ownership(session, mfid: str, new_owner: User) -> Optional[User]:
+    project = session.exec(select(Project).where(Project.unique_id == mfid)).one()
     ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == project.unique_id)).one_or_none()
     if ag is None:
-        raise HTTPException(status_code=409, detail=f"No access group for project '{proj_id}'")
+        raise HTTPException(status_code=409, detail=f"No access group for project '{project.project_id}'")
 
     previous_owner = None
     old_owner_links = session.exec(
@@ -837,7 +845,7 @@ def _current_owner(session, resource: Resource, mfid: str) -> Optional[User]:
     also has to defensively clean up more than one owner-role row if one
     ever existed (see _transfer_resource_owner_acl)."""
     if resource.resource_type == "project":
-        project = session.exec(select(Project).where(Project.project_id == mfid)).one_or_none()
+        project = session.exec(select(Project).where(Project.unique_id == mfid)).one_or_none()
         ag = (
             session.exec(select(AccessGroup).where(AccessGroup.group_name == project.unique_id)).one_or_none()
             if project else None
@@ -940,7 +948,7 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
         new_proj = session.exec(select(Project).where(Project.project_id == body.project_id)).one_or_none()
         if new_proj is None:
             raise HTTPException(status_code=404, detail=f"Project '{body.project_id}' not found")
-        require_permission(session, auth_res, body.project_id, Permission.CREATE)
+        require_permission(session, auth_res, new_proj.unique_id, Permission.CREATE)
 
         current_grants = _current_project_grants(session, mfid)
         previous_project_id = None

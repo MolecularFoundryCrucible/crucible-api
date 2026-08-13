@@ -32,8 +32,11 @@ def session():
         for orcid in (OWNER_ORCID, FRIEND_ORCID):
             s.add(User(first_name="A", last_name="B", email=f"{orcid}@x", unique_id=orcid))
             s.add(AccessGroup(group_name=orcid))
-        s.add(Project(project_id=PROJ, organization="LBNL", project_lead_orcid=OWNER_ORCID))
-        s.add(AccessGroup(group_name=PROJ))
+        proj = Project(project_id=PROJ, organization="LBNL", project_lead_orcid=OWNER_ORCID)
+        s.add(proj)
+        s.commit()
+        s.refresh(proj)
+        s.add(AccessGroup(group_name=proj.unique_id))
         s.add(AccessGroup(group_name=PUBLIC_GROUP_NAME))
         s.commit()
         owner_gid = s.exec(select(AccessGroup).where(
@@ -56,8 +59,9 @@ def owner(session):
 class TestGroupKind:
     def test_classifies_each_principal_type(self, session):
         from app.api.routes.resources import _group_kind
+        proj = session.exec(select(Project).where(Project.project_id == PROJ)).one()
         assert _group_kind(session, OWNER_ORCID) == "user"
-        assert _group_kind(session, PROJ) == "project"
+        assert _group_kind(session, proj.unique_id) == "project"
         assert _group_kind(session, PUBLIC_GROUP_NAME) == "public"
         assert _group_kind(session, "admin") == "system"
         assert _group_kind(session, "nothing-like-this") == "unknown"
@@ -79,8 +83,9 @@ class TestResolveGrantee:
 
     def test_project_by_id(self, session):
         from app.api.routes.resources import _resolve_grantee
+        proj = session.exec(select(Project).where(Project.project_id == PROJ)).one()
         ag, canonical = _resolve_grantee(session, "projects", PROJ)
-        assert canonical == PROJ and ag.group_name == PROJ
+        assert canonical == proj.unique_id and ag.group_name == proj.unique_id
 
     def test_unknown_project_is_404(self, session):
         from app.api.routes.resources import _resolve_grantee
@@ -107,6 +112,11 @@ class TestResolveGrantee:
         assert canonical == sa_id
 
 
+def proj_gid(session):
+    proj = session.exec(select(Project).where(Project.project_id == PROJ)).one()
+    return gid(session, proj.unique_id)
+
+
 class TestManageAclCap:
     def test_owner_may_grant_anything_up_to_owner(self, session):
         from app.utils.auth_utils import require_grant
@@ -115,32 +125,32 @@ class TestManageAclCap:
 
     def test_admin_cannot_mint_an_owner(self, session):
         from app.utils.auth_utils import require_grant
-        session.add(ResourceACL(mfid=MFID, accessgroup_id=gid(session, PROJ),
+        session.add(ResourceACL(mfid=MFID, accessgroup_id=proj_gid(session),
                                 read=True, write=True, role=Role.ADMIN.db_value))
         session.commit()
         p = Principal(user_id="x",
-                      groups=(GroupMembership(gid(session, PROJ), PROJ, Role.ADMIN),))
+                      groups=(GroupMembership(proj_gid(session), PROJ, Role.ADMIN),))
         require_grant(session, p, MFID, Role.EDITOR)      # fine
         with pytest.raises(HTTPException):
             require_grant(session, p, MFID, Role.OWNER)
 
     def test_admin_cannot_overwrite_an_owner_grant(self, session):
         from app.utils.auth_utils import require_grant
-        session.add(ResourceACL(mfid=MFID, accessgroup_id=gid(session, PROJ),
+        session.add(ResourceACL(mfid=MFID, accessgroup_id=proj_gid(session),
                                 read=True, write=True, role=Role.ADMIN.db_value))
         session.commit()
         p = Principal(user_id="x",
-                      groups=(GroupMembership(gid(session, PROJ), PROJ, Role.ADMIN),))
+                      groups=(GroupMembership(proj_gid(session), PROJ, Role.ADMIN),))
         with pytest.raises(HTTPException):
             require_grant(session, p, MFID, Role.VIEWER, current=Role.OWNER)
 
     def test_a_mere_editor_cannot_manage_acls_at_all(self, session):
         from app.utils.auth_utils import require_grant
-        session.add(ResourceACL(mfid=MFID, accessgroup_id=gid(session, PROJ),
+        session.add(ResourceACL(mfid=MFID, accessgroup_id=proj_gid(session),
                                 read=True, write=True, role=Role.EDITOR.db_value))
         session.commit()
         p = Principal(user_id="x",
-                      groups=(GroupMembership(gid(session, PROJ), PROJ, Role.EDITOR),))
+                      groups=(GroupMembership(proj_gid(session), PROJ, Role.EDITOR),))
         with pytest.raises(HTTPException):
             require_grant(session, p, MFID, Role.VIEWER)
 

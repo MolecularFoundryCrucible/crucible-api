@@ -33,8 +33,8 @@ def _setup(db_engine):
 
         old_proj_ag = _group(session, proj_old.unique_id)
         new_proj_ag = _group(session, proj_new.unique_id)
-        session.add(Resource(mfid="proj_old", resource_type="project"))
-        session.add(Resource(mfid="proj_new", resource_type="project"))
+        session.add(Resource(mfid=proj_old.unique_id, resource_type="project"))
+        session.add(Resource(mfid=proj_new.unique_id, resource_type="project"))
         session.add(Resource(mfid="ds_1", resource_type="dataset"))
         session.add(Dataset(unique_id="ds_1", dataset_name="d", owner_orcid="0000-0031", project_id="proj_old"))
         session.commit()
@@ -42,8 +42,8 @@ def _setup(db_engine):
         session.add(UserAccessGroupLink(user_id=caller.id, accessgroup_id=new_proj_ag.id, role="contributor"))
         session.add(ResourceACL(mfid="ds_1", accessgroup_id=old_proj_ag.id, read=True, write=True, role="admin"))
         # A project's own self-referential ACL entry — its own group, at owner.
-        session.add(ResourceACL(mfid="proj_old", accessgroup_id=old_proj_ag.id, read=True, write=True, role="owner"))
-        session.add(ResourceACL(mfid="proj_new", accessgroup_id=new_proj_ag.id, read=True, write=True, role="owner"))
+        session.add(ResourceACL(mfid=proj_old.unique_id, accessgroup_id=old_proj_ag.id, read=True, write=True, role="owner"))
+        session.add(ResourceACL(mfid=proj_new.unique_id, accessgroup_id=new_proj_ag.id, read=True, write=True, role="owner"))
         session.commit()
         return old_proj_ag.id, new_proj_ag.id
 

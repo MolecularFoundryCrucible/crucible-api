@@ -74,12 +74,12 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
                                           session, role=Role.OWNER)
 
         add_or_update(session, Resource,
-                      where=(Resource.mfid == P.project_id),
-                      mfid=P.project_id,
+                      where=(Resource.mfid == prop.unique_id),
+                      mfid=prop.unique_id,
                       resource_type="project",
                       created_with_api_version=API_VERSION,
                       api_version_githash=API_VERSION_GITHASH)
-        sql_create_resource_acl(ag, P.project_id, read=True, write=True,
+        sql_create_resource_acl(ag, prop.unique_id, read=True, write=True,
                                 session=session, role=Role.OWNER)
 
         if prop not in project_lead.projects:
@@ -229,7 +229,7 @@ def update_project(proj_id: str, auth_res: Annotated[Principal, Depends(authoriz
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        require_permission(session, auth_res, proj_id, Permission.EDIT, legacy_group=project.unique_id)
+        require_permission(session, auth_res, project.unique_id, Permission.EDIT, legacy_group=project.unique_id)
 
         update_data = project_update.model_dump(exclude_unset=True)
 
@@ -237,11 +237,11 @@ def update_project(proj_id: str, auth_res: Annotated[Principal, Depends(authoriz
             setattr(project, key, value)
 
         session.add(project)
-        touch_resource_modification_time(session, proj_id)
+        touch_resource_modification_time(session, project.unique_id)
         session.commit()
         session.refresh(project)
         lead = session.exec(select(User).where(User.unique_id == project.project_lead_orcid)).one_or_none() if project.project_lead_orcid else None
-        resource = session.exec(select(Resource).where(Resource.mfid == proj_id)).one_or_none()
+        resource = session.exec(select(Resource).where(Resource.mfid == project.unique_id)).one_or_none()
         return ProjectWithLead(
             **project.model_dump(),
             lead=lead,
@@ -280,7 +280,7 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[Principal, Depends(a
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        require_permission(session, auth_res, proj_id, Permission.READ, legacy_group=project.unique_id)
+        require_permission(session, auth_res, project.unique_id, Permission.READ, legacy_group=project.unique_id)
 
         all_users = _get_project_users(proj_id, session)
         return PaginatedResponse(total=len(all_users), limit=limit, offset=offset, items=all_users[offset:offset + limit])
@@ -306,8 +306,8 @@ def add_users_to_project(
         if proj is None:
             raise HTTPException(status_code=404, detail=f'Project {proj_id} not found')
 
-        require_permission(session, auth_res, proj_id, Permission.EDIT, legacy_group=proj.unique_id)
-        require_grant(session, auth_res, proj_id, role, floor=Role.EDITOR)
+        require_permission(session, auth_res, proj.unique_id, Permission.EDIT, legacy_group=proj.unique_id)
+        require_grant(session, auth_res, proj.unique_id, role, floor=Role.EDITOR)
 
         user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
 
@@ -336,7 +336,7 @@ def set_project_user_role(
         if proj is None:
             raise HTTPException(status_code=404, detail=f'Project {proj_id} not found')
 
-        require_permission(session, auth_res, proj_id, Permission.EDIT, legacy_group=proj.unique_id)
+        require_permission(session, auth_res, proj.unique_id, Permission.EDIT, legacy_group=proj.unique_id)
 
         user = resolve_user(session, orcid=orcid)
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)).one_or_none()
@@ -353,11 +353,11 @@ def set_project_user_role(
                                 detail=f'{orcid} is not a member of {proj_id}')
 
         current = Role.from_db(link.role) if link.role else None
-        require_grant(session, auth_res, proj_id, role, current=current, floor=Role.EDITOR)
+        require_grant(session, auth_res, proj.unique_id, role, current=current, floor=Role.EDITOR)
 
         link.role = role.db_value
         session.add(link)
-        touch_resource_modification_time(session, proj_id)
+        touch_resource_modification_time(session, proj.unique_id)
         session.commit()
 
         return _get_project_users(proj_id, session)
@@ -415,7 +415,7 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[Princ
         if link is not None:
             session.delete(link)
 
-        touch_resource_modification_time(session, proj_id)
+        touch_resource_modification_time(session, proj.unique_id)
         session.commit()
         return _get_project_users(proj_id, session)
 
@@ -425,7 +425,7 @@ def project_sample_graph(project_id: str, auth_res: Annotated[Principal, Depends
 
     with Session(engine) as session:
         proj = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
-        require_permission(session, auth_res, project_id, Permission.READ,
+        require_permission(session, auth_res, proj.unique_id if proj else project_id, Permission.READ,
                            legacy_group=proj.unique_id if proj else None)
 
         samp_cmd = select(Sample).options(joinedload(Sample.parents))
@@ -487,7 +487,7 @@ def project_entity_graph(project_id: str, auth_res: Annotated[Principal, Depends
     '''
     with Session(engine) as session:
         proj = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
-        require_permission(session, auth_res, project_id, Permission.READ,
+        require_permission(session, auth_res, proj.unique_id if proj else project_id, Permission.READ,
                            legacy_group=proj.unique_id if proj else None)
 
         # Load all samples in the project with parent relationships

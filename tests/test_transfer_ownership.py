@@ -39,21 +39,22 @@ class TestProjectTransfer:
             session.add(proj)
             session.commit()
             session.refresh(proj)
-            proj_ag = _group(session, proj.unique_id)
+            mfid = proj.unique_id
+            proj_ag = _group(session, mfid)
             _group(session, "0000-0002")  # new owner's personal group must exist
-            session.add(Resource(mfid="proj_x", resource_type="project"))
+            session.add(Resource(mfid=mfid, resource_type="project"))
             session.add(UserAccessGroupLink(user_id=old_owner.id, accessgroup_id=proj_ag.id, role="owner"))
             session.commit()
             # A project's one and only ACL entry: its own group, at owner.
-            session.add(ResourceACL(mfid="proj_x", accessgroup_id=proj_ag.id, read=True, write=True, role="owner"))
+            session.add(ResourceACL(mfid=mfid, accessgroup_id=proj_ag.id, read=True, write=True, role="owner"))
             session.commit()
-            return proj_ag.id
+            return proj_ag.id, mfid
 
     def test_preview_does_not_mutate_anything(self, client, db_engine, auth_as):
-        ag_id = self._setup(db_engine)
+        ag_id, mfid = self._setup(db_engine)
         auth_as("0000-0001", groups=[("proj_x", ag_id, Role.OWNER)])
 
-        resp = client.post("/resources/proj_x/transfer_ownership", json={"new_owner": "newlead"})
+        resp = client.post(f"/resources/{mfid}/transfer_ownership", json={"new_owner": "newlead"})
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["previous_owner"]["unique_id"] == "0000-0001"
@@ -68,10 +69,10 @@ class TestProjectTransfer:
             assert proj.project_lead_orcid == "0000-0001"  # unchanged
 
     def test_confirm_transfers_standing_and_syncs_lead_pointer(self, client, db_engine, auth_as):
-        ag_id = self._setup(db_engine)
+        ag_id, mfid = self._setup(db_engine)
         auth_as("0000-0001", groups=[("proj_x", ag_id, Role.OWNER)])
 
-        resp = client.post("/resources/proj_x/transfer_ownership?confirm=true",
+        resp = client.post(f"/resources/{mfid}/transfer_ownership?confirm=true",
                            json={"new_owner": "newlead"})
         assert resp.status_code == 200, resp.text
 
@@ -90,10 +91,10 @@ class TestProjectTransfer:
             assert proj.project_lead_orcid == "0000-0002"
 
     def test_non_owner_cannot_transfer(self, client, db_engine, auth_as):
-        ag_id = self._setup(db_engine)
+        ag_id, mfid = self._setup(db_engine)
         auth_as("0000-0001", groups=[("proj_x", ag_id, Role.ADMIN)])
 
-        resp = client.post("/resources/proj_x/transfer_ownership?confirm=true",
+        resp = client.post(f"/resources/{mfid}/transfer_ownership?confirm=true",
                            json={"new_owner": "newlead"})
         assert resp.status_code == 403
 

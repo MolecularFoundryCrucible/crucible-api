@@ -24,13 +24,14 @@ def test_create_project_creates_resource_and_owner_acl(client, db_engine, auth_a
     assert resp.status_code == 200, resp.text
 
     with Session(db_engine) as session:
-        resource = session.exec(select(Resource).where(Resource.mfid == "proj_new")).one_or_none()
+        proj = session.exec(select(Project).where(Project.project_id == "proj_new")).one()
+
+        resource = session.exec(select(Resource).where(Resource.mfid == proj.unique_id)).one_or_none()
         assert resource is not None
         assert resource.resource_type == "project"
 
-        proj = session.exec(select(Project).where(Project.project_id == "proj_new")).one()
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)).one()
-        acl_rows = session.exec(select(ResourceACL).where(ResourceACL.mfid == "proj_new")).all()
+        acl_rows = session.exec(select(ResourceACL).where(ResourceACL.mfid == proj.unique_id)).all()
         assert len(acl_rows) == 1
         assert acl_rows[0].accessgroup_id == ag.id
         assert acl_rows[0].role == "owner"

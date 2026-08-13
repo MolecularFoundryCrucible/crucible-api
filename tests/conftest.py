@@ -1,15 +1,17 @@
 import pytest
 from sqlmodel import SQLModel, create_engine
+from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 
 from app.api.main import app
 from app.models.core_models import (
     User, AccessGroup, UserAccessGroupLink, ResourceACL, Resource, Dataset,
     AssociatedFile, IngestionRequest, Project, UserProjectLink, Sample,
-    DeletionRequest, Instrument,
+    DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
 )
 from app.utils.auth_utils import authorize_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
+import app.api.routes.access_groups as access_groups_routes
 import app.api.routes.files as files_routes
 import app.api.routes.datasets as datasets_routes
 import app.api.routes.instruments as instruments_routes
@@ -24,7 +26,8 @@ TEST_TABLES = [
     ResourceACL.__table__, Resource.__table__, Dataset.__table__,
     AssociatedFile.__table__, IngestionRequest.__table__, Project.__table__,
     UserProjectLink.__table__, Sample.__table__, DeletionRequest.__table__,
-    Instrument.__table__,
+    Instrument.__table__, AccessGroupJoinRequest.__table__, DatasetSampleLink.__table__,
+    SampleLink.__table__,
 ]
 
 
@@ -35,6 +38,18 @@ def db_engine():
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
     SQLModel.metadata.create_all(engine, tables=TEST_TABLES)
+    # scientific_metadata_new isn't in TEST_TABLES: its scientific_metadata
+    # column is JSONB (postgres-only), which SQLite can't compile via
+    # create_all. samp.resource.scientific_metadata / ds.resource... are
+    # accessed unconditionally by several read routes, so the table must
+    # still exist for the lazy load to succeed even when unused.
+    with engine.connect() as conn:
+        conn.execute(text(
+            "CREATE TABLE scientific_metadata_new "
+            "(id INTEGER PRIMARY KEY, unique_id VARCHAR, scientific_metadata TEXT)"
+        ))
+        conn.commit()
+    access_groups_routes.engine = engine
     files_routes.engine = engine
     datasets_routes.engine = engine
     instruments_routes.engine = engine

@@ -111,7 +111,7 @@ def sql_add_user_to_project(user: User, proj_id: str, session, role=None):
                   user_id=user.id,
                   project_id=proj_id)
     sql_add_user_to_access_group(user.unique_id, group_name, session, role=role)
-    touch_resource_modification_time(session, proj_id)
+    touch_resource_modification_time(session, group_name)
 
 
 def is_project_group(group_name: str, session) -> bool:

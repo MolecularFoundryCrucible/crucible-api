@@ -22,6 +22,7 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import authorize_user, permission_filter, require_groups, require_permission
+from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
 from app.utils.permissions import Principal, Permission, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid
 from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, visibility_filter_for
@@ -352,15 +353,21 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     children_by_sample.setdefault(parent_id, []).append(
                         LinkedResource(unique_id=child.unique_id, resource_type="sample", name=child.sample_name, relationship="child")
                     )
-                for sid, ds in session.exec(
+                sample_dataset_rows = session.exec(
                     select(DatasetSampleLink.sample_id, Dataset)
                     .join(Dataset, Dataset.id == DatasetSampleLink.dataset_id)
                     .where(DatasetSampleLink.sample_id.in_(sample_ids))
-                ).all():
+                ).all()
+                instrument_ids = resolve_instrument_mfids_to_ids(
+                    [ds.instrument_mfid for _, ds in sample_dataset_rows], session)
+                for sid, ds in sample_dataset_rows:
                     datasets_by_sample.setdefault(sid, []).append(
                         LinkedResource(unique_id=ds.unique_id, resource_type="dataset", name=ds.dataset_name, relationship="associated")
                     )
-                    dataset_reads_by_sample.setdefault(sid, []).append(DatasetRead.model_validate(ds))
+                    dataset_reads_by_sample.setdefault(sid, []).append(DatasetRead.model_validate({
+                        **ds.model_dump(),
+                        "instrument_id": instrument_ids.get(ds.instrument_mfid),
+                    }))
 
         # Batch-resolve owners if requested
         owners_by_orcid = {}
@@ -496,10 +503,15 @@ def read_sample(sample_id: str, auth_res: Annotated[Principal, Depends(authorize
             owner_user = session.exec(select(User).where(User.unique_id == samp.owner_orcid)).one_or_none()
             if owner_user:
                 owner = UserPublicRead.model_validate(owner_user)
+        instrument_ids = resolve_instrument_mfids_to_ids(
+            [ds.instrument_mfid for ds in samp.datasets], session)
         return SampleResponse.model_validate({
             **samp.model_dump(),
             "public": samp.resource.public if samp.resource else False,
-            "datasets": [DatasetRead.model_validate(ds) for ds in samp.datasets],
+            "datasets": [DatasetRead.model_validate({
+                **ds.model_dump(),
+                "instrument_id": instrument_ids.get(ds.instrument_mfid),
+            }) for ds in samp.datasets],
             "creation_time": samp.resource.creation_time if samp.resource else None,
             "modification_time": samp.resource.modification_time if samp.resource else None,
             "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,

@@ -371,6 +371,56 @@ anything created in the gap between the backfill and the deploy landing.
 
 ---
 
+## Project's own resource identity + join-request FK (staging)
+
+Two independent fixes to identity that stayed genuinely mutable-label-keyed
+after everything above shipped:
+
+- `create_project` seeded `Resource.mfid`/`ResourceACL.mfid` for a project's
+  own idtype/ACL row with `project_id`, not `Project.unique_id` — the same
+  bug already fixed for Dataset/Sample/Instrument FKs, just missed for a
+  project's identity toward itself. Every `require_permission`/`require_grant`
+  call site and generic `/resources/{mfid}/...` route that special-cases
+  projects moves to `Project.unique_id` in the same change.
+- `AccessGroupJoinRequest.group_name` FK'd to `accessgroup.group_name`, which
+  has meant a project's MFID since the C4b group rename — but
+  `app/api/routes/access_groups.py` wrote/read it as a project_id throughout.
+  Live-broken since C4b (any real insert should violate the FK); no test
+  exercised it against an FK-enforcing database. Fixed by switching to
+  `accessgroup_id: int` (an internal id, no label/MFID ambiguity to get
+  wrong). 0 rows on staging, confirmed before writing the migration, so no
+  data backfill needed for this one — a straight schema change.
+
+```bash
+# 1. schema: accessgroupjoinrequest.group_name -> accessgroup_id
+DB_CONF_FILE=.env alembic upgrade head
+
+# 2. data: repoint existing projects' idtype/resourceacl rows from
+#    project_id to unique_id (dry run first, both roll back cleanly if
+#    anything looks wrong)
+DB_CONF_FILE=.env python migrations/data/20260813_repoint_project_resource_identity.py
+DB_CONF_FILE=.env python migrations/data/20260813_repoint_project_resource_identity.py --commit
+
+# 3. only now, deploy
+git push origin <branch>:staging
+```
+
+Step 2 must run before step 3 lands: the code no longer checks ACL rows
+keyed by `project_id` at all, so a project not yet repointed would fail
+every permission check on itself until the backfill catches it up. No
+re-run-after-deploy step is needed here (unlike the project/instrument
+identity rollout above) — `create_project` writes the correct identity from
+the moment the new code is live, there's no gap to backfill.
+
+Verify:
+
+```sql
+SELECT count(*) FROM project p JOIN idtype i ON i.mfid = p.project_id WHERE i.resource_type = 'project';  -- expected 0 after step 2
+SELECT count(*) FROM project p JOIN idtype i ON i.mfid = p.unique_id WHERE i.resource_type = 'project';   -- expected = total project count
+```
+
+---
+
 ## Before cutover (phase 4)
 
 Not optional. Cutover switches authorization to `platform_role` and

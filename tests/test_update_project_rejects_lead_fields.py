@@ -20,14 +20,18 @@ def _setup(db_engine):
     with Session(db_engine) as session:
         lead = User(first_name="A", last_name="Lead", email="lead@x.com", unique_id="0000-0001")
         session.add(lead)
-        ag = AccessGroup(group_name="proj_x")
+        proj = Project(project_id="proj_x", organization="LBNL", project_lead_orcid="0000-0001")
+        session.add(proj)
+        session.commit()
+        session.refresh(proj)
+        mfid = proj.unique_id
+        ag = AccessGroup(group_name=mfid)
         session.add(ag)
-        session.add(Resource(mfid="proj_x", resource_type="project"))
-        session.add(Project(project_id="proj_x", organization="LBNL", project_lead_orcid="0000-0001"))
+        session.add(Resource(mfid=mfid, resource_type="project"))
         session.commit()
         session.refresh(ag)
         session.add(UserAccessGroupLink(user_id=lead.id, accessgroup_id=ag.id, role="owner"))
-        session.add(ResourceACL(mfid="proj_x", accessgroup_id=ag.id, read=True, write=True, role="owner"))
+        session.add(ResourceACL(mfid=mfid, accessgroup_id=ag.id, read=True, write=True, role="owner"))
         session.commit()
         return ag.id
 

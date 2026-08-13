@@ -222,6 +222,10 @@ def update_project(proj_id: str, auth_res: Annotated[Principal, Depends(authoriz
     Leadership is not a field here — ProjectUpdate has no project_lead_*
     fields (extra="forbid" 422s if you send one). Use
     POST /resources/{proj_id}/transfer_ownership instead.
+
+    project_id may be changed (renamed) here. Every foreign key that names a
+    project stores its MFID (Project.unique_id), never project_id, so a
+    rename does not orphan any dataset/sample/ACL row.
     '''
     with Session(engine) as session:
         project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
@@ -232,6 +236,14 @@ def update_project(proj_id: str, auth_res: Annotated[Principal, Depends(authoriz
         require_permission(session, auth_res, project.unique_id, Permission.EDIT, legacy_group=project.unique_id)
 
         update_data = project_update.model_dump(exclude_unset=True)
+
+        if update_data.get("project_id") and update_data["project_id"] != project.project_id:
+            existing = session.exec(
+                select(Project).where(Project.project_id == update_data["project_id"])
+            ).one_or_none()
+            if existing is not None:
+                raise HTTPException(status_code=409, detail=f"Project '{update_data['project_id']}' already exists.")
+            assert_project_id_available(session, update_data["project_id"])
 
         for key, value in update_data.items():
             setattr(project, key, value)
@@ -430,8 +442,8 @@ def project_sample_graph(project_id: str, auth_res: Annotated[Principal, Depends
 
         samp_cmd = select(Sample).options(joinedload(Sample.parents))
 
-        # Filter samples on proj_id
-        samp_cmd = samp_cmd.where(Sample.project_id == project_id)
+        # Filter samples by the project's MFID, not its (renamable) project_id
+        samp_cmd = samp_cmd.where(Sample.project_mfid == (proj.unique_id if proj else None))
         samp_list = session.exec(samp_cmd).unique().all()
 
         edges = []
@@ -453,6 +465,7 @@ def project_dataset_graph(project_id: str, auth_res: Annotated[Principal, Depend
     ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
+        proj = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
         auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
 
         ds_cmd = (
@@ -460,7 +473,7 @@ def project_dataset_graph(project_id: str, auth_res: Annotated[Principal, Depend
             .options(joinedload(Dataset.parents))
             .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
             .filter(auth_filter)
-            .where(Dataset.project_id == project_id)
+            .where(Dataset.project_mfid == (proj.unique_id if proj else None))
         )
 
         ds_list = session.exec(ds_cmd).unique().all()
@@ -490,8 +503,10 @@ def project_entity_graph(project_id: str, auth_res: Annotated[Principal, Depends
         require_permission(session, auth_res, proj.unique_id if proj else project_id, Permission.READ,
                            legacy_group=proj.unique_id if proj else None)
 
-        # Load all samples in the project with parent relationships
-        samp_cmd = select(Sample).options(joinedload(Sample.parents)).where(Sample.project_id == project_id)
+        # Load all samples in the project with parent relationships. Filtered
+        # by the project's MFID, not its (renamable) project_id.
+        proj_mfid = proj.unique_id if proj else None
+        samp_cmd = select(Sample).options(joinedload(Sample.parents)).where(Sample.project_mfid == proj_mfid)
         samp_list = session.exec(samp_cmd).unique().all()
 
         # Load all authorized datasets in the project with parent relationships
@@ -500,7 +515,7 @@ def project_entity_graph(project_id: str, auth_res: Annotated[Principal, Depends
             .options(joinedload(Dataset.parents))
             .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
             .filter(permission_filter(auth_res, Dataset))
-            .where(Dataset.project_id == project_id)
+            .where(Dataset.project_mfid == proj_mfid)
         ).unique().all()
 
         s_int_to_uid = {s.id: s.unique_id for s in samp_list}

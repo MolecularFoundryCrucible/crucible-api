@@ -24,7 +24,7 @@ from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleU
 from app.utils.auth_utils import authorize_user, permission_filter, require_groups, require_permission
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
 from app.utils.permissions import Principal, Permission, Role
-from app.utils.project_utils import project_standing, resolve_project_id_to_mfid
+from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
 from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.models.users import UserPublicRead
@@ -130,8 +130,10 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
         session.commit()
         session.refresh(sample)
         background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri), user_unique_id, "update")
+        project_ids = resolve_project_mfids_to_ids([sample.project_mfid], session)
         return SampleResponse.model_validate({
             **sample.model_dump(),
+            "project_id": project_ids.get(sample.project_mfid, sample.project_id),
             "public": ri.public if ri else False,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
@@ -155,10 +157,16 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
             if session.exec(select(Sample).where(Sample.unique_id == S.unique_id)).one_or_none():
                 raise HTTPException(status_code=409, detail=f"Sample '{S.unique_id}' already exists. Use PATCH to update it.")
 
+        project_mfid = None
+        if S.project_id:
+            project_mfid = resolve_project_id_to_mfid(S.project_id, session)
+            if project_mfid is None:
+                raise HTTPException(status_code=404, detail=f"Project '{S.project_id}' not found")
+
         if session.exec(
             select(Sample).where(
                 and_(
-                    Sample.project_id == S.project_id,
+                    Sample.project_mfid == project_mfid,
                     Sample.sample_name == S.sample_name,
                     deletion_filter_for(Sample),
                 )
@@ -186,11 +194,8 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
                     raise HTTPException(status_code=404, detail=f"Owner '{owner_orcid}' not found")
 
         sample_details = S.model_dump(exclude_unset=True)
-        if sample_details.get('project_id', None):
-            mfid = resolve_project_id_to_mfid(sample_details['project_id'], session)
-            if mfid is None:
-                raise HTTPException(status_code=404, detail=f"Project '{sample_details['project_id']}' not found")
-            sample_details['project_mfid'] = mfid
+        if project_mfid is not None:
+            sample_details['project_mfid'] = project_mfid
 
         sample = Sample(**sample_details)
         session.add(sample)
@@ -360,6 +365,8 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                 ).all()
                 instrument_ids = resolve_instrument_mfids_to_ids(
                     [ds.instrument_mfid for _, ds in sample_dataset_rows], session)
+                ds_project_ids = resolve_project_mfids_to_ids(
+                    [ds.project_mfid for _, ds in sample_dataset_rows], session)
                 for sid, ds in sample_dataset_rows:
                     datasets_by_sample.setdefault(sid, []).append(
                         LinkedResource(unique_id=ds.unique_id, resource_type="dataset", name=ds.dataset_name, relationship="associated")
@@ -367,6 +374,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     dataset_reads_by_sample.setdefault(sid, []).append(DatasetRead.model_validate({
                         **ds.model_dump(),
                         "instrument_id": instrument_ids.get(ds.instrument_mfid),
+                        "project_id": ds_project_ids.get(ds.project_mfid, ds.project_id),
                     }))
 
         # Batch-resolve owners if requested
@@ -376,6 +384,8 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
             if orcids:
                 for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all():
                     owners_by_orcid[u.unique_id] = UserPublicRead.model_validate(u)
+
+        project_ids_by_mfid = resolve_project_mfids_to_ids((row[0].project_mfid for row in rows), session)
 
         items = []
         for row in rows:
@@ -396,6 +406,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     compat_datasets = dataset_reads_by_sample.get(samp.id, [])
             items.append(SampleResponse.model_validate({
                 **samp.model_dump(),
+                "project_id": project_ids_by_mfid.get(samp.project_mfid, samp.project_id),
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
@@ -442,11 +453,13 @@ def search_samples(
                 literal(token).op("<%")(Sample.sample_name)
             )
         if project_id:
-            query = query.where(Sample.project_id == project_id)
+            query = query.where(Sample.project_mfid == resolve_project_id_to_mfid(project_id, session))
         query = query.order_by(func.word_similarity(q, Sample.sample_name).desc()).limit(limit)
         results = session.exec(query).all()
+        project_ids_by_mfid = resolve_project_mfids_to_ids((samp.project_mfid for samp, *_ in results), session)
         items = [SampleResponse.model_validate({
             **samp.model_dump(),
+            "project_id": project_ids_by_mfid.get(samp.project_mfid, samp.project_id),
             "public": public if public is not None else False,
             "creation_time": creation_time,
             "modification_time": modification_time,
@@ -505,12 +518,16 @@ def read_sample(sample_id: str, auth_res: Annotated[Principal, Depends(authorize
                 owner = UserPublicRead.model_validate(owner_user)
         instrument_ids = resolve_instrument_mfids_to_ids(
             [ds.instrument_mfid for ds in samp.datasets], session)
+        ds_project_ids = resolve_project_mfids_to_ids(
+            [ds.project_mfid for ds in samp.datasets] + [samp.project_mfid], session)
         return SampleResponse.model_validate({
             **samp.model_dump(),
+            "project_id": ds_project_ids.get(samp.project_mfid, samp.project_id),
             "public": samp.resource.public if samp.resource else False,
             "datasets": [DatasetRead.model_validate({
                 **ds.model_dump(),
                 "instrument_id": instrument_ids.get(ds.instrument_mfid),
+                "project_id": ds_project_ids.get(ds.project_mfid, ds.project_id),
             }) for ds in samp.datasets],
             "creation_time": samp.resource.creation_time if samp.resource else None,
             "modification_time": samp.resource.modification_time if samp.resource else None,
@@ -651,7 +668,7 @@ def sample_graph(sample_id: str, auth_res: Annotated[Principal, Depends(authoriz
         samp_list = session.exec(
             select(Sample)
             .options(joinedload(Sample.parents))
-            .where(Sample.project_id == target.project_id)
+            .where(Sample.project_mfid == target.project_mfid)
         ).unique().all()
 
         edges = []

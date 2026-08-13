@@ -36,7 +36,7 @@ from app.utils.permissions import (
 from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, set_public, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
-from app.utils.project_utils import is_project_group
+from app.utils.project_utils import is_project_group, resolve_project_mfids_to_ids
 from app.utils.user_utils import resolve_user_by_identifier
 
 
@@ -218,9 +218,11 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
             if ds is None:
                 raise HTTPException(status_code=404, detail="Dataset not found")
             instrument_ids = resolve_instrument_mfids_to_ids([ds.instrument_mfid], session)
+            project_ids = resolve_project_mfids_to_ids([ds.project_mfid], session)
             return DatasetResponse.model_validate({
                 **ds.model_dump(),
                 "instrument_id": instrument_ids.get(ds.instrument_mfid),
+                "project_id": project_ids.get(ds.project_mfid, ds.project_id),
                 "public": resource.public,
                 "creation_time": resource.creation_time,
                 "modification_time": resource.modification_time,
@@ -240,12 +242,16 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
                 raise HTTPException(status_code=404, detail="Sample not found")
             instrument_ids = resolve_instrument_mfids_to_ids(
                 [ds.instrument_mfid for ds in samp.datasets], session)
+            ds_project_ids = resolve_project_mfids_to_ids(
+                [ds.project_mfid for ds in samp.datasets] + [samp.project_mfid], session)
             return SampleResponse.model_validate({
                 **samp.model_dump(),
+                "project_id": ds_project_ids.get(samp.project_mfid, samp.project_id),
                 "public": resource.public,
                 "datasets": [DatasetRead.model_validate({
                     **ds.model_dump(),
                     "instrument_id": instrument_ids.get(ds.instrument_mfid),
+                    "project_id": ds_project_ids.get(ds.project_mfid, ds.project_id),
                 }) for ds in samp.datasets],
                 "creation_time": resource.creation_time,
                 "modification_time": resource.modification_time,

@@ -44,7 +44,7 @@ from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
 from app.utils.auth_utils import authorize_user, require_permission, permission_filter
 from app.utils.permissions import Permission, Principal, Role
-from app.utils.project_utils import project_standing, resolve_project_id_to_mfid
+from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
@@ -310,9 +310,11 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
         session.refresh(upds)
         background_tasks.add_task(write_record, upds.unique_id, dataset_record(upds, ri), user_unique_id, "update")
         instrument_ids = resolve_instrument_mfids_to_ids([upds.instrument_mfid], session)
+        project_ids = resolve_project_mfids_to_ids([upds.project_mfid], session)
         return DatasetResponse.model_validate({
             **upds.model_dump(),
             "instrument_id": instrument_ids.get(upds.instrument_mfid),
+            "project_id": project_ids.get(upds.project_mfid, upds.project_id),
             "public": ri.public if ri else upds.public,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
@@ -455,6 +457,8 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
 
         instrument_ids_by_mfid = resolve_instrument_mfids_to_ids(
             (row[0].instrument_mfid for row in results), session)
+        project_ids_by_mfid = resolve_project_mfids_to_ids(
+            (row[0].project_mfid for row in results), session)
 
         items = []
         for row in results:
@@ -473,6 +477,7 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
             items.append(DatasetResponse.model_validate({
                 **dataset.model_dump(),
                 "instrument_id": instrument_ids_by_mfid.get(dataset.instrument_mfid),
+                "project_id": project_ids_by_mfid.get(dataset.project_mfid, dataset.project_id),
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
@@ -518,14 +523,17 @@ def search_datasets(
                 literal(token).op("<%")(Dataset.dataset_name)
             )
         if project_id:
-            query = query.where(Dataset.project_id == project_id)
+            query = query.where(Dataset.project_mfid == resolve_project_id_to_mfid(project_id, session))
         query = query.order_by(func.word_similarity(q, Dataset.dataset_name).desc()).limit(limit)
         results = session.exec(query).all()
         instrument_ids_by_mfid = resolve_instrument_mfids_to_ids(
             (dataset.instrument_mfid for dataset, *_ in results), session)
+        project_ids_by_mfid = resolve_project_mfids_to_ids(
+            (dataset.project_mfid for dataset, *_ in results), session)
         items = [DatasetResponse.model_validate({
             **dataset.model_dump(),
             "instrument_id": instrument_ids_by_mfid.get(dataset.instrument_mfid),
+            "project_id": project_ids_by_mfid.get(dataset.project_mfid, dataset.project_id),
             "public": public if public is not None else False,
             "creation_time": creation_time,
             "modification_time": modification_time,
@@ -591,9 +599,11 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: 
             if owner_user:
                 owner = UserPublicRead.model_validate(owner_user)
         instrument_ids = resolve_instrument_mfids_to_ids([ds.instrument_mfid], session)
+        project_ids = resolve_project_mfids_to_ids([ds.project_mfid], session)
         return DatasetResponse.model_validate({
             **ds.model_dump(),
             "instrument_id": instrument_ids.get(ds.instrument_mfid),
+            "project_id": project_ids.get(ds.project_mfid, ds.project_id),
             "public": ds.resource.public if ds.resource else ds.public,
             "creation_time": ds.resource.creation_time if ds.resource else None,
             "modification_time": ds.resource.modification_time if ds.resource else None,
@@ -1185,7 +1195,7 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[Principal, Depends(author
             .options(joinedload(Dataset.parents))
             .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
             .where(auth_filter).where(deletion_filter)
-            .where(Dataset.project_id == target.project_id)
+            .where(Dataset.project_mfid == target.project_mfid)
         ).unique().all()
 
         edges = []

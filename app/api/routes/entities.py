@@ -13,6 +13,7 @@ from app.models.core_models import (
     DatasetLink, DatasetSampleLink, Sample, SampleLink,
 )
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
+from app.utils.project_utils import resolve_project_id_to_mfid
 from app.utils.sql_utils import deletion_filter_for
 from app.utils.permissions import Principal, Permission
 
@@ -48,7 +49,7 @@ def entity_graph(entity_id: str, auth_res: Annotated[Principal, Depends(authoriz
         ).first()
 
         if sample_target is not None:
-            project_id = sample_target.project_id
+            project_mfid = sample_target.project_mfid
         else:
             dataset_target = session.exec(
                 select(Dataset)
@@ -58,15 +59,16 @@ def entity_graph(entity_id: str, auth_res: Annotated[Principal, Depends(authoriz
             ).first()
             if dataset_target is None:
                 raise HTTPException(status_code=404, detail="Entity not found")
-            project_id = dataset_target.project_id
+            project_mfid = dataset_target.project_mfid
 
-        # Load all authorized samples in the project with parent relationships
+        # Load all authorized samples in the project with parent relationships.
+        # Scoped by the project's MFID, not its (renamable) project_id.
         samp_list = session.exec(
             select(Sample)
             .options(joinedload(Sample.parents))
             .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
             .where(s_auth).where(s_del)
-            .where(Sample.project_id == project_id)
+            .where(Sample.project_mfid == project_mfid)
         ).unique().all()
 
         # Load all authorized datasets in the project with parent relationships
@@ -75,7 +77,7 @@ def entity_graph(entity_id: str, auth_res: Annotated[Principal, Depends(authoriz
             .options(joinedload(Dataset.parents))
             .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
             .where(ds_auth).where(ds_del)
-            .where(Dataset.project_id == project_id)
+            .where(Dataset.project_mfid == project_mfid)
         ).unique().all()
 
         # Map integer FK → unique_id for resolving DatasetSampleLink rows
@@ -697,15 +699,16 @@ def project_graph(
     """
 
     with Session(engine) as session:
+        project_mfid = resolve_project_id_to_mfid(project_id, session)
         sample_ids = set(
-            session.exec(select(Sample.id).where(Sample.project_id == project_id)).all()
+            session.exec(select(Sample.id).where(Sample.project_mfid == project_mfid)).all()
         )
         auth_filter = permission_filter(auth_res, Dataset, Permission.READ)
         dataset_ids = set(
             session.exec(
                 select(Dataset.id)
                 .filter(auth_filter)
-                .where(Dataset.project_id == project_id)
+                .where(Dataset.project_mfid == project_mfid)
             ).unique().all()
         )
         return _build_graph(session, sample_ids, dataset_ids)

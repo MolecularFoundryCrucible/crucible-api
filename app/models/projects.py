@@ -68,6 +68,13 @@ class ProjectUpdate(SQLModel):
     '''
     model_config = ConfigDict(extra="forbid")
 
+    project_id: Optional[str] = None
     organization: Optional[str] = None
     status: Optional[str] = None
     title: Optional[str] = None
+
+    @field_validator("project_id")
+    @classmethod
+    def check_project_id(cls, v):
+        from app.utils.project_utils import validate_project_id
+        return validate_project_id(v) if v is not None else v

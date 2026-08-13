@@ -421,6 +421,16 @@ SELECT count(*) FROM project p JOIN idtype i ON i.mfid = p.unique_id WHERE i.res
 
 ---
 
+## Project rename support (staging)
+
+Builds directly on the identity fix above: `PATCH /projects/{proj_id}` now
+accepts `project_id`, and every dataset/sample read path resolves
+`project_id` live from `project_mfid` rather than trusting the text stored
+at creation. Pure code, no schema or data migration — deploy like any other
+release, no ordering constraint with anything else in this document.
+
+---
+
 ## Before cutover (phase 4)
 
 Not optional. Cutover switches authorization to `platform_role` and

@@ -98,9 +98,9 @@ def touch_resource_modification_time(session, mfid):
     return resource
 
 
-def sql_create_resource_acl(ag, mfid, read, write, session, role=None):
-    """Create an ACL entry. `role` is the granted role; read/write are the
-    pre-role columns, kept in step until they are dropped in phase 5."""
+def sql_create_resource_acl(ag, mfid, read, write, session, permission=None):
+    """Create an ACL entry. `permission` is the granted role; read/write are
+    the pre-role columns, kept in step until they are dropped in phase 5."""
     from app.models.core_models import ResourceACL
     from sqlmodel import select
     if ag is None:
@@ -112,7 +112,7 @@ def sql_create_resource_acl(ag, mfid, read, write, session, role=None):
     ).one_or_none()
     if not acl:
         acl = ResourceACL(accessgroup_id=ag.id, mfid=mfid, read=read, write=write,
-                          role=role.db_value if role is not None else None)
+                          permission=permission.db_value if permission is not None else None)
         session.add(acl)
         session.flush()
     return acl
@@ -142,7 +142,7 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None)
             logger.warning("create_standard_acls: no AccessGroup for owner '%s' — skipping owner ACL for resource '%s'", owner_id, mfid)
         else:
             sql_create_resource_acl(owner_ag, mfid, read=True, write=True,
-                                    session=session, role=Role.OWNER)
+                                    session=session, permission=Role.OWNER)
 
     if project_id:
         project = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
@@ -154,7 +154,7 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None)
             logger.warning("create_standard_acls: no AccessGroup for project '%s' — skipping project ACL for resource '%s'", project_id, mfid)
         else:
             sql_create_resource_acl(proj_ag, mfid, read=True, write=True,
-                                    session=session, role=Role.ADMIN)
+                                    session=session, permission=Role.ADMIN)
 
 
 def set_public(session, mfid: str, is_public: bool):

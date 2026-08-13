@@ -39,7 +39,7 @@ class TestCreateInstrument:
             ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == mfid)).one()
             acl = session.exec(select(ResourceACL).where(
                 ResourceACL.accessgroup_id == ag.id, ResourceACL.mfid == mfid)).one()
-            assert acl.role == Role.EDITOR.db_value
+            assert acl.permission == Role.EDITOR.db_value
 
     def test_rejects_duplicate_instrument_id(self, client, db_engine, auth_as):
         auth_as("admin-2", groups=[], platform_role=PlatformRole.ADMIN)
@@ -139,7 +139,7 @@ class TestDatasetInstrumentResolution:
             ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == mfid)).one()
             acl = session.exec(select(ResourceACL).where(
                 ResourceACL.accessgroup_id == ag.id, ResourceACL.mfid == ds.unique_id)).one()
-            assert acl.role == Role.CONTRIBUTOR.db_value
+            assert acl.permission == Role.CONTRIBUTOR.db_value
 
     def test_unregistered_instrument_name_is_rejected(self, client, db_engine, auth_as):
         auth_as("0000-0005", groups=[])

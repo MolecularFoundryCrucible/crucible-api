@@ -167,10 +167,13 @@ class ResourceACL(SQLModel, table=True):
     )
     read: bool = Field(index=True)
     write: bool = Field(index=True)
-    # Postgres enum resource_role; declared as str so SQLite-backed tests can
-    # still create the table. Converted with Role.from_db on read.
-    # read/write stay until phase 5 — see docs/permission_system_plan.md.
-    role: Optional[str] = Field(default=None)
+    # What the group was granted on this resource -- distinct from a user's
+    # standing within the group (UserAccessGroupLink.role). Postgres enum
+    # resource_role, shared with that column; declared as str so
+    # SQLite-backed tests can still create the table. Converted with
+    # Role.from_db on read. read/write stay until phase 5 — see
+    # docs/permission_system_plan.md.
+    permission: Optional[str] = Field(default=None)
 
     accessgroup: "AccessGroup" = Relationship(back_populates="acl")
 

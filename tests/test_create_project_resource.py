@@ -34,4 +34,4 @@ def test_create_project_creates_resource_and_owner_acl(client, db_engine, auth_a
         acl_rows = session.exec(select(ResourceACL).where(ResourceACL.mfid == proj.unique_id)).all()
         assert len(acl_rows) == 1
         assert acl_rows[0].accessgroup_id == ag.id
-        assert acl_rows[0].role == "owner"
+        assert acl_rows[0].permission == "owner"

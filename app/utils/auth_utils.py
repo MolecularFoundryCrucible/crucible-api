@@ -425,10 +425,10 @@ def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(securi
 # read_access_filter_list / require_groups / require_admin at cutover.
 
 def fetch_acl_rows(session, mfid: str):
-    """(accessgroup_id, role) for one resource."""
+    """(accessgroup_id, permission) for one resource."""
     from app.models.core_models import ResourceACL
     rows = session.exec(
-        select(ResourceACL.accessgroup_id, ResourceACL.role)
+        select(ResourceACL.accessgroup_id, ResourceACL.permission)
         .where(ResourceACL.mfid == mfid)
     ).all()
     return [(gid, Role.from_db(r)) for gid, r in rows if r is not None]
@@ -521,7 +521,7 @@ def permission_filter(principal: Principal, resource_model,
         .where(
             ResourceACL.mfid == resource_model.unique_id,
             ResourceACL.accessgroup_id.in_(group_ids),
-            ResourceACL.role.in_(allowed),
+            ResourceACL.permission.in_(allowed),
         )
         .select_from(ResourceACL)
         .correlate(resource_model)

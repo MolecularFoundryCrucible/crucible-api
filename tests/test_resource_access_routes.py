@@ -42,7 +42,7 @@ def session():
         owner_gid = s.exec(select(AccessGroup).where(
             AccessGroup.group_name == OWNER_ORCID)).one().id
         s.add(ResourceACL(mfid=MFID, accessgroup_id=owner_gid,
-                          read=True, write=True, role=Role.OWNER.db_value))
+                          read=True, write=True, permission=Role.OWNER.db_value))
         s.commit()
         yield s
 
@@ -126,7 +126,7 @@ class TestManageAclCap:
     def test_admin_cannot_mint_an_owner(self, session):
         from app.utils.auth_utils import require_grant
         session.add(ResourceACL(mfid=MFID, accessgroup_id=proj_gid(session),
-                                read=True, write=True, role=Role.ADMIN.db_value))
+                                read=True, write=True, permission=Role.ADMIN.db_value))
         session.commit()
         p = Principal(user_id="x",
                       groups=(GroupMembership(proj_gid(session), PROJ, Role.ADMIN),))
@@ -137,7 +137,7 @@ class TestManageAclCap:
     def test_admin_cannot_overwrite_an_owner_grant(self, session):
         from app.utils.auth_utils import require_grant
         session.add(ResourceACL(mfid=MFID, accessgroup_id=proj_gid(session),
-                                read=True, write=True, role=Role.ADMIN.db_value))
+                                read=True, write=True, permission=Role.ADMIN.db_value))
         session.commit()
         p = Principal(user_id="x",
                       groups=(GroupMembership(proj_gid(session), PROJ, Role.ADMIN),))
@@ -147,7 +147,7 @@ class TestManageAclCap:
     def test_a_mere_editor_cannot_manage_acls_at_all(self, session):
         from app.utils.auth_utils import require_grant
         session.add(ResourceACL(mfid=MFID, accessgroup_id=proj_gid(session),
-                                read=True, write=True, role=Role.EDITOR.db_value))
+                                read=True, write=True, permission=Role.EDITOR.db_value))
         session.commit()
         p = Principal(user_id="x",
                       groups=(GroupMembership(proj_gid(session), PROJ, Role.EDITOR),))

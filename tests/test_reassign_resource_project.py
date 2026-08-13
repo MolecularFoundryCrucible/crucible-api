@@ -40,10 +40,10 @@ def _setup(db_engine):
         session.commit()
         session.add(UserAccessGroupLink(user_id=caller.id, accessgroup_id=old_proj_ag.id, role="admin"))
         session.add(UserAccessGroupLink(user_id=caller.id, accessgroup_id=new_proj_ag.id, role="contributor"))
-        session.add(ResourceACL(mfid="ds_1", accessgroup_id=old_proj_ag.id, read=True, write=True, role="admin"))
+        session.add(ResourceACL(mfid="ds_1", accessgroup_id=old_proj_ag.id, read=True, write=True, permission="admin"))
         # A project's own self-referential ACL entry — its own group, at owner.
-        session.add(ResourceACL(mfid=proj_old.unique_id, accessgroup_id=old_proj_ag.id, read=True, write=True, role="owner"))
-        session.add(ResourceACL(mfid=proj_new.unique_id, accessgroup_id=new_proj_ag.id, read=True, write=True, role="owner"))
+        session.add(ResourceACL(mfid=proj_old.unique_id, accessgroup_id=old_proj_ag.id, read=True, write=True, permission="owner"))
+        session.add(ResourceACL(mfid=proj_new.unique_id, accessgroup_id=new_proj_ag.id, read=True, write=True, permission="owner"))
         session.commit()
         return old_proj_ag.id, new_proj_ag.id
 
@@ -73,7 +73,7 @@ def test_confirm_moves_the_acl_row_and_syncs_project_id(client, db_engine, auth_
     assert resp.status_code == 200, resp.text
 
     with Session(db_engine) as session:
-        acls = {a.accessgroup_id: a.role for a in
+        acls = {a.accessgroup_id: a.permission for a in
                session.exec(select(ResourceACL).where(ResourceACL.mfid == "ds_1")).all()}
         assert old_ag_id not in acls
         assert acls[new_ag_id] == "admin"

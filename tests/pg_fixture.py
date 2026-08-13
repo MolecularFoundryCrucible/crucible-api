@@ -67,7 +67,7 @@ def drop_new_columns(engine):
     """
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE useraccessgrouplink DROP COLUMN IF EXISTS role"))
-        conn.execute(text("ALTER TABLE resourceacl DROP COLUMN IF EXISTS role"))
+        conn.execute(text("ALTER TABLE resourceacl DROP COLUMN IF EXISTS permission"))
         conn.execute(text('ALTER TABLE "user" DROP COLUMN IF EXISTS platform_role'))
 
 
@@ -82,6 +82,17 @@ def run_migration_sql(engine):
             cur.execute(MIGRATION_SQL.read_text())
     finally:
         raw.close()
+
+
+def rename_role_to_permission(engine):
+    """Mirrors migrations/versions/..._rename_resourceacl_role_to_permission.py.
+    Not itself replayed by run_migration_sql, which only reproduces the
+    original phase-1 SQL — every migration since then that isn't part of the
+    phase-1/backfill story this fixture exists to test gets applied here
+    directly instead, so the schema this fixture produces matches current
+    reality by the time tests run against it."""
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE resourceacl RENAME COLUMN role TO permission"))
 
 
 def run_backfill(engine):
@@ -116,7 +127,7 @@ def acl_for(engine, mfid):
     from app.utils.permissions import Role
     with Session(engine) as session:
         return [(gid, Role.from_db(role)) for gid, role in session.execute(
-            text("SELECT accessgroup_id, role FROM resourceacl WHERE mfid = :m"),
+            text("SELECT accessgroup_id, permission FROM resourceacl WHERE mfid = :m"),
             {"m": mfid}).all()]
 
 
@@ -202,4 +213,5 @@ def build_migrated_engine():
     drop_new_columns(engine)
     run_migration_sql(engine)
     run_backfill(engine)
+    rename_role_to_permission(engine)
     return engine

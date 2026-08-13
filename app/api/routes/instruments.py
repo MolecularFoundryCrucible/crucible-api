@@ -193,7 +193,7 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
                            AccessGroup.group_name == db_instrument.unique_id,
                            group_name=db_instrument.unique_id)
         sql_create_resource_acl(ag, db_instrument.unique_id, read=True, write=True,
-                                session=session, role=Role.EDITOR)
+                                session=session, permission=Role.EDITOR)
 
         session.commit()
         session.refresh(db_instrument)

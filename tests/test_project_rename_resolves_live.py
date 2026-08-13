@@ -27,7 +27,7 @@ def _setup(db_engine):
         session.commit()
         session.refresh(ag)
         session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=ag.id, role="owner"))
-        session.add(ResourceACL(mfid=mfid, accessgroup_id=ag.id, read=True, write=True, role="owner"))
+        session.add(ResourceACL(mfid=mfid, accessgroup_id=ag.id, read=True, write=True, permission="owner"))
 
         ds = Dataset(unique_id="ds_1", dataset_name="ds-one", owner_orcid="0000-0001",
                     project_id="proj_old", project_mfid=mfid)

@@ -80,7 +80,7 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
                       created_with_api_version=API_VERSION,
                       api_version_githash=API_VERSION_GITHASH)
         sql_create_resource_acl(ag, prop.unique_id, read=True, write=True,
-                                session=session, role=Role.OWNER)
+                                session=session, permission=Role.OWNER)
 
         if prop not in project_lead.projects:
             project_lead.projects.append(prop)

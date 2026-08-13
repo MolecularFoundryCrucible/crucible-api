@@ -46,7 +46,7 @@ class TestProjectTransfer:
             session.add(UserAccessGroupLink(user_id=old_owner.id, accessgroup_id=proj_ag.id, role="owner"))
             session.commit()
             # A project's one and only ACL entry: its own group, at owner.
-            session.add(ResourceACL(mfid=mfid, accessgroup_id=proj_ag.id, read=True, write=True, role="owner"))
+            session.add(ResourceACL(mfid=mfid, accessgroup_id=proj_ag.id, read=True, write=True, permission="owner"))
             session.commit()
             return proj_ag.id, mfid
 
@@ -110,7 +110,7 @@ class TestDatasetTransfer:
             session.add(Dataset(unique_id="ds_1", dataset_name="d", owner_orcid="0000-0011",
                                 owner_user_id=old_owner.id))
             session.commit()
-            session.add(ResourceACL(mfid="ds_1", accessgroup_id=old_ag.id, read=True, write=True, role="owner"))
+            session.add(ResourceACL(mfid="ds_1", accessgroup_id=old_ag.id, read=True, write=True, permission="owner"))
             session.commit()
             return old_ag.id, new_ag.id
 
@@ -126,7 +126,7 @@ class TestDatasetTransfer:
         assert resp.status_code == 200, resp.text
 
         with Session(db_engine) as session:
-            acls = {a.accessgroup_id: a.role for a in
+            acls = {a.accessgroup_id: a.permission for a in
                    session.exec(select(ResourceACL).where(ResourceACL.mfid == "ds_1")).all()}
             assert old_ag_id not in acls
             assert acls[new_ag_id] == "owner"
@@ -146,7 +146,7 @@ class TestDatasetTransfer:
             session.add(Dataset(unique_id="ds_2", dataset_name="d", owner_orcid="0000-0021",
                                 owner_user_id=old_owner.id))
             session.commit()
-            session.add(ResourceACL(mfid="ds_2", accessgroup_id=old_ag.id, read=True, write=True, role="owner"))
+            session.add(ResourceACL(mfid="ds_2", accessgroup_id=old_ag.id, read=True, write=True, permission="owner"))
             session.commit()
             old_ag_id = old_ag.id
 

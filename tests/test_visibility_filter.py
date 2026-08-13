@@ -21,7 +21,7 @@ def _engine():
 
 
 def _grant_public(session, mfid, pub_id):
-    session.add(ResourceACL(mfid=mfid, accessgroup_id=pub_id, read=True, write=False, role="viewer"))
+    session.add(ResourceACL(mfid=mfid, accessgroup_id=pub_id, read=True, write=False, permission="viewer"))
     session.commit()
 
 

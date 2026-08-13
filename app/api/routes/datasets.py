@@ -239,7 +239,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                     status_code=500,
                     detail=f"Instrument '{instrument.instrument_name}' has no operator group provisioned")
             sql_create_resource_acl(inst_ag, ds.unique_id, read=True, write=True,
-                                    session=session, role=Role.CONTRIBUTOR)
+                                    session=session, permission=Role.CONTRIBUTOR)
 
         session.commit()
         session.refresh(ds)
@@ -305,7 +305,7 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
                     status_code=500,
                     detail=f"Instrument '{instrument.instrument_name}' has no operator group provisioned")
             sql_create_resource_acl(inst_ag, upds.unique_id, read=True, write=True,
-                                    session=session, role=Role.CONTRIBUTOR)
+                                    session=session, permission=Role.CONTRIBUTOR)
 
         session.commit()
         session.refresh(upds)

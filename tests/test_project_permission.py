@@ -37,7 +37,7 @@ def migrated(session):
     """Give the project its resource row and self-granting ACL entry."""
     session.add(Resource(mfid=PROJ, resource_type="project"))
     session.add(ResourceACL(mfid=PROJ, accessgroup_id=GID, read=True, write=True,
-                            role=Role.OWNER.db_value))
+                            permission=Role.OWNER.db_value))
     session.commit()
 
 

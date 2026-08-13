@@ -31,7 +31,7 @@ def _setup(db_engine):
         session.commit()
         session.refresh(ag)
         session.add(UserAccessGroupLink(user_id=lead.id, accessgroup_id=ag.id, role="owner"))
-        session.add(ResourceACL(mfid=mfid, accessgroup_id=ag.id, read=True, write=True, role="owner"))
+        session.add(ResourceACL(mfid=mfid, accessgroup_id=ag.id, read=True, write=True, permission="owner"))
         session.commit()
         return ag.id
 

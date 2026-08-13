@@ -12,7 +12,7 @@ class AccessGrantRead(SQLModel):
     """
     principal: str
     kind: str            # user | service_account | project | instrument | public | unknown
-    role: str
+    effective_permission: str
     display_name: Optional[str] = None
     group_name: str      # the group actually holding the grant
     group_id: int
@@ -20,4 +20,4 @@ class AccessGrantRead(SQLModel):
 
 class AccessGrantWrite(SQLModel):
     """Body for PUT /resources/{mfid}/access/{kind}/{principal}."""
-    role: str
+    effective_permission: str

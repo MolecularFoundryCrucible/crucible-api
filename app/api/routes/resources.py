@@ -608,7 +608,7 @@ def list_resource_access(mfid: str, auth_res: Annotated[Principal, Depends(autho
                 display = u.username or f"{u.first_name} {u.last_name}".strip() if u else None
             out.append(AccessGrantRead(
                 principal=ag.group_name, kind=kind,
-                role=acl.role or "unknown", display_name=display,
+                effective_permission=acl.permission or "unknown", display_name=display,
                 group_name=ag.group_name, group_id=ag.id))
         return out
 
@@ -625,10 +625,10 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
         raise HTTPException(status_code=404,
                             detail="kind must be 'users' or 'projects'; use /access/public for public")
     try:
-        target = Role.from_db(body.role)
+        target = Role.from_db(body.effective_permission)
     except KeyError:
         raise HTTPException(status_code=422,
-                            detail=f"role must be one of {[r.db_value for r in Role]}")
+                            detail=f"effective_permission must be one of {[r.db_value for r in Role]}")
 
     with Session(engine) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
@@ -639,7 +639,7 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
         existing = session.exec(
             select(ResourceACL).where(ResourceACL.mfid == mfid)
             .where(ResourceACL.accessgroup_id == ag.id)).one_or_none()
-        current = Role.from_db(existing.role) if existing and existing.role else None
+        current = Role.from_db(existing.permission) if existing and existing.permission else None
 
         require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
         require_grant(session, auth_res, mfid, target, current=current)
@@ -647,9 +647,9 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
         if existing is None:
             existing = ResourceACL(mfid=mfid, accessgroup_id=ag.id,
                                    read=True, write=target >= Role.EDITOR,
-                                   role=target.db_value)
+                                   permission=target.db_value)
         else:
-            existing.role = target.db_value
+            existing.permission = target.db_value
             existing.write = target >= Role.EDITOR
         session.add(existing)
         touch_resource_modification_time(session, mfid)
@@ -657,7 +657,7 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
 
         return AccessGrantRead(principal=canonical,
                                kind=_group_kind(session, ag.group_name),
-                               role=target.db_value, group_name=ag.group_name, group_id=ag.id)
+                               effective_permission=target.db_value, group_name=ag.group_name, group_id=ag.id)
 
 
 @router.delete("/resources/{mfid}/access/{kind}/{principal}")
@@ -680,7 +680,7 @@ def revoke_resource_access(mfid: str, kind: str, principal: str,
             raise HTTPException(status_code=404,
                                 detail=f"'{canonical}' has no access to this resource")
 
-        current = Role.from_db(existing.role) if existing.role else None
+        current = Role.from_db(existing.permission) if existing.permission else None
         if current is Role.OWNER:
             raise HTTPException(
                 status_code=409,
@@ -718,7 +718,7 @@ def publish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize
 
         ag, _ = _resolve_grantee(session, "public", PUBLIC_GROUP_NAME)
         return AccessGrantRead(principal=PUBLIC_GROUP_NAME, kind="public",
-                               role=Role.VIEWER.db_value,
+                               effective_permission=Role.VIEWER.db_value,
                                group_name=ag.group_name, group_id=ag.id)
 
 
@@ -808,7 +808,7 @@ def _transfer_resource_owner_acl(session, resource: Resource, mfid: str, new_own
     """
     previous_owner = None
     old_owner_acls = session.exec(
-        select(ResourceACL).where(ResourceACL.mfid == mfid, ResourceACL.role == Role.OWNER.db_value)
+        select(ResourceACL).where(ResourceACL.mfid == mfid, ResourceACL.permission == Role.OWNER.db_value)
     ).all()
     for acl in old_owner_acls:
         old_ag = session.exec(select(AccessGroup).where(AccessGroup.id == acl.accessgroup_id)).one()
@@ -827,9 +827,9 @@ def _transfer_resource_owner_acl(session, resource: Resource, mfid: str, new_own
     ).one_or_none()
     if new_owner_acl is None:
         session.add(ResourceACL(mfid=mfid, accessgroup_id=new_ag.id, read=True, write=True,
-                                role=Role.OWNER.db_value))
+                                permission=Role.OWNER.db_value))
     else:
-        new_owner_acl.role = Role.OWNER.db_value
+        new_owner_acl.permission = Role.OWNER.db_value
         new_owner_acl.write = True
         session.add(new_owner_acl)
 
@@ -866,7 +866,7 @@ def _current_owner(session, resource: Resource, mfid: str) -> Optional[User]:
         return session.exec(select(User).where(User.id == link.user_id)).one_or_none() if link else None
 
     acl = session.exec(
-        select(ResourceACL).where(ResourceACL.mfid == mfid, ResourceACL.role == Role.OWNER.db_value)
+        select(ResourceACL).where(ResourceACL.mfid == mfid, ResourceACL.permission == Role.OWNER.db_value)
     ).first()
     if acl is None:
         return None
@@ -974,7 +974,7 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
         for acl, _ in current_grants:
             session.delete(acl)
         session.flush()
-        sql_create_resource_acl(new_ag, mfid, read=True, write=True, session=session, role=Role.ADMIN)
+        sql_create_resource_acl(new_ag, mfid, read=True, write=True, session=session, permission=Role.ADMIN)
 
         entity_model = Dataset if resource.resource_type == "dataset" else Sample
         entity = session.exec(select(entity_model).where(entity_model.unique_id == mfid)).one_or_none()

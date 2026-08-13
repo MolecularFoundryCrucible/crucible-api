@@ -43,7 +43,7 @@ def op(session, role):
 
 def granted(session, role):
     session.add(ResourceACL(mfid=MFID, accessgroup_id=gid(session),
-                            read=True, write=True, role=role.db_value))
+                            read=True, write=True, permission=role.db_value))
     session.commit()
 
 

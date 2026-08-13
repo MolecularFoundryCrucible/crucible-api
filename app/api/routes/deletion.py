@@ -69,7 +69,7 @@ def list_deletion_requests(
                     select(ResourceACL.mfid).where(
                         ResourceACL.accessgroup_id.in_(
                             auth_res.group_ids_at_or_above(THRESHOLDS[Permission.DELETE])),
-                        ResourceACL.role.in_(
+                        ResourceACL.permission.in_(
                             [r.db_value for r in Role
                              if r >= THRESHOLDS[Permission.DELETE]]),
                     )

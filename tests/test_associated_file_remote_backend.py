@@ -22,7 +22,7 @@ def grant_public(session, mfid):
         session.commit()
         session.refresh(pub)
     session.add(ResourceACL(mfid=mfid, accessgroup_id=pub.id,
-                            read=True, write=False, role="viewer"))
+                            read=True, write=False, permission="viewer"))
     session.commit()
     return pub.id
 
@@ -121,7 +121,7 @@ def _grant_write_access(db_engine, dsid, user_id):
         session.refresh(ag)
         # role, not just read/write: the checks read the role column now.
         session.add(ResourceACL(mfid=dsid, accessgroup_id=ag.id, read=True, write=True,
-                                role="owner"))
+                                permission="owner"))
         session.commit()
         return ag.id
 
@@ -198,7 +198,7 @@ def test_non_gcs_file_in_batch_download_links_is_null(client, db_engine, auth_as
         session.commit()
         session.refresh(pub)
         session.add(ResourceACL(mfid="ds_pub_3", accessgroup_id=pub.id,
-                                read=True, write=False, role="viewer"))
+                                read=True, write=False, permission="viewer"))
         session.commit()
         public_gid = pub.id
         session.refresh(ds)

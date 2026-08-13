@@ -87,7 +87,7 @@ A Postgres enum rather than `VARCHAR`, deliberately: enums compare by declaratio
 
 ### Effective role
 
-`role` lives on **both** `useraccessgrouplink` (your standing in a group) and `resourceacl` (what that group was granted on that resource).
+A `Role` value lives on two different columns for two different things: `useraccessgrouplink.role` is your **standing** in a group; `resourceacl.permission` is what that group was **granted** on a resource. Both were originally named `role`, which overloaded the word confusingly — renamed `resourceacl.permission` once the two concepts needed to be told apart in code, not just in prose. The `Permission` enum (`READ`/`CREATE`/.../`TRANSFER`, used by `has_permission`/`require_permission`) is a third, unrelated thing — an action, not a grant level — despite the name proximity.
 
 ```
 effective_role(user, resource) =
@@ -799,7 +799,7 @@ Because `min(a,b) >= r ⟺ a >= r AND b >= r`, and per-group roles are already i
 
 ```python
 qualifying = principal.groups_at_or_above(required)
-# SQL: resourceacl.accessgroup_id IN :qualifying AND resourceacl.role >= :required
+# SQL: resourceacl.accessgroup_id IN :qualifying AND resourceacl.permission >= :required
 ```
 
 No join against `useraccessgrouplink` is required in list queries.

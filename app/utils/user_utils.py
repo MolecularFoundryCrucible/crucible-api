@@ -145,7 +145,7 @@ def sql_add_user_to_access_group(orcid, group_name, session, role=None):
     """Add a user to an access group by ORCID, creating the group if needed.
 
     `role` is the standing in that group, defaulting to contributor. Appending
-    via the relationship would leave it null, which fails closed to viewer —
+    via the relationship would leave it null, which fails closed to viewer,
     so a newly added project member would land read-only.
     """
     from app.models.core_models import UserAccessGroupLink
@@ -156,9 +156,6 @@ def sql_add_user_to_access_group(orcid, group_name, session, role=None):
                        AccessGroup,
                        AccessGroup.group_name == group_name,
                        group_name=group_name)
-    if group_name == orcid and ag.owner_orcid is None and ag.resource_mfid is None:
-        ag.owner_orcid = orcid
-        session.add(ag)
     if user is None:
         return ag
 

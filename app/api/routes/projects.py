@@ -68,12 +68,10 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
         session.add(prop)
 
         # ag.users.append would insert a link row with no role, failing closed to viewer.
-        # Group is keyed by the project's MFID (unique_id), not project_id — see
+        # Group is keyed by the project's MFID (unique_id), not project_id, see
         # docs/permission_system_plan.md, "Groups" / the MFID-named-groups rename.
         ag = sql_add_user_to_access_group(project_lead.unique_id, prop.unique_id,
                                           session, role=Role.OWNER)
-        if ag.owner_orcid is None and ag.resource_mfid is None:
-            ag.resource_mfid = P.project_id
 
         add_or_update(session, Resource,
                       where=(Resource.mfid == P.project_id),

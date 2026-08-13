@@ -943,8 +943,11 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
         require_permission(session, auth_res, body.project_id, Permission.CREATE)
 
         current_grants = _current_project_grants(session, mfid)
-        current_project_ids = [ag.resource_mfid for _, ag in current_grants]
-        previous_project_id = current_project_ids[0] if current_project_ids else None
+        previous_project_id = None
+        if current_grants:
+            _, prev_ag = current_grants[0]
+            prev_proj = session.exec(select(Project).where(Project.unique_id == prev_ag.group_name)).one_or_none()
+            previous_project_id = prev_proj.project_id if prev_proj else None
 
         if not confirm:
             return ReassignProjectRead(resource_id=mfid, previous_project_id=previous_project_id,

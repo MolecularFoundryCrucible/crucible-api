@@ -295,22 +295,19 @@ DB_CONF_FILE=.env python migrations/data/20260810_provision_instrument_operator_
 # 3. instrument_id slugs — additive, no ordering constraint
 DB_CONF_FILE=.env python migrations/data/20260810_backfill_instrument_id.py --commit
 
-# 4. accessgroup owner_orcid/resource_mfid — additive, no ordering constraint
-DB_CONF_FILE=.env python migrations/data/20260810_backfill_accessgroup_kind.py --commit
-
-# 5. project unique_id, then the group rename it unblocks — REQUIRED before
+# 4. project unique_id, then the group rename it unblocks — REQUIRED before
 #    deploy, or every project route 403s/404s (no fallback path, unlike rule 1)
 DB_CONF_FILE=.env python migrations/data/20260810_backfill_project_unique_id.py --commit
 DB_CONF_FILE=.env python migrations/data/20260810_rename_project_groups_to_mfid.py
 DB_CONF_FILE=.env python migrations/data/20260810_rename_project_groups_to_mfid.py --commit
 
-# 6. only now, deploy
+# 5. only now, deploy
 git push origin <branch>:staging
 ```
 
-Dry run (no `--commit`) before every `--commit` line above — all five scripts
+Dry run (no `--commit`) before every `--commit` line above — all four scripts
 default to dry-run and print what they'd do. Watch for `WARNING:` lines in
-steps 2 and 5: a legacy group name shared with something else (a user's
+steps 2 and 4: a legacy group name shared with something else (a user's
 ORCID, another project/instrument) is left untouched and needs a manual call,
 not a rerun.
 
@@ -319,9 +316,14 @@ Verify:
 ```sql
 SELECT count(*) FROM instrument WHERE instrument_id IS NULL;              -- 0
 SELECT count(*) FROM project WHERE unique_id IS NULL;                     -- 0
-SELECT count(*) FROM accessgroup WHERE owner_orcid IS NOT NULL
-  AND resource_mfid IS NOT NULL;                                          -- 0 (CHECK constraint backstops this)
 ```
+
+`AccessGroup` briefly gained `owner_orcid`/`resource_mfid` classification
+columns here (migration `8ca4a71f1bed`) but they were reverted in
+`bb780697b63b` after an audit found no real reader — omitted from the steps
+above since `alembic upgrade head` already carries both the add and the
+drop for anyone running this fresh. See docs/permission_system_plan.md,
+"Membership lived in two tables," for the full story.
 
 ---
 

@@ -12,8 +12,8 @@ def _user(session, orcid):
     return u
 
 
-def _group(session, name, resource_mfid=None):
-    ag = AccessGroup(group_name=name, resource_mfid=resource_mfid)
+def _group(session, name):
+    ag = AccessGroup(group_name=name)
     session.add(ag)
     session.commit()
     session.refresh(ag)
@@ -31,8 +31,8 @@ def _setup(db_engine):
         session.refresh(proj_old)
         session.refresh(proj_new)
 
-        old_proj_ag = _group(session, proj_old.unique_id, resource_mfid="proj_old")
-        new_proj_ag = _group(session, proj_new.unique_id, resource_mfid="proj_new")
+        old_proj_ag = _group(session, proj_old.unique_id)
+        new_proj_ag = _group(session, proj_new.unique_id)
         session.add(Resource(mfid="proj_old", resource_type="project"))
         session.add(Resource(mfid="proj_new", resource_type="project"))
         session.add(Resource(mfid="ds_1", resource_type="dataset"))

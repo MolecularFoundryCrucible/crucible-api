@@ -1,6 +1,6 @@
 from typing import Optional, List
 from pydantic import ConfigDict
-from sqlalchemy import JSON, CheckConstraint, Column, BigInteger, func, Index, text, Text, String
+from sqlalchemy import JSON, Column, BigInteger, func, Index, text, Text, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel,Relationship, Column
 from mfid import mfid
@@ -187,16 +187,8 @@ class UserAccessGroupLink(SQLModel, table=True):
 
 
 class AccessGroup(SQLModel, table=True):
-    __table_args__ = (
-        CheckConstraint(
-            "NOT (owner_orcid IS NOT NULL AND resource_mfid IS NOT NULL)",
-            name="ck_accessgroup_kind_exclusive",
-        ),
-    )
     id: Optional[int] = Field(default=None, primary_key=True)
     group_name: str = Field(index=True, unique=True)
-    owner_orcid: Optional[str] = Field(default=None, foreign_key="user.orcid", index=True)
-    resource_mfid: Optional[str] = Field(default=None, foreign_key="idtype.mfid", index=True)
     users: List["User"] = Relationship(back_populates="accessgroups", link_model=UserAccessGroupLink)
     acl: List["ResourceACL"] = Relationship(back_populates="accessgroup")
 

@@ -192,8 +192,6 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
         ag = add_or_update(session, AccessGroup,
                            AccessGroup.group_name == db_instrument.unique_id,
                            group_name=db_instrument.unique_id)
-        if ag.owner_orcid is None and ag.resource_mfid is None:
-            ag.resource_mfid = db_instrument.unique_id
         sql_create_resource_acl(ag, db_instrument.unique_id, read=True, write=True,
                                 session=session, role=Role.EDITOR)
 

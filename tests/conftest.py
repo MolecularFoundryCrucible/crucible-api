@@ -8,6 +8,7 @@ from app.models.core_models import (
     User, AccessGroup, UserAccessGroupLink, ResourceACL, Resource, Dataset,
     AssociatedFile, IngestionRequest, Project, UserProjectLink, Sample,
     DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
+    DatasetLink,
 )
 from app.utils.auth_utils import authorize_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
@@ -27,7 +28,7 @@ TEST_TABLES = [
     AssociatedFile.__table__, IngestionRequest.__table__, Project.__table__,
     UserProjectLink.__table__, Sample.__table__, DeletionRequest.__table__,
     Instrument.__table__, AccessGroupJoinRequest.__table__, DatasetSampleLink.__table__,
-    SampleLink.__table__,
+    SampleLink.__table__, DatasetLink.__table__,
 ]
 
 

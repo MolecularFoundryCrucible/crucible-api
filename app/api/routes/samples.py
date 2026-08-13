@@ -621,7 +621,12 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[Principal, Dep
             .where(~exists().where(DeletionRequest.resource_id == Sample.unique_id, DeletionRequest.status.in_(["pending", "approved"])))
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        items = session.exec(query.offset(offset).limit(limit)).all()
+        rows = session.exec(query.offset(offset).limit(limit)).all()
+        project_ids = resolve_project_mfids_to_ids((s.project_mfid for s in rows), session)
+        items = [SampleRead.model_validate({
+            **s.model_dump(),
+            "project_id": project_ids.get(s.project_mfid, s.project_id),
+        }) for s in rows]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
@@ -644,7 +649,12 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[Principal, Dep
             .where(~exists().where(DeletionRequest.resource_id == Sample.unique_id, DeletionRequest.status.in_(["pending", "approved"])))
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        items = session.exec(query.offset(offset).limit(limit)).all()
+        rows = session.exec(query.offset(offset).limit(limit)).all()
+        project_ids = resolve_project_mfids_to_ids((s.project_mfid for s in rows), session)
+        items = [SampleRead.model_validate({
+            **s.model_dump(),
+            "project_id": project_ids.get(s.project_mfid, s.project_id),
+        }) for s in rows]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 @router.get("/samples/{sample_id}/sample_graph")

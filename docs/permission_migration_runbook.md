@@ -10,6 +10,37 @@ ordering mistakes made along the way.
 
 ---
 
+## Production checklist (start here)
+
+Nothing below has run on production yet. Each numbered step is a checkpoint —
+finish it before starting the next. `alembic upgrade head` is safe to run any
+time (Alembic tracks its own state); every `--commit` script should be run
+without the flag first (dry run) and checked before re-running with it.
+
+1. `DELETE FROM idtype WHERE mfid = '' AND resource_type = 'sample';` (the one open precondition blocker)
+2. `python migrations/data/20260806_audit_permission_preconditions.py` — confirm clean
+3. `python migrations/data/20260806_apply_sql.py migrations/data/20260806_add_permission_roles.sql`
+4. **Deploy** (the base permission-role code, with the admin-group bypass)
+5. `python migrations/data/20260806_backfill_permission_roles.py --commit`
+6. `alembic stamp head`, then `alembic upgrade head` (catches up every later schema change in one go — all additive, safe regardless of code version)
+7. `python migrations/data/20260810_provision_instrument_operator_groups.py --commit`
+8. `python migrations/data/20260810_backfill_instrument_id.py --commit`
+9. `python migrations/data/20260810_backfill_project_unique_id.py --commit`
+10. `python migrations/data/20260810_rename_project_groups_to_mfid.py --commit`
+11. **Deploy** (Group C)
+12. `python migrations/data/20260811_backfill_project_mfid.py --commit`
+13. `python migrations/data/20260811_backfill_instrument_mfid.py --commit`
+14. `python migrations/data/20260813_repoint_project_resource_identity.py --commit`
+15. **Deploy** (project/instrument identity + project's-own-identity + join-request FK + rename support — everything currently on `feat/permission-roles` past Group C)
+16. Re-run steps 12–14 (idempotent — catches anything created in the gap between backfill and deploy)
+
+Full context, verify-queries, and why each ordering constraint exists: see the
+matching section below (`Procedure`, `Group C rollout`, `Project/instrument
+identity rollout`, `Project's own resource identity + join-request FK`,
+`Project rename support`).
+
+---
+
 ## Schema migrations moved to Alembic (2026-08-10)
 
 Everything below this table predates it. `migrations/` used to be a flat
@@ -51,9 +82,16 @@ is empty — it marks
 | 4 — cutover | not started | not started |
 | 5 — contract (drops) | not started | not started |
 
-**Branch:** `feat/permission-roles`, 22 commits, **not merged to `main`**.
+**Branch:** `feat/permission-roles`, 48 commits, **not merged to `main`**.
 Deployed to staging by pushing `feat/permission-roles:staging` (fast-forward).
-Test suite: 475 hermetic, 549 with a throwaway Postgres.
+Test suite: 757 hermetic, 856 with a throwaway Postgres (99 skipped without one).
+
+This table covers phases 0–5 of the original Role/Permission rollout only.
+Everything staging has additionally received since — instrument/project
+identity (MFID groups, `project_mfid`/`instrument_mfid`), the project's own
+resource identity fix, the join-request FK fix, and project rename support —
+is tracked in the dated `## ... rollout (staging)` sections below instead,
+and rolled into the production checklist at the top of this document.
 
 ### What has been built
 

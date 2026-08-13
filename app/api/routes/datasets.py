@@ -712,7 +712,14 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[Principal, D
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         parents = session.exec(query.offset(offset).limit(limit)).all()
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=parents)
+        instrument_ids = resolve_instrument_mfids_to_ids((d.instrument_mfid for d in parents), session)
+        project_ids = resolve_project_mfids_to_ids((d.project_mfid for d in parents), session)
+        items = [DatasetRead.model_validate({
+            **d.model_dump(),
+            "instrument_id": instrument_ids.get(d.instrument_mfid),
+            "project_id": project_ids.get(d.project_mfid, d.project_id),
+        }) for d in parents]
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
 @router.get("/datasets/{parent_dataset_id}/children", response_model=PaginatedResponse[DatasetRead])
@@ -740,7 +747,14 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[Principal, D
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         children = session.exec(query.offset(offset).limit(limit)).all()
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=children)
+        instrument_ids = resolve_instrument_mfids_to_ids((d.instrument_mfid for d in children), session)
+        project_ids = resolve_project_mfids_to_ids((d.project_mfid for d in children), session)
+        items = [DatasetRead.model_validate({
+            **d.model_dump(),
+            "instrument_id": instrument_ids.get(d.instrument_mfid),
+            "project_id": project_ids.get(d.project_mfid, d.project_id),
+        }) for d in children]
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
 
@@ -1166,7 +1180,12 @@ def read_samples_in_dataset(dsid: str, auth_res: Annotated[Principal, Depends(au
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         samples = session.exec(query.offset(offset).limit(limit)).all()
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=samples)
+        project_ids = resolve_project_mfids_to_ids((s.project_mfid for s in samples), session)
+        items = [SampleRead.model_validate({
+            **s.model_dump(),
+            "project_id": project_ids.get(s.project_mfid, s.project_id),
+        }) for s in samples]
+        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 @router.get("/datasets/{dataset_id}/dataset_graph")
 def dataset_graph(dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):

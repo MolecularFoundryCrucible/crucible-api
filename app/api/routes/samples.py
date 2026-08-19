@@ -27,6 +27,7 @@ from app.utils.permissions import Principal, Permission, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
 from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, sample_record
+from app.utils.user_utils import resolve_user_by_identifier
 from app.models.users import UserPublicRead
 
 router = APIRouter(tags=["samples"])
@@ -157,6 +158,12 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
             if session.exec(select(Sample).where(Sample.unique_id == S.unique_id)).one_or_none():
                 raise HTTPException(status_code=409, detail=f"Sample '{S.unique_id}' already exists. Use PATCH to update it.")
 
+        if S.owner and S.owner_orcid:
+            raise HTTPException(status_code=400, detail="Provide owner or owner_orcid, not both")
+        resolved_owner_orcid = S.owner_orcid
+        if S.owner:
+            resolved_owner_orcid = resolve_user_by_identifier(session, S.owner).unique_id
+
         project_mfid = None
         if S.project_id:
             project_mfid = resolve_project_id_to_mfid(S.project_id, session)
@@ -178,7 +185,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
             )
 
         if not auth_res.is_platform_admin:
-            owner_orcid = S.owner_orcid or user_unique_id
+            owner_orcid = resolved_owner_orcid or user_unique_id
             if S.project_id:
                 standing = project_standing(owner_orcid, S.project_id, session)
                 if standing is None or standing < Role.CONTRIBUTOR:
@@ -194,6 +201,9 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
                     raise HTTPException(status_code=404, detail=f"Owner '{owner_orcid}' not found")
 
         sample_details = S.model_dump(exclude_unset=True)
+        sample_details.pop('owner', None)
+        if resolved_owner_orcid is not None:
+            sample_details['owner_orcid'] = resolved_owner_orcid
         if project_mfid is not None:
             sample_details['project_mfid'] = project_mfid
 

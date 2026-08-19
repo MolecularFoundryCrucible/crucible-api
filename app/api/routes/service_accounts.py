@@ -22,7 +22,7 @@ def create_service_account(
 ):
     '''
     Create a service account and return its API key.
-    The API key is only returned once — store it securely.
+    The API key is only returned once.
     unique_id is optional; if omitted the server generates an mfid.
     Admin only.
     '''

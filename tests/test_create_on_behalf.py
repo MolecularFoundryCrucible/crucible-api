@@ -215,3 +215,98 @@ class TestCreateSample:
         auth_as("sa-instrument-9", groups=[], is_service_account=True)
         resp = client.post("/samples", json={"sample_name": "s5", "owner_orcid": "0000-0015"})
         assert resp.status_code == 404
+
+
+class TestCreateOnBehalfByIdentifier:
+    """The owner field is the flexible superset of owner_orcid: same
+    create-on-behalf authorization, but accepts an ORCID, username, or
+    email, resolved server-side via resolve_user_by_identifier."""
+
+    def test_dataset_owner_by_email_resolves_and_checks_standing(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            researcher = _user(session, "0000-0021")
+            ag = _project_with_group(session, "proj_id_1", "0000-0021")
+            session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
+            session.commit()
+
+        auth_as("sa-instrument-10", groups=[])
+        resp = client.post("/datasets", json={
+            "dataset_name": "d20", "project_id": "proj_id_1", "owner": "0000-0021@x.com",
+        })
+        assert resp.status_code == 200, resp.text
+        with Session(db_engine) as session:
+            ds = session.exec(select(Dataset).where(Dataset.dataset_name == "d20")).one()
+            assert ds.owner_orcid == "0000-0021"
+
+    def test_dataset_owner_by_username_resolves(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            researcher = User(first_name="U", last_name="Name", email="uname@x.com",
+                              unique_id="0000-0022", username="dsowner")
+            session.add(researcher)
+            ag = _project_with_group(session, "proj_id_2", "0000-0022")
+            session.commit()
+            session.refresh(researcher)
+            session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
+            session.commit()
+
+        auth_as("sa-instrument-11", groups=[])
+        resp = client.post("/datasets", json={
+            "dataset_name": "d21", "project_id": "proj_id_2", "owner": "dsowner",
+        })
+        assert resp.status_code == 200, resp.text
+        with Session(db_engine) as session:
+            ds = session.exec(select(Dataset).where(Dataset.dataset_name == "d21")).one()
+            assert ds.owner_orcid == "0000-0022"
+
+    def test_owner_without_standing_is_still_rejected(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "0000-0023")
+            _project_with_group(session, "proj_id_3", "0000-0023")
+            session.commit()
+
+        auth_as("sa-instrument-12", groups=[])
+        resp = client.post("/datasets", json={
+            "dataset_name": "d22", "project_id": "proj_id_3", "owner": "0000-0023@x.com",
+        })
+        assert resp.status_code == 403
+
+    def test_owner_and_owner_orcid_together_is_rejected(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "0000-0024")
+
+        auth_as("sa-instrument-13", groups=[])
+        resp = client.post("/datasets", json={
+            "dataset_name": "d23", "owner": "0000-0024@x.com", "owner_orcid": "0000-0024",
+        })
+        assert resp.status_code == 400
+
+    def test_unresolvable_owner_is_404(self, client, db_engine, auth_as):
+        auth_as("sa-instrument-14", groups=[], is_service_account=True)
+        resp = client.post("/datasets", json={"dataset_name": "d24", "owner": "nobody@x.com"})
+        assert resp.status_code == 404
+
+    def test_sample_owner_by_email_resolves(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            researcher = _user(session, "0000-0025")
+            ag = _project_with_group(session, "proj_id_4", "0000-0025")
+            session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
+            session.commit()
+
+        auth_as("sa-instrument-15", groups=[])
+        resp = client.post("/samples", json={
+            "sample_name": "s20", "project_id": "proj_id_4", "owner": "0000-0025@x.com",
+        })
+        assert resp.status_code == 200, resp.text
+        with Session(db_engine) as session:
+            samp = session.exec(select(Sample).where(Sample.sample_name == "s20")).one()
+            assert samp.owner_orcid == "0000-0025"
+
+    def test_sample_owner_and_owner_orcid_together_is_rejected(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "0000-0026")
+
+        auth_as("sa-instrument-16", groups=[])
+        resp = client.post("/samples", json={
+            "sample_name": "s21", "owner": "0000-0026@x.com", "owner_orcid": "0000-0026",
+        })
+        assert resp.status_code == 400

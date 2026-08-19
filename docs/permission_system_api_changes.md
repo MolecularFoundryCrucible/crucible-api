@@ -64,9 +64,58 @@ returns 409 on collision. The response (`InstrumentResponse`) now includes
 ### `PATCH /projects/{proj_id}`
 
 Body now rejects `project_lead_orcid`, `project_lead_email`,
-`project_lead_username` with **422** (`extra="forbid"`). Only `organization`,
-`status`, `title` are accepted. Use `POST /resources/{mfid}/transfer_ownership`
-for leadership changes instead.
+`project_lead_username` with **422** (`extra="forbid"`). Use
+`POST /resources/{mfid}/transfer_ownership` for leadership changes instead.
+
+`project_id` itself is now an accepted field — **renames the project**.
+Validated the same way as at creation (format, reserved names, collision
+against other projects/access groups/instrument names); 409 on collision,
+422 on malformed input. Safe to do at any time: every FK that names a
+project stores its MFID, never `project_id`, and every dataset/sample
+response resolves `project_id` live rather than from a stored value, so a
+rename never strands existing data under the old name. Accepted fields are
+now `project_id`, `organization`, `status`, `title`.
+
+### `GET/PUT/DELETE /resources/{mfid}/access/{kind}/{principal}`, `PUT/DELETE /resources/{mfid}/access/public`
+
+**Breaking field rename.** `AccessGrantRead`/`AccessGrantWrite`'s `role`
+field is now `effective_permission` — same values (`viewer`/`contributor`/
+`editor`/`admin`/`owner`), new JSON key, in both the `PUT .../access/...`
+request body and every response from these routes (`GET .../access`,
+`PUT`/`DELETE .../access/{kind}/{principal}`, `PUT`/`DELETE .../access/public`).
+A 422 on `PUT` now says `effective_permission must be one of [...]` instead
+of `role must be one of [...]`.
+
+The legacy, platform-admin-only `POST`/`GET /resources/{mfid}/access_groups`
+pair (superseded by the above, but still live) is affected differently:
+`POST`'s response returns the `ResourceACL` row directly, so its `role` key
+is now `permission` instead — a separate rename from `effective_permission`
+above, since this route was never updated to the newer response shape.
+
+### `GET /projects/{proj_id}`
+
+New optional `?include_members=true`. Adds a `members` field: a list of
+`{unique_id, username, first_name, last_name, role}` (public-safe — no
+email, unlike `GET /projects/{proj_id}/users`) for every project member.
+**Members-only** — a non-member gets `"members": null` regardless of the
+flag, same pattern as `?include_metadata=` and the lead's email today.
+
+Also a bug fix with no schema change: membership detection for the lead's
+email and `?include_metadata=` was comparing the caller's group name
+against `project_id` instead of the project's MFID, so it was only ever
+true for platform admins — a real member calling this route without
+admin rights got the non-member (`UserPublicRead`, no email, null
+metadata) response even for their own project. Fixed; real members now
+correctly get the fuller response.
+
+### `POST/PATCH /projects/{proj_id}/users/{orcid}`
+
+Both now return **409** if `?role=owner` (`role=5`) is requested — a
+project has exactly one owner, and appointing or changing one now only
+happens through `POST /resources/{mfid}/transfer_ownership`. Previously an
+existing owner could grant a second member `owner` via either route (or
+change their own standing away from it), silently desyncing
+`Project.project_lead_orcid` from who actually held owner standing.
 
 ### `PATCH /datasets/{dsid}`
 
@@ -118,6 +167,27 @@ to `POST`/`DELETE /projects/{proj_id}/users/{orcid}` instead.
 
 Now 404s if the target group name isn't a real project.
 
+## `POST /datasets`, `POST /samples`: flexible `owner` field (unrelated to the permission redesign, noted here anyway since this is the one doc client services check)
+
+New optional `owner` field, alongside the existing `owner_orcid`. Accepts an
+ORCID, username, email, or service-account MFID — resolved server-side the
+same way `POST /resources/{mfid}/transfer_ownership`'s `new_owner` already
+does. `owner_orcid` is unchanged and still works exactly as before (strict
+ORCID/MFID match, no resolution); `owner` is the flexible superset, not a
+replacement — pick whichever your integration prefers. Providing both in
+the same request is a **400**. All existing create-on-behalf authorization
+(project standing, service-account bypass) applies identically regardless
+of which field named the owner.
+
+## `POST /projects`: flexible `project_lead` field (same pattern as above)
+
+New optional `project_lead` field, alongside the existing three explicit
+`project_lead_orcid`/`project_lead_email`/`project_lead_username`. Accepts an
+ORCID, username, or email, resolved the same way as `owner` above. The three
+explicit fields are unchanged; `project_lead` is the flexible superset, not
+a replacement. Providing `project_lead` together with any of the three is a
+**400**, as is providing none of the four.
+
 ## Unchanged (no client-side schema change, but new server-side validation)
 
 ### `POST /datasets` / `POST /samples`
@@ -130,6 +200,33 @@ no project given and a different named owner, the request is rejected with
 400 unless the caller is a service account (which only needs the named owner
 to be a real registered user). Expect new 400/403/404 responses on payloads
 that previously succeeded unvalidated — no request/response field changes.
+
+## Behavior fixes (no schema change)
+
+### Datasets nested under a sample or project response
+
+`GET /resources/{sample_mfid}`, `GET /samples/{sample_id}`, `GET /samples`
+(with `include_links=true&include_datasets=true`), and the parent/child
+dataset lineage routes (`GET /datasets/{id}/parents`, `/children`) previously
+**500'd** for any dataset that had a registered instrument, because
+`instrument_id` in the response is the instrument's slug (a string) but was
+being read from the wrong underlying column (an internal integer). Fixed;
+no schema change, just no more crash.
+
+### `project_id` in dataset/sample responses
+
+Previously echoed whatever `project_id` text was stored at creation time.
+Now resolved live from the project's current name on every read path
+(`get`/`list`/`search` for both datasets and samples, plus the generic
+`GET /resources/{mfid}`). Matters if you renamed a project (see
+`PATCH /projects/{proj_id}` above) — old data now correctly shows the new
+name instead of a name that no longer resolves to anything.
+
+### `POST /access_groups/{group_name}/join`
+
+Was silently broken for every real project (500, not surfaced clearly)
+since the project-group MFID rename shipped — fixed. If any client had a
+workaround in place for this, it's no longer needed.
 
 ## Verification method
 

@@ -1,12 +1,14 @@
 import warnings
-from typing import Optional, Union
+from typing import List, Optional, Union
 from pydantic import ConfigDict, field_validator, model_validator
 from sqlmodel import SQLModel
+from app.models.access_groups import AccessGroupMemberPublicRead
 from app.models.users import UserPublicRead, UserRead
 
 
 class ProjectCreate(SQLModel):
-    '''Input schema for creating a project. One of project_lead_orcid, project_lead_email, or project_lead_username must be provided.'''
+    '''Input schema for creating a project. One of project_lead, project_lead_orcid,
+    project_lead_email, or project_lead_username must be provided.'''
     project_id: str
     organization: str
 
@@ -17,6 +19,9 @@ class ProjectCreate(SQLModel):
         access groups needs a session and lives in the route."""
         from app.utils.project_utils import validate_project_id
         return validate_project_id(v)
+    project_lead: Optional[str] = None  # ORCID, username, or email; resolved server-side.
+                                         # Prefer over the three project_lead_* fields below,
+                                         # kept for existing integrations. Provide at most one.
     project_lead_orcid: Optional[str] = None
     project_lead_email: Optional[str] = None
     project_lead_username: Optional[str] = None
@@ -44,11 +49,14 @@ class ProjectRead(SQLModel):
 class ProjectWithLead(ProjectRead):
     '''ProjectRead extended with the resolved project lead. Non-members get the
     project lead as UserPublicRead (no email) and never see scientific_metadata,
-    regardless of ?include_metadata=. Members and admins get the full UserRead.'''
+    regardless of ?include_metadata=. Members and admins get the full UserRead.
+    Same for members: non-members never see the list, regardless of
+    ?include_members=.'''
     lead: Optional[Union[UserRead, UserPublicRead]] = None
     scientific_metadata: Optional[dict] = None
     creation_time: Optional[str] = None
     modification_time: Optional[str] = None
+    members: Optional[List[AccessGroupMemberPublicRead]] = None
 
 
 class ProjectMinimalRead(SQLModel):

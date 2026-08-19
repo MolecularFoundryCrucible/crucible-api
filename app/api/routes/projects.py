@@ -20,11 +20,11 @@ from app.utils.auth_utils import (
 from app.utils.permissions import (
     Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, sql_create_resource_acl, touch_resource_modification_time
-from app.utils.user_utils import resolve_user, sql_add_user_to_access_group
+from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import (
     assert_project_id_available, is_project_owner, sql_add_user_to_project,
     sql_get_projects_for_user)
-from app.models.access_groups import AccessGroupMemberRead
+from app.models.access_groups import AccessGroupMemberPublicRead, AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
 from app.models.users import UserPublicRead, UserRead
@@ -39,12 +39,16 @@ API_VERSION_GITHASH = os.getenv("GITHASH", None)
 @router.post("/projects", response_model=ProjectRead)
 def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: ProjectCreate):
     """
-    Create a new project. Either project_lead_orcid or project_lead_email must be
-    provided and must correspond to an existing user. The resolved ORCID is stored on the project.
+    Create a new project. One of project_lead (ORCID, username, or email) or
+    project_lead_orcid/_email/_username must be provided and must correspond
+    to an existing user. The resolved ORCID is stored on the project.
     Returns 409 if a project with the given project_id already exists.
     """
-    if not P.project_lead_orcid and not P.project_lead_email and not P.project_lead_username:
-        raise HTTPException(status_code=400, detail="One of project_lead_orcid, project_lead_email, or project_lead_username must be provided.")
+    named_lead_fields = [P.project_lead, P.project_lead_orcid, P.project_lead_email, P.project_lead_username]
+    if not any(named_lead_fields):
+        raise HTTPException(status_code=400, detail="One of project_lead, project_lead_orcid, project_lead_email, or project_lead_username must be provided.")
+    if P.project_lead and any(named_lead_fields[1:]):
+        raise HTTPException(status_code=400, detail="Provide project_lead or one of project_lead_orcid/_email/_username, not both.")
 
     with Session(engine) as session:
         existing = session.exec(select(Project).where(Project.project_id == P.project_id)).one_or_none()
@@ -55,7 +59,10 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
         # name belongs to something else. add_or_update below would reuse it.
         assert_project_id_available(session, P.project_id)
 
-        project_lead = resolve_user(session, orcid=P.project_lead_orcid, email=P.project_lead_email, username=P.project_lead_username)
+        if P.project_lead:
+            project_lead = resolve_user_by_identifier(session, P.project_lead)
+        else:
+            project_lead = resolve_user(session, orcid=P.project_lead_orcid, email=P.project_lead_email, username=P.project_lead_username)
 
         prop = Project(
             project_id=P.project_id,
@@ -181,33 +188,37 @@ def search_projects(
 
 
 @router.get("/projects/{proj_id}", response_model=ProjectWithLead)
-def read_project(proj_id: str, auth_res: Annotated[Principal, Depends(authorize_user)], include_metadata: bool = False):
+def read_project(proj_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
+                 include_metadata: bool = False, include_members: bool = False):
     '''
     Returns the project object for the provided ID, including the resolved project lead.
     Any authenticated user can read basic project info (project_id, organization,
     status, title) to support discovery for join requests. Members and admins
     additionally get the lead's email (UserRead) and scientific_metadata; non-members
     get the lead as UserPublicRead (no email) and scientific_metadata is always null,
-    regardless of ?include_metadata=.
+    regardless of ?include_metadata=. Same for ?include_members=: non-members never
+    get the member list, which is always public-safe (no email) even for members.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    is_member = any(ag.group_name in ('admin', proj_id) for ag in ag_list)
-
     with Session(engine) as session:
-        query = select(Project).where(Project.project_id == proj_id)
-        if include_metadata and is_member:
-            query = query.options(selectinload(Project.resource).selectinload(Resource.scientific_metadata))
-        else:
-            query = query.options(selectinload(Project.resource))
-        prop = session.exec(query).one_or_none()
+        prop = session.exec(
+            select(Project).where(Project.project_id == proj_id)
+            .options(selectinload(Project.resource).selectinload(Resource.scientific_metadata))
+        ).one_or_none()
         if prop is None:
             raise HTTPException(status_code=404, detail="Project not found")
+
+        # Membership is standing in the project's own group, keyed by its
+        # MFID (Project.unique_id) — not proj_id, which is just the label.
+        is_member = auth_res.is_platform_admin or auth_res.role_in(prop.unique_id) is not None
+
         lead_user = session.exec(select(User).where(User.unique_id == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
         lead = (UserRead.model_validate(lead_user) if is_member else UserPublicRead.model_validate(lead_user)) if lead_user else None
         resource_md = prop.resource.scientific_metadata if (prop.resource and is_member) else None
+        members = _get_project_members_public(proj_id, session) if (include_members and is_member) else None
         return ProjectWithLead(
             **prop.model_dump(),
             lead=lead,
+            members=members,
             creation_time=prop.resource.creation_time if prop.resource else None,
             modification_time=prop.resource.modification_time if prop.resource else None,
             scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
@@ -262,20 +273,35 @@ def update_project(proj_id: str, auth_res: Annotated[Principal, Depends(authoriz
         )
 
 
-def _get_project_users(proj_id: str, session) -> List[AccessGroupMemberRead]:
-    '''Query project members and their role from the project's own access
-    group — the authoritative membership record, not UserProjectLink (see
+def _project_member_rows(proj_id: str, session):
+    '''(User, role) for every member of proj_id's own access group — the
+    authoritative membership record, not UserProjectLink (see
     is_project_member). No auth check, for internal use only.'''
-    rows = session.exec(
+    return session.exec(
         select(User, UserAccessGroupLink.role)
         .select_from(join(AccessGroup, UserAccessGroupLink, UserAccessGroupLink.accessgroup_id == AccessGroup.id))
         .join(User, User.id == UserAccessGroupLink.user_id)
         .join(Project, Project.unique_id == AccessGroup.group_name)
         .where(Project.project_id == proj_id)
     ).all()
+
+
+def _get_project_users(proj_id: str, session) -> List[AccessGroupMemberRead]:
+    '''Project members and their role, including email — for the
+    members/admins-only /projects/{proj_id}/users route.'''
     return [
         AccessGroupMemberRead.model_validate(user, update={"role": role or "unknown"})
-        for user, role in rows
+        for user, role in _project_member_rows(proj_id, session)
+    ]
+
+
+def _get_project_members_public(proj_id: str, session) -> List[AccessGroupMemberPublicRead]:
+    '''Project members and their role, public-safe (no email) — for
+    ?include_members= on GET /projects/{proj_id}, visible to members only
+    but not warranting the fuller profile /users returns.'''
+    return [
+        AccessGroupMemberPublicRead.model_validate(user, update={"role": role or "unknown"})
+        for user, role in _project_member_rows(proj_id, session)
     ]
 
 
@@ -312,7 +338,14 @@ def add_users_to_project(
 
     Requires editor or above in the project, and you may only grant a role at
     or below your own — so an editor can seat a contributor but never an admin.
+    Cannot seat someone as owner this way; a project has exactly one owner,
+    changed only via POST /resources/{mfid}/transfer_ownership.
     '''
+    if role == Role.OWNER:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot appoint an owner this way; use POST /resources/{mfid}/transfer_ownership")
+
     with Session(engine) as session:
         proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if proj is None:
@@ -342,7 +375,16 @@ def set_project_user_role(
     The cap binds on both ends: you may not grant a role above your own, nor
     change a member who already holds one above your own. That is what stops a
     project admin demoting the owner.
+
+    Cannot grant or touch owner standing at all, even as the owner yourself —
+    a project has exactly one owner, changed only via
+    POST /resources/{mfid}/transfer_ownership.
     '''
+    if role == Role.OWNER:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot appoint an owner this way; use POST /resources/{mfid}/transfer_ownership")
+
     with Session(engine) as session:
         proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
         if proj is None:
@@ -365,6 +407,10 @@ def set_project_user_role(
                                 detail=f'{orcid} is not a member of {proj_id}')
 
         current = Role.from_db(link.role) if link.role else None
+        if current is Role.OWNER:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot change the owner's standing this way; use POST /resources/{mfid}/transfer_ownership")
         require_grant(session, auth_res, proj.unique_id, role, current=current, floor=Role.EDITOR)
 
         link.role = role.db_value

@@ -65,7 +65,7 @@ THRESHOLDS: Mapping[Permission, Role] = MappingProxyType(_THRESHOLDS)
 
 @dataclass(frozen=True)
 class GroupMembership:
-    """A principal's standing in one group — not a grant on a resource."""
+    """A principal's standing in one access group."""
     id: int
     group_name: str
     role: Role

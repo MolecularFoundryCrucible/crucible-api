@@ -48,6 +48,7 @@ from app.utils.permissions import Permission, Principal, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
+from app.utils.user_utils import resolve_user_by_identifier
 from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
@@ -155,7 +156,13 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
             if existing is not None:
                 raise HTTPException(status_code=409, detail=f"Dataset '{dataset_details['unique_id']}' already exists. Use PATCH to update it.")
 
-        if not dataset.owner_orcid:
+        owner_identifier = dataset_details.pop('owner', None)
+        if owner_identifier:
+            if dataset.owner_orcid:
+                raise HTTPException(status_code=400, detail="Provide owner or owner_orcid, not both")
+            dataset_details['owner_orcid'] = resolve_user_by_identifier(session, owner_identifier).unique_id
+
+        if not dataset_details.get('owner_orcid'):
             dataset_details['owner_orcid'] = user_unique_id
 
         if not auth_res.is_platform_admin:

@@ -32,8 +32,11 @@ class DatasetCreate(SQLModel):
     timestamp: Optional[str] = None
     public: bool = False
     owner_orcid: Optional[str] = None     # falls back to the authenticated user if not provided
+    owner: Optional[str] = None           # ORCID, username, email, or SA MFID; resolved server-side.
+                                           # Prefer over owner_orcid, kept for existing integrations.
+                                           # Provide at most one of owner/owner_orcid.
 
-    @field_validator("project_id", "owner_orcid", mode="before", check_fields=False)
+    @field_validator("project_id", "owner_orcid", "owner", mode="before", check_fields=False)
     @classmethod
     def blank_identifiers_to_none(cls, v):
         """Uploaders that send "" instead of omitting the field would otherwise

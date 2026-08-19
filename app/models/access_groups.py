@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel
 
-from app.models.users import UserRead
+from app.models.users import UserPublicRead, UserRead
 
 
 class AccessGroupCreate(SQLModel):
@@ -16,4 +16,11 @@ class AccessGroupRead(SQLModel):
 
 class AccessGroupMemberRead(UserRead):
     '''A group member's profile plus their standing role in that group.'''
+    role: str
+
+
+class AccessGroupMemberPublicRead(UserPublicRead):
+    '''Public-safe (no email) member profile plus their standing role in
+    that group. Used wherever a member list is shown to an audience wider
+    than the group's own members/admins.'''
     role: str

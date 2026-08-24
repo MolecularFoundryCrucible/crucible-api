@@ -125,11 +125,11 @@ def update_file(
 
 @router.delete("/files/{file_id}")
 def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
-    '''Deletes a file and its ingestion requests. Requires write access to the parent dataset.'''
+    '''Deletes a file and its ingestion requests. Requires admin on the parent dataset.'''
 
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
-        require_permission(session, auth_res, ds.unique_id, Permission.EDIT)
+        require_permission(session, auth_res, ds.unique_id, Permission.DELETE)
 
         for ir in session.exec(
             select(IngestionRequest).where(IngestionRequest.file_mfid == af.mfid)

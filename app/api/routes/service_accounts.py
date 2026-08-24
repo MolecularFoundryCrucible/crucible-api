@@ -4,12 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import AccessGroup, User, UserAccessGroupLink
+from app.models.core_models import User
 from app.models.users import ServiceAccountCreate, ServiceAccountRead
 from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin
-from app.utils.permissions import Principal
-from app.utils.sql_utils import add_or_update
-from app.utils.user_utils import assert_username_available
+from app.utils.permissions import Principal, Role
+from app.utils.user_utils import assert_username_available, sql_add_user_to_access_group
 
 router = APIRouter(tags=["service_accounts"])
 engine = get_engine()
@@ -51,13 +50,10 @@ def create_service_account(
         session.add(user)
         session.flush()  # get user.id
 
-        # Create personal access group (same as regular users at login)
-        ag = add_or_update(session, AccessGroup,
-                           AccessGroup.group_name == unique_id,
-                           group_name=unique_id)
-        session.flush()  # ensure ag.id is populated before creating the link
-        link = UserAccessGroupLink(user_id=user.id, accessgroup_id=ag.id)
-        session.add(link)
+        # Personal access group at owner standing, same as a human user gets
+        # at login (see auth.py) -- without it, a resource this SA itself
+        # owns would cap its own effective role at viewer via a null standing.
+        sql_add_user_to_access_group(unique_id, unique_id, session, role=Role.OWNER)
         session.commit()
 
     # Generate API key (outside session — find_or_add_api_access opens its own)

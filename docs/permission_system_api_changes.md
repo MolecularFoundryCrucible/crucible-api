@@ -222,6 +222,24 @@ Now resolved live from the project's current name on every read path
 `PATCH /projects/{proj_id}` above) — old data now correctly shows the new
 name instead of a name that no longer resolves to anything.
 
+### `POST /datasets`, `POST /samples`: client-supplied `unique_id` cross-type collision
+
+Previously only checked the target's own table (a dataset's `unique_id` was
+checked against other datasets, never samples/projects/instruments) — a
+client-supplied id colliding with an *existing resource of a different
+type* slipped past that check and silently flipped the other resource's
+own identity record to the new type in place. Now checked against the
+shared identity table up front, so any collision — same-type or
+cross-type — is a clean **409**, with the other resource's type named in
+the message when it's a cross-type collision.
+
+### `DELETE /files/{file_id}`
+
+Now requires **admin** on the parent dataset (`Permission.DELETE`), not
+editor (`Permission.EDIT`). Deleting the dataset itself already requires
+admin; deleting one of its files was an inconsistently lower bar.
+`PATCH /files/{file_id}` (metadata update) is unchanged, still editor+.
+
 ### `POST /access_groups/{group_name}/join`
 
 Was silently broken for every real project (500, not surfaced clearly)

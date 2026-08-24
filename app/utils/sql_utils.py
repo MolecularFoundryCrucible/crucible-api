@@ -6,6 +6,7 @@ import urllib.parse
 from app.general_utils import get_secret, get_utc_isoformat, is_orcid
 
 logger = logging.getLogger(__name__)
+from fastapi import HTTPException
 from sqlalchemy import join
 from sqlmodel import create_engine, select
 from dotenv import load_dotenv
@@ -71,6 +72,28 @@ def add_or_update(session, cls, where, **kwargs):
         obj = cls(**kwargs)
     session.add(obj)
     return obj
+
+
+def assert_mfid_available(session, mfid: str, resource_type: str) -> None:
+    """Raise 409 if a client-supplied mfid already names any resource in the
+    shared idtype table -- same-type or cross-type. Checked against the
+    shared table, not just the caller's own, so a collision with a resource
+    of a *different* type 409s here instead of reaching the add_or_update
+    that creates the idtype row, which would silently flip the existing
+    row's resource_type in place.
+
+    resource_type is the kind being created now (e.g. "dataset"), used only
+    to phrase the same-type message the way callers already expect.
+    """
+    from app.models.core_models import Resource
+    existing = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
+    if existing is None:
+        return
+    if existing.resource_type == resource_type:
+        raise HTTPException(status_code=409,
+                            detail=f"{resource_type.capitalize()} '{mfid}' already exists. Use PATCH to update it.")
+    raise HTTPException(status_code=409,
+                        detail=f"'{mfid}' is already in use by a {existing.resource_type}.")
 
 
 

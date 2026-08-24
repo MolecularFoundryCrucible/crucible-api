@@ -8,7 +8,7 @@ from app.models.core_models import (
     User, AccessGroup, UserAccessGroupLink, ResourceACL, Resource, Dataset,
     AssociatedFile, IngestionRequest, Project, UserProjectLink, Sample,
     DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
-    DatasetLink,
+    DatasetLink, ApiToken,
 )
 from app.utils.auth_utils import authorize_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
@@ -19,6 +19,7 @@ import app.api.routes.instruments as instruments_routes
 import app.api.routes.projects as projects_routes
 import app.api.routes.resources as resources_routes
 import app.api.routes.samples as samples_routes
+import app.api.routes.service_accounts as service_accounts_routes
 import app.api.routes.users as users_routes
 from fastapi.testclient import TestClient
 
@@ -28,7 +29,7 @@ TEST_TABLES = [
     AssociatedFile.__table__, IngestionRequest.__table__, Project.__table__,
     UserProjectLink.__table__, Sample.__table__, DeletionRequest.__table__,
     Instrument.__table__, AccessGroupJoinRequest.__table__, DatasetSampleLink.__table__,
-    SampleLink.__table__, DatasetLink.__table__,
+    SampleLink.__table__, DatasetLink.__table__, ApiToken.__table__,
 ]
 
 
@@ -57,6 +58,7 @@ def db_engine():
     projects_routes.engine = engine
     resources_routes.engine = engine
     samples_routes.engine = engine
+    service_accounts_routes.engine = engine
     users_routes.engine = engine
     yield engine
 

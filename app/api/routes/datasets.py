@@ -49,7 +49,7 @@ from app.utils.project_utils import project_standing, resolve_project_id_to_mfid
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.user_utils import resolve_user_by_identifier
-from app.utils.sql_utils import add_or_update, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
+from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
@@ -152,9 +152,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
     user_unique_id = auth_res.user_id
     with Session(engine) as session:
         if dataset_details.get('unique_id'):
-            existing = session.exec(select(Dataset).where(Dataset.unique_id == dataset_details['unique_id'])).one_or_none()
-            if existing is not None:
-                raise HTTPException(status_code=409, detail=f"Dataset '{dataset_details['unique_id']}' already exists. Use PATCH to update it.")
+            assert_mfid_available(session, dataset_details['unique_id'], "dataset")
 
         owner_identifier = dataset_details.pop('owner', None)
         if owner_identifier:

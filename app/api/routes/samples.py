@@ -25,7 +25,7 @@ from app.utils.auth_utils import authorize_user, permission_filter, require_grou
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
 from app.utils.permissions import Principal, Permission, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
-from app.utils.sql_utils import add_or_update, deletion_filter_for, generate_kw_query, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, visibility_filter_for
+from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_user_by_identifier
 from app.models.users import UserPublicRead
@@ -155,8 +155,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
 
     with Session(engine) as session:
         if S.unique_id:
-            if session.exec(select(Sample).where(Sample.unique_id == S.unique_id)).one_or_none():
-                raise HTTPException(status_code=409, detail=f"Sample '{S.unique_id}' already exists. Use PATCH to update it.")
+            assert_mfid_available(session, S.unique_id, "sample")
 
         if S.owner and S.owner_orcid:
             raise HTTPException(status_code=400, detail="Provide owner or owner_orcid, not both")

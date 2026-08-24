@@ -13,16 +13,28 @@ ordering mistakes made along the way.
 ## Production checklist (start here)
 
 Nothing below has run on production yet. Each numbered step is a checkpoint —
-finish it before starting the next. `alembic upgrade head` is safe to run any
-time (Alembic tracks its own state); every `--commit` script should be run
+finish it before starting the next. Every `--commit` script should be run
 without the flag first (dry run) and checked before re-running with it.
+
+**Not every `alembic upgrade` below targets `head`, on purpose.** Most of
+this migration's schema changes are additive (new nullable columns) and
+genuinely safe to apply ahead of the code that uses them. Two are not —
+`accessgroupjoinrequest.group_name → accessgroup_id` and
+`resourceacl.role → permission` are hard cutovers: the column is renamed,
+not added alongside, so code still reading the old name breaks the moment
+either migration runs. `resourceacl.role` in particular is read on nearly
+every authenticated request (`fetch_acl_rows`/`permission_filter`), so
+running that migration early — even by one deploy cycle — would break
+production auth broadly, not just one feature. Both are deferred to step 15,
+run immediately before the deploy that actually contains the corresponding
+code (staging validated this exact staged sequence already).
 
 1. `DELETE FROM idtype WHERE mfid = '' AND resource_type = 'sample';` (the one open precondition blocker)
 2. `python migrations/data/20260806_audit_permission_preconditions.py` — confirm clean
 3. `python migrations/data/20260806_apply_sql.py migrations/data/20260806_add_permission_roles.sql`
 4. **Deploy** (the base permission-role code, with the admin-group bypass)
 5. `python migrations/data/20260806_backfill_permission_roles.py --commit`
-6. `alembic stamp head`, then `alembic upgrade head` (catches up every later schema change in one go — all additive, safe regardless of code version)
+6. `alembic stamp fc9be1ddfb92` (marks the DB at the baseline matching what step 3 just applied by hand — **not** `head`), then `alembic upgrade e5d68f53b42c` (every additive schema change through the accessgroup owner_orcid/resource_mfid add-then-drop cycle — safe regardless of code version, stops short of the two hard cutovers below)
 7. `python migrations/data/20260810_provision_instrument_operator_groups.py --commit`
 8. `python migrations/data/20260810_backfill_instrument_id.py --commit`
 9. `python migrations/data/20260810_backfill_project_unique_id.py --commit`
@@ -31,8 +43,24 @@ without the flag first (dry run) and checked before re-running with it.
 12. `python migrations/data/20260811_backfill_project_mfid.py --commit`
 13. `python migrations/data/20260811_backfill_instrument_mfid.py --commit`
 14. `python migrations/data/20260813_repoint_project_resource_identity.py --commit`
-15. **Deploy** (project/instrument identity + project's-own-identity + join-request FK + rename support — everything currently on `feat/permission-roles` past Group C)
-16. Re-run steps 12–14 (idempotent — catches anything created in the gap between backfill and deploy)
+15. `alembic upgrade head` (picks up the two hard-cutover migrations — do this immediately before step 16, not earlier)
+16. **Deploy** (everything else currently on `feat/permission-roles`: project's-own-identity fix, join-request FK fix, project rename support, public-safe project members + `?include_members=`, the ownership-appointment guard on `POST`/`PATCH /projects/{proj_id}/users/{orcid}`, flexible `owner`/`project_lead` resolution, the service-account owner-standing fix, the cross-type mfid collision check on dataset/sample creation, and `DELETE /files/{file_id}` requiring admin)
+17. Re-run steps 12–14 (idempotent — catches anything created in the gap between backfill and deploy)
+
+Verified against staging directly before writing this: alembic at `head`,
+`resourceacl`/`accessgroupjoinrequest` columns renamed correctly, all 6,756
+projects keyed by `unique_id` in both `idtype` and `resourceacl`, zero
+datasets missing `project_mfid`/`instrument_mfid` where they should have
+one, both `unique_id` indexes are real (non-partial) unique constraints.
+Full query set: see `git log` for this runbook's revision history, or ask —
+they were run ad hoc, not saved as a script.
+
+**Explicitly out of scope for this checklist**: the phase-4 cutover
+hardening described below (naming a human `platform_role=admin`, narrowing
+each service account from blanket admin to its own instrument's scope). As
+of this writing, staging has 7 service accounts still holding
+`platform_role='admin'` and zero humans do — that work is deliberately
+deferred to after this migration lands, not forgotten.
 
 Full context, verify-queries, and why each ordering constraint exists: see the
 matching section below (`Procedure`, `Group C rollout`, `Project/instrument
@@ -466,6 +494,55 @@ accepts `project_id`, and every dataset/sample read path resolves
 `project_id` live from `project_mfid` rather than trusting the text stored
 at creation. Pure code, no schema or data migration — deploy like any other
 release, no ordering constraint with anything else in this document.
+
+---
+
+## `ResourceACL.role` → `permission`, project members/ownership, misc fixes (staging)
+
+Three separate pieces of work, deployed together since they landed in the
+same session:
+
+**`ResourceACL.role` → `permission`** (Alembic `ecfa70615e54`, a genuine hard
+cutover — see the checklist notes above). `UserAccessGroupLink.role` is
+untouched; the split is standing (`role`) vs. what a group was granted on a
+resource (`permission`). The API surface follows the same split:
+`AccessGrantRead`/`AccessGrantWrite.role` → `effective_permission` on
+`GET/PUT/DELETE /resources/{mfid}/access/...`. The legacy admin-only
+`POST/GET /resources/{mfid}/access_groups` pair is affected differently — it
+returns the `ResourceACL` row directly, so its `role` key becomes
+`permission` there instead, not `effective_permission`.
+
+**Public-safe project members + ownership-appointment guard.**
+`GET /projects/{proj_id}?include_members=true` returns a public-safe (no
+email) member list enriched with role, members-only — non-members always
+get `"members": null`. Along the way, fixed `is_member` itself: it compared
+the caller's group name against `project_id` instead of the project's MFID
+(or checked a legacy `admin`-group membership instead of
+`is_platform_admin`), so it was effectively always false for real members —
+only platform admins ever saw the lead's email or `?include_metadata=`.
+Separately, `POST`/`PATCH /projects/{proj_id}/users/{orcid}` now 409 on
+`role=owner` — a project has exactly one owner, changed only via
+`transfer_ownership`; previously an existing owner could mint a second one
+or self-demote through the generic membership routes, desyncing
+`Project.project_lead_orcid` from who actually held owner standing.
+
+**Flexible identity resolution.** `DatasetCreate`/`SampleCreate` gain
+`owner`, and `ProjectCreate` gains `project_lead`: both accept an
+ORCID/username/email (service accounts: MFID), resolved via
+`resolve_user_by_identifier` — the same helper `transfer_ownership`'s
+`new_owner` already used. Both are additive; `owner_orcid` and the three
+`project_lead_*` fields are unchanged, kept for existing integrations.
+
+**Misc fixes, same batch**: `create_service_account` now grants the SA
+owner standing in its own personal group (previously left unset, failing
+closed to viewer); `POST /datasets`/`POST /samples` check a client-supplied
+`unique_id` against the shared `idtype` table, not just their own table, so
+a collision with a *different* resource type 409s instead of silently
+flipping that resource's `resource_type` in place; `DELETE /files/{file_id}`
+now requires admin, not editor, on the parent dataset.
+
+No new data backfill for any of this — see the production checklist above
+for the one schema migration (`ecfa70615e54`) and where it fits.
 
 ---
 

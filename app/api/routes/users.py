@@ -32,7 +32,7 @@ router = APIRouter(tags=["users"])
 engine = get_engine()
 
 
-@router.get("/users", response_model=PaginatedResponse[Union[UserRead, UserPublicRead]])
+@router.get("/users", response_model=PaginatedResponse[UserPublicRead])
 def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
                unique_id: Optional[str] = Query(default=None, description="Exact ORCID or service-account MFID."),
                username: Optional[str] = Query(default=None, description="Exact username."),
@@ -67,9 +67,8 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
     if is_service_account is not None:
         search_cmd = search_cmd.where(User.is_service_account == is_service_account)
 
-    # Admins see all users; non-admins are scoped to users who share an access
-    # group with them (each user has a personal access group, so this includes
-    # themselves).
+    # Admins see the full directory; non-admins are scoped to users who share
+    # an access group with them. Collection responses are public-safe for both.
     if not exact_lookup and not has_platform_admin_access(auth_res):
         ag_ids = [ag.id for ag in ag_list]
         search_cmd = search_cmd.where(
@@ -85,14 +84,7 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
         items = session.exec(
             search_cmd.order_by(User.last_name, User.first_name).offset(offset).limit(limit)
         ).all()
-        if exact_lookup:
-            may_see_private = has_platform_admin_access(auth_res)
-            items = [
-                UserRead.model_validate(user)
-                if may_see_private or user.unique_id == auth_res.user_id
-                else UserPublicRead.model_validate(user)
-                for user in items
-            ]
+        items = [UserPublicRead.model_validate(user) for user in items]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
@@ -395,7 +387,7 @@ def update_user(user_id: str, auth_res: Annotated[Principal, Depends(authorize_u
 @router.get("/users/{user_id}/datasets", response_model=List[str], deprecated=True)
 def read_user_datasets(user_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
-    Deprecated compatibility route returning dataset MFIDs. Use GET /datasets?accessible_to={user_id}.
+    Deprecated compatibility route returning dataset MFIDs. Use GET /datasets?accessible_to_user={user_id}.
     '''
     with Session(engine) as session:
         access_principal = resolve_access_principal(session, auth_res, user_id)
@@ -409,7 +401,7 @@ def read_user_datasets(user_id: str, auth_res: Annotated[Principal, Depends(auth
 
 @router.get("/users/{user_id}/samples", response_model=List[str], deprecated=True)
 def read_user_samples(user_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Deprecated compatibility route returning sample MFIDs. Use GET /samples?accessible_to={user_id}.'''
+    '''Deprecated compatibility route returning sample MFIDs. Use GET /samples?accessible_to_user={user_id}.'''
     with Session(engine) as session:
         access_principal = resolve_access_principal(session, auth_res, user_id)
         return session.exec(

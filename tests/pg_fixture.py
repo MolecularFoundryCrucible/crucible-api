@@ -84,17 +84,6 @@ def run_migration_sql(engine):
         raw.close()
 
 
-def rename_role_to_permission(engine):
-    """Mirrors migrations/versions/..._rename_resourceacl_role_to_permission.py.
-    Not itself replayed by run_migration_sql, which only reproduces the
-    original phase-1 SQL — every migration since then that isn't part of the
-    phase-1/backfill story this fixture exists to test gets applied here
-    directly instead, so the schema this fixture produces matches current
-    reality by the time tests run against it."""
-    with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE resourceacl RENAME COLUMN role TO permission"))
-
-
 def run_backfill(engine):
     backfill = load_backfill_module()
 
@@ -213,5 +202,4 @@ def build_migrated_engine():
     drop_new_columns(engine)
     run_migration_sql(engine)
     run_backfill(engine)
-    rename_role_to_permission(engine)
     return engine

@@ -153,7 +153,7 @@ def test_bypass_acl_rows_are_gone(migrated):
 def test_public_resources_gain_a_viewer_entry(migrated):
     with Session(migrated) as session:
         rows = dict(session.execute(text("""
-            SELECT a.mfid, a.role FROM resourceacl a JOIN accessgroup ag ON ag.id = a.accessgroup_id
+            SELECT a.mfid, a.permission FROM resourceacl a JOIN accessgroup ag ON ag.id = a.accessgroup_id
             WHERE ag.group_name = 'public'
         """)).all())
     assert rows == {"ds-pub": "viewer", "sm-pub": "viewer"}

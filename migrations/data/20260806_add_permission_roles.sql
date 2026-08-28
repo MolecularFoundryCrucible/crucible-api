@@ -13,8 +13,8 @@
 -- The one_owner_per_group index is NOT created here. It belongs at the end of
 -- the backfill, once every standing has been assigned.
 --
--- WARNING for fresh environments. The SQLModel models declare role and
--- platform_role as str, so that SQLite-backed tests can create the tables.
+-- WARNING for fresh environments. The SQLModel models declare permission,
+-- membership role, and platform_role as str so SQLite-backed tests can create the tables.
 -- That means SQLModel.metadata.create_all() against an empty Postgres produces
 -- VARCHAR columns, and the ADD COLUMN IF NOT EXISTS statements below then
 -- silently do nothing — leaving a database whose columns are the wrong type
@@ -46,8 +46,20 @@ ALTER TABLE useraccessgrouplink
 
 -- What a group was granted on a resource. The MIN of this and the standing
 -- above is the effective role.
+DO $$ BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'resourceacl'
+          AND column_name = 'role'
+    ) THEN
+        RAISE EXCEPTION 'resourceacl.role already exists; resolve the intermediate schema before adding permission';
+    END IF;
+END $$;
+
 ALTER TABLE resourceacl
-    ADD COLUMN IF NOT EXISTS role resource_role;
+    ADD COLUMN IF NOT EXISTS permission resource_role;
 
 -- Bypass lives on the principal, never as ACL rows.
 ALTER TABLE "user"
@@ -61,9 +73,9 @@ ALTER TABLE instrument
 -- phase 1 rather than after cutover so that shadow mode and the first live
 -- traffic are measured against an indexed table.
 -- accessgroup_id leads because every query filters on the caller's groups
--- first; role is included so the comparison is answered from the index alone.
-CREATE INDEX IF NOT EXISTS ix_resourceacl_group_mfid_role
-    ON resourceacl (accessgroup_id, mfid, role);
+-- first; permission is included so the comparison is answered from the index alone.
+CREATE INDEX IF NOT EXISTS ix_resourceacl_group_mfid_permission
+    ON resourceacl (accessgroup_id, mfid, permission);
 
 -- The virtual public group. Membership is injected at auth time and never
 -- stored, so this row exists only to give ACL entries something to point at.

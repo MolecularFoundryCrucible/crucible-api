@@ -145,7 +145,7 @@ def create_project_resources(session):
     """)
 
     acl = step(session, "project ACL entries (own group at owner)", """
-        INSERT INTO resourceacl (mfid, accessgroup_id, read, write, role)
+        INSERT INTO resourceacl (mfid, accessgroup_id, read, write, permission)
         SELECT p.project_id, ag.id, TRUE, TRUE, 'owner'::resource_role
         FROM project p
         JOIN accessgroup ag ON ag.group_name = p.project_id
@@ -198,11 +198,11 @@ def backfill_acl_grants(session):
             FROM group_kind gk
         )
         UPDATE resourceacl a
-        SET role = t.role
+        SET permission = t.role
         FROM target t
         JOIN group_kind gk2 ON gk2.id = t.accessgroup_id
         WHERE t.accessgroup_id = a.accessgroup_id
-          AND a.role IS DISTINCT FROM t.role
+          AND a.permission IS DISTINCT FROM t.role
           -- Never touch a project's entry on itself. Step 2 sets that to
           -- `owner` so effective role on a project equals standing in it; the
           -- generic project grant of `admin` applies to a project's grant on
@@ -221,7 +221,7 @@ def migrate_public_flags(session):
     print("\n[5] public flags become ACL entries")
 
     datasets = step(session, "public datasets", """
-        INSERT INTO resourceacl (mfid, accessgroup_id, read, write, role)
+        INSERT INTO resourceacl (mfid, accessgroup_id, read, write, permission)
         SELECT d.unique_id, ag.id, TRUE, FALSE, 'viewer'::resource_role
         FROM dataset d
         CROSS JOIN accessgroup ag
@@ -233,7 +233,7 @@ def migrate_public_flags(session):
     """)
 
     others = step(session, "other public resources (samples etc.)", """
-        INSERT INTO resourceacl (mfid, accessgroup_id, read, write, role)
+        INSERT INTO resourceacl (mfid, accessgroup_id, read, write, permission)
         SELECT r.mfid, ag.id, TRUE, FALSE, 'viewer'::resource_role
         FROM idtype r
         CROSS JOIN accessgroup ag
@@ -350,7 +350,7 @@ def verify(session):
     null_standings = session.execute(text(
         "SELECT count(*) FROM useraccessgrouplink WHERE role IS NULL")).scalar()
     null_grants = session.execute(text(
-        "SELECT count(*) FROM resourceacl WHERE role IS NULL")).scalar()
+        "SELECT count(*) FROM resourceacl WHERE permission IS NULL")).scalar()
     print(f"  useraccessgrouplink rows still null                        {null_standings}")
     print(f"  resourceacl rows still null                                {null_grants}")
 

@@ -163,6 +163,12 @@ class Dataset(SQLModel, table=True):
 class ResourceACL(SQLModel, table=True):
     __table_args__ = (
         Index(
+            "ix_resourceacl_group_mfid_permission",
+            "accessgroup_id",
+            "mfid",
+            "permission",
+        ),
+        Index(
             "one_owner_acl_per_resource",
             "mfid",
             unique=True,

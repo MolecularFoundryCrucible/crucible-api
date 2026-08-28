@@ -1,9 +1,9 @@
 import warnings
-from typing import List, Optional, Union
+from typing import List, Optional
 from pydantic import ConfigDict, field_validator, model_validator
 from sqlmodel import SQLModel
-from app.models.access_groups import AccessGroupMemberPublicRead
-from app.models.users import UserPublicRead, UserRead
+from app.models.access_groups import AccessGroupMemberRead
+from app.models.users import UserPublicRead
 
 
 class ProjectCreate(SQLModel):
@@ -47,16 +47,13 @@ class ProjectRead(SQLModel):
 
 
 class ProjectWithLead(ProjectRead):
-    '''ProjectRead extended with the resolved project lead. Non-members get the
-    project lead as UserPublicRead (no email) and never see scientific_metadata,
-    regardless of ?include_metadata=. Members and admins get the full UserRead.
-    Same for members: non-members never see the list, regardless of
-    ?include_members=.'''
-    lead: Optional[Union[UserRead, UserPublicRead]] = None
+    '''ProjectRead extended with a public-safe lead profile. Project metadata and
+    members remain restricted to project members and platform administrators.'''
+    lead: Optional[UserPublicRead] = None
     scientific_metadata: Optional[dict] = None
     creation_time: Optional[str] = None
     modification_time: Optional[str] = None
-    members: Optional[List[AccessGroupMemberPublicRead]] = None
+    members: Optional[List[AccessGroupMemberRead]] = None
 
 
 class ProjectMinimalRead(SQLModel):

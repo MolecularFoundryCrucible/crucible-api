@@ -105,7 +105,7 @@ Authorization: Bearer your_api_key_here
 
 ## API Endpoints
 
-Use the generated [Swagger UI](https://crucible.lbl.gov/testapi-staging/docs), [ReDoc](https://crucible.lbl.gov/testapi-staging/redoc), or [OpenAPI JSON](https://crucible.lbl.gov/testapi-staging/openapi.json) as the authoritative route inventory. See [`docs/resource_identifier_routes.md`](docs/resource_identifier_routes.md) for the canonical identifier, exact lookup, compatibility, and Python client dispatch contract.
+Use the generated [Swagger UI](https://crucible.lbl.gov/testapi-staging/docs), [ReDoc](https://crucible.lbl.gov/testapi-staging/redoc), or [OpenAPI JSON](https://crucible.lbl.gov/testapi-staging/openapi.json) as the authoritative deployed route inventory. The repository checkpoint artifact is [`openapi/crucible-api.json`](openapi/crucible-api.json), its checksum is [`openapi/crucible-api.json.sha256`](openapi/crucible-api.json.sha256), and both are regenerated with `.venv/bin/python -m scripts.export_openapi`. Client owners should start with the [`client migration summary`](docs/client_migration_summary.md). See [`docs/resource_identifier_routes.md`](docs/resource_identifier_routes.md) for the canonical identifier, exact lookup, compatibility, and Python client dispatch contract.
 
 ## Data Models
 

@@ -21,7 +21,7 @@ from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
-from app.utils.auth_utils import authorize_user, permission_filter, require_permission, resolve_access_principal
+from app.utils.auth_utils import access_selector_filter, authorize_user, permission_filter, require_permission
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
 from app.utils.permissions import Principal, Permission, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
@@ -256,7 +256,8 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
 
 @router.get("/samples", response_model=PaginatedResponse[SampleResponse])
 def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
-                 accessible_to: Optional[str] = Query(default=None, description="User MFID, ORCID, username, or email whose effective access should be listed."),
+                 accessible_to_user: Optional[List[str]] = Query(default=None, description="User references whose effective access must all include each result."),
+                 accessible_to_project: Optional[List[str]] = Query(default=None, description="Project MFIDs or slugs whose direct access must all include each result."),
                  include_metadata: bool = False,
                  include_links: bool = False,
                  include_datasets: bool = False,
@@ -283,7 +284,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
     Pass include_links=true to include parent, child, and associated resources for each sample.
     include_datasets is deprecated — use include_links instead.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
-    Pass accessible_to=<user reference> to list another user's effective access. This is limited to self and platform administrators.
+    Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
     import warnings
     if include_datasets:
@@ -294,12 +295,18 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
     params_dict = dict(request.query_params)
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
               'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets',
-              'include_owner', 'limit', 'cursor', 'offset', 'visibility', 'accessible_to'):
+              'include_owner', 'limit', 'cursor', 'offset', 'visibility',
+              'accessible_to_user', 'accessible_to_project'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
-        access_principal = resolve_access_principal(session, auth_res, accessible_to)
-        auth_filter = permission_filter(access_principal, Sample)
+        auth_filter = access_selector_filter(
+            session,
+            auth_res,
+            Sample,
+            user_refs=accessible_to_user,
+            project_refs=accessible_to_project,
+        )
         deletion_filter = deletion_filter_for(Sample)
 
         def apply_filters(q):

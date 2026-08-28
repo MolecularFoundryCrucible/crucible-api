@@ -41,7 +41,7 @@ Use exact collection filters when the caller has a human-readable identifier.
 
 These requests return the normal paginated collection shape. The client must return the single item directly, raise its not-found error for zero items, and treat multiple items as an API integrity error. It must not make a second canonical GET because the item already includes `unique_id` and the full authorized representation.
 
-Project lookup remains public-safe for authenticated callers. Project members and platform administrators retain private lead and metadata fields. Exact user lookup remains available outside shared-group scope but returns `UserPublicRead` for another user, so email lookup never discloses the email address. `permissive=true` does not make `unique_id`, `username`, or `email` filters perform substring matching.
+Project lookup remains public-safe for authenticated callers. Project members and platform administrators retain member-only metadata and member-list access, while lead profiles remain public-safe. Exact user collection lookup always returns `UserPublicRead`, so email lookup never discloses the email address. Self and platform administrators use canonical `GET /users/{user_id}` when the private profile is required. `permissive=true` does not make `unique_id`, `username`, or `email` filters perform substring matching.
 
 An exact instrument slug lookup searches every lifecycle state unless the caller explicitly supplies `status`. A normal instrument list still defaults to `status=active`.
 
@@ -62,7 +62,7 @@ Project updates, membership routes, and graph routes also accept either the proj
 
 Compatibility singleton GET responses include `Content-Location` with the canonical path. Collection responses and nested routes do not include that header.
 
-`GET /users/{user_id}` temporarily accepts username and email aliases. The deprecated `/users/{user_id}/datasets` and `/users/{user_id}/samples` compatibility routes accept the same references while clients migrate to `GET /datasets?accessible_to={user_ref}` and `GET /samples?accessible_to={user_ref}`. `GET /users/{user_id}/datasets/{dataset_mfid}` also accepts these references and returns the resolved canonical user ID. Other nested user routes, user mutations, API-key routes, and project membership targets remain canonical. Their `{user_id}` value must be an ORCID or service-account MFID.
+`GET /users/{user_id}` temporarily accepts username and email aliases. The deprecated `/users/{user_id}/datasets` and `/users/{user_id}/samples` compatibility routes accept the same references while clients migrate to `GET /datasets?accessible_to_user={user_ref}` and `GET /samples?accessible_to_user={user_ref}`. `GET /users/{user_id}/datasets/{dataset_mfid}` also accepts these references and returns the resolved canonical user ID. Other nested user routes, user mutations, API-key routes, and project membership targets remain canonical. Their `{user_id}` value must be an ORCID or service-account MFID.
 
 ## Python client dispatch
 

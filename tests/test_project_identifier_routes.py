@@ -99,14 +99,14 @@ def test_exact_slug_query_returns_empty_collection_when_missing(client, db_engin
     assert response.json()["items"] == []
 
 
-def test_exact_slug_query_preserves_private_fields_for_members(client, db_engine, auth_as):
+def test_exact_slug_query_keeps_lead_email_private_for_members(client, db_engine, auth_as):
     project_mfid, group_id = _setup(db_engine)
     auth_as("0000-0001-1111-1111", groups=[(project_mfid, group_id, Role.OWNER)])
 
     response = client.get("/projects", params={"project_id": "project-slug"})
 
     assert response.status_code == 200, response.text
-    assert response.json()["items"][0]["lead"]["email"] == "lead@example.com"
+    assert "email" not in response.json()["items"][0]["lead"]
 
 
 def test_project_update_accepts_canonical_mfid(client, db_engine, auth_as):
@@ -128,6 +128,7 @@ def test_project_membership_read_accepts_canonical_mfid(client, db_engine, auth_
 
     assert response.status_code == 200, response.text
     assert response.json()["items"][0]["unique_id"] == "0000-0001-1111-1111"
+    assert "email" not in response.json()["items"][0]
 
 
 def test_project_membership_mutations_accept_canonical_mfid(client, db_engine, auth_as):

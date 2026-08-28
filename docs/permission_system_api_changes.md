@@ -1,6 +1,6 @@
 # API Contract Changes - Permission System Redesign
 
-Reference for updating API clients against the completed `feat/permission-roles` contract. The staging deployment can lag behind local branch changes, so use `docs/permission_migration_runbook.md` for the currently deployed revision and staging verification status. See `docs/resource_identifier_routes.md` for canonical identifiers, exact lookup filters, compatibility aliases, and current path parameter names.
+Reference for updating API clients against the `feat/permission-roles` contract. The base release is live on staging, while the typed access selectors and stricter email redaction are in the next local deployment candidate. Start with `docs/client_migration_summary.md` for the changes grouped by client type. Use `docs/permission_migration_runbook.md` for the deployed revision and staging verification status. See `docs/resource_identifier_routes.md` for canonical identifiers, exact lookup filters, compatibility aliases, and current path parameter names.
 
 ## New routes
 
@@ -36,7 +36,7 @@ Response: [ AccessGroupMemberRead, ... ]   # full operator-group member list aft
 
 AccessGroupMemberRead = {
   unique_id: str, first_name: str, last_name: str,
-  username: str | null, email: str | null,
+  username: str | null,
   is_service_account: bool | null, role: str,
 }
 ```
@@ -90,9 +90,11 @@ The legacy POST route maps its Boolean flags to the role model: `read=true&write
 
 ### `GET /projects/{project_ref}`
 
-New optional `?include_members=true`. Adds a `members` field: a list of `{unique_id, username, first_name, last_name, role}` (public-safe, with no email, unlike `GET /projects/{project_ref}/users`) for every project member. **Members-only**: a non-member gets `"members": null` regardless of the flag, following the same pattern as `?include_metadata=` and the lead's email.
+New optional `?include_members=true`. Adds a public-safe `members` list for every project member. A non-member gets `"members": null` regardless of the flag, following the same pattern as `?include_metadata=`. Project lead and member profiles never include email.
 
-Also a bug fix with no schema change: membership detection for the lead's email and `?include_metadata=` was comparing the caller's group name against `project_id` instead of the project's MFID, so it was only ever true for platform admins. A real member calling this route without admin rights got the non-member (`UserPublicRead`, no email, null metadata) response even for their own project. Real members now correctly get the fuller response.
+Also a bug fix: membership detection for `?include_metadata=` and `?include_members=` was comparing the caller's group name against `project_id` instead of the project's MFID, so it was only ever true for platform administrators. Real members now receive the authorized metadata and member list while the resolved lead remains public-safe.
+
+The exact collection lookup `GET /projects?project_id={slug}&include_members=true` supports the same authorized member expansion so clients can resolve a slug without a second canonical request. `include_members=true` without an exact `project_id` filter returns 422.
 
 ### `POST/PATCH /projects/{project_ref}/users/{orcid}`
 
@@ -114,7 +116,7 @@ All three now return the **full member list** instead of a single-user response:
 Response: [ AccessGroupMemberRead, ... ]
 ```
 
-`PATCH` requires a `role` query param with no default; it was previously optional in shape. `DELETE` gains a 409 if the caller is the project lead trying to remove themselves ("Transfer leadership first").
+Every member record is public-safe and omits email. `PATCH` requires a `role` query param with no default; it was previously optional in shape. `DELETE` gains a 409 if the caller is the project lead trying to remove themselves ("Transfer leadership first").
 
 ### `GET /users/{user_id}/projects`
 
@@ -131,18 +133,26 @@ Response is now `PaginatedResponse[Union[ProjectWithLead, ProjectMinimalRead]]`,
   ```
 - anyone else → 403
 
-### Resource lists for a specified user
+### Resource lists for specified users and projects
 
-`GET /datasets` and `GET /samples` accept an optional `accessible_to` query parameter containing a user MFID, ORCID, username, or email. With no parameter, each route continues to list resources accessible to the authenticated caller. Supplying the caller's own reference is equivalent. Inspecting another user's effective access requires platform-admin authority.
+`GET /datasets`, `GET /samples`, and `GET /projects` accept repeated `accessible_to_user` and `accessible_to_project` query parameters. User references may be MFIDs, ORCIDs, usernames, or emails. Project references may be MFIDs or slugs. The API resolves each reference once, deduplicates canonical principals, and returns resources accessible to every selected principal using AND semantics.
 
-The canonical routes return their existing paginated resource models and support their normal filters:
+Selectors only narrow resources readable by the caller. Inspecting another user requires platform-admin authority. Inspecting a project requires membership in that project or platform-admin authority. At most 10 selectors may be supplied in one request.
 
 ```http
-GET /datasets?accessible_to={user_ref}
-GET /samples?accessible_to={user_ref}
+GET /datasets?accessible_to_user={user_ref}
+GET /datasets?accessible_to_project={project_ref}
+GET /samples?accessible_to_project={project_a}&accessible_to_project={project_b}
+GET /projects?accessible_to_user={user_ref}&accessible_to_project={project_ref}
 ```
 
 `GET /users/{user_id}/datasets` and `GET /users/{user_id}/samples` are deprecated compatibility routes. They now use the same effective-role and deletion filtering as the canonical collections but retain their existing unpaginated `List[str]` MFID responses for current Nano clients.
+
+### User email disclosure
+
+`GET /users`, exact email lookup, batch user resolution, project lead, project membership, instrument operator, and access-group member responses now use public-safe user schemas and never return email. `GET /users?email={email}` and `POST /users/resolve` still resolve email to canonical user identity for ingestion and other clients.
+
+Email remains available through the authenticated caller's own profile, self singleton user reads, platform-admin singleton user reads, and authorized user mutation responses. Service-account status alone does not grant email disclosure.
 
 ### `GET /users/{user_id}/datasets/{dataset_mfid}`
 
@@ -244,10 +254,11 @@ This was silently broken for every real project (500, not surfaced clearly) sinc
 
 ## Verification
 
-Generate and inspect the local schema before deployment:
+Generate and inspect the deterministic local schema before deployment:
 
 ```bash
-.venv/bin/python -c "from app.api.main import app; schema = app.openapi(); print(len(schema['paths']), 'paths', len(schema['components']['schemas']), 'schemas')"
+.venv/bin/python -m scripts.export_openapi
+git diff --exit-code -- openapi/crucible-api.json
 ```
 
 After deployment, compare it with `https://crucible.lbl.gov/testapi-staging/openapi.json` and run the smoke checks in `docs/resource_identifier_routes.md` and `docs/permission_migration_runbook.md`.

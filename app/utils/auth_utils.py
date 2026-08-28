@@ -1,4 +1,4 @@
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Sequence
 import logging
 import re
 import os
@@ -383,6 +383,25 @@ def permission_filter(principal: Principal, resource_model,
     )
 
 
+def access_group_permission_filter(accessgroup_id: int, resource_model,
+                                   permission: Permission = Permission.READ):
+    from sqlalchemy import exists
+    from app.models.core_models import ResourceACL
+
+    threshold = THRESHOLDS[permission]
+    allowed = [role.db_value for role in Role if role >= threshold]
+    return (
+        exists()
+        .where(
+            ResourceACL.mfid == resource_model.unique_id,
+            ResourceACL.accessgroup_id == accessgroup_id,
+            ResourceACL.permission.in_(allowed),
+        )
+        .select_from(ResourceACL)
+        .correlate(resource_model)
+    )
+
+
 def has_platform_admin_access(principal: Principal) -> bool:
     return principal.is_platform_admin or any(
         group.group_name == "admin" for group in principal.groups
@@ -420,6 +439,59 @@ def resolve_access_principal(session, caller: Principal, user_ref: Optional[str]
     if caller.user_id == user.unique_id:
         return caller
     return load_principal(session, user.unique_id)
+
+
+def access_selector_filter(session, caller: Principal, resource_model,
+                           user_refs: Optional[Sequence[str]] = None,
+                           project_refs: Optional[Sequence[str]] = None,
+                           max_selectors: int = 10):
+    from app.models.core_models import AccessGroup
+    from app.utils.permissions import AccessGroupType
+    from app.utils.project_utils import resolve_project_reference
+
+    requested_users = list(user_refs or ())
+    requested_projects = list(project_refs or ())
+    if len(requested_users) + len(requested_projects) > max_selectors:
+        raise HTTPException(
+            status_code=422,
+            detail=f"At most {max_selectors} access selectors may be provided",
+        )
+
+    filters = [permission_filter(caller, resource_model)]
+    seen = set()
+
+    for user_ref in requested_users:
+        principal = resolve_access_principal(session, caller, user_ref)
+        key = ("user", principal.user_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        filters.append(permission_filter(principal, resource_model))
+
+    for project_ref in requested_projects:
+        project = resolve_project_reference(project_ref, session)
+        if project is None:
+            raise HTTPException(status_code=404, detail=f"Project '{project_ref}' not found")
+        if not has_platform_admin_access(caller) and caller.role_in(project.unique_id) is None:
+            raise HTTPException(status_code=403, detail="Not authorized to inspect project access")
+        key = ("project", project.unique_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        group = session.exec(
+            select(AccessGroup).where(
+                AccessGroup.group_name == project.unique_id,
+                AccessGroup.group_type == AccessGroupType.PROJECT.value,
+            )
+        ).one_or_none()
+        if group is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Project '{project.project_id}' has no project access group",
+            )
+        filters.append(access_group_permission_filter(group.id, resource_model))
+
+    return and_(*filters)
 
 
 def is_instrument_group_member(principal: Principal, session) -> bool:

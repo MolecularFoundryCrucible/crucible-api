@@ -15,8 +15,8 @@ from app.models.core_models import (
     Dataset, DatasetSampleLink,
 )
 from app.utils.auth_utils import (
-    authorize_user, has_platform_admin_access, permission_filter, require_grant,
-    require_permission, require_platform_admin)
+    access_selector_filter, authorize_user, has_platform_admin_access,
+    permission_filter, require_grant, require_permission, require_platform_admin)
 from app.utils.permissions import (
     AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
@@ -24,10 +24,10 @@ from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_a
 from app.utils.project_utils import (
     assert_project_id_available, is_project_owner, sql_add_user_to_project,
     sql_get_projects_for_user, resolve_project_reference)
-from app.models.access_groups import AccessGroupMemberPublicRead, AccessGroupMemberRead
+from app.models.access_groups import AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
-from app.models.users import UserPublicRead, UserRead
+from app.models.users import UserPublicRead
 
 router = APIRouter(tags=["projects"])
 engine = get_engine()
@@ -101,12 +101,18 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
 @router.get("/projects", response_model=PaginatedResponse[ProjectWithLead])
 def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
                   project_id: Optional[str] = Query(default=None, description="Exact project slug."),
+                  accessible_to_user: Optional[List[str]] = Query(default=None, description="User references whose effective access must all include each result."),
+                  accessible_to_project: Optional[List[str]] = Query(default=None, description="Project MFIDs or slugs whose direct access must all include each result."),
                   include_metadata: bool = False,
+                  include_members: bool = Query(default=False, description="Include members for an exact project_id lookup when authorized."),
                   limit: int = Query(default=100, ge=1, le=1000),
                   offset: int = Query(default=0, ge=0)):
     '''
     Returns a paginated list of projects the user is authorized to see, including the resolved project lead.
     '''
+    if include_members and project_id is None:
+        raise HTTPException(status_code=422, detail="include_members requires an exact project_id filter")
+
     user_unique_id = auth_res.user_id
     if include_metadata:
         loader_opts = [selectinload(Project.resource).selectinload(Resource.scientific_metadata)]
@@ -114,7 +120,18 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
         loader_opts = [selectinload(Project.resource)]
 
     with Session(engine) as session:
-        if project_id is not None:
+        has_access_selectors = bool(accessible_to_user or accessible_to_project)
+        if has_access_selectors:
+            base = select(Project).where(access_selector_filter(
+                session,
+                auth_res,
+                Project,
+                user_refs=accessible_to_user,
+                project_refs=accessible_to_project,
+            ))
+            if project_id is not None:
+                base = base.where(Project.project_id == project_id)
+        elif project_id is not None:
             base = select(Project).where(Project.project_id == project_id)
         elif is_orcid(user_unique_id):
             user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
@@ -144,23 +161,20 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
         items = []
         for proj in props:
             may_see_private_fields = (
-                project_id is None
-                or auth_res.is_platform_admin
+                has_platform_admin_access(auth_res)
                 or auth_res.role_in(proj.unique_id) is not None
             )
             lead_user = leads.get(proj.project_lead_orcid)
-            lead = (
-                UserRead.model_validate(lead_user)
-                if lead_user and may_see_private_fields
-                else UserPublicRead.model_validate(lead_user) if lead_user else None
-            )
+            lead = UserPublicRead.model_validate(lead_user) if lead_user else None
             resource_md = proj.resource.scientific_metadata if proj.resource and may_see_private_fields else None
+            members = _get_project_users(proj.project_id, session) if include_members and may_see_private_fields else None
             items.append(ProjectWithLead(
                 **proj.model_dump(),
                 lead=lead,
                 creation_time=proj.resource.creation_time if proj.resource else None,
                 modification_time=proj.resource.modification_time if proj.resource else None,
                 scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
+                members=members,
             ))
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
@@ -211,10 +225,9 @@ def read_project(project_ref: str, response: Response,
     accepted temporarily for compatibility.
     Any authenticated user can read basic project info (project_id, organization,
     status, title) to support discovery for join requests. Members and admins
-    additionally get the lead's email (UserRead) and scientific_metadata; non-members
-    get the lead as UserPublicRead (no email) and scientific_metadata is always null,
-    regardless of ?include_metadata=. Same for ?include_members=: non-members never
-    get the member list, which is always public-safe (no email) even for members.
+    Members and platform administrators additionally get scientific_metadata.
+    The lead and member profiles are always public-safe and never include email.
+    Non-members never get the member list, regardless of ?include_members=.
     '''
     with Session(engine) as session:
         prop = resolve_project_reference(
@@ -230,12 +243,12 @@ def read_project(project_ref: str, response: Response,
 
         # Membership is standing in the project's own group, keyed by its
         # MFID (Project.unique_id), not project_ref when it is a slug.
-        is_member = auth_res.is_platform_admin or auth_res.role_in(prop.unique_id) is not None
+        is_member = has_platform_admin_access(auth_res) or auth_res.role_in(prop.unique_id) is not None
 
         lead_user = session.exec(select(User).where(User.unique_id == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
-        lead = (UserRead.model_validate(lead_user) if is_member else UserPublicRead.model_validate(lead_user)) if lead_user else None
+        lead = UserPublicRead.model_validate(lead_user) if lead_user else None
         resource_md = prop.resource.scientific_metadata if (prop.resource and is_member) else None
-        members = _get_project_members_public(prop.project_id, session) if (include_members and is_member) else None
+        members = _get_project_users(prop.project_id, session) if (include_members and is_member) else None
         return ProjectWithLead(
             **prop.model_dump(),
             lead=lead,
@@ -308,24 +321,11 @@ def _project_member_rows(proj_id: str, session):
 
 
 def _get_project_users(proj_id: str, session) -> List[AccessGroupMemberRead]:
-    '''Project members and their role, including email — for the
-    members/admins-only /projects/{proj_id}/users route.'''
+    '''Public-safe project members and their role.'''
     return [
         AccessGroupMemberRead.model_validate(user, update={"role": role or "unknown"})
         for user, role in _project_member_rows(proj_id, session)
     ]
-
-
-def _get_project_members_public(proj_id: str, session) -> List[AccessGroupMemberPublicRead]:
-    '''Project members and their role, public-safe (no email) — for
-    ?include_members= on GET /projects/{proj_id}, visible to members only
-    but not warranting the fuller profile /users returns.'''
-    return [
-        AccessGroupMemberPublicRead.model_validate(user, update={"role": role or "unknown"})
-        for user, role in _project_member_rows(proj_id, session)
-    ]
-
-
 @router.get("/projects/{project_ref}/users", response_model=PaginatedResponse[AccessGroupMemberRead])
 def read_users_on_project(project_ref: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                           limit: int = Query(default=100, ge=1, le=1000),

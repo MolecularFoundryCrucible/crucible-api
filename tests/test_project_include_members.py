@@ -72,17 +72,13 @@ def test_member_list_omitted_without_the_flag(client, db_engine, auth_as):
     assert resp.json()["members"] is None
 
 
-def test_member_sees_lead_email_not_just_admin(client, db_engine, auth_as):
-    """Regression: is_member used to compare the caller's group_name against
-    proj_id (the label), which a real member's group_name (the project's
-    MFID) never equals -- so only the literal 'admin' bypass group ever saw
-    the lead's email. A real member must see it too."""
+def test_member_sees_lead_without_email(client, db_engine, auth_as):
     ag_id, mfid = _setup(db_engine)
     auth_as("0000-0002-2222-2222", groups=[(mfid, ag_id, Role.CONTRIBUTOR)])
 
     resp = client.get("/projects/proj_x")
     assert resp.status_code == 200, resp.text
-    assert resp.json()["lead"]["email"] == "lead@x.com"
+    assert "email" not in resp.json()["lead"]
 
 
 def test_outsider_sees_lead_without_email(client, db_engine, auth_as):

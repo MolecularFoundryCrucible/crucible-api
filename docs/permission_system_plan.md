@@ -89,7 +89,7 @@ A Postgres enum rather than `VARCHAR`, deliberately: enums compare by declaratio
 
 ### Effective role
 
-A `Role` value lives on two different columns for two different things: `useraccessgrouplink.role` is your **standing** in a group; `resourceacl.permission` is what that group was **granted** on a resource. Both were originally named `role`, which overloaded the word confusingly — renamed `resourceacl.permission` once the two concepts needed to be told apart in code, not just in prose. The `Permission` enum (`READ`/`CREATE`/.../`TRANSFER`, used by `has_permission`/`require_permission`) is a third, unrelated thing — an action, not a grant level — despite the name proximity.
+A `Role` value lives on two different columns for two different things: `useraccessgrouplink.role` is your **standing** in a group; `resourceacl.permission` is what that group was **granted** on a resource. Staging briefly introduced both as `role` and then renamed the ACL column. Production starts from a schema with neither column and adds the final names directly. The `Permission` enum (`READ`/`CREATE`/.../`TRANSFER`, used by `has_permission`/`require_permission`) is a third, unrelated thing: an action, not a grant level.
 
 ```
 effective_role(user, resource) =
@@ -695,8 +695,8 @@ Split by migration phase (see Migration path → Environments and rollout). Noth
 - [ ] `CREATE TYPE resource_role AS ENUM ('viewer','contributor','editor','admin','owner')`
 - [ ] `CREATE TYPE platform_role AS ENUM ('none','support','admin')`
 - [x] `useraccessgrouplink` -- add `role resource_role`, backfill it, then enforce `NOT NULL`
-- [x] `resourceacl` -- add the resource grant as `resource_role`, rename it to `permission`, backfill it, then enforce `NOT NULL`
-- [ ] `resourceacl` — add covering index `(accessgroup_id, mfid, role)`
+- [x] `resourceacl` -- add `permission` as `resource_role`, backfill it, then enforce `NOT NULL`
+- [x] `resourceacl` -- add covering index `(accessgroup_id, mfid, permission)`
 - [ ] `user` — add `platform_role platform_role NOT NULL DEFAULT 'none'`
 - [ ] `instrument` — add `status VARCHAR DEFAULT 'active'`
 - [ ] `accessgroup` — insert the virtual `public` group row
@@ -737,7 +737,7 @@ Two indexes, one per traversal direction of the many-to-many.
 
 Note the apparent contradiction, so it is not "fixed" later: a **standalone** index on a five-value enum is useless, but that same column **trailing** in a composite is a free covering win.
 
-Existing waste to remove: `resourceacl.read` and `resourceacl.write` each carry a standalone index on a two-value column — no selectivity, pure write cost. They go with the columns and must not be replaced by a standalone `role` index. `idtype.public` has the same problem; a partial index (`ON idtype (mfid) WHERE public`) would be smaller and actually usable.
+Existing waste to remove: `resourceacl.read` and `resourceacl.write` each carry a standalone index on a two-value column. They go with the columns and must not be replaced by a standalone `permission` index. `idtype.public` has the same problem; a partial index (`ON idtype (mfid) WHERE public`) would be smaller and actually usable.
 
 **The `OR` goes away.** Today's filter is `public = true OR EXISTS(acl…)`, which spans two tables, and such ORs routinely defeat index usage. Once `public` becomes an ACL entry against a virtual group, the whole predicate collapses to `accessgroup_id IN (:my_groups)` — a single indexed clause with no `OR` at all, so the `UNION` rewrite that would otherwise be the tuning lever is not needed.
 

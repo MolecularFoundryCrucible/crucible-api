@@ -137,14 +137,24 @@ def test_exact_email_query_is_case_insensitive(client, db_engine, auth_as):
     assert "email" not in response.json()["items"][0]
 
 
-def test_exact_unique_id_query_returns_private_profile_to_self(client, db_engine, auth_as):
+def test_exact_unique_id_collection_query_returns_public_profile_to_self(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as(PERSON_ORCID)
 
     response = client.get("/users", params={"unique_id": PERSON_ORCID})
 
     assert response.status_code == 200, response.text
-    assert response.json()["items"][0]["email"] == "Alice@Example.com"
+    assert "email" not in response.json()["items"][0]
+
+
+def test_canonical_user_get_returns_private_profile_to_admin(client, db_engine, auth_as):
+    _setup(db_engine)
+    auth_as(OTHER_ORCID, platform_role=PlatformRole.ADMIN)
+
+    response = client.get(f"/users/{PERSON_ORCID}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["email"] == "Alice@Example.com"
 
 
 def test_permissive_does_not_make_username_identity_query_partial(client, db_engine, auth_as):

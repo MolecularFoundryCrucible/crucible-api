@@ -1,6 +1,6 @@
 """require_permission and permission_filter against a real Postgres.
 
-Both depend on the `role` column comparing by ENUM ORDER, not alphabetically.
+Both depend on the `resource_role` enum comparing by declaration order, not alphabetically.
 The two disagree completely:
 
     enum:         viewer < contributor < editor < admin < owner
@@ -58,7 +58,7 @@ class TestEnumOrderingReachesSQL:
         contributor — this is what catches that."""
         with Session(migrated) as session:
             got = set(r for (r,) in session.execute(text(
-                "SELECT DISTINCT role::text FROM resourceacl WHERE role >= :t"),
+                "SELECT DISTINCT permission::text FROM resourceacl WHERE permission >= :t"),
                 {"t": threshold.db_value}).all())
         assert got <= expected, f"selected roles below {threshold.name}: {got - expected}"
 

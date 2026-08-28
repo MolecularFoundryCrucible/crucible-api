@@ -9,7 +9,7 @@ Verified on 2026-08-28.
 | Environment | Status |
 |---|---|
 | Staging database | Final permission head `c4a7e9d2b615` is applied. All 9,880 access groups are classified, permission roles are non-null, duplicate owner ACLs are rejected, and the duplicate-owner `unknown` group has been removed. |
-| Staging API | The final API release is being deployed from `origin/staging`. Treat the public OpenAPI as authoritative only after the deployment completes and the verification below passes. |
+| Staging API | API commit `297144c` is deployed. Its live OpenAPI was verified against the generated contract. Typed access selectors and stricter email redaction are in the next local deployment candidate and are not live yet. |
 | Production | Not queried during this review. The existing rollout record says the migration has not started. Re-run every preflight check against production before rollout. |
 
 All counts in the staging sections describe staging only. Production is substantially larger, so do not use staging row counts as production expectations or anomaly thresholds. For production, compare each dry run with its immediately following committed run and enforce only the documented structural invariants and zero-result blockers.
@@ -49,17 +49,17 @@ DB_CONF_FILE=.env .venv/bin/python migrations/data/20260827_repair_staging_null_
 DB_CONF_FILE=.env .venv/bin/python migrations/data/20260827_repair_staging_null_sample_acl.py --commit
 ```
 
-Both runs reported `crucible-staging`. The personal group received `owner`, the project group received `admin`, and the obsolete `admin` and `read_only` grants were deleted. Independent verification returned `0` for `SELECT count(*) FROM resourceacl WHERE permission IS NULL;` and exactly those two grants for sample `0tkpgy57k5w9h000swxzek7wrr`. Do not rerun `20260806_backfill_permission_roles.py` against the current schema because that script targets the old `resourceacl.role` column.
+Both runs reported `crucible-staging`. The personal group received `owner`, the project group received `admin`, and the obsolete `admin` and `read_only` grants were deleted. Independent verification returned `0` for `SELECT count(*) FROM resourceacl WHERE permission IS NULL;` and exactly those two grants for sample `0tkpgy57k5w9h000swxzek7wrr`. Do not rerun `20260806_backfill_permission_roles.py` against the current staging schema because its group classification targets the pre-identity production shape.
 
-The staging deployment candidate removes dataset `source_folder`, makes ownership exclusive to the transfer route, writes explicit access-group types, and includes the route and authorization changes documented in `docs/permission_system_api_changes.md`. These contracts are not live until the deployment completes.
+The deployed staging release removes dataset `source_folder`, makes ownership exclusive to the transfer route, writes explicit access-group types, and includes the route and authorization changes present in commit `297144c`. The typed access selectors and stricter email-redaction contract documented in `docs/permission_system_api_changes.md` require one more API deployment.
 
-### Pending staging deployment and verification
+### Pending staging verification
 
-The snapshot, schema migrations, legacy-group review, classification commit, `unknown` cleanup, and precondition audit are complete. Forty-seven inert groups remain custom until case-by-case cleanup. Keep staging writes and ingestion paused until these remaining steps finish:
+The snapshot, schema migrations, legacy-group review, classification commit, `unknown` cleanup, precondition audit, and API deployment are complete. Forty-seven inert groups remain custom until case-by-case cleanup. The user confirmed that staging has no other active users, so smoke testing can proceed safely. Finish these steps before treating staging as fully verified:
 
-1. Deploy the API release that writes explicit group types.
-2. Run the verification queries and smoke-test creation, publication, ACL changes, project membership, ownership transfer, and instrument ingestion.
-3. Resume staging writes and ingestion only after verification passes.
+1. Run the verification queries and smoke-test creation, publication, ACL changes, project membership, ownership transfer, and instrument ingestion against commit `297144c`.
+2. Deploy the follow-up typed-selector and email-redaction candidate.
+3. Verify repeated user and project selectors, caller-based narrowing, project metadata redaction, exact email resolution without email disclosure, and self/admin singleton email disclosure.
 
 The precondition audit checks null ACL roles, null membership roles, duplicate owner ACLs, and unclassified groups. It is read-only and supports both the pre-rename `resourceacl.role` schema and the post-rename `resourceacl.permission` schema.
 
@@ -103,9 +103,9 @@ Expected results: `group_type` is non-null and uses `access_group_type`; both pe
 
 1. Confirm the database name before every command. Staging and production share a Cloud SQL instance.
 2. Run every data script without `--commit` first. Review its target database, counts, and warnings before committing.
-3. Take a Cloud SQL snapshot before the permission backfill and before the final hard cutover.
+3. Take a Cloud SQL snapshot before the permission backfill and before the remaining hard cutover.
 4. Stop if a verification query does not match its expected result.
-5. Keep the final schema migration and final application deploy in one maintenance window. The old application cannot read the renamed columns, and the new application cannot run before those columns are renamed.
+5. Keep the destructive join-request migration and final application deploy in one maintenance window. The permission columns use their final names from the additive step and do not require a rename.
 
 ## Deployment checkpoints
 
@@ -113,11 +113,11 @@ Production requires staged application builds. Do not deploy the current branch 
 
 | Checkpoint | Commit | Purpose |
 |---|---|---|
-| Expand-compatible build | `e75185b` | Reads the additive role columns, keeps old authorization active, and includes the admin-group bypass needed before ACL cleanup. |
-| Identity build | `737d81e` | Uses MFID-keyed project groups and instrument operator groups after their backfills. |
+| Unified expand-compatible build | pending reviewed commit | Maps `ResourceACL.permission`, keeps old authorization active, and includes the admin-group bypass needed before ACL cleanup. Base commit `e75185b` used the obsolete temporary field name and must not be deployed unchanged. |
+| Unified identity build | pending reviewed commit | Uses `ResourceACL.permission`, MFID-keyed project groups, and instrument operator groups after their backfills. Base commit `737d81e` used the obsolete temporary field name and must not be deployed unchanged. |
 | Final build | reviewed release commit | Uses `resourceacl.permission`, `accessgroupjoinrequest.accessgroup_id`, explicit role writers, and the completed identity model. |
 
-Build and identify all three deployable artifacts before changing production data.
+Build and identify all three deployable artifacts before changing production data. Production is blocked until the two pending checkpoint rows contain tested commit IDs. Rebuilding a checkpoint means changing the ResourceACL model and every ResourceACL grant reader or writer from `role` to `permission`; `useraccessgrouplink.role` remains unchanged.
 
 ## Production recipe
 
@@ -183,15 +183,22 @@ Verify the new columns use PostgreSQL enum types:
 ```sql
 SELECT table_name, column_name, udt_name
 FROM information_schema.columns
-WHERE table_name IN ('useraccessgrouplink', 'resourceacl', 'user')
-  AND column_name IN ('role', 'platform_role');
+WHERE (table_name, column_name) IN (
+    ('useraccessgrouplink', 'role'),
+    ('resourceacl', 'permission'),
+    ('user', 'platform_role')
+);
+
+SELECT count(*)
+FROM information_schema.columns
+WHERE table_name = 'resourceacl' AND column_name = 'role';
 ```
 
-Do not continue if either column is `character varying`.
+The first query must return exactly the three expected enum-backed columns. The second query must return `0`. Do not continue if any expected column is `character varying`.
 
 ### 5. Deploy the expand-compatible build
 
-Deploy commit `e75185b`. Wait for a healthy rollout and verify authenticated reads and ingestion before continuing.
+Deploy the reviewed unified expand-compatible build recorded in the checkpoint table. Wait for a healthy rollout and verify authenticated reads and ingestion before continuing.
 
 This deploy must happen before the permission backfill removes the old `admin` and `read_only` ACL rows.
 
@@ -213,7 +220,7 @@ Verify:
 
 ```sql
 SELECT count(*) FROM useraccessgrouplink WHERE role IS NULL;
-SELECT count(*) FROM resourceacl WHERE role IS NULL;
+SELECT count(*) FROM resourceacl WHERE permission IS NULL;
 SELECT count(*) FROM resourceacl a JOIN accessgroup g ON g.id = a.accessgroup_id WHERE g.group_name IN ('admin', 'read_only');
 SELECT count(*) FROM (SELECT accessgroup_id FROM useraccessgrouplink WHERE role = 'owner' GROUP BY accessgroup_id HAVING count(*) > 1) duplicate_owners;
 ```
@@ -231,7 +238,7 @@ The baseline is empty because step 4 already created the initial permission sche
 .venv/bin/alembic -x yes-this-is-production=true upgrade 91f3c8a4d2e7
 ```
 
-This follows the additive chain through `e5d68f53b42c`, then adds nullable `accessgroup.group_type` on its migration branch. It stops before the incompatible column renames and the non-null enforcement.
+This follows the additive chain through `e5d68f53b42c`, then adds nullable `accessgroup.group_type` on its migration branch. It stops before the incompatible join-request migration and the non-null enforcement.
 
 ### 8. Prepare project and instrument identity data
 
@@ -273,7 +280,7 @@ Expected result for every query: `0`. The legacy-group audit must contain only r
 
 ### 9. Deploy the identity build
 
-Deploy commit `737d81e`. Wait for a healthy rollout. Verify project reads, project membership operations, dataset creation for registered instruments, and ingestion.
+Deploy the reviewed unified identity build recorded in the checkpoint table. Wait for a healthy rollout. Verify project reads, project membership operations, dataset creation for registered instruments, and ingestion.
 
 ### 10. Backfill resource identity references
 
@@ -317,7 +324,7 @@ Before starting:
 
 The access-group classifier must report no identifier collisions, missing entity-owned groups, conflicting stored types, or malformed identity groups. Record any accepted suspicious custom groups for later case-by-case cleanup.
 
-### 12. Run the hard cutover and deploy
+### 12. Run the remaining hard cutover and deploy
 
 Keep these commands and the deploy in the same maintenance window:
 
@@ -328,6 +335,8 @@ Keep these commands and the deploy in the same maintenance window:
 .venv/bin/python migrations/data/20260813_repoint_project_resource_identity.py --commit --yes-this-is-production
 .venv/bin/alembic -x yes-this-is-production=true upgrade c4a7e9d2b615
 ```
+
+Revision `ecfa70615e54` verifies that `resourceacl.permission` already exists and is otherwise a no-op on the unified production path. The maintenance boundary remains necessary because revision `454c96264cfb` removes the legacy join-request column.
 
 Immediately deploy the final release artifact.
 

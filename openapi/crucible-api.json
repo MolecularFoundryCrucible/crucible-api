@@ -3060,11 +3060,18 @@
         "title": "PaginatedResponse[Union[ProjectWithLead, ProjectMinimalRead]]",
         "type": "object"
       },
-      "PaginatedResponse_UserPublicRead_": {
+      "PaginatedResponse_Union_UserRead__UserPublicRead__": {
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/UserPublicRead"
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/UserRead"
+                },
+                {
+                  "$ref": "#/components/schemas/UserPublicRead"
+                }
+              ]
             },
             "title": "Items",
             "type": "array"
@@ -3111,7 +3118,7 @@
           "limit",
           "items"
         ],
-        "title": "PaginatedResponse[UserPublicRead]",
+        "title": "PaginatedResponse[Union[UserRead, UserPublicRead]]",
         "type": "object"
       },
       "ProjectCreate": {
@@ -12253,7 +12260,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaginatedResponse_UserPublicRead_"
+                  "$ref": "#/components/schemas/PaginatedResponse_Union_UserRead__UserPublicRead__"
                 }
               }
             },
@@ -12327,7 +12334,7 @@
     },
     "/users/by-username/{username}": {
       "get": {
-        "description": "Look up a user by username. Returns public profile (no email). Any authenticated user.",
+        "description": "Look up a user by username. Email is visible only to self and platform administrators.",
         "operationId": "get_user_by_username_users_by_username__username__get",
         "parameters": [
           {
@@ -12345,7 +12352,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserPublicRead"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/UserRead"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UserPublicRead"
+                    }
+                  ],
+                  "title": "Response Get User By Username Users By Username  Username  Get"
                 }
               }
             },

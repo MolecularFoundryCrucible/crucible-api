@@ -41,7 +41,7 @@ Use exact collection filters when the caller has a human-readable identifier.
 
 These requests return the normal paginated collection shape. The client must return the single item directly, raise its not-found error for zero items, and treat multiple items as an API integrity error. It must not make a second canonical GET because the item already includes `unique_id` and the full authorized representation.
 
-Project lookup remains public-safe for authenticated callers. Project members and platform administrators retain member-only metadata and member-list access, while lead profiles remain public-safe. Exact user collection lookup always returns `UserPublicRead`, so email lookup never discloses the email address. Self and platform administrators use canonical `GET /users/{user_id}` when the private profile is required. `permissive=true` does not make `unique_id`, `username`, or `email` filters perform substring matching.
+Project lookup remains public-safe for authenticated callers. Project members and platform administrators retain member-only metadata and member-list access, while lead profiles remain public-safe. Exact user collection and singleton lookups return the same caller-authorized representation: self and platform administrators may receive email, while other authenticated callers receive `UserPublicRead`. Broad directory listings and batch resolution remain public-safe. `permissive=true` does not make `unique_id`, `username`, or `email` filters perform substring matching.
 
 An exact instrument slug lookup searches every lifecycle state unless the caller explicitly supplies `status`. A normal instrument list still defaults to `status=active`.
 

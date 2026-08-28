@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select, col
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.general_utils import is_orcid, is_valid_mfid, get_secret
+from app.general_utils import get_secret
 from app.models.core_models import (
     AccessGroup, Dataset, Project, Sample, User,
     UserAccessGroupLink,
@@ -32,7 +32,7 @@ router = APIRouter(tags=["users"])
 engine = get_engine()
 
 
-@router.get("/users", response_model=PaginatedResponse[UserPublicRead])
+@router.get("/users", response_model=PaginatedResponse[Union[UserRead, UserPublicRead]])
 def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
                unique_id: Optional[str] = Query(default=None, description="Exact ORCID or service-account MFID."),
                username: Optional[str] = Query(default=None, description="Exact username."),
@@ -68,7 +68,7 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
         search_cmd = search_cmd.where(User.is_service_account == is_service_account)
 
     # Admins see the full directory; non-admins are scoped to users who share
-    # an access group with them. Collection responses are public-safe for both.
+    # an access group with them. Broad collection responses are public-safe.
     if not exact_lookup and not has_platform_admin_access(auth_res):
         ag_ids = [ag.id for ag in ag_list]
         search_cmd = search_cmd.where(
@@ -84,7 +84,13 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
         items = session.exec(
             search_cmd.order_by(User.last_name, User.first_name).offset(offset).limit(limit)
         ).all()
-        items = [UserPublicRead.model_validate(user) for user in items]
+        is_admin = has_platform_admin_access(auth_res)
+        items = [
+            UserRead.model_validate(user)
+            if exact_lookup and (is_admin or user.unique_id == auth_res.user_id)
+            else UserPublicRead.model_validate(user)
+            for user in items
+        ]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
@@ -191,15 +197,17 @@ def search_users(
     return results
 
 
-@router.get("/users/by-username/{username}", response_model=UserPublicRead)
+@router.get("/users/by-username/{username}", response_model=Union[UserRead, UserPublicRead])
 def get_user_by_username(username: str, response: Response,
                          auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Look up a user by username. Returns public profile (no email). Any authenticated user.'''
+    '''Look up a user by username. Email is visible only to self and platform administrators.'''
     with Session(engine) as session:
         user = session.exec(select(User).where(User.username == username.lower())).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
         response.headers["Content-Location"] = f"/users/{user.unique_id}"
+        if auth_res.user_id == user.unique_id or has_platform_admin_access(auth_res):
+            return UserRead.model_validate(user)
         return UserPublicRead.model_validate(user)
 
 
@@ -209,12 +217,8 @@ def read_user(user_id: str, response: Response,
     with Session(engine) as session:
         user = resolve_user_by_identifier(session, user_id)
 
-    canonical_reference = is_orcid(user_id) or is_valid_mfid(user_id)
-    if canonical_reference and auth_res.user_id != user.unique_id:
-        require_platform_admin(auth_res)
-
     is_admin = has_platform_admin_access(auth_res)
-    if not canonical_reference:
+    if user_id != user.unique_id:
         response.headers["Content-Location"] = f"/users/{user.unique_id}"
 
     if auth_res.user_id == user.unique_id or is_admin:

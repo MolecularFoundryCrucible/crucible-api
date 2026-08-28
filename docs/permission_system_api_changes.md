@@ -150,9 +150,9 @@ GET /projects?accessible_to_user={user_ref}&accessible_to_project={project_ref}
 
 ### User email disclosure
 
-`GET /users`, exact email lookup, batch user resolution, project lead, project membership, instrument operator, and access-group member responses now use public-safe user schemas and never return email. `GET /users?email={email}` and `POST /users/resolve` still resolve email to canonical user identity for ingestion and other clients.
+Broad `GET /users` listings, batch user resolution, project lead, project membership, instrument operator, and access-group member responses use public-safe user schemas and never return email. Exact `GET /users?unique_id=`, `?username=`, or `?email=` lookups return the same authorized representation as `GET /users/{user_id}`: self and platform administrators may receive email, while other authenticated callers receive `UserPublicRead`.
 
-Email remains available through the authenticated caller's own profile, self singleton user reads, platform-admin singleton user reads, and authorized user mutation responses. Service-account status alone does not grant email disclosure.
+Email remains available through the authenticated caller's own profile, exact self lookups, exact platform-admin lookups, and authorized user mutation responses. Service-account status alone does not grant email disclosure. `POST /users/resolve` remains public-safe even when the request contains one identifier because it is a batch-resolution contract.
 
 ### `GET /users/{user_id}/datasets/{dataset_mfid}`
 

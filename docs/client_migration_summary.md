@@ -153,10 +153,10 @@ The unpaginated MFID-only routes `GET /users/{user_id}/datasets` and `GET /users
 
 ## User email privacy
 
-- User collection, exact email lookup, batch resolution, project lead, project membership, instrument operator, and access-group member responses never contain email.
-- `GET /users?email={email}` remains an authenticated exact lookup and returns the matching public-safe user with `unique_id`.
+- Broad user collection, batch resolution, project lead, project membership, instrument operator, and access-group member responses never contain email.
+- Exact `GET /users?unique_id=`, `?username=`, and `?email=` lookups return the same caller-authorized representation as the singleton route. Self and platform administrators may receive email; other callers receive the matching public-safe user with `unique_id`.
 - `POST /users/resolve` continues to accept emails and returns public-safe user records keyed by canonical identifier.
-- Email is returned only for the authenticated user's own profile, a self singleton user read, a platform-admin singleton user read, or an authorized user mutation response.
+- Email is returned only for the authenticated user's own profile, an exact self lookup, an exact platform-admin lookup, or an authorized user mutation response.
 - Service-account status alone does not grant email disclosure. A service account may resolve an email without receiving it back.
 
 `GET /users/{user_id}/datasets/{dataset_mfid}` now returns:
@@ -207,7 +207,7 @@ Replace uses of the removed `read` and `write` Booleans. `effective_access` is o
 7. List datasets and samples for self with no selector and with `accessible_to_user=self`.
 8. Verify repeated user and project selectors return their intersection and never broaden the caller's readable collection.
 9. Verify another user's access is denied to an ordinary caller and allowed to a platform administrator.
-10. Resolve a user by email and confirm that collection, membership, operator, and project-lead responses omit email.
+10. Resolve a user by email and confirm that self/admin exact lookups may include email while other callers, broad collections, membership, operator, and project-lead responses omit it.
 11. Create and read a dataset without `source_folder`.
 12. Verify a viewer cannot request ingestion, a contributor can, and a non-GCS file is rejected.
 13. Verify graph and relationship views do not expose inaccessible resources.

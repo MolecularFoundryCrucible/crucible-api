@@ -47,13 +47,15 @@ def test_canonical_orcid_get_returns_private_profile_to_self(client, db_engine, 
     assert "content-location" not in response.headers
 
 
-def test_canonical_orcid_get_rejects_other_user(client, db_engine, auth_as):
+def test_canonical_orcid_get_returns_public_profile_to_other_user(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as(OTHER_ORCID)
 
     response = client.get(f"/users/{PERSON_ORCID}")
 
-    assert response.status_code == 403
+    assert response.status_code == 200, response.text
+    assert response.json()["unique_id"] == PERSON_ORCID
+    assert "email" not in response.json()
 
 
 def test_canonical_service_account_mfid_get_works_for_admin(client, db_engine, auth_as):
@@ -125,6 +127,16 @@ def test_exact_username_query_returns_public_profile(client, db_engine, auth_as)
     assert "email" not in body["items"][0]
 
 
+def test_exact_username_query_returns_private_profile_to_self(client, db_engine, auth_as):
+    _setup(db_engine)
+    auth_as(PERSON_ORCID)
+
+    response = client.get("/users", params={"username": "alice_researcher"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"][0]["email"] == "Alice@Example.com"
+
+
 def test_exact_email_query_is_case_insensitive(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as(OTHER_ORCID)
@@ -137,14 +149,24 @@ def test_exact_email_query_is_case_insensitive(client, db_engine, auth_as):
     assert "email" not in response.json()["items"][0]
 
 
-def test_exact_unique_id_collection_query_returns_public_profile_to_self(client, db_engine, auth_as):
+def test_exact_unique_id_collection_query_returns_private_profile_to_self(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as(PERSON_ORCID)
 
     response = client.get("/users", params={"unique_id": PERSON_ORCID})
 
     assert response.status_code == 200, response.text
-    assert "email" not in response.json()["items"][0]
+    assert response.json()["items"][0]["email"] == "Alice@Example.com"
+
+
+def test_exact_email_query_returns_private_profile_to_admin(client, db_engine, auth_as):
+    _setup(db_engine)
+    auth_as(OTHER_ORCID, platform_role=PlatformRole.ADMIN)
+
+    response = client.get("/users", params={"email": "alice@example.com"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"][0]["email"] == "Alice@Example.com"
 
 
 def test_canonical_user_get_returns_private_profile_to_admin(client, db_engine, auth_as):

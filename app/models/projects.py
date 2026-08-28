@@ -32,7 +32,7 @@ class ProjectCreate(SQLModel):
 class ProjectRead(SQLModel):
     '''Response model for Project.'''
     # id: int
-    unique_id: Optional[str] = None
+    unique_id: str
     project_id: str
     organization: str
     project_lead_orcid: Optional[str] = None
@@ -60,6 +60,7 @@ class ProjectWithLead(ProjectRead):
 
 
 class ProjectMinimalRead(SQLModel):
+    unique_id: str
     project_id: str
     title: Optional[str] = None
 

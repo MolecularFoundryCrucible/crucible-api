@@ -10,7 +10,7 @@ run against production unless explicitly told to.
 Usage:
     DB_CONF_FILE=.env alembic revision --autogenerate -m "add a column"
     DB_CONF_FILE=.env alembic upgrade head
-    DB_CONF_FILE=.env alembic upgrade head -x yes-this-is-production=true
+    DB_CONF_FILE=.env alembic -x yes-this-is-production=true upgrade head
 """
 import os
 import sys

@@ -7,7 +7,7 @@ from app.api.dependencies import get_engine
 from app.models.core_models import User
 from app.models.users import ServiceAccountCreate, ServiceAccountRead
 from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin
-from app.utils.permissions import Principal, Role
+from app.utils.permissions import AccessGroupType, Principal, Role
 from app.utils.user_utils import assert_username_available, sql_add_user_to_access_group
 
 router = APIRouter(tags=["service_accounts"])
@@ -53,7 +53,13 @@ def create_service_account(
         # Personal access group at owner standing, same as a human user gets
         # at login (see auth.py) -- without it, a resource this SA itself
         # owns would cap its own effective role at viewer via a null standing.
-        sql_add_user_to_access_group(unique_id, unique_id, session, role=Role.OWNER)
+        sql_add_user_to_access_group(
+            unique_id,
+            unique_id,
+            session,
+            role=Role.OWNER,
+            group_type=AccessGroupType.IDENTITY,
+        )
         session.commit()
 
     # Generate API key (outside session — find_or_add_api_access opens its own)

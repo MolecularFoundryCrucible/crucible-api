@@ -7,6 +7,8 @@ touch UserProjectLink). See is_project_member in app/utils/project_utils.py.
 The access group is keyed by the project's MFID (Project.unique_id), not its
 project_id — see docs/permission_system_plan.md, "Groups".
 """
+import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlalchemy.pool import StaticPool
 
@@ -56,9 +58,7 @@ def test_member_role_comes_from_the_project_access_group():
         assert result == {"0000-0001": "owner", "0000-0002": "contributor"}
 
 
-def test_access_group_link_with_null_role_reports_unknown_not_a_crash():
-    """A pre-backfill UserAccessGroupLink row (role never set) is stale data,
-    not a reason to 500 the route."""
+def test_access_group_link_with_null_role_is_rejected():
     engine = _engine()
     with Session(engine) as session:
         proj = _project(session, "proj_y", "0000-0003")
@@ -71,11 +71,8 @@ def test_access_group_link_with_null_role_reports_unknown_not_a_crash():
         session.refresh(user)
 
         session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=ag.id, role=None))
-        session.commit()
-
-        result = _get_project_users("proj_y", session)
-        assert len(result) == 1
-        assert result[0].role == "unknown"
+        with pytest.raises(IntegrityError):
+            session.commit()
 
 
 def test_stale_user_project_link_with_no_real_access_is_not_a_member():

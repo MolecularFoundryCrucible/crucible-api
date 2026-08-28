@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from app.models.core_models import (
     AccessGroup, Dataset, Project, Resource, ResourceACL, User, UserAccessGroupLink)
-from app.utils.permissions import PlatformRole, Role
+from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 
 def _user(session, orcid, username=None, email=None):
@@ -22,8 +22,8 @@ def _user(session, orcid, username=None, email=None):
     return u
 
 
-def _group(session, name):
-    ag = AccessGroup(group_name=name)
+def _group(session, name, group_type):
+    ag = AccessGroup(group_name=name, group_type=group_type.value)
     session.add(ag)
     session.commit()
     session.refresh(ag)
@@ -40,8 +40,8 @@ class TestProjectTransfer:
             session.commit()
             session.refresh(proj)
             mfid = proj.unique_id
-            proj_ag = _group(session, mfid)
-            _group(session, "0000-0002")  # new owner's personal group must exist
+            proj_ag = _group(session, mfid, AccessGroupType.PROJECT)
+            _group(session, "0000-0002", AccessGroupType.IDENTITY)
             session.add(Resource(mfid=mfid, resource_type="project"))
             session.add(UserAccessGroupLink(user_id=old_owner.id, accessgroup_id=proj_ag.id, role="owner"))
             session.commit()
@@ -104,8 +104,8 @@ class TestDatasetTransfer:
         with Session(db_engine) as session:
             old_owner = _user(session, "0000-0011")
             _user(session, "0000-0012", username="newowner")
-            old_ag = _group(session, "0000-0011")
-            new_ag = _group(session, "0000-0012")
+            old_ag = _group(session, "0000-0011", AccessGroupType.IDENTITY)
+            new_ag = _group(session, "0000-0012", AccessGroupType.IDENTITY)
             session.add(Resource(mfid="ds_1", resource_type="dataset"))
             session.add(Dataset(unique_id="ds_1", dataset_name="d", owner_orcid="0000-0011",
                                 owner_user_id=old_owner.id))
@@ -141,7 +141,7 @@ class TestDatasetTransfer:
         with Session(db_engine) as session:
             old_owner = _user(session, "0000-0021")
             _user(session, "0000-0022")  # exists, but no AccessGroup for them
-            old_ag = _group(session, "0000-0021")
+            old_ag = _group(session, "0000-0021", AccessGroupType.IDENTITY)
             session.add(Resource(mfid="ds_2", resource_type="dataset"))
             session.add(Dataset(unique_id="ds_2", dataset_name="d", owner_orcid="0000-0021",
                                 owner_user_id=old_owner.id))

@@ -1,5 +1,7 @@
 # Permission System Redesign
 
+This document explains the permission model and records design decisions. It is not an operational checklist. The rollout phases later in this document are historical design context and no longer describe the current environment state. Shadow mode, agreement tests, and the legacy authorization helpers described in those phases were retired after cutover. Use `docs/permission_migration_runbook.md` for current staging findings and the ordered production recipe.
+
 ## Goals
 
 The current permission model is binary: read or write access to a group's resources. This is too coarse for a platform where researchers, collaborators, facility staff, instrument software, and operators all have different levels of responsibility.
@@ -162,17 +164,17 @@ The rule that follows: **nothing derived from user input ever becomes an identif
 
 ### Groups
 
-| Group | Named after (today) | Named after (target) | Members |
-|---|---|---|---|
-| Project group | `project_id` | project MFID | Project members, at their project role |
-| ORCID group | user's ORCID | unchanged | The user, always at `owner` |
-| `admin` group | `admin` | unchanged | Legacy container; confers nothing after cutover |
-| Instrument group | `instrument_name.lower()` | instrument MFID | The instrument's service account, and nothing else — see Instruments |
-| `public` group | `public` | unchanged | **Virtual** — every principal, always at `viewer` |
+| Group type | Name | Members |
+|---|---|---|
+| `project` | Project MFID | Project members, at their project role |
+| `identity` | `User.unique_id`, either a human ORCID or service-account MFID | Exactly that user, always at `owner` |
+| `instrument` | Instrument MFID | Bound instrument service accounts |
+| `system` | Reserved name such as `admin`, `read_only`, or `public` | Defined by the system policy rather than generic membership routes |
+| `custom` | Administrator-chosen legacy name | Legacy compatibility only |
 
-**Every group derived from an entity is named after that entity's MFID.** Only the two reserved literals are exceptions, and neither comes from user input. This is not cosmetic: naming groups after `project_id` and `instrument_name` is what lets a caller-chosen string land in the same namespace as `admin`, which is a live privilege escalation (see Currently Unguarded Operations → `project_id` collides with the access-group namespace).
+**Every entity-owned group has an explicit `group_type`.** Identifier format is not a discriminator because service accounts, projects, and instruments all use MFIDs. Human and service-account personal groups are both `identity`; the owning `User.unique_id` determines the member. Project and instrument groups use the corresponding entity MFID. Reserved literals are `system` groups.
 
-> **Migration note.** This is a data migration, not a greenfield choice — renaming touches `accessgroup.group_name` for every project and instrument group, and every `require_groups(ag_list, {'admin', proj_id})` comparison changes shape. Those call sites are being rewritten for `require_permission` anyway, so sequence the two together rather than doing the work twice. ACL rows themselves are unaffected: `resourceacl.accessgroup_id` points at `accessgroup.id`, so a rename never touches permission data.
+> **Migration note.** Revision `91f3c8a4d2e7` adds nullable `accessgroup.group_type`. `20260827_backfill_access_group_types.py` classifies existing rows only after detecting identifier collisions, missing entity-owned groups, and malformed identity membership. Revision `c4a7e9d2b615` then makes the column non-null. ACL rows are unaffected because they reference `accessgroup.id`.
 
 ### Public resources
 
@@ -632,7 +634,7 @@ On top of the grammar, reject case-insensitively: the reserved names (`public`, 
 
 **Join requests accept any group name but can only be approved for projects.** `POST /access_groups/{group_name}/join` takes the name unvalidated, so a request to join an instrument group, another user's ORCID group, or a typo-created orphan is accepted and sits pending. Approval then fails: `review_join_request` calls `sql_add_user_to_project(requester, req.group_name, ...)`, which inserts a `UserProjectLink` whose `project_id` is foreign-keyed to `project.project_id`. For a non-project group that row has no parent, so the reviewer gets a 500 rather than a 403, after the request has already been accepted.
 
-The fix is validation at request time, not a generic add-to-any-group route. Every group type has a membership path that knows its own authorization bar — projects via `POST /projects/{id}/users/{orcid}`, instruments via the service-account binding route above, ORCID groups created with the user and never joined, and `public` virtual with no membership at all. A generic route could not choose the right bar, and would allow a second member in someone's ORCID group, breaking both `one_owner_per_group` and the assumption that everyone holds `owner` in their own group that makes sharing safe.
+The fix is validation at request time, not a generic add-to-any-group route. Every group type has a membership path that knows its own authorization bar. Projects use `POST /projects/{id}/users/{orcid}`, instruments use the service-account binding route, identity groups are created with the user and never joined, and `public` is virtual. The deprecated generic routes now reject `identity`, `project`, and `system` groups, require an existing group, and temporarily retain instrument and custom compatibility behavior.
 
 This is a live bug independent of the redesign, but it lands in scope because `_is_group_lead` and the whole join-request path are being migrated to standing checks anyway.
 
@@ -692,14 +694,15 @@ Split by migration phase (see Migration path → Environments and rollout). Noth
 
 - [ ] `CREATE TYPE resource_role AS ENUM ('viewer','contributor','editor','admin','owner')`
 - [ ] `CREATE TYPE platform_role AS ENUM ('none','support','admin')`
-- [ ] `useraccessgrouplink` — add `role resource_role NOT NULL DEFAULT 'contributor'`
-- [ ] `resourceacl` — add `role resource_role`
+- [x] `useraccessgrouplink` -- add `role resource_role`, backfill it, then enforce `NOT NULL`
+- [x] `resourceacl` -- add the resource grant as `resource_role`, rename it to `permission`, backfill it, then enforce `NOT NULL`
 - [ ] `resourceacl` — add covering index `(accessgroup_id, mfid, role)`
 - [ ] `user` — add `platform_role platform_role NOT NULL DEFAULT 'none'`
 - [ ] `instrument` — add `status VARCHAR DEFAULT 'active'`
 - [ ] `accessgroup` — insert the virtual `public` group row
 - [ ] `idtype` — backfill a `Resource` row per existing project, `resource_type='project'`
-- [ ] `useraccessgrouplink` — add partial unique index `one_owner_per_group` (last, after every standing is assigned)
+- [x] `useraccessgrouplink` -- add partial unique index `one_owner_per_group` after every standing is assigned
+- [x] `resourceacl` -- add partial unique index `one_owner_acl_per_resource` after every permission is assigned; this permits zero owners but rejects multiple owners
 - [ ] `project` — add FK `project_lead_orcid` → `user.orcid` (not destructive; needs a precondition check first — see "Project lead becomes a role")
 
 **Contract — phase 5, after the new path is trusted:**
@@ -823,7 +826,7 @@ No join against `useraccessgrouplink` is required in list queries.
 - [x] `instrument` — add an `instrument_id` handle, validated like `project_id` (no group-namespace collision check needed — groups are keyed by `unique_id`, not `instrument_id`); backfilled via `migrations/data/20260810_backfill_instrument_id.py`, slugified from `instrument_name`, which stays free text
 - [x] Validate `project_id` on `POST /projects`: grammar, reserved names, cross-namespace collision — `validate_project_id`/`assert_project_id_available` in `app/utils/project_utils.py`, case-insensitive, checks `AccessGroup` and `Instrument.instrument_name` directly (the latter needed until every instrument has a group — see above)
 - [x] Rename existing project access groups to MFIDs — `project_utils.py`, `projects.py`, `resources.py`, `access_groups.py`, `users.py`, `sql_utils.py` now resolve a project's group via `Project.unique_id`, not `project_id`; `migrations/data/20260810_rename_project_groups_to_mfid.py` renames existing groups in place (or creates fresh + flags for manual review on collision, same policy as the instrument version). **Not yet cut over** — this code cannot go live until `Project.unique_id` is backfilled (`20260810_backfill_project_unique_id.py`) and the rename script above has run, in that order; a half-migrated state breaks every project route (see the scripts' own docstrings)
-- [x] ~~`AccessGroup` gains `owner_orcid`/`resource_mfid`~~ — built, then reverted. Audited actual usage and found exactly one real reader (`reassign_resource_project`'s `previous_project_id`, now resolved via a live join through `Project` instead) and zero readers of `owner_orcid` anywhere; the columns existed only to satisfy the "classify every group by kind" aspiration below, not an actual code path. Removed in `migrations/versions/20260813_bb780697b63b_drop_accessgroup_owner_orcid_and_.py`. If a future redesign genuinely needs to classify groups by kind (e.g. the tag-plus-policy model discussed for scattered ACL rows), reintroduce it then, against a real reader, not preemptively
+- [x] `AccessGroup.group_type` explicitly distinguishes identity, project, instrument, custom, and system groups. This is narrower than the reverted `owner_orcid`/`resource_mfid` design and has direct authorization readers in generic membership guards and ACL principal serialization. The nullable expansion, audited backfill, and non-null enforcement are revisions `91f3c8a4d2e7` and `c4a7e9d2b615`.
 - [x] `POST/DELETE /instruments/{instrument_mfid}/service_accounts/{sa_unique_id}` — bind an SA to an instrument at `admin` standing in its operator group; requires `MANAGE_ACL` on the instrument (in practice platform-admin only, since no group holds `admin` on an instrument otherwise — matches "Defer the manager group")
 - [x] `POST /datasets` and `PATCH /datasets/{dsid}` — reject unregistered `instrument_name` with `400` instead of creating a group
 - [x] `POST /access_groups/{group_name}/join` — reject a non-project group with `400`, so a request cannot be accepted and then fail on approval (already validated against `Project` before this redesign started; 404, not 400, but closes the same gap)
@@ -879,7 +882,9 @@ This is the second payoff from `Principal`: a principal is a plain frozen value,
 
 **Agreement tests, specific to the migration.** For a matrix of `(principal, resource, operation)`, assert the old check and the new check return the same answer, with a deliberate enumerated list of exceptions where behaviour is *supposed* to change — for example project members losing the ability to add other members. This is the test-time counterpart to shadow-mode validation, and it turns "did this break something across 70 routes" into a question with an answer.
 
-### Migration path
+### Historical migration design
+
+Do not execute the numbered phases in this section. They describe how the rollout was designed and preserve the reasoning behind expand, cutover, and contract stages. The current procedure, deployment checkpoints, verification queries, and environment status are maintained only in `docs/permission_migration_runbook.md`.
 
 ~70 call sites use the four existing check helpers (`require_groups` 21, `require_write_access` 16, `require_admin` 12, `read_access_filter_list` 12, `require_read_access` 9). The risk in this project is the migration, not the model.
 
@@ -906,13 +911,7 @@ Shadow mode is safe in production by construction: it computes both answers, ret
 
 **Merge the inert work to main early.** Phases 2 and 3 below change no behaviour — `Principal` is a mechanical refactor, and `effective_role` is new code wired to nothing. They can land on main while staging work continues, which takes several thousand lines out of the review that actually matters and leaves one focused cutover PR.
 
-> **This section is the design intent. For what to actually type, in what
-> order, and current status per environment, see
-> `docs/permission_migration_runbook.md`.** The runbook supersedes the ordering
-> implied by the numbering below in one respect: the code carrying the
-> admin-group bypass must be deployed *before* the backfill deletes the
-> `admin` ACL rows, and the schema must exist before that code deploys. So per
-> environment it is schema → code → backfill, not schema → backfill → code.
+The production runbook supersedes all sequencing in this historical section.
 
 ### Phase 0 — baseline
 
@@ -1096,7 +1095,7 @@ On performance, the join is roughly a wash rather than a regression, provided th
 
 ### Instrument ↔ project association
 
-`POST/DELETE /instruments/{id}/projects/{proj_id}`, auto-granting the service account `contributor` in the associated project group. Deferred as too much operational machinery for now; create-on-behalf works without it. Revisit when scoped *read* access for instruments is needed (see the consequence noted above), or when it becomes desirable to state explicitly which instruments a project has approved.
+`POST/DELETE /instruments/{id}/projects/{proj_id}`, granting the instrument group `contributor` on the project resource. This remains deferred. Service-account create-on-behalf is temporarily allowed without project authorization to preserve ingestion, so the API does not yet prove that an instrument is approved for the target project. Implement this association before removing that transitional exception or granting instruments scoped access to existing project resources.
 
 ### Deriving the instrument grant instead of storing it
 

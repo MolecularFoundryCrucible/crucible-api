@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.models.core_models import (
     AccessGroup, Instrument, Project, Resource, ResourceACL, User, UserAccessGroupLink)
 from app.utils.permissions import (
-    PUBLIC_GROUP_NAME, GroupMembership, PlatformRole, Principal, Role)
+    PUBLIC_GROUP_NAME, AccessGroupType, GroupMembership, PlatformRole, Principal, Role)
 
 MFID = "ds-1"
 OWNER_ORCID = "0000-0001-2345-6789"
@@ -31,13 +31,13 @@ def session():
         s.add(Resource(mfid=MFID, resource_type="dataset"))
         for orcid in (OWNER_ORCID, FRIEND_ORCID):
             s.add(User(first_name="A", last_name="B", email=f"{orcid}@x", unique_id=orcid))
-            s.add(AccessGroup(group_name=orcid))
+            s.add(AccessGroup(group_name=orcid, group_type=AccessGroupType.IDENTITY.value))
         proj = Project(project_id=PROJ, organization="LBNL", project_lead_orcid=OWNER_ORCID)
         s.add(proj)
         s.commit()
         s.refresh(proj)
-        s.add(AccessGroup(group_name=proj.unique_id))
-        s.add(AccessGroup(group_name=PUBLIC_GROUP_NAME))
+        s.add(AccessGroup(group_name=proj.unique_id, group_type=AccessGroupType.PROJECT.value))
+        s.add(AccessGroup(group_name=PUBLIC_GROUP_NAME, group_type=AccessGroupType.SYSTEM.value))
         s.commit()
         owner_gid = s.exec(select(AccessGroup).where(
             AccessGroup.group_name == OWNER_ORCID)).one().id
@@ -56,23 +56,58 @@ def owner(session):
                      groups=(GroupMembership(gid(session, OWNER_ORCID), OWNER_ORCID, Role.OWNER),))
 
 
-class TestGroupKind:
-    def test_classifies_each_principal_type(self, session):
-        from app.api.routes.resources import _group_kind
+class TestAccessGrantRead:
+    def test_describes_each_principal_type(self, session):
+        from app.api.routes.resources import _access_grant_read
         proj = session.exec(select(Project).where(Project.project_id == PROJ)).one()
-        assert _group_kind(session, OWNER_ORCID) == "user"
-        assert _group_kind(session, proj.unique_id) == "project"
-        assert _group_kind(session, PUBLIC_GROUP_NAME) == "public"
-        assert _group_kind(session, "admin") == "system"
-        assert _group_kind(session, "nothing-like-this") == "unknown"
+        owner_group = session.exec(select(AccessGroup).where(AccessGroup.group_name == OWNER_ORCID)).one()
+        project_group = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)).one()
+        public_group = session.exec(select(AccessGroup).where(AccessGroup.group_name == PUBLIC_GROUP_NAME)).one()
+        assert _access_grant_read(session, owner_group, "owner").principal_type == "user"
+        assert _access_grant_read(session, project_group, "admin").principal_type == "project"
+        assert _access_grant_read(session, public_group, "viewer").principal_type == "public"
+        assert _access_grant_read(session, AccessGroup(group_name="admin", group_type=AccessGroupType.SYSTEM.value), "admin").principal_type == "system"
+        assert _access_grant_read(session, AccessGroup(group_name="nothing-like-this"), "viewer").principal_type == "unknown"
 
     def test_distinguishes_service_accounts(self, session):
-        from app.api.routes.resources import _group_kind
+        from app.api.routes.resources import _access_grant_read
         session.add(User(first_name="", last_name="", email=None,
                          unique_id="0tkn2knjast3h0008nyq9zps2c", is_service_account=True))
-        session.add(AccessGroup(group_name="0tkn2knjast3h0008nyq9zps2c"))
+        service_account_group = AccessGroup(
+            group_name="0tkn2knjast3h0008nyq9zps2c",
+            group_type=AccessGroupType.IDENTITY.value,
+        )
+        session.add(service_account_group)
         session.commit()
-        assert _group_kind(session, "0tkn2knjast3h0008nyq9zps2c") == "service_account"
+        assert _access_grant_read(session, service_account_group, "contributor").principal_type == "service_account"
+
+    def test_instrument_group_uses_the_instrument_mfid(self, session):
+        from app.api.routes.resources import _access_grant_read
+        instrument = Instrument(
+            unique_id="0inst2knjast3h0008nyq9zps2c",
+            instrument_id="beamline-1",
+            instrument_name="Beamline 1",
+            owner="LBNL",
+            location="Berkeley",
+            other_id=None,
+            other_id_source=None,
+            manufacturer=None,
+            model=None,
+            description=None,
+            instrument_type=None,
+        )
+        instrument_group = AccessGroup(
+            group_name=instrument.unique_id,
+            group_type=AccessGroupType.INSTRUMENT.value,
+        )
+        session.add(instrument)
+        session.add(instrument_group)
+        session.commit()
+        grant = _access_grant_read(session, instrument_group, "contributor")
+        assert grant.principal_type == "instrument"
+        assert grant.principal_id == instrument.unique_id
+        assert grant.slug == "beamline-1"
+        assert grant.display_name == "Beamline 1"
 
 
 class TestResolveGrantee:
@@ -106,7 +141,7 @@ class TestResolveGrantee:
         sa_id = "0tkn2knjast3h0008nyq9zps2c"
         session.add(User(first_name="", last_name="", email=None,
                          unique_id=sa_id, is_service_account=True))
-        session.add(AccessGroup(group_name=sa_id))
+        session.add(AccessGroup(group_name=sa_id, group_type=AccessGroupType.IDENTITY.value))
         session.commit()
         ag, canonical = _resolve_grantee(session, "users", sa_id)
         assert canonical == sa_id

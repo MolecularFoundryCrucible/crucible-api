@@ -40,6 +40,14 @@ class PlatformRole(str, Enum):
     ADMIN = "admin"
 
 
+class AccessGroupType(str, Enum):
+    IDENTITY = "identity"
+    PROJECT = "project"
+    INSTRUMENT = "instrument"
+    CUSTOM = "custom"
+    SYSTEM = "system"
+
+
 class Permission(str, Enum):
     READ = "read"
     CREATE = "create"

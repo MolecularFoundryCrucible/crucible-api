@@ -11,13 +11,14 @@ from app.utils.instrument_utils import (
 
 
 class TestGrammar:
-    @pytest.mark.parametrize("value", ["xrd-1", "XRD_1", "hip-microscope", "a1"])
+    @pytest.mark.parametrize("value", ["abc", "xrd-1", "XRD_1", "hip-microscope", "x" * 25])
     def test_well_formed_is_accepted(self, value):
         assert validate_instrument_id_format(value) == value
 
     @pytest.mark.parametrize("value,why", [
-        ("", "empty"), ("a", "single character"), ("has a space", "space"),
-        ("-leading", "leading hyphen"), ("x" * 65, "too long"),
+        ("", "empty"), ("a", "single character"), ("ab", "two characters"),
+        ("has a space", "space"), ("-leading", "leading hyphen"),
+        ("x" * 26, "too long"),
         ("xrd-1\n", "trailing newline"),
     ])
     def test_malformed_is_rejected(self, value, why):

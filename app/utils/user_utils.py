@@ -6,7 +6,6 @@ from sqlalchemy import func
 from sqlmodel import select
 from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import AccessGroup, User
-from app.utils.sql_utils import add_or_update
 
 # A separator (- or _) must always be followed by an alphanumeric run, which
 # structurally rules out leading, trailing, and consecutive separators in one
@@ -141,7 +140,7 @@ def resolve_user_by_identifier(session, identifier: str) -> User:
     return resolve_user(session, username=identifier)
 
 
-def sql_add_user_to_access_group(orcid, group_name, session, role=None):
+def sql_add_user_to_access_group(orcid, group_name, session, role=None, group_type=None):
     """Add a user to an access group by ORCID, creating the group if needed.
 
     `role` is the standing in that group, defaulting to contributor. Appending
@@ -149,13 +148,22 @@ def sql_add_user_to_access_group(orcid, group_name, session, role=None):
     so a newly added project member would land read-only.
     """
     from app.models.core_models import UserAccessGroupLink
-    from app.utils.permissions import Role
+    from app.utils.permissions import AccessGroupType, Role
 
     user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
-    ag = add_or_update(session,
-                       AccessGroup,
-                       AccessGroup.group_name == group_name,
-                       group_name=group_name)
+    ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
+    expected_type = group_type.value if hasattr(group_type, "value") else group_type
+    if ag is None:
+        ag = AccessGroup(
+            group_name=group_name,
+            group_type=expected_type or AccessGroupType.CUSTOM.value,
+        )
+        session.add(ag)
+    elif expected_type is not None and ag.group_type != expected_type:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Access group '{group_name}' is {ag.group_type}, expected {expected_type}",
+        )
     if user is None:
         return ag
 

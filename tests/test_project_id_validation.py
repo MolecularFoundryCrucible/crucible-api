@@ -22,11 +22,10 @@ from app.utils.project_utils import (
     RESERVED_PROJECT_IDS, assert_project_id_available, validate_project_id,
 )
 
-# Values drawn from real production project IDs — the grammar must not reject
-# any of these. 6,707 of 6,757 contain uppercase; 3 start with a digit.
+# Representative production project IDs within the new length range.
 REAL_PROJECT_IDS = [
     "MFP00001", "MFP10928", "10k_perovskites", "11k-project", "4D_STEM",
-    "AUM_DEMO", "nsf-summer-school-2026", "summer-school-2026-HNR-659",
+    "AUM_DEMO", "nsf-summer-school-2026",
     "crucible-developers", "LPS_test", "LPS-giwaxs", "qspleem-test",
     "SummerSchool_DEMO_RD", "TEST000002", "MFUSER_brad",
 ]
@@ -34,13 +33,14 @@ REAL_PROJECT_IDS = [
 MALFORMED = [
     ("", "empty"),
     ("a", "single character"),
+    ("ab", "two characters"),
     ("[7093]", "brackets"),
     ("Training [9069]", "brackets and spaces"),
     ("SummerSchool DEMO", "space"),
     ("-leading", "leading hyphen"),
     ("_leading", "leading underscore"),
     ("has/slash", "slash"),
-    ("x" * 65, "too long"),
+    ("x" * 26, "too long"),
     ("proj_x\n", "trailing newline"),
 ]
 
@@ -58,6 +58,10 @@ class TestGrammar:
     def test_case_is_preserved(self):
         """MFP IDs are uppercase and meaningful; do not lowercase them."""
         assert validate_project_id("MFP00001") == "MFP00001"
+
+    @pytest.mark.parametrize("project_id", ["abc", "x" * 25])
+    def test_length_boundaries_are_accepted(self, project_id):
+        assert validate_project_id(project_id) == project_id
 
 
 class TestReservedNames:

@@ -161,6 +161,16 @@ class Dataset(SQLModel, table=True):
 
 
 class ResourceACL(SQLModel, table=True):
+    __table_args__ = (
+        Index(
+            "one_owner_acl_per_resource",
+            "mfid",
+            unique=True,
+            postgresql_where=text("permission = 'owner'"),
+            sqlite_where=text("permission = 'owner'"),
+        ),
+    )
+
     mfid: str = Field(foreign_key="idtype.mfid", primary_key=True, index=True)
     accessgroup_id: Optional[int] = Field(
         default=None, foreign_key="accessgroup.id", primary_key=True
@@ -173,12 +183,22 @@ class ResourceACL(SQLModel, table=True):
     # SQLite-backed tests can still create the table. Converted with
     # Role.from_db on read. read/write stay until phase 5 — see
     # docs/permission_system_plan.md.
-    permission: Optional[str] = Field(default=None)
+    permission: str
 
     accessgroup: "AccessGroup" = Relationship(back_populates="acl")
 
 
 class UserAccessGroupLink(SQLModel, table=True):
+    __table_args__ = (
+        Index(
+            "one_owner_per_group",
+            "accessgroup_id",
+            unique=True,
+            postgresql_where=text("role = 'owner'"),
+            sqlite_where=text("role = 'owner'"),
+        ),
+    )
+
     user_id: Optional[int] = Field(
         default=None, foreign_key="user.id", primary_key=True
     )
@@ -186,12 +206,13 @@ class UserAccessGroupLink(SQLModel, table=True):
         default=None, foreign_key="accessgroup.id", primary_key=True
     )
     # Standing in the group, not a grant. Postgres enum resource_role.
-    role: Optional[str] = Field(default=None)
+    role: str
 
 
 class AccessGroup(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     group_name: str = Field(index=True, unique=True)
+    group_type: str = Field(default="custom", index=True)
     users: List["User"] = Relationship(back_populates="accessgroups", link_model=UserAccessGroupLink)
     acl: List["ResourceACL"] = Relationship(back_populates="accessgroup")
 
@@ -379,4 +400,3 @@ class UploadSession(SQLModel, table=True):
     owner_user_id: str
     expires_at: str         # written as ISO 8601 string; DB returns datetime, handle both
     size: Optional[int] = Field(default=None, sa_column=Column(BigInteger()))
-

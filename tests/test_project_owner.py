@@ -14,6 +14,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlalchemy.pool import StaticPool
 
 from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
+from app.utils.permissions import AccessGroupType
 from app.utils.project_utils import is_project_owner
 
 
@@ -45,7 +46,7 @@ def test_owner_standing_in_the_project_group_is_the_lead():
     engine = _engine()
     with Session(engine) as session:
         proj = _project(session, "proj_a", "0000-0001")
-        ag = AccessGroup(group_name=proj.unique_id)
+        ag = AccessGroup(group_name=proj.unique_id, group_type=AccessGroupType.PROJECT.value)
         session.add(ag)
         user = _user(session, "0000-0001")
         session.commit()
@@ -61,7 +62,7 @@ def test_admin_standing_is_not_ownership():
     engine = _engine()
     with Session(engine) as session:
         proj = _project(session, "proj_b", "0000-0002")
-        ag = AccessGroup(group_name=proj.unique_id)
+        ag = AccessGroup(group_name=proj.unique_id, group_type=AccessGroupType.PROJECT.value)
         session.add(ag)
         user = _user(session, "0000-0003")
         session.commit()
@@ -80,7 +81,7 @@ def test_owner_of_your_own_orcid_group_does_not_make_you_the_lead_of_an_unrelate
     engine = _engine()
     with Session(engine) as session:
         orcid = "0000-0004"
-        ag = AccessGroup(group_name=orcid)  # the user's own ORCID group, not a project
+        ag = AccessGroup(group_name=orcid, group_type=AccessGroupType.IDENTITY.value)
         session.add(ag)
         user = _user(session, orcid)
         session.commit()
@@ -96,7 +97,10 @@ def test_no_standing_at_all_is_not_ownership():
     engine = _engine()
     with Session(engine) as session:
         proj = _project(session, "proj_c", "0000-0005")
-        session.add(AccessGroup(group_name=proj.unique_id))
+        session.add(AccessGroup(
+            group_name=proj.unique_id,
+            group_type=AccessGroupType.PROJECT.value,
+        ))
         session.commit()
 
         assert is_project_owner("0000-0005", "proj_c", session) is False
@@ -110,7 +114,8 @@ def test_led_accessgroup_ids_aggregates_every_project_owned():
         proj1 = _project(session, "proj_lead_1", "0000-0006")
         proj2 = _project(session, "proj_lead_2", "0000-0006")
         _project(session, "proj_not_led", "0000-0007")
-        ag1, ag2 = AccessGroup(group_name=proj1.unique_id), AccessGroup(group_name=proj2.unique_id)
+        ag1 = AccessGroup(group_name=proj1.unique_id, group_type=AccessGroupType.PROJECT.value)
+        ag2 = AccessGroup(group_name=proj2.unique_id, group_type=AccessGroupType.PROJECT.value)
         session.add(ag1)
         session.add(ag2)
         user = _user(session, "0000-0006")

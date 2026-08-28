@@ -46,7 +46,7 @@ class InstrumentUpdate(SQLModel):
 class InstrumentRead(SQLModel):
     '''Response model for Instrument. Includes server-generated fields.'''
     # id: int
-    unique_id: Optional[str] = None
+    unique_id: str
     instrument_id: Optional[str] = None
     instrument_name: str
     owner: str

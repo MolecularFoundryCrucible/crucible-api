@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink, UserProjectLink
 from app.utils.project_utils import is_project_group, is_project_member, sql_get_projects_for_user
+from app.utils.permissions import AccessGroupType
 
 
 def _engine():
@@ -45,7 +46,7 @@ def test_real_access_group_standing_is_membership():
     engine = _engine()
     with Session(engine) as session:
         proj = _project(session, "proj_a", "0000-0010")
-        ag = AccessGroup(group_name=proj.unique_id)
+        ag = AccessGroup(group_name=proj.unique_id, group_type=AccessGroupType.PROJECT.value)
         session.add(ag)
         user = _user(session, "0000-0010")
         session.commit()
@@ -77,7 +78,7 @@ def test_access_group_standing_without_user_project_link_is_still_membership():
     engine = _engine()
     with Session(engine) as session:
         proj = _project(session, "proj_c", "0000-0012")
-        ag = AccessGroup(group_name=proj.unique_id)
+        ag = AccessGroup(group_name=proj.unique_id, group_type=AccessGroupType.PROJECT.value)
         session.add(ag)
         user = _user(session, "0000-0012")
         session.commit()
@@ -93,7 +94,7 @@ def test_sql_get_projects_for_user_matches_is_project_member():
     engine = _engine()
     with Session(engine) as session:
         proj = _project(session, "proj_d", "0000-0013")
-        ag = AccessGroup(group_name=proj.unique_id)
+        ag = AccessGroup(group_name=proj.unique_id, group_type=AccessGroupType.PROJECT.value)
         session.add(ag)
         user = _user(session, "0000-0013")
         session.commit()
@@ -110,6 +111,11 @@ def test_is_project_group_distinguishes_projects_from_other_groups():
     engine = _engine()
     with Session(engine) as session:
         proj = _project(session, "real_proj", "0000-0014")
+        session.add(AccessGroup(
+            group_name=proj.unique_id,
+            group_type=AccessGroupType.PROJECT.value,
+        ))
+        session.commit()
 
         assert is_project_group(proj.unique_id, session) is True
         assert is_project_group("0000-0014", session) is False  # an ORCID group

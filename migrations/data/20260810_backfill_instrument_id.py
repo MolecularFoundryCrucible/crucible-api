@@ -1,18 +1,13 @@
-"""
-Backfill instrument.instrument_id — a validated, human-readable handle,
-slugified from instrument_name — for every existing instrument.
+"""Generate a 3-to-25-character slug for every instrument missing instrument_id.
 
-Purely additive groundwork (see the schema migration, migrations/versions/
-20260810_..._add_instrument_instrument_id.py). Idempotent — only touches
-rows where instrument_id IS NULL, safe to re-run.
-
-Dry run by default. Refuses to touch production without --yes-this-is-production.
+The dry run is read-only. The commit sends all assignments in one set-based update and verifies null and duplicate counts before committing.
 
 Usage:
-    DB_CONF_FILE=.env python migrations/data/20260810_backfill_instrument_id.py
-    DB_CONF_FILE=.env python migrations/data/20260810_backfill_instrument_id.py --commit
+    DB_CONF_FILE=.env .venv/bin/python migrations/data/20260810_backfill_instrument_id.py
+    DB_CONF_FILE=.env .venv/bin/python migrations/data/20260810_backfill_instrument_id.py --commit
 """
 import argparse
+import json
 import os
 import re
 import sys
@@ -20,73 +15,99 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sqlalchemy import text
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.api.dependencies import get_engine
-from app.models.core_models import Instrument
+
 
 PRODUCTION_DB = "crucible"
-
-_NON_SLUG = re.compile(r'[^a-z0-9]+')
+MAX_SLUG_LENGTH = 25
+NON_SLUG = re.compile(r"[^a-z0-9]+")
 
 
 def slugify(instrument_name: str, fallback: str) -> str:
-    slug = _NON_SLUG.sub('-', instrument_name.lower()).strip('-')[:64]
-    return slug or fallback
+    slug = NON_SLUG.sub("-", instrument_name.lower()).strip("-")[:MAX_SLUG_LENGTH]
+    return slug if len(slug) >= 3 else fallback[:MAX_SLUG_LENGTH]
 
 
-def main():
+def deconflict(base: str, seen: set[str]) -> str:
+    if base not in seen:
+        return base
+    counter = 2
+    while True:
+        suffix = f"-{counter}"
+        candidate = f"{base[:MAX_SLUG_LENGTH - len(suffix)]}{suffix}"
+        if candidate not in seen:
+            return candidate
+        counter += 1
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--commit", action="store_true",
-                        help="apply; without it everything is rolled back")
-    parser.add_argument("--yes-this-is-production", action="store_true",
-                        help=f"required to run against the {PRODUCTION_DB!r} database")
+    parser.add_argument("--commit", action="store_true", help="apply changes; otherwise audit only")
+    parser.add_argument(
+        "--yes-this-is-production",
+        action="store_true",
+        help=f"required to write to the {PRODUCTION_DB!r} database",
+    )
     args = parser.parse_args()
 
     engine = get_engine()
     with Session(engine) as session:
-        actual = session.execute(text("SELECT current_database()")).scalar()
-        print(f"connected to  : {actual!r} on {engine.url.host}:{engine.url.port}")
-        print(f"mode          : {'COMMIT' if args.commit else 'DRY RUN (rolled back)'}")
-
-        if actual == PRODUCTION_DB and not args.yes_this_is_production:
-            print(f"\nREFUSING TO RUN: {actual!r} is production.")
-            print("Re-run with --yes-this-is-production if that is genuinely intended.")
+        database = session.execute(text("SELECT current_database()")).scalar_one()
+        print(f"connected to  : {database!r} on {engine.url.host}:{engine.url.port}")
+        print(f"mode          : {'COMMIT' if args.commit else 'DRY RUN (read only)'}")
+        if database == PRODUCTION_DB and args.commit and not args.yes_this_is_production:
+            print(f"REFUSING TO RUN: {database!r} is production.")
             return 2
 
-        instruments = session.exec(select(Instrument).where(Instrument.instrument_id == None)).all()  # noqa: E711
-        print(f"instruments missing instrument_id: {len(instruments)}")
+        instruments = session.execute(text("""
+            SELECT id, unique_id, instrument_name
+            FROM instrument
+            WHERE instrument_id IS NULL
+            ORDER BY id
+        """)).all()
+        seen = set(session.execute(text("""
+            SELECT instrument_id FROM instrument WHERE instrument_id IS NOT NULL
+        """)).scalars().all())
+        assignments = []
+        for instrument in instruments:
+            base = slugify(instrument.instrument_name, instrument.unique_id)
+            instrument_id = deconflict(base, seen)
+            seen.add(instrument_id)
+            assignments.append({"id": instrument.id, "instrument_id": instrument_id})
+            print(f"  {instrument.instrument_name!r} -> {instrument_id!r}")
 
-        seen = set(session.exec(
-            select(Instrument.instrument_id).where(Instrument.instrument_id != None)  # noqa: E711
-        ).all())
-        for inst in instruments:
-            base = slugify(inst.instrument_name, fallback=inst.unique_id)
-            slug, n = base, 2
-            while slug in seen:
-                slug = f"{base}-{n}"
-                n += 1
-            seen.add(slug)
-            inst.instrument_id = slug
-            session.add(inst)
-            print(f"  {inst.instrument_name!r} -> {slug!r}")
+        print(f"instruments   : {len(assignments)}")
+        if not args.commit:
+            print("dry run only: nothing written")
+            return 0
+        if not assignments:
+            print("nothing to do")
+            return 0
 
-        nulls_remaining = session.exec(select(Instrument).where(Instrument.instrument_id == None)).all()  # noqa: E711
-        assert not nulls_remaining, f"{len(nulls_remaining)} still null after backfill"
-
-        dupes = session.execute(text(
-            "SELECT instrument_id, count(*) FROM instrument WHERE instrument_id IS NOT NULL "
-            "GROUP BY instrument_id HAVING count(*) > 1"
-        )).all()
-        assert not dupes, f"duplicate instrument_id values would result: {dupes}"
-
-        if args.commit:
-            session.commit()
-            print(f"committed: {len(instruments)} instruments backfilled")
-        else:
+        updated = session.execute(text("""
+            UPDATE instrument target
+            SET instrument_id = assignment.instrument_id
+            FROM jsonb_to_recordset(CAST(:assignments AS jsonb)) AS assignment(id integer, instrument_id text)
+            WHERE target.id = assignment.id
+              AND target.instrument_id IS NULL
+        """), {"assignments": json.dumps(assignments)}).rowcount
+        invalid = session.execute(text("""
+            SELECT
+                count(*) FILTER (WHERE instrument_id IS NULL) AS nulls,
+                count(instrument_id) - count(DISTINCT instrument_id) AS duplicates
+            FROM instrument
+        """)).one()
+        if updated != len(assignments) or invalid.nulls or invalid.duplicates:
             session.rollback()
-            print(f"dry run only: {len(instruments)} instruments would be backfilled, nothing written")
-
+            print(
+                "REFUSING TO COMMIT: "
+                f"updated={updated}, expected={len(assignments)}, nulls={invalid.nulls}, duplicates={invalid.duplicates}."
+            )
+            return 2
+        session.commit()
+        print(f"committed: {updated} instruments")
     return 0
 
 

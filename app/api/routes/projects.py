@@ -1,7 +1,7 @@
 import os
 from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import and_, func, join, literal, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import Session, select, col
@@ -12,18 +12,18 @@ from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import is_orcid
 from app.models.core_models import (
     AccessGroup, Project, Resource, Sample, User, UserProjectLink, UserAccessGroupLink,
-    ResourceACL, Dataset, DatasetSampleLink,
+    Dataset, DatasetSampleLink,
 )
 from app.utils.auth_utils import (
-    authorize_user, permission_filter, require_grant, require_permission,
-    require_platform_admin)
+    authorize_user, has_platform_admin_access, permission_filter, require_grant,
+    require_permission, require_platform_admin)
 from app.utils.permissions import (
-    Permission, Principal, Role, can_grant, effective_role)
-from app.utils.sql_utils import add_or_update, sql_create_resource_acl, touch_resource_modification_time
+    AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
+from app.utils.sql_utils import add_or_update, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import (
     assert_project_id_available, is_project_owner, sql_add_user_to_project,
-    sql_get_projects_for_user)
+    sql_get_projects_for_user, resolve_project_reference)
 from app.models.access_groups import AccessGroupMemberPublicRead, AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
@@ -78,7 +78,8 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
         # Group is keyed by the project's MFID (unique_id), not project_id, see
         # docs/permission_system_plan.md, "Groups" / the MFID-named-groups rename.
         ag = sql_add_user_to_access_group(project_lead.unique_id, prop.unique_id,
-                                          session, role=Role.OWNER)
+                                          session, role=Role.OWNER,
+                                          group_type=AccessGroupType.PROJECT)
 
         add_or_update(session, Resource,
                       where=(Resource.mfid == prop.unique_id),
@@ -99,6 +100,7 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
 
 @router.get("/projects", response_model=PaginatedResponse[ProjectWithLead])
 def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
+                  project_id: Optional[str] = Query(default=None, description="Exact project slug."),
                   include_metadata: bool = False,
                   limit: int = Query(default=100, ge=1, le=1000),
                   offset: int = Query(default=0, ge=0)):
@@ -112,7 +114,9 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
         loader_opts = [selectinload(Project.resource)]
 
     with Session(engine) as session:
-        if is_orcid(user_unique_id):
+        if project_id is not None:
+            base = select(Project).where(Project.project_id == project_id)
+        elif is_orcid(user_unique_id):
             user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
             if user is None:
                 return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
@@ -139,10 +143,21 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
 
         items = []
         for proj in props:
-            resource_md = proj.resource.scientific_metadata if proj.resource else None
+            may_see_private_fields = (
+                project_id is None
+                or auth_res.is_platform_admin
+                or auth_res.role_in(proj.unique_id) is not None
+            )
+            lead_user = leads.get(proj.project_lead_orcid)
+            lead = (
+                UserRead.model_validate(lead_user)
+                if lead_user and may_see_private_fields
+                else UserPublicRead.model_validate(lead_user) if lead_user else None
+            )
+            resource_md = proj.resource.scientific_metadata if proj.resource and may_see_private_fields else None
             items.append(ProjectWithLead(
                 **proj.model_dump(),
-                lead=leads.get(proj.project_lead_orcid),
+                lead=lead,
                 creation_time=proj.resource.creation_time if proj.resource else None,
                 modification_time=proj.resource.modification_time if proj.resource else None,
                 scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
@@ -187,11 +202,13 @@ def search_projects(
         return PaginatedResponse(limit=limit, items=results)
 
 
-@router.get("/projects/{proj_id}", response_model=ProjectWithLead)
-def read_project(proj_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
+@router.get("/projects/{project_ref}", response_model=ProjectWithLead)
+def read_project(project_ref: str, response: Response,
+                 auth_res: Annotated[Principal, Depends(authorize_user)],
                  include_metadata: bool = False, include_members: bool = False):
     '''
-    Returns the project object for the provided ID, including the resolved project lead.
+    Returns the project object for the provided MFID. Project slugs remain
+    accepted temporarily for compatibility.
     Any authenticated user can read basic project info (project_id, organization,
     status, title) to support discovery for join requests. Members and admins
     additionally get the lead's email (UserRead) and scientific_metadata; non-members
@@ -200,21 +217,25 @@ def read_project(proj_id: str, auth_res: Annotated[Principal, Depends(authorize_
     get the member list, which is always public-safe (no email) even for members.
     '''
     with Session(engine) as session:
-        prop = session.exec(
-            select(Project).where(Project.project_id == proj_id)
-            .options(selectinload(Project.resource).selectinload(Resource.scientific_metadata))
-        ).one_or_none()
+        prop = resolve_project_reference(
+            project_ref,
+            session,
+            options=(selectinload(Project.resource).selectinload(Resource.scientific_metadata),),
+        )
         if prop is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
+        if prop.project_id == project_ref:
+            response.headers["Content-Location"] = f"/projects/{prop.unique_id}"
+
         # Membership is standing in the project's own group, keyed by its
-        # MFID (Project.unique_id) — not proj_id, which is just the label.
+        # MFID (Project.unique_id), not project_ref when it is a slug.
         is_member = auth_res.is_platform_admin or auth_res.role_in(prop.unique_id) is not None
 
         lead_user = session.exec(select(User).where(User.unique_id == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
         lead = (UserRead.model_validate(lead_user) if is_member else UserPublicRead.model_validate(lead_user)) if lead_user else None
         resource_md = prop.resource.scientific_metadata if (prop.resource and is_member) else None
-        members = _get_project_members_public(proj_id, session) if (include_members and is_member) else None
+        members = _get_project_members_public(prop.project_id, session) if (include_members and is_member) else None
         return ProjectWithLead(
             **prop.model_dump(),
             lead=lead,
@@ -225,8 +246,8 @@ def read_project(proj_id: str, auth_res: Annotated[Principal, Depends(authorize_
         )
 
 
-@router.patch("/projects/{proj_id}", response_model=ProjectWithLead)
-def update_project(proj_id: str, auth_res: Annotated[Principal, Depends(authorize_user)], project_update: ProjectUpdate):
+@router.patch("/projects/{project_ref}", response_model=ProjectWithLead)
+def update_project(project_ref: str, auth_res: Annotated[Principal, Depends(authorize_user)], project_update: ProjectUpdate):
     '''
     Partially update a project record. Only fields provided in the request body are modified.
     Accessible by admins and the project lead.
@@ -239,7 +260,7 @@ def update_project(proj_id: str, auth_res: Annotated[Principal, Depends(authoriz
     rename does not orphan any dataset/sample/ACL row.
     '''
     with Session(engine) as session:
-        project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
+        project = resolve_project_reference(project_ref, session)
 
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -305,8 +326,8 @@ def _get_project_members_public(proj_id: str, session) -> List[AccessGroupMember
     ]
 
 
-@router.get("/projects/{proj_id}/users", response_model=PaginatedResponse[AccessGroupMemberRead])
-def read_users_on_project(proj_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
+@router.get("/projects/{project_ref}/users", response_model=PaginatedResponse[AccessGroupMemberRead])
+def read_users_on_project(project_ref: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                           limit: int = Query(default=100, ge=1, le=1000),
                           offset: int = Query(default=0, ge=0)):
     '''
@@ -314,19 +335,19 @@ def read_users_on_project(proj_id: str, auth_res: Annotated[Principal, Depends(a
     Accessible by admins and members of the project.
     '''
     with Session(engine) as session:
-        project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
+        project = resolve_project_reference(project_ref, session)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
         require_permission(session, auth_res, project.unique_id, Permission.READ, legacy_group=project.unique_id)
 
-        all_users = _get_project_users(proj_id, session)
+        all_users = _get_project_users(project.project_id, session)
         return PaginatedResponse(total=len(all_users), limit=limit, offset=offset, items=all_users[offset:offset + limit])
 
 
-@router.post("/projects/{proj_id}/users/{orcid}", response_model=List[AccessGroupMemberRead])
+@router.post("/projects/{project_ref}/users/{orcid}", response_model=List[AccessGroupMemberRead])
 def add_users_to_project(
-    proj_id: str,
+    project_ref: str,
     orcid: str,
     auth_res: Annotated[Principal, Depends(authorize_user)],
     email: Optional[str] = None,
@@ -347,24 +368,24 @@ def add_users_to_project(
             detail="Cannot appoint an owner this way; use POST /resources/{mfid}/transfer_ownership")
 
     with Session(engine) as session:
-        proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
+        proj = resolve_project_reference(project_ref, session)
         if proj is None:
-            raise HTTPException(status_code=404, detail=f'Project {proj_id} not found')
+            raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')
 
         require_permission(session, auth_res, proj.unique_id, Permission.EDIT, legacy_group=proj.unique_id)
         require_grant(session, auth_res, proj.unique_id, role, floor=Role.EDITOR)
 
         user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
 
-        sql_add_user_to_project(user, proj_id, session, role=role)
+        sql_add_user_to_project(user, proj.project_id, session, role=role)
         session.commit()
 
-        return _get_project_users(proj_id, session)
+        return _get_project_users(proj.project_id, session)
 
 
-@router.patch("/projects/{proj_id}/users/{orcid}", response_model=List[AccessGroupMemberRead])
+@router.patch("/projects/{project_ref}/users/{orcid}", response_model=List[AccessGroupMemberRead])
 def set_project_user_role(
-    proj_id: str,
+    project_ref: str,
     orcid: str,
     auth_res: Annotated[Principal, Depends(authorize_user)],
     role: Role,
@@ -386,16 +407,16 @@ def set_project_user_role(
             detail="Cannot appoint an owner this way; use POST /resources/{mfid}/transfer_ownership")
 
     with Session(engine) as session:
-        proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
+        proj = resolve_project_reference(project_ref, session)
         if proj is None:
-            raise HTTPException(status_code=404, detail=f'Project {proj_id} not found')
+            raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')
 
         require_permission(session, auth_res, proj.unique_id, Permission.EDIT, legacy_group=proj.unique_id)
 
         user = resolve_user(session, orcid=orcid)
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)).one_or_none()
         if ag is None:
-            raise HTTPException(status_code=404, detail=f'Project {proj_id} not found')
+            raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')
 
         link = session.exec(
             select(UserAccessGroupLink)
@@ -404,7 +425,7 @@ def set_project_user_role(
         ).one_or_none()
         if link is None:
             raise HTTPException(status_code=404,
-                                detail=f'{orcid} is not a member of {proj_id}')
+                                detail=f'{orcid} is not a member of {proj.project_id}')
 
         current = Role.from_db(link.role) if link.role else None
         if current is Role.OWNER:
@@ -418,11 +439,11 @@ def set_project_user_role(
         touch_resource_modification_time(session, proj.unique_id)
         session.commit()
 
-        return _get_project_users(proj_id, session)
+        return _get_project_users(proj.project_id, session)
 
 
-@router.delete("/projects/{proj_id}/users/{orcid}", response_model=List[AccessGroupMemberRead])
-def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)],
+@router.delete("/projects/{project_ref}/users/{orcid}", response_model=List[AccessGroupMemberRead])
+def remove_user_from_project(project_ref: str, orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                              email: Optional[str] = None, username: Optional[str] = None):
     '''
     Remove a user from a project and its associated access group.
@@ -431,16 +452,16 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[Princ
     remove themselves — transfer leadership first.
     Provide ?email= or ?username= to look up the user instead of the orcid path parameter.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    is_admin = any(ag.group_name == 'admin' for ag in ag_list)
+    user_unique_id = auth_res.user_id
+    is_admin = has_platform_admin_access(auth_res)
 
     with Session(engine) as session:
-        proj = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
+        proj = resolve_project_reference(project_ref, session)
         if proj is None:
-            raise HTTPException(status_code=404, detail=f"Project {proj_id} not found")
+            raise HTTPException(status_code=404, detail=f"Project {project_ref} not found")
 
         is_self = user_unique_id == orcid and not email and not username
-        caller_is_owner = is_project_owner(user_unique_id, proj_id, session)
+        caller_is_owner = is_project_owner(user_unique_id, proj.project_id, session)
         if not is_admin and not caller_is_owner and not is_self:
             raise HTTPException(status_code=403, detail="Only platform admins, the project lead, or the member themselves can remove a member.")
 
@@ -460,14 +481,14 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[Princ
             )
         ).one_or_none() if ag else None
         if ag_link is None:
-            raise HTTPException(status_code=404, detail=f"User {user.unique_id} is not a member of project {proj_id}")
+            raise HTTPException(status_code=404, detail=f"User {user.unique_id} is not a member of project {proj.project_id}")
         session.delete(ag_link)
 
         # Best-effort cleanup of the legacy link table; its absence is not an error.
         link = session.exec(
             select(UserProjectLink).where(
                 UserProjectLink.user_id == user.id,
-                UserProjectLink.project_id == proj_id
+                UserProjectLink.project_id == proj.project_id
             )
         ).one_or_none()
         if link is not None:
@@ -475,27 +496,35 @@ def remove_user_from_project(proj_id: str, orcid: str, auth_res: Annotated[Princ
 
         touch_resource_modification_time(session, proj.unique_id)
         session.commit()
-        return _get_project_users(proj_id, session)
+        return _get_project_users(proj.project_id, session)
 
 
-@router.get("/projects/{project_id}/sample_graph")
-def project_sample_graph(project_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/projects/{project_ref}/sample_graph")
+def project_sample_graph(project_ref: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
     with Session(engine) as session:
-        proj = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
-        require_permission(session, auth_res, proj.unique_id if proj else project_id, Permission.READ,
-                           legacy_group=proj.unique_id if proj else None)
+        proj = resolve_project_reference(project_ref, session)
+        if proj is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        require_permission(session, auth_res, proj.unique_id, Permission.READ, legacy_group=proj.unique_id)
 
-        samp_cmd = select(Sample).options(joinedload(Sample.parents))
+        samp_cmd = (
+            select(Sample)
+            .options(joinedload(Sample.parents))
+            .where(permission_filter(auth_res, Sample, Permission.READ))
+            .where(deletion_filter_for(Sample))
+        )
 
         # Filter samples by the project's MFID, not its (renamable) project_id
-        samp_cmd = samp_cmd.where(Sample.project_mfid == (proj.unique_id if proj else None))
+        samp_cmd = samp_cmd.where(Sample.project_mfid == proj.unique_id)
         samp_list = session.exec(samp_cmd).unique().all()
 
+        allowed_ids = {sample.unique_id for sample in samp_list}
         edges = []
         for sample in samp_list:
             for parent in sample.parents:
-                edges.append((parent.unique_id, sample.unique_id))
+                if parent.unique_id in allowed_ids:
+                    edges.append((parent.unique_id, sample.unique_id))
 
         G = nx.DiGraph(edges)
         for sample in samp_list:
@@ -504,30 +533,30 @@ def project_sample_graph(project_id: str, auth_res: Annotated[Principal, Depends
 
         return json_graph.node_link_data(G)
 
-@router.get("/projects/{project_id}/dataset_graph")
-def project_dataset_graph(project_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
-
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
+@router.get("/projects/{project_ref}/dataset_graph")
+def project_dataset_graph(project_ref: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
     with Session(engine) as session:
-        proj = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
-        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        proj = resolve_project_reference(project_ref, session)
+        if proj is None:
+            raise HTTPException(status_code=404, detail="Project not found")
 
         ds_cmd = (
             select(Dataset)
             .options(joinedload(Dataset.parents))
-            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
-            .filter(auth_filter)
-            .where(Dataset.project_mfid == (proj.unique_id if proj else None))
+            .filter(permission_filter(auth_res, Dataset, Permission.READ))
+            .where(deletion_filter_for(Dataset))
+            .where(Dataset.project_mfid == proj.unique_id)
         )
 
         ds_list = session.exec(ds_cmd).unique().all()
 
+        allowed_ids = {dataset.unique_id for dataset in ds_list}
         edges = []
         for dataset in ds_list:
             for parent in dataset.parents:
-                edges.append((parent.unique_id, dataset.unique_id))
+                if parent.unique_id in allowed_ids:
+                    edges.append((parent.unique_id, dataset.unique_id))
 
         G = nx.DiGraph(edges)
         for dataset in ds_list:
@@ -537,35 +566,44 @@ def project_dataset_graph(project_id: str, auth_res: Annotated[Principal, Depend
         return json_graph.node_link_data(G)
 
 
-@router.get("/projects/{project_id}/entity_graph")
-def project_entity_graph(project_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/projects/{project_ref}/entity_graph")
+def project_entity_graph(project_ref: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     Returns a NetworkX node-link graph of all samples and datasets in the
     project, connected via sample lineage, dataset lineage, and sample-dataset
     associations. Nodes carry entity_type ('sample' or 'dataset') and name.
     '''
     with Session(engine) as session:
-        proj = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
-        require_permission(session, auth_res, proj.unique_id if proj else project_id, Permission.READ,
-                           legacy_group=proj.unique_id if proj else None)
+        proj = resolve_project_reference(project_ref, session)
+        if proj is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        require_permission(session, auth_res, proj.unique_id, Permission.READ, legacy_group=proj.unique_id)
 
         # Load all samples in the project with parent relationships. Filtered
         # by the project's MFID, not its (renamable) project_id.
-        proj_mfid = proj.unique_id if proj else None
-        samp_cmd = select(Sample).options(joinedload(Sample.parents)).where(Sample.project_mfid == proj_mfid)
+        proj_mfid = proj.unique_id
+        samp_cmd = (
+            select(Sample)
+            .options(joinedload(Sample.parents))
+            .where(permission_filter(auth_res, Sample, Permission.READ))
+            .where(deletion_filter_for(Sample))
+            .where(Sample.project_mfid == proj_mfid)
+        )
         samp_list = session.exec(samp_cmd).unique().all()
 
         # Load all authorized datasets in the project with parent relationships
         ds_list = session.exec(
             select(Dataset)
             .options(joinedload(Dataset.parents))
-            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
-            .filter(permission_filter(auth_res, Dataset))
+            .filter(permission_filter(auth_res, Dataset, Permission.READ))
+            .where(deletion_filter_for(Dataset))
             .where(Dataset.project_mfid == proj_mfid)
         ).unique().all()
 
         s_int_to_uid = {s.id: s.unique_id for s in samp_list}
         d_int_to_uid = {d.id: d.unique_id for d in ds_list}
+        sample_mfids = set(s_int_to_uid.values())
+        dataset_mfids = set(d_int_to_uid.values())
 
         # Load sample-dataset associations scoped to this project's entities
         sd_links = session.exec(
@@ -579,13 +617,14 @@ def project_entity_graph(project_id: str, auth_res: Annotated[Principal, Depends
         for s in samp_list:
             G.add_node(s.unique_id, entity_type='sample', name=s.sample_name)
             for parent in s.parents:
-                G.add_edge(parent.unique_id, s.unique_id)
+                if parent.unique_id in sample_mfids:
+                    G.add_edge(parent.unique_id, s.unique_id)
         for d in ds_list:
             G.add_node(d.unique_id, entity_type='dataset', name=d.dataset_name)
             for parent in d.parents:
-                G.add_edge(parent.unique_id, d.unique_id)
+                if parent.unique_id in dataset_mfids:
+                    G.add_edge(parent.unique_id, d.unique_id)
         for link in sd_links:
             G.add_edge(s_int_to_uid[link.sample_id], d_int_to_uid[link.dataset_id])
 
         return json_graph.node_link_data(G)
-

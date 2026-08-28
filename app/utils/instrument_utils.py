@@ -6,13 +6,13 @@ from sqlmodel import select
 
 from app.models.core_models import Instrument, Project
 
-_INSTRUMENT_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$')
+_INSTRUMENT_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{2,24}$')
 
 
 def validate_instrument_id_format(instrument_id: str) -> str:
     if not isinstance(instrument_id, str) or not _INSTRUMENT_ID_RE.fullmatch(instrument_id):
         raise ValueError(
-            "instrument_id must be 2-64 chars, start with a letter or digit, "
+            "instrument_id must be 3-25 chars, start with a letter or digit, "
             "and contain only letters, digits, underscores, hyphens"
         )
     return instrument_id

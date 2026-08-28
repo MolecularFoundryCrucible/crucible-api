@@ -11,7 +11,7 @@ accessgroup_id (an internal id, no label/MFID ambiguity to get wrong).
 from sqlmodel import Session, select
 
 from app.models.core_models import AccessGroup, AccessGroupJoinRequest, Project, User, UserAccessGroupLink
-from app.utils.permissions import PlatformRole, Role
+from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 
 def _setup(db_engine, lead_orcid="0000-0001", member_orcid="0000-0002"):
@@ -26,7 +26,7 @@ def _setup(db_engine, lead_orcid="0000-0001", member_orcid="0000-0002"):
         session.refresh(proj)
         session.refresh(requester)
 
-        ag = AccessGroup(group_name=proj.unique_id)
+        ag = AccessGroup(group_name=proj.unique_id, group_type=AccessGroupType.PROJECT.value)
         session.add(ag)
         session.commit()
         session.refresh(ag)
@@ -102,3 +102,18 @@ def test_non_lead_cannot_review(client, db_engine, auth_as):
     auth_as("0000-0002", platform_role=PlatformRole.NONE)
     resp = client.patch(f"/join_requests/{request_id}", json={"status": "approved"})
     assert resp.status_code == 403
+
+
+def test_platform_role_admin_can_list_and_review(client, db_engine, auth_as):
+    _setup(db_engine)
+    auth_as("0000-0002", platform_role=PlatformRole.NONE)
+    created = client.post("/access_groups/proj_x/join", json={})
+    request_id = created.json()["id"]
+
+    auth_as("platform-admin", groups=[], platform_role=PlatformRole.ADMIN)
+    listed = client.get("/join_requests")
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+
+    reviewed = client.patch(f"/join_requests/{request_id}", json={"status": "approved"})
+    assert reviewed.status_code == 200

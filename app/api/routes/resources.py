@@ -3,7 +3,7 @@ from typing import Annotated, List, Optional, Union
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import desc, func, join, text, Text
 from sqlalchemy.orm import attributes, selectinload
-from sqlalchemy.sql import and_, exists, or_
+from sqlalchemy.sql import and_, exists
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -32,7 +32,7 @@ from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import (
     authorize_user, require_grant, permission_filter, require_permission, require_platform_admin)
 from app.utils.permissions import (
-    PUBLIC_GROUP_NAME, Permission, Principal, Role, can_grant, effective_role)
+    PUBLIC_GROUP_NAME, AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, set_public, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
@@ -114,7 +114,7 @@ def search_resource_metadata_v2(
     )
     rank_expr = func.ts_rank_cd(metadata_vector, search_query)
 
-    acl_subquery = permission_filter(auth_res, ScientificMetadataBinary, Permission.READ)
+    auth_filter = permission_filter(auth_res, ScientificMetadataBinary, Permission.READ)
 
     active_deletion = exists().where(
         DeletionRequest.resource_id == ScientificMetadataBinary.unique_id,
@@ -126,7 +126,7 @@ def search_resource_metadata_v2(
             select(ScientificMetadataBinary, Resource, rank_expr.label("rank"))
             .join(Resource, Resource.mfid == ScientificMetadataBinary.unique_id)
             .where(and_(
-                or_(Resource.public == True, acl_subquery),
+                auth_filter,
                 metadata_vector.op('@@')(search_query),
                 ~active_deletion,
             ))
@@ -483,7 +483,54 @@ def create_deletion_request(
         )
 
 
-@router.get("/resources/{mfid}/access_groups", response_model=List[AccessGroupRead])
+def _set_resource_access_grant(
+    session: Session,
+    auth_res: Principal,
+    mfid: str,
+    access_group: AccessGroup,
+    target: Role,
+) -> ResourceACL:
+    require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
+    existing = session.exec(
+        select(ResourceACL)
+        .where(ResourceACL.mfid == mfid)
+        .where(ResourceACL.accessgroup_id == access_group.id)
+    ).one_or_none()
+    current = Role.from_db(existing.permission) if existing and existing.permission else None
+    if target is Role.OWNER:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot grant owner access this way; use POST /resources/{mfid}/transfer_ownership",
+        )
+    if current is Role.OWNER:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot change the owner's access this way; use POST /resources/{mfid}/transfer_ownership",
+        )
+
+    require_grant(session, auth_res, mfid, target, current=current)
+    if existing is None:
+        existing = ResourceACL(
+            mfid=mfid,
+            accessgroup_id=access_group.id,
+            read=True,
+            write=target >= Role.EDITOR,
+            permission=target.db_value,
+        )
+    else:
+        existing.read = True
+        existing.write = target >= Role.EDITOR
+        existing.permission = target.db_value
+    session.add(existing)
+    touch_resource_modification_time(session, mfid)
+    return existing
+
+
+@router.get(
+    "/resources/{mfid}/access_groups",
+    response_model=List[AccessGroupRead],
+    deprecated=True,
+)
 def read_resource_acl(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     require_platform_admin(auth_res)
     with Session(engine) as session:
@@ -503,9 +550,16 @@ def read_resource_acl(mfid: str, auth_res: Annotated[Principal, Depends(authoriz
         return acl
 
 
-@router.post("/resources/{mfid}/access_groups", response_model=ResourceACL)
+@router.post(
+    "/resources/{mfid}/access_groups",
+    response_model=ResourceACL,
+    deprecated=True,
+)
 def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, auth_res: Annotated[Principal, Depends(authorize_user)]):
     require_platform_admin(auth_res)
+    if not read:
+        raise HTTPException(status_code=422, detail="read must be true; use the revoke route to remove access")
+    permission = Role.EDITOR if write else Role.VIEWER
     with Session(engine) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
@@ -513,8 +567,7 @@ def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, aut
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
         if ag is None:
             raise HTTPException(status_code=404, detail="Access Group not found")
-        acl = sql_create_resource_acl(ag, mfid, read, write, session)
-        touch_resource_modification_time(session, mfid)
+        acl = _set_resource_access_grant(session, auth_res, mfid, ag, permission)
         session.commit()
         session.refresh(acl)
     return acl
@@ -532,28 +585,74 @@ def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, aut
 # project id.
 # ---------------------------------------------------------------------------
 
-def _group_kind(session, group_name: str) -> str:
-    from app.models.core_models import Instrument
-    if group_name == PUBLIC_GROUP_NAME:
-        return "public"
-    if group_name in ("admin", "read_only"):
-        return "system"
-    user = session.exec(select(User).where(User.unique_id == group_name)).one_or_none()
-    if user is not None:
-        return "service_account" if user.is_service_account else "user"
-    if session.exec(select(Project).where(Project.unique_id == group_name)).one_or_none():
-        return "project"
-    if session.exec(select(Instrument).where(
-            func.lower(Instrument.instrument_name) == group_name)).one_or_none():
-        return "instrument"
-    return "unknown"
+def _access_grant_read(session, access_group: AccessGroup, permission: str) -> AccessGrantRead:
+    group_name = access_group.group_name
+    group_type = access_group.group_type
+    if group_type == AccessGroupType.SYSTEM.value and group_name == PUBLIC_GROUP_NAME:
+        return AccessGrantRead(
+            principal_id=PUBLIC_GROUP_NAME,
+            principal_type="public",
+            permission=permission,
+            display_name="All authenticated users",
+        )
+    if group_type == AccessGroupType.SYSTEM.value:
+        return AccessGrantRead(
+            principal_id=group_name,
+            principal_type="system",
+            permission=permission,
+            display_name=group_name,
+        )
+    if group_type == AccessGroupType.IDENTITY.value:
+        user = session.exec(select(User).where(User.unique_id == group_name)).one_or_none()
+    else:
+        user = None
+    if user:
+        display_name = f"{user.first_name} {user.last_name}".strip() or None
+        return AccessGrantRead(
+            principal_id=user.unique_id,
+            principal_type="service_account" if user.is_service_account else "user",
+            permission=permission,
+            slug=user.username,
+            display_name=display_name,
+        )
+    if group_type == AccessGroupType.PROJECT.value:
+        project = session.exec(select(Project).where(Project.unique_id == group_name)).one_or_none()
+    else:
+        project = None
+    if project:
+        return AccessGrantRead(
+            principal_id=project.unique_id,
+            principal_type="project",
+            permission=permission,
+            slug=project.project_id,
+            display_name=project.title or project.project_id,
+        )
+    if group_type == AccessGroupType.INSTRUMENT.value:
+        instrument = session.exec(select(Instrument).where(Instrument.unique_id == group_name)).one_or_none()
+    else:
+        instrument = None
+    if instrument:
+        return AccessGrantRead(
+            principal_id=instrument.unique_id,
+            principal_type="instrument",
+            permission=permission,
+            slug=instrument.instrument_id,
+            display_name=instrument.instrument_name,
+        )
+    return AccessGrantRead(
+        principal_id=group_name,
+        principal_type="unknown",
+        permission=permission,
+    )
 
 
 def _resolve_grantee(session, kind: str, principal: str):
     """(AccessGroup, canonical principal) for a typed path segment."""
     if kind == "public":
         ag = session.exec(select(AccessGroup).where(
-            AccessGroup.group_name == PUBLIC_GROUP_NAME)).one_or_none()
+            AccessGroup.group_name == PUBLIC_GROUP_NAME,
+            AccessGroup.group_type == AccessGroupType.SYSTEM.value,
+        )).one_or_none()
         if ag is None:
             raise HTTPException(status_code=409,
                                 detail="No public access group — has the migration run?")
@@ -563,17 +662,21 @@ def _resolve_grantee(session, kind: str, principal: str):
         # Also accepts email now, via the same format-sniffing transfer_ownership uses.
         user = resolve_user_by_identifier(session, principal)
         group_name = user.unique_id
+        group_type = AccessGroupType.IDENTITY.value
     elif kind == "projects":
         proj = session.exec(select(Project).where(
             Project.project_id == principal)).one_or_none()
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project '{principal}' not found")
         group_name = proj.unique_id
+        group_type = AccessGroupType.PROJECT.value
     else:
         raise HTTPException(status_code=404, detail=f"Unknown principal kind '{kind}'")
 
     ag = session.exec(select(AccessGroup).where(
-        AccessGroup.group_name == group_name)).one_or_none()
+        AccessGroup.group_name == group_name,
+        AccessGroup.group_type == group_type,
+    )).one_or_none()
     if ag is None:
         raise HTTPException(status_code=404,
                             detail=f"No access group for '{principal}'")
@@ -582,15 +685,12 @@ def _resolve_grantee(session, kind: str, principal: str):
 
 @router.get("/resources/{mfid}/access", response_model=List[AccessGrantRead])
 def list_resource_access(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    """Who can reach this resource, and at what role.
-
-    Requires read access: if you can see the resource you can see who else can.
-    """
+    """List the grants on a resource. Requires permission to manage its ACL."""
     with Session(engine) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
-        require_permission(session, auth_res, mfid, Permission.READ)
+        require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
 
         rows = session.exec(
             select(ResourceACL, AccessGroup)
@@ -598,19 +698,7 @@ def list_resource_access(mfid: str, auth_res: Annotated[Principal, Depends(autho
             .where(ResourceACL.mfid == mfid)
         ).all()
 
-        out = []
-        for acl, ag in rows:
-            kind = _group_kind(session, ag.group_name)
-            display = None
-            if kind in ("user", "service_account"):
-                u = session.exec(select(User).where(
-                    User.unique_id == ag.group_name)).one_or_none()
-                display = u.username or f"{u.first_name} {u.last_name}".strip() if u else None
-            out.append(AccessGrantRead(
-                principal=ag.group_name, kind=kind,
-                effective_permission=acl.permission or "unknown", display_name=display,
-                group_name=ag.group_name, group_id=ag.id))
-        return out
+        return [_access_grant_read(session, ag, acl.permission) for acl, ag in rows]
 
 
 @router.put("/resources/{mfid}/access/{kind}/{principal}", response_model=AccessGrantRead)
@@ -619,45 +707,33 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
     """Grant or change a principal's access. Idempotent.
 
     `kind` is `users` or `projects`. Requires admin on the resource, and you
-    may not grant above your own role nor overwrite a grant above it.
+    may not grant above your own role nor overwrite a grant above it. Owner
+    grants and changes to an existing owner require transfer_ownership.
     """
     if kind not in ("users", "projects"):
         raise HTTPException(status_code=404,
                             detail="kind must be 'users' or 'projects'; use /access/public for public")
     try:
-        target = Role.from_db(body.effective_permission)
+        target = Role.from_db(body.permission.value)
     except KeyError:
         raise HTTPException(status_code=422,
-                            detail=f"effective_permission must be one of {[r.db_value for r in Role]}")
-
+                            detail=f"permission must be one of {[r.db_value for r in Role]}")
     with Session(engine) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
+        require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
+
+        if target is Role.OWNER:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot grant owner access this way; use POST /resources/{mfid}/transfer_ownership")
 
         ag, canonical = _resolve_grantee(session, kind, principal)
-        existing = session.exec(
-            select(ResourceACL).where(ResourceACL.mfid == mfid)
-            .where(ResourceACL.accessgroup_id == ag.id)).one_or_none()
-        current = Role.from_db(existing.permission) if existing and existing.permission else None
-
-        require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
-        require_grant(session, auth_res, mfid, target, current=current)
-
-        if existing is None:
-            existing = ResourceACL(mfid=mfid, accessgroup_id=ag.id,
-                                   read=True, write=target >= Role.EDITOR,
-                                   permission=target.db_value)
-        else:
-            existing.permission = target.db_value
-            existing.write = target >= Role.EDITOR
-        session.add(existing)
-        touch_resource_modification_time(session, mfid)
+        _set_resource_access_grant(session, auth_res, mfid, ag, target)
         session.commit()
 
-        return AccessGrantRead(principal=canonical,
-                               kind=_group_kind(session, ag.group_name),
-                               effective_permission=target.db_value, group_name=ag.group_name, group_id=ag.id)
+        return _access_grant_read(session, ag, target.db_value)
 
 
 @router.delete("/resources/{mfid}/access/{kind}/{principal}")
@@ -672,6 +748,11 @@ def revoke_resource_access(mfid: str, kind: str, principal: str,
         raise HTTPException(status_code=404, detail="kind must be 'users' or 'projects'")
 
     with Session(engine) as session:
+        resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+        require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
+
         ag, canonical = _resolve_grantee(session, kind, principal)
         existing = session.exec(
             select(ResourceACL).where(ResourceACL.mfid == mfid)
@@ -686,7 +767,6 @@ def revoke_resource_access(mfid: str, kind: str, principal: str,
                 status_code=409,
                 detail="Cannot revoke the owner's access; transfer ownership instead")
 
-        require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
         require_grant(session, auth_res, mfid, current or Role.VIEWER, current=current)
 
         session.delete(existing)
@@ -717,9 +797,7 @@ def publish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize
         session.commit()
 
         ag, _ = _resolve_grantee(session, "public", PUBLIC_GROUP_NAME)
-        return AccessGrantRead(principal=PUBLIC_GROUP_NAME, kind="public",
-                               effective_permission=Role.VIEWER.db_value,
-                               group_name=ag.group_name, group_id=ag.id)
+        return _access_grant_read(session, ag, Role.VIEWER.db_value)
 
 
 @router.delete("/resources/{mfid}/access/public")
@@ -763,7 +841,10 @@ def unpublish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authori
 
 def _transfer_project_ownership(session, mfid: str, new_owner: User) -> Optional[User]:
     project = session.exec(select(Project).where(Project.unique_id == mfid)).one()
-    ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == project.unique_id)).one_or_none()
+    ag = session.exec(select(AccessGroup).where(
+        AccessGroup.group_name == project.unique_id,
+        AccessGroup.group_type == AccessGroupType.PROJECT.value,
+    )).one_or_none()
     if ag is None:
         raise HTTPException(status_code=409, detail=f"No access group for project '{project.project_id}'")
 
@@ -818,7 +899,10 @@ def _transfer_resource_owner_acl(session, resource: Resource, mfid: str, new_own
         session.delete(acl)
     session.flush()
 
-    new_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == new_owner.unique_id)).one_or_none()
+    new_ag = session.exec(select(AccessGroup).where(
+        AccessGroup.group_name == new_owner.unique_id,
+        AccessGroup.group_type == AccessGroupType.IDENTITY.value,
+    )).one_or_none()
     if new_ag is None:
         raise HTTPException(status_code=409,
                             detail=f"New owner '{new_owner.unique_id}' has no personal access group")
@@ -889,9 +973,9 @@ def transfer_ownership(mfid: str, body: TransferOwnershipRequest,
     let them undo it themselves. Recovery needs the (possibly wrong) new
     owner's cooperation or a platform admin.
 
-    This is the only way to change who owns a project — PATCH /projects
-    rejects project_lead_orcid. The same PATCH rejection for owner_orcid on
-    datasets/samples is tracked separately and not yet in place.
+    This is the only way to change who owns a resource. PATCH /projects
+    rejects project_lead fields, and PATCH /datasets and PATCH /samples reject
+    ownership fields.
     """
     with Session(engine) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()

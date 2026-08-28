@@ -1,23 +1,52 @@
+from enum import Enum
 from typing import Optional
 
 from sqlmodel import SQLModel
 
 
-class AccessGrantRead(SQLModel):
-    """One principal's access to a resource.
+class AccessPrincipalType(str, Enum):
+    USER = "user"
+    SERVICE_ACCOUNT = "service_account"
+    PROJECT = "project"
+    INSTRUMENT = "instrument"
+    PUBLIC = "public"
+    SYSTEM = "system"
+    UNKNOWN = "unknown"
 
-    `principal` is what a caller would type — an ORCID, a project_id, or
-    `public` — rather than the underlying group name, which is an internal
-    detail and is due to become an MFID.
-    """
-    principal: str
-    kind: str            # user | service_account | project | instrument | public | unknown
-    effective_permission: str
+
+class AccessPermission(str, Enum):
+    VIEWER = "viewer"
+    CONTRIBUTOR = "contributor"
+    EDITOR = "editor"
+    ADMIN = "admin"
+    OWNER = "owner"
+
+
+class EffectiveAccess(str, Enum):
+    NONE = "none"
+    VIEWER = "viewer"
+    CONTRIBUTOR = "contributor"
+    EDITOR = "editor"
+    ADMIN = "admin"
+    OWNER = "owner"
+    PLATFORM_ADMIN = "platform_admin"
+
+
+class EffectiveResourceAccessRead(SQLModel):
+    resource_mfid: str
+    user_id: str
+    effective_access: EffectiveAccess
+
+
+class AccessGrantRead(SQLModel):
+    """One canonical principal grant on a resource."""
+    principal_id: str
+    principal_type: AccessPrincipalType
+    permission: AccessPermission
+    slug: Optional[str] = None
     display_name: Optional[str] = None
-    group_name: str      # the group actually holding the grant
-    group_id: int
 
 
 class AccessGrantWrite(SQLModel):
     """Body for PUT /resources/{mfid}/access/{kind}/{principal}."""
-    effective_permission: str
+    permission: AccessPermission

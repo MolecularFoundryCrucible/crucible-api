@@ -1,6 +1,6 @@
 from unittest.mock import patch
 from sqlmodel import Session, select
-from app.utils.permissions import PUBLIC_GROUP_NAME, Role
+from app.utils.permissions import PUBLIC_GROUP_NAME, PlatformRole, Role
 from app.models.core_models import Resource, Dataset, AssociatedFile, AccessGroup, ResourceACL
 from app.models.datasets import AssociatedFileCreate, AssociatedFileRead, AssociatedFileUpdate
 
@@ -247,10 +247,84 @@ def test_ingest_rejects_non_gcs_file(client, db_engine, auth_as):
         session.commit()
         session.refresh(af)
         file_mfid = af.mfid
-        public_gid = grant_public(session, "ds_pub_4")
+        grant_public(session, "ds_pub_4")
 
-    auth_as("0000-0000-0000-0001",
-            groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
+    auth_as("0000-0000-0000-0001", platform_role=PlatformRole.ADMIN)
+
+    resp = client.post(f"/files/{file_mfid}/ingest")
+
+    assert resp.status_code == 400, resp.text
+    assert "globus" in resp.json()["detail"]
+
+
+def test_viewer_cannot_request_ingestion(client, db_engine, auth_as):
+    with Session(db_engine) as session:
+        session.add(Resource(mfid="ds_ingest_viewer", resource_type="dataset", public=False))
+        ds = Dataset(unique_id="ds_ingest_viewer", dataset_name="test", owner_orcid="0000-0000-0000-0001")
+        group = AccessGroup(group_name="ingest-viewers")
+        session.add_all([ds, group])
+        session.commit()
+        session.refresh(ds)
+        session.refresh(group)
+        session.add(ResourceACL(
+            mfid=ds.unique_id,
+            accessgroup_id=group.id,
+            read=True,
+            write=False,
+            permission=Role.VIEWER.db_value,
+        ))
+        af = AssociatedFile(
+            filename="remote.dat",
+            storage_backend="globus",
+            storage_path="globus://endpoint/remote.dat",
+            size=1,
+            sha256_hash="viewer-ingest",
+            dataset_id=ds.id,
+        )
+        session.add(af)
+        session.commit()
+        session.refresh(af)
+        file_mfid = af.mfid
+        group_id = group.id
+
+    auth_as("0000-0000-0000-0001", groups=[("ingest-viewers", group_id, Role.VIEWER)])
+
+    resp = client.post(f"/files/{file_mfid}/ingest")
+
+    assert resp.status_code == 403, resp.text
+
+
+def test_contributor_can_reach_ingestion_request_validation(client, db_engine, auth_as):
+    with Session(db_engine) as session:
+        session.add(Resource(mfid="ds_ingest_contributor", resource_type="dataset", public=False))
+        ds = Dataset(unique_id="ds_ingest_contributor", dataset_name="test", owner_orcid="0000-0000-0000-0001")
+        group = AccessGroup(group_name="ingest-contributors")
+        session.add_all([ds, group])
+        session.commit()
+        session.refresh(ds)
+        session.refresh(group)
+        session.add(ResourceACL(
+            mfid=ds.unique_id,
+            accessgroup_id=group.id,
+            read=True,
+            write=True,
+            permission=Role.CONTRIBUTOR.db_value,
+        ))
+        af = AssociatedFile(
+            filename="remote.dat",
+            storage_backend="globus",
+            storage_path="globus://endpoint/remote.dat",
+            size=1,
+            sha256_hash="contributor-ingest",
+            dataset_id=ds.id,
+        )
+        session.add(af)
+        session.commit()
+        session.refresh(af)
+        file_mfid = af.mfid
+        group_id = group.id
+
+    auth_as("0000-0000-0000-0001", groups=[("ingest-contributors", group_id, Role.CONTRIBUTOR)])
 
     resp = client.post(f"/files/{file_mfid}/ingest")
 

@@ -59,7 +59,10 @@ def test_instrument_group_member_gets_minimal_projection(client, db_engine, auth
     resp = client.get("/users/0000-0001/projects")
     assert resp.status_code == 200, resp.text
     item = resp.json()["items"][0]
-    assert item == {"project_id": "proj_a", "title": "Alpha"}
+    assert item["unique_id"]
+    assert item["project_id"] == "proj_a"
+    assert item["title"] == "Alpha"
+    assert "lead" not in item
 
 
 def test_unrelated_caller_is_rejected(client, db_engine, auth_as):

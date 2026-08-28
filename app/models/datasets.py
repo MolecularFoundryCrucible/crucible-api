@@ -22,7 +22,6 @@ class DatasetCreate(SQLModel):
         return v
     dataset_name: Optional[str] = None
     project_id: Optional[str] = None
-    source_folder: Optional[str] = None
     instrument_name: Optional[str] = None
     instrument_id: Optional[str] = None  # instrument's validated slug; preferred over instrument_name when given
     data_format: Optional[str] = None
@@ -69,7 +68,6 @@ class DatasetRead(SQLModel):
    # file_to_upload: Optional[str] = None
     owner_orcid: Optional[str] = None
     project_id: Optional[str] = None
-    source_folder: Optional[str] = None
     instrument_name: Optional[str] = None
     instrument_id: Optional[str] = None  # instrument's validated slug, resolved server-side
     timestamp: Optional[str] = None
@@ -148,4 +146,3 @@ class DatasetResponse(DatasetRead):
     deletion_request: Optional[dict] = None
     links: Optional[List[LinkedResource]] = None
     owner: Optional[Any] = None  # UserPublicRead when include_owner=true
-

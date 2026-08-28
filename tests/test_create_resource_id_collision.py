@@ -11,14 +11,18 @@ in one query.
 """
 from sqlmodel import Session, select
 
-from app.models.core_models import Dataset, Resource, Sample
-from app.utils.permissions import PlatformRole
+from app.models.core_models import AccessGroup, Dataset, Resource, Sample
+from app.utils.permissions import AccessGroupType, PlatformRole
 
 
 def test_dataset_same_type_collision_is_409(client, db_engine, auth_as):
     with Session(db_engine) as session:
         session.add(Dataset(unique_id="00000000000000000000000001", dataset_name="existing", owner_orcid="0000-0001"))
         session.add(Resource(mfid="00000000000000000000000001", resource_type="dataset"))
+        session.add(AccessGroup(
+            group_name="0000-0001",
+            group_type=AccessGroupType.IDENTITY.value,
+        ))
         session.commit()
 
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)

@@ -14,8 +14,8 @@ from app.api.dependencies import (
     get_engine, get_api_path, get_api_url,
     get_orcid_client_id, get_orcid_client_secret, get_redirect_uri,
 )
-from app.models.core_models import AccessGroup, User
-from app.utils.permissions import Role
+from app.models.core_models import User
+from app.utils.permissions import AccessGroupType, Role
 from app.utils.auth_utils import find_or_add_api_access
 from app.utils.sql_utils import add_or_update
 from app.utils.user_utils import sql_add_user_to_access_group
@@ -105,13 +105,6 @@ def get_apikey(request: Request):
     orcid = user_info["orcid"]
 
     with Session(engine) as session:
-        # confirm access group for the user's orcid exists
-        add_or_update(
-            session,
-            AccessGroup,
-            AccessGroup.group_name == orcid,
-            group_name=orcid
-        )
         # add the user
         key_map = {'orcid': 'unique_id', 'given_name': 'first_name', 'family_name': 'last_name'}
         user_updates = {key_map[k]: user_info[k] for k in key_map if user_info.get(k) is not None}
@@ -131,7 +124,13 @@ def get_apikey(request: Request):
         )
 
         # add the user to their orcid access group
-        sql_add_user_to_access_group(orcid, orcid, session, role=Role.OWNER)
+        sql_add_user_to_access_group(
+            orcid,
+            orcid,
+            session,
+            role=Role.OWNER,
+            group_type=AccessGroupType.IDENTITY,
+        )
         session.commit()
 
         user_email = user.email

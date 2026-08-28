@@ -14,14 +14,14 @@ from sqlmodel import and_, Session, select
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import get_utc_isoformat, is_orcid
 from app.models.core_models import (
-    Dataset, ResourceACL, DatasetSampleLink,
+    Dataset, DatasetSampleLink,
     DeletionRequest, Project, Resource, Sample, SampleLink, ScientificMetadataBinary, User,
 )
 from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
-from app.utils.auth_utils import authorize_user, permission_filter, require_groups, require_permission
+from app.utils.auth_utils import authorize_user, permission_filter, require_permission, resolve_access_principal
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
 from app.utils.permissions import Principal, Permission, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
@@ -186,6 +186,10 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         if not auth_res.is_platform_admin:
             owner_orcid = resolved_owner_orcid or user_unique_id
             if S.project_id:
+                if owner_orcid != user_unique_id and not auth_res.is_service_account:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Only service accounts and platform administrators may create a sample on behalf of another user")
                 standing = project_standing(owner_orcid, S.project_id, session)
                 if standing is None or standing < Role.CONTRIBUTOR:
                     raise HTTPException(
@@ -208,8 +212,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
 
         sample = Sample(**sample_details)
         session.add(sample)
-        session.commit()
-        session.refresh(sample)
+        session.flush()
 
         # Resolve owner from auth if not explicitly provided
         if sample.owner_orcid is None and is_orcid(user_unique_id):
@@ -233,7 +236,6 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         ri.modification_time = now
         ri.public = S.public
         set_public(session, S.unique_id, bool(S.public))
-        session.commit()
 
         create_standard_acls(session, sample.unique_id,
                              owner_id=sample.owner_orcid,
@@ -254,6 +256,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
 
 @router.get("/samples", response_model=PaginatedResponse[SampleResponse])
 def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
+                 accessible_to: Optional[str] = Query(default=None, description="User MFID, ORCID, username, or email whose effective access should be listed."),
                  include_metadata: bool = False,
                  include_links: bool = False,
                  include_datasets: bool = False,
@@ -280,6 +283,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
     Pass include_links=true to include parent, child, and associated resources for each sample.
     include_datasets is deprecated — use include_links instead.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
+    Pass accessible_to=<user reference> to list another user's effective access. This is limited to self and platform administrators.
     '''
     import warnings
     if include_datasets:
@@ -290,11 +294,12 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
     params_dict = dict(request.query_params)
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
               'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets',
-              'include_owner', 'limit', 'cursor', 'offset', 'visibility'):
+              'include_owner', 'limit', 'cursor', 'offset', 'visibility', 'accessible_to'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
-        auth_filter = permission_filter(auth_res, Sample)
+        access_principal = resolve_access_principal(session, auth_res, accessible_to)
+        auth_filter = permission_filter(access_principal, Sample)
         deletion_filter = deletion_filter_for(Sample)
 
         def apply_filters(q):
@@ -482,10 +487,10 @@ def search_samples(
         return PaginatedResponse(limit=limit, items=items)
 
 
-@router.get("/samples/{sample_id}", response_model=SampleResponse)
-def read_sample(sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)], include_links: bool = False, include_metadata: bool = False, include_owner: bool = False):
+@router.get("/samples/{sample_mfid}", response_model=SampleResponse)
+def read_sample(sample_mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)], include_links: bool = False, include_metadata: bool = False, include_owner: bool = False):
     '''
-    Returns the sample for the provided ID.
+    Returns the sample for the provided MFID.
     Pass include_links=true to include parent, child, and associated resources.
     '''
     with Session(engine) as session:
@@ -503,7 +508,7 @@ def read_sample(sample_id: str, auth_res: Annotated[Principal, Depends(authorize
         samp = session.exec(
             select(Sample)
             .options(selectinload(Sample.datasets), resource_opts, *link_opts)
-            .where(Sample.unique_id == sample_id)
+            .where(Sample.unique_id == sample_mfid)
         ).first()
 
         # if not existing, return error
@@ -511,10 +516,10 @@ def read_sample(sample_id: str, auth_res: Annotated[Principal, Depends(authorize
             raise HTTPException(status_code=404, detail="Sample not found")
 
         # check that requester has read access
-        require_permission(session, auth_res, sample_id, Permission.READ)
+        require_permission(session, auth_res, sample_mfid, Permission.READ)
 
         # check deletion request
-        deletion_req = get_active_deletion_request(session, sample_id)
+        deletion_req = get_active_deletion_request(session, sample_mfid)
 
         # fetch all linked resources (datasets reuse already-loaded relationship)
         links = None
@@ -568,23 +573,20 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[Principal, Depends(
 
         if sample is None:
             raise HTTPException(status_code=404, detail="Sample not found")
+        require_permission(session, auth_res, sample_id, Permission.READ)
 
         auth_filter = permission_filter(auth_res, Dataset, Permission.READ)
+        deletion_filter = deletion_filter_for(Dataset)
         if include_metadata:
             query = (
                     select(Dataset, ScientificMetadataBinary.scientific_metadata)
-                    .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
                     .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Dataset.unique_id, isouter=True)
                     .filter(auth_filter)
+                    .where(deletion_filter)
                 )
 
         else:
-            query = (select(Dataset)
-                        .select_from(
-                            join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
-                        )
-                        .filter(auth_filter)
-                    )
+            query = select(Dataset).filter(auth_filter).where(deletion_filter)
 
         if keyword_filter:
             query = generate_kw_query(session, query, keyword_filter)
@@ -596,13 +598,8 @@ def list_sample_datasets(sample_id: str, auth_res: Annotated[Principal, Depends(
         full_query = query.join(DatasetSampleLink,
                                 DatasetSampleLink.dataset_id == Dataset.id
                                 ).where(
-                                    DatasetSampleLink.sample_id == select(Sample.id).where(Sample.unique_id == sample_id)
-                                ).where(
-                                    ~exists().where(
-                                        DeletionRequest.resource_id == Dataset.unique_id,
-                                        DeletionRequest.status.in_(["pending", "approved"])
-                                    )
-                                ).distinct(Dataset.id)
+                                    DatasetSampleLink.sample_id == sample.id
+                                ).distinct()
 
         if limit is not None:
             full_query = full_query.limit(limit)
@@ -628,12 +625,14 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[Principal, Dep
         child_sample = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).one_or_none()
         if child_sample is None:
             raise HTTPException(status_code=404, detail="Child sample not found")
+        require_permission(session, auth_res, child_sample_id, Permission.READ)
 
         query = (
             select(Sample)
             .select_from(join(Sample, SampleLink, SampleLink.parent_sample_id == Sample.id))
             .where(SampleLink.sample_id == child_sample.id)
-            .where(~exists().where(DeletionRequest.resource_id == Sample.unique_id, DeletionRequest.status.in_(["pending", "approved"])))
+            .where(permission_filter(auth_res, Sample, Permission.READ))
+            .where(deletion_filter_for(Sample))
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
@@ -656,12 +655,14 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[Principal, Dep
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
         if parent_sample is None:
             raise HTTPException(status_code=404, detail="Parent sample not found")
+        require_permission(session, auth_res, parent_sample_id, Permission.READ)
 
         query = (
             select(Sample)
             .select_from(join(Sample, SampleLink, SampleLink.sample_id == Sample.id))
             .where(SampleLink.parent_sample_id == parent_sample.id)
-            .where(~exists().where(DeletionRequest.resource_id == Sample.unique_id, DeletionRequest.status.in_(["pending", "approved"])))
+            .where(permission_filter(auth_res, Sample, Permission.READ))
+            .where(deletion_filter_for(Sample))
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
@@ -693,13 +694,17 @@ def sample_graph(sample_id: str, auth_res: Annotated[Principal, Depends(authoriz
         samp_list = session.exec(
             select(Sample)
             .options(joinedload(Sample.parents))
+            .where(permission_filter(auth_res, Sample, Permission.READ))
+            .where(deletion_filter_for(Sample))
             .where(Sample.project_mfid == target.project_mfid)
         ).unique().all()
 
+        allowed_ids = {sample.unique_id for sample in samp_list}
         edges = []
         for sample in samp_list:
             for parent in sample.parents:
-                edges.append((parent.unique_id, sample.unique_id))
+                if parent.unique_id in allowed_ids:
+                    edges.append((parent.unique_id, sample.unique_id))
 
         G = nx.DiGraph(edges)
         for sample in samp_list:
@@ -763,6 +768,15 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[Principal, Depends(auth
             FROM (SELECT * FROM ancestors UNION ALL SELECT * FROM descendants) combined
         """)
         rows = session.execute(cte_sql, {"sample_uid": sample_id}).all()
+
+        reachable_ids = [row.unique_id for row in rows]
+        allowed_ids = set(session.exec(
+            select(Sample.unique_id)
+            .where(Sample.unique_id.in_(reachable_ids))
+            .where(permission_filter(auth_res, Sample, Permission.READ))
+            .where(deletion_filter_for(Sample))
+        ).all())
+        rows = [row for row in rows if row.unique_id in allowed_ids]
 
         id_to_uid = {r.id: r.unique_id for r in rows}
         node_ids = list(id_to_uid.keys())

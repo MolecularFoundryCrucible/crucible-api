@@ -13,7 +13,7 @@ from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentRe
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_permission, require_platform_admin
 from app.utils.instrument_utils import assert_instrument_id_available
-from app.utils.permissions import Permission, Principal, Role
+from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.sql_utils import add_or_update, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_record, instrument_record
 
@@ -25,21 +25,27 @@ API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 @router.get("/instruments", response_model=PaginatedResponse[InstrumentResponse])
 def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
+                     instrument_id: Optional[str] = Query(default=None, description="Exact instrument slug."),
                      include_metadata: bool = False,
                      limit: int = Query(default=100, ge=1, le=1000),
                      offset: int = Query(default=0, ge=0)):
     '''
     Returns a paginated list of instruments filtered by any provided query parameters that
     match Instrument attributes. Matching is case-insensitive exact match.
-    Filterable fields: other_id, other_id_source, instrument_name, manufacturer,
+    Use instrument_id for exact slug lookup. Other filterable fields include
+    other_id, other_id_source, instrument_name, manufacturer,
     model, owner, location, description, instrument_type, status.
     Defaults to status=active; pass ?status=maintenance or ?status=decommissioned to see others.
+    An exact instrument_id lookup searches every status unless status is also provided.
     '''
     query_params = dict(request.query_params)
-    for k in ('include_metadata', 'limit', 'offset'):
+    for k in ('instrument_id', 'include_metadata', 'limit', 'offset'):
         query_params.pop(k, None)
-    query_params.setdefault('status', 'active')
+    if instrument_id is None:
+        query_params.setdefault('status', 'active')
     filters = [getattr(Instrument, k) == v.lower().strip() for k, v in query_params.items() if hasattr(Instrument, k)]
+    if instrument_id is not None:
+        filters.append(func.lower(Instrument.instrument_id) == instrument_id.lower().strip())
 
     with Session(engine) as session:
         base = select(Instrument).join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
@@ -191,7 +197,8 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
 
         ag = add_or_update(session, AccessGroup,
                            AccessGroup.group_name == db_instrument.unique_id,
-                           group_name=db_instrument.unique_id)
+                           group_name=db_instrument.unique_id,
+                           group_type=AccessGroupType.INSTRUMENT.value)
         sql_create_resource_acl(ag, db_instrument.unique_id, read=True, write=True,
                                 session=session, permission=Role.EDITOR)
 
@@ -339,7 +346,8 @@ def add_instrument_service_account(
 
         ag = add_or_update(session, AccessGroup,
                            AccessGroup.group_name == instrument_mfid,
-                           group_name=instrument_mfid)
+                           group_name=instrument_mfid,
+                           group_type=AccessGroupType.INSTRUMENT.value)
         session.flush()
         link = session.exec(
             select(UserAccessGroupLink)

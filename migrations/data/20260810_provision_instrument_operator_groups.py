@@ -1,33 +1,12 @@
-"""
-Ensure every instrument has an operator access group keyed by its MFID
-(unique_id), with an editor ACL entry on the instrument's own resource.
+"""Provision one MFID-named operator group for every instrument.
 
-Before this, an instrument's group only came into existence lazily, inside
-create_dataset, named after instrument_name.lower() — see
-docs/permission_system_plan.md, "Binding a service account to an
-instrument." POST /instruments now creates this group at registration time
-(see app/api/routes/instruments.py); this backfill catches every instrument
-registered before that shipped.
+Run after revision 91f3c8a4d2e7. A safe, unshared instrument-name group is renamed in place. Missing canonical groups are created. Existing canonical and unshared legacy groups block writes until reconciled.
 
-For each instrument missing a unique_id-named group:
-  - if a legacy instrument_name.lower()-named group exists AND that name is
-    not shared with anything else (a project, a user's ORCID, another
-    instrument) -> RENAME it in place. accessgroup.id is unchanged, so every
-    existing ResourceACL and UserAccessGroupLink row on it (including SA
-    memberships) carries over automatically.
-  - if no legacy group exists, or the legacy name is shared with something
-    else (the documented "unknown" project/instrument collision) -> create a
-    fresh group under the MFID and print a warning. A shared legacy name is
-    left untouched; reconciling who should actually hold its grants is a
-    manual call, not one this script should make.
-
-Idempotent — an instrument that already has its MFID-named group with the
-editor ACL is skipped. Dry run by default. Refuses to touch production
-without --yes-this-is-production.
+The dry run is read-only. The commit uses set-based statements and works before or after the resourceacl role-to-permission rename.
 
 Usage:
-    DB_CONF_FILE=.env python migrations/data/20260810_provision_instrument_operator_groups.py
-    DB_CONF_FILE=.env python migrations/data/20260810_provision_instrument_operator_groups.py --commit
+    DB_CONF_FILE=.env .venv/bin/python migrations/data/20260810_provision_instrument_operator_groups.py
+    DB_CONF_FILE=.env .venv/bin/python migrations/data/20260810_provision_instrument_operator_groups.py --commit
 """
 import argparse
 import os
@@ -35,92 +14,178 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from sqlalchemy import func, text
-from sqlmodel import Session, select
+from sqlalchemy import text
+from sqlmodel import Session
 
 from app.api.dependencies import get_engine
-from app.models.core_models import AccessGroup, Instrument, Project, User
-from app.utils.permissions import Role
-from app.utils.sql_utils import add_or_update, sql_create_resource_acl
+
 
 PRODUCTION_DB = "crucible"
 
 
-def name_is_shared_with_something_else(session, name: str, this_instrument_id: int) -> bool:
-    if session.exec(select(Project).where(func.lower(Project.project_id) == name)).first():
-        return True
-    if session.exec(select(User).where(func.lower(User.unique_id) == name)).first():
-        return True
-    other = session.exec(
-        select(Instrument).where(func.lower(Instrument.instrument_name) == name,
-                                 Instrument.id != this_instrument_id)
-    ).first()
-    return other is not None
+def _acl_column(session: Session) -> str:
+    columns = session.execute(text("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'resourceacl'
+          AND column_name IN ('role', 'permission')
+        ORDER BY column_name
+    """)).scalars().all()
+    if len(columns) != 1:
+        raise RuntimeError(f"Expected exactly one resourceacl role column, found {columns!r}")
+    return columns[0]
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--commit", action="store_true",
-                        help="apply; without it everything is rolled back")
-    parser.add_argument("--yes-this-is-production", action="store_true",
-                        help=f"required to run against the {PRODUCTION_DB!r} database")
+    parser.add_argument("--commit", action="store_true", help="apply changes; otherwise audit only")
+    parser.add_argument(
+        "--yes-this-is-production",
+        action="store_true",
+        help=f"required to write to the {PRODUCTION_DB!r} database",
+    )
     args = parser.parse_args()
 
     engine = get_engine()
     with Session(engine) as session:
-        actual = session.execute(text("SELECT current_database()")).scalar()
-        print(f"connected to  : {actual!r} on {engine.url.host}:{engine.url.port}")
-        print(f"mode          : {'COMMIT' if args.commit else 'DRY RUN (rolled back)'}")
+        database = session.execute(text("SELECT current_database()")).scalar_one()
+        print(f"connected to  : {database!r} on {engine.url.host}:{engine.url.port}")
+        print(f"mode          : {'COMMIT' if args.commit else 'DRY RUN (read only)'}")
 
-        if actual == PRODUCTION_DB and not args.yes_this_is_production:
-            print(f"\nREFUSING TO RUN: {actual!r} is production.")
-            print("Re-run with --yes-this-is-production if that is genuinely intended.")
+        if database == PRODUCTION_DB and args.commit and not args.yes_this_is_production:
+            print(f"REFUSING TO RUN: {database!r} is production.")
+            print("Re-run with --yes-this-is-production if that is intended.")
             return 2
 
-        instruments = session.exec(select(Instrument)).all()
-        renamed, created, flagged = 0, 0, 0
+        states = session.execute(text("""
+            SELECT
+                i.id,
+                i.instrument_name,
+                i.unique_id,
+                canonical.id AS canonical_group_id,
+                legacy.id AS legacy_group_id,
+                EXISTS (
+                    SELECT 1 FROM "user" u
+                    WHERE lower(u.orcid) = lower(i.instrument_name)
+                ) AS user_collision,
+                EXISTS (
+                    SELECT 1 FROM project p
+                    WHERE lower(p.project_id) = lower(i.instrument_name)
+                ) AS project_collision,
+                EXISTS (
+                    SELECT 1 FROM instrument other
+                    WHERE other.id <> i.id
+                      AND lower(other.instrument_name) = lower(i.instrument_name)
+                ) AS instrument_collision
+            FROM instrument i
+            LEFT JOIN accessgroup canonical ON canonical.group_name = i.unique_id
+            LEFT JOIN accessgroup legacy ON legacy.group_name = lower(i.instrument_name)
+            ORDER BY i.instrument_name
+        """)).all()
 
-        for inst in instruments:
-            ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == inst.unique_id)).one_or_none()
-            if ag is None:
-                legacy_name = inst.instrument_name.lower()
-                legacy_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == legacy_name)).one_or_none()
-                if legacy_ag is not None and not name_is_shared_with_something_else(session, legacy_name, inst.id):
-                    legacy_ag.group_name = inst.unique_id
-                    session.add(legacy_ag)
-                    ag = legacy_ag
-                    renamed += 1
-                    print(f"  renamed group {legacy_name!r} -> {inst.unique_id!r} (instrument {inst.instrument_name!r})")
-                else:
-                    ag = add_or_update(session, AccessGroup,
-                                       AccessGroup.group_name == inst.unique_id,
-                                       group_name=inst.unique_id)
-                    created += 1
-                    if legacy_ag is not None:
-                        flagged += 1
-                        print(f"  WARNING: group {legacy_name!r} is shared with something else — "
-                             f"created fresh group {inst.unique_id!r} for instrument {inst.instrument_name!r}, "
-                             f"leaving {legacy_name!r} untouched. Reconcile its members/grants manually.")
-                    else:
-                        print(f"  created fresh group {inst.unique_id!r} for instrument {inst.instrument_name!r}")
-                if ag.owner_orcid is None and ag.resource_mfid is None:
-                    ag.resource_mfid = inst.unique_id
-                    session.add(ag)
-                session.flush()
+        unresolved = []
+        rename_count = 0
+        create_count = 0
+        for state in states:
+            shared = state.user_collision or state.project_collision or state.instrument_collision
+            if state.canonical_group_id is not None:
+                if state.legacy_group_id is not None and state.legacy_group_id != state.canonical_group_id and not shared:
+                    unresolved.append(state)
+            elif state.legacy_group_id is not None and not shared:
+                rename_count += 1
+            else:
+                create_count += 1
 
-            sql_create_resource_acl(ag, inst.unique_id, read=True, write=True,
-                                    session=session, role=Role.EDITOR)
+        print(f"instruments   : {len(states)}")
+        print(f"groups rename : {rename_count}")
+        print(f"groups create : {create_count}")
+        print(f"duplicates    : {len(unresolved)}")
+        for state in unresolved[:50]:
+            print(f"  {state.instrument_name!r}: canonical={state.unique_id!r}, legacy group remains")
+        if unresolved:
+            print("REFUSING TO RUN: reconcile duplicate legacy instrument groups first.")
+            return 2
 
-        print(f"\n{renamed} renamed, {created} created fresh ({flagged} flagged for manual review), "
-             f"{len(instruments) - renamed - created} already provisioned")
-
-        if args.commit:
-            session.commit()
-            print("committed")
-        else:
-            session.rollback()
+        acl_column = _acl_column(session)
+        group_columns = set(session.execute(text("""
+            SELECT column_name FROM information_schema.columns WHERE table_name = 'accessgroup'
+        """)).scalars().all())
+        legacy_kind_columns = {"owner_orcid", "resource_mfid"}.issubset(group_columns)
+        print(f"ACL column    : {acl_column}")
+        if not args.commit:
             print("dry run only: nothing written")
+            return 0
 
+        renamed = session.execute(text("""
+            UPDATE accessgroup ag
+            SET group_name = i.unique_id,
+                group_type = CAST('instrument' AS access_group_type)
+            FROM instrument i
+            WHERE ag.group_name = lower(i.instrument_name)
+              AND NOT EXISTS (
+                  SELECT 1 FROM accessgroup canonical
+                  WHERE canonical.group_name = i.unique_id
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM "user" u
+                  WHERE lower(u.orcid) = lower(i.instrument_name)
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM project p
+                  WHERE lower(p.project_id) = lower(i.instrument_name)
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM instrument other
+                  WHERE other.id <> i.id
+                    AND lower(other.instrument_name) = lower(i.instrument_name)
+              )
+        """)).rowcount
+        created = session.execute(text("""
+            INSERT INTO accessgroup (group_name, group_type)
+            SELECT i.unique_id, CAST('instrument' AS access_group_type)
+            FROM instrument i
+            WHERE NOT EXISTS (
+                SELECT 1 FROM accessgroup ag WHERE ag.group_name = i.unique_id
+            )
+        """)).rowcount
+        legacy_kind_assignment = ", resource_mfid = i.unique_id, owner_orcid = NULL" if legacy_kind_columns else ""
+        legacy_kind_predicate = (
+            " OR ag.resource_mfid IS DISTINCT FROM i.unique_id OR ag.owner_orcid IS NOT NULL"
+            if legacy_kind_columns
+            else ""
+        )
+        session.execute(text(f"""
+            UPDATE accessgroup ag
+            SET group_type = CAST('instrument' AS access_group_type)
+                {legacy_kind_assignment}
+            FROM instrument i
+            WHERE ag.group_name = i.unique_id
+              AND (
+                  ag.group_type IS DISTINCT FROM CAST('instrument' AS access_group_type)
+                  {legacy_kind_predicate}
+              )
+        """))
+        acl_sql = f"""
+            INSERT INTO resourceacl (mfid, accessgroup_id, read, write, {acl_column})
+            SELECT i.unique_id, ag.id, TRUE, TRUE, CAST('editor' AS resource_role)
+            FROM instrument i
+            JOIN accessgroup ag ON ag.group_name = i.unique_id
+            JOIN idtype resource ON resource.mfid = i.unique_id
+                                AND resource.resource_type = 'instrument'
+            ON CONFLICT (mfid, accessgroup_id) DO UPDATE
+            SET {acl_column} = COALESCE(resourceacl.{acl_column}, EXCLUDED.{acl_column})
+        """
+        session.execute(text(acl_sql))
+
+        if renamed != rename_count or created != create_count:
+            session.rollback()
+            print(
+                "REFUSING TO COMMIT: database changed during the run "
+                f"(expected rename/create {rename_count}/{create_count}, got {renamed}/{created})."
+            )
+            return 2
+        session.commit()
+        print(f"committed: {renamed} renamed, {created} created")
     return 0
 
 

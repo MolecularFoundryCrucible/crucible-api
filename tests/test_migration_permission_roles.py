@@ -128,7 +128,7 @@ class TestServiceAccountsKeepWorking:
         assert principal_for(migrated, PLATFORM_ADMIN).platform_role is PlatformRole.ADMIN
 
     def test_still_in_the_admin_group(self, migrated):
-        """Membership stays; the pre-cutover helpers key off it."""
+        """The data migration preserves legacy membership for rollback."""
         assert principal_for(migrated, SA).role_in("admin") is not None
 
     def test_admin_group_confers_nothing_through_the_acl(self, migrated):
@@ -139,54 +139,6 @@ class TestServiceAccountsKeepWorking:
                 WHERE ag.group_name = 'admin'
             """)).scalar()
         assert rows == 0
-
-
-class TestAdminGroupBypassSurvivesRowDeletion:
-    """The migration deletes ~360k admin ACL rows. On production every
-    admin-group member is a service account whose only other group is its own
-    ORCID group, so those rows are their entire access. platform_role is not
-    consulted until cutover, so without a bypass in the pre-role helpers this
-    deletion would cut off every instrument the moment phase 1 ran."""
-
-    def _ag_ids(self, engine, orcid):
-        with Session(engine) as session:
-            return session.execute(text("""
-                SELECT ag.id FROM useraccessgrouplink l
-                JOIN accessgroup ag ON ag.id = l.accessgroup_id
-                JOIN "user" u ON u.id = l.user_id WHERE u.orcid = :o
-            """), {"o": orcid}).scalars().all()
-
-    def test_admin_group_member_still_reads_after_rows_are_deleted(self, migrated):
-        from app.utils.auth_utils import require_read_access
-        ag_ids = self._ag_ids(migrated, SA)
-        with Session(migrated) as session:
-            require_read_access(session, "ds-priv", ag_ids)  # must not raise
-
-    def test_admin_group_member_still_writes_after_rows_are_deleted(self, migrated):
-        from app.utils.auth_utils import require_write_access
-        ag_ids = self._ag_ids(migrated, SA)
-        with Session(migrated) as session:
-            require_write_access(session, ag_ids, ["ds-priv"])  # must not raise
-
-    def test_non_admin_is_still_denied(self, migrated):
-        """The bypass must key on admin membership, not simply always pass."""
-        from fastapi import HTTPException
-        from app.utils.auth_utils import require_read_access
-        ag_ids = self._ag_ids(migrated, STAFF)
-        with Session(migrated) as session:
-            with pytest.raises(HTTPException) as exc:
-                require_read_access(session, "ds-priv", ag_ids)
-            assert exc.value.status_code == 403
-
-    def test_the_admin_acl_rows_really_are_gone(self, migrated):
-        """Guards against this passing for the boring reason."""
-        with Session(migrated) as session:
-            n = session.execute(text("""
-                SELECT count(*) FROM resourceacl a
-                JOIN accessgroup ag ON ag.id = a.accessgroup_id
-                WHERE ag.group_name = 'admin'
-            """)).scalar()
-        assert n == 0
 
 
 def test_bypass_acl_rows_are_gone(migrated):

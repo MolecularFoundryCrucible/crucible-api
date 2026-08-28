@@ -7,14 +7,23 @@ in any project.
 from sqlmodel import Session, select
 
 from app.models.core_models import AccessGroup, Dataset, Project, Sample, User, UserAccessGroupLink
-from app.utils.permissions import PlatformRole, Role
+from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 
 def _user(session, orcid):
     u = User(first_name="T", last_name=orcid[-4:], email=f"{orcid}@x.com", unique_id=orcid)
+    personal_group = AccessGroup(group_name=orcid, group_type=AccessGroupType.IDENTITY.value)
     session.add(u)
+    session.add(personal_group)
     session.commit()
     session.refresh(u)
+    session.refresh(personal_group)
+    session.add(UserAccessGroupLink(
+        user_id=u.id,
+        accessgroup_id=personal_group.id,
+        role="owner",
+    ))
+    session.commit()
     return u
 
 
@@ -23,7 +32,7 @@ def _project_with_group(session, proj_id, lead_orcid):
     session.add(proj)
     session.commit()
     session.refresh(proj)
-    ag = AccessGroup(group_name=proj.unique_id)
+    ag = AccessGroup(group_name=proj.unique_id, group_type=AccessGroupType.PROJECT.value)
     session.add(ag)
     session.commit()
     session.refresh(ag)
@@ -63,7 +72,7 @@ class TestCreateDataset:
             session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
             session.commit()
 
-        auth_as("sa-instrument-1", groups=[])
+        auth_as("sa-instrument-1", groups=[], is_service_account=True)
         resp = client.post("/datasets", json={
             "dataset_name": "d3", "project_id": "proj_z", "owner_orcid": "0000-0003",
         })
@@ -79,7 +88,7 @@ class TestCreateDataset:
             _project_with_group(session, "proj_w", "0000-0004")
             session.commit()
 
-        auth_as("sa-instrument-2", groups=[])
+        auth_as("sa-instrument-2", groups=[], is_service_account=True)
         resp = client.post("/datasets", json={
             "dataset_name": "d4", "project_id": "proj_w", "owner_orcid": "0000-0004",
         })
@@ -93,7 +102,26 @@ class TestCreateDataset:
         resp = client.post("/datasets", json={"dataset_name": "d5", "owner_orcid": "0000-0005"})
         assert resp.status_code == 400
 
+    def test_human_cannot_create_for_another_project_member(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            researcher = _user(session, "0000-0005a")
+            _user(session, "0000-0005b")
+            ag = _project_with_group(session, "proj_human_dataset", "0000-0005a")
+            session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
+            session.commit()
+
+        auth_as("0000-0005b", groups=[])
+        resp = client.post("/datasets", json={
+            "dataset_name": "d5b",
+            "project_id": "proj_human_dataset",
+            "owner_orcid": "0000-0005a",
+        })
+        assert resp.status_code == 403
+
     def test_no_project_self_owned_is_allowed(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "0000-0006")
+
         auth_as("0000-0006", groups=[])
         resp = client.post("/datasets", json={"dataset_name": "d6"})
         assert resp.status_code == 200, resp.text
@@ -160,7 +188,7 @@ class TestCreateSample:
             session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
             session.commit()
 
-        auth_as("sa-instrument-4", groups=[])
+        auth_as("sa-instrument-4", groups=[], is_service_account=True)
         resp = client.post("/samples", json={
             "sample_name": "s2", "project_id": "proj_t", "owner_orcid": "0000-0012",
         })
@@ -199,6 +227,22 @@ class TestCreateSample:
         resp = client.post("/samples", json={"sample_name": "s3", "owner_orcid": "0000-0013"})
         assert resp.status_code == 400
 
+    def test_human_cannot_create_for_another_project_member(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            researcher = _user(session, "0000-0013a")
+            _user(session, "0000-0013b")
+            ag = _project_with_group(session, "proj_human_sample", "0000-0013a")
+            session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
+            session.commit()
+
+        auth_as("0000-0013b", groups=[])
+        resp = client.post("/samples", json={
+            "sample_name": "s3b",
+            "project_id": "proj_human_sample",
+            "owner_orcid": "0000-0013a",
+        })
+        assert resp.status_code == 403
+
     def test_service_account_no_project_and_different_owner_is_allowed(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             _user(session, "0000-0014")
@@ -229,7 +273,7 @@ class TestCreateOnBehalfByIdentifier:
             session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
             session.commit()
 
-        auth_as("sa-instrument-10", groups=[])
+        auth_as("sa-instrument-10", groups=[], is_service_account=True)
         resp = client.post("/datasets", json={
             "dataset_name": "d20", "project_id": "proj_id_1", "owner": "0000-0021@x.com",
         })
@@ -243,13 +287,24 @@ class TestCreateOnBehalfByIdentifier:
             researcher = User(first_name="U", last_name="Name", email="uname@x.com",
                               unique_id="0000-0022", username="dsowner")
             session.add(researcher)
+            personal_group = AccessGroup(
+                group_name="0000-0022",
+                group_type=AccessGroupType.IDENTITY.value,
+            )
+            session.add(personal_group)
             ag = _project_with_group(session, "proj_id_2", "0000-0022")
             session.commit()
             session.refresh(researcher)
+            session.refresh(personal_group)
+            session.add(UserAccessGroupLink(
+                user_id=researcher.id,
+                accessgroup_id=personal_group.id,
+                role="owner",
+            ))
             session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
             session.commit()
 
-        auth_as("sa-instrument-11", groups=[])
+        auth_as("sa-instrument-11", groups=[], is_service_account=True)
         resp = client.post("/datasets", json={
             "dataset_name": "d21", "project_id": "proj_id_2", "owner": "dsowner",
         })
@@ -264,7 +319,7 @@ class TestCreateOnBehalfByIdentifier:
             _project_with_group(session, "proj_id_3", "0000-0023")
             session.commit()
 
-        auth_as("sa-instrument-12", groups=[])
+        auth_as("sa-instrument-12", groups=[], is_service_account=True)
         resp = client.post("/datasets", json={
             "dataset_name": "d22", "project_id": "proj_id_3", "owner": "0000-0023@x.com",
         })
@@ -292,7 +347,7 @@ class TestCreateOnBehalfByIdentifier:
             session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
             session.commit()
 
-        auth_as("sa-instrument-15", groups=[])
+        auth_as("sa-instrument-15", groups=[], is_service_account=True)
         resp = client.post("/samples", json={
             "sample_name": "s20", "project_id": "proj_id_4", "owner": "0000-0025@x.com",
         })

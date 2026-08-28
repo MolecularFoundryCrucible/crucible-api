@@ -60,7 +60,7 @@ def dataset_record(ds, ri) -> dict:
         "owner_orcid": ds.owner_orcid, "project_id": ds.project_id,
         "instrument_name": ds.instrument_name, "measurement": ds.measurement,
         "data_type": ds.data_type, "data_format": ds.data_format,
-        "session_name": ds.session_name, "source_folder": ds.source_folder,
+        "session_name": ds.session_name,
         "timestamp": ds.timestamp, "size": ds.size,
         "public": ri.public if ri else ds.public,
         "resource_type": "dataset",
@@ -124,6 +124,5 @@ def write_metadata(mfid: str, metadata: dict, actor: str, operation: str) -> Non
         logger.info("Wrote metadata.json for %s (revision %d)", mfid, audit["revision"])
     except Exception:
         logger.exception("Failed to write metadata.json for %s", mfid)
-
 
 

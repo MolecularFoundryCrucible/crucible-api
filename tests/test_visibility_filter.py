@@ -8,7 +8,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlalchemy.pool import StaticPool
 
 from app.models.core_models import AccessGroup, Dataset, ResourceACL, Sample
-from app.utils.permissions import PUBLIC_GROUP_NAME
+from app.utils.permissions import AccessGroupType, PUBLIC_GROUP_NAME
 from app.utils.sql_utils import visibility_filter_for
 
 
@@ -28,7 +28,7 @@ def _grant_public(session, mfid, pub_id):
 def test_public_and_private_datasets_split_correctly():
     engine = _engine()
     with Session(engine) as session:
-        pub = AccessGroup(group_name=PUBLIC_GROUP_NAME)
+        pub = AccessGroup(group_name=PUBLIC_GROUP_NAME, group_type=AccessGroupType.SYSTEM.value)
         session.add(pub)
         session.commit()
         session.refresh(pub)
@@ -50,7 +50,7 @@ def test_public_and_private_datasets_split_correctly():
 def test_samples_use_the_same_predicate():
     engine = _engine()
     with Session(engine) as session:
-        pub = AccessGroup(group_name=PUBLIC_GROUP_NAME)
+        pub = AccessGroup(group_name=PUBLIC_GROUP_NAME, group_type=AccessGroupType.SYSTEM.value)
         session.add(pub)
         session.commit()
         session.refresh(pub)

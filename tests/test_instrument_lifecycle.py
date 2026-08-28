@@ -8,15 +8,24 @@ group at admin standing.
 from sqlmodel import Session, select
 
 from app.models.core_models import AccessGroup, Dataset, Instrument, Project, ResourceACL, User, UserAccessGroupLink
-from app.utils.permissions import PlatformRole, Role
+from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 
 def _user(session, orcid, is_service_account=False):
     u = User(first_name="T", last_name=orcid[-4:], email=f"{orcid}@x.com",
             unique_id=orcid, is_service_account=is_service_account)
+    personal_group = AccessGroup(group_name=orcid, group_type=AccessGroupType.IDENTITY.value)
     session.add(u)
+    session.add(personal_group)
     session.commit()
     session.refresh(u)
+    session.refresh(personal_group)
+    session.add(UserAccessGroupLink(
+        user_id=u.id,
+        accessgroup_id=personal_group.id,
+        role=Role.OWNER.db_value,
+    ))
+    session.commit()
     return u
 
 
@@ -130,6 +139,9 @@ class TestDatasetInstrumentResolution:
         resp = client.post("/instruments", json=INSTRUMENT_PAYLOAD)
         mfid = resp.json()["unique_id"]
 
+        with Session(db_engine) as session:
+            _user(session, "0000-0004")
+
         auth_as("0000-0004", groups=[])
         resp = client.post("/datasets", json={"dataset_name": "d1", "instrument_name": "XRD-1"})
         assert resp.status_code == 200, resp.text
@@ -150,8 +162,12 @@ class TestDatasetInstrumentResolution:
         with Session(db_engine) as session:
             session.add(Instrument(unique_id="inst-ci-1", instrument_id="ci-1",
                                    instrument_name="hip_microscope", owner="lab", location="b30"))
-            session.add(AccessGroup(group_name="inst-ci-1"))
+            session.add(AccessGroup(
+                group_name="inst-ci-1",
+                group_type=AccessGroupType.INSTRUMENT.value,
+            ))
             session.commit()
+            _user(session, "0000-0006")
 
         auth_as("0000-0006", groups=[])
         resp = client.post("/datasets", json={"dataset_name": "d3", "instrument_name": "HiP_Microscope"})
@@ -160,8 +176,6 @@ class TestDatasetInstrumentResolution:
     def test_update_dataset_rejects_unregistered_instrument(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             _user(session, "0000-0007")
-            session.add(AccessGroup(group_name="0000-0007"))
-            session.commit()
 
         auth_as("0000-0007", groups=[])
         resp = client.post("/datasets", json={"dataset_name": "d4"})
@@ -184,6 +198,8 @@ class TestInstrumentIdOnDataset:
 
     def test_create_dataset_with_instrument_id_resolves_and_echoes_it(self, client, db_engine, auth_as):
         self._register(client, auth_as)
+        with Session(db_engine) as session:
+            _user(session, "0000-0010")
 
         auth_as("0000-0010", groups=[])
         resp = client.post("/datasets", json={"dataset_name": "d5", "instrument_id": "xrd-id-1"})
@@ -206,6 +222,8 @@ class TestInstrumentIdOnDataset:
         """A dataset created the legacy way (free-text instrument_name) still
         gets instrument_id resolved in the response, for clients that adopt it."""
         self._register(client, auth_as)
+        with Session(db_engine) as session:
+            _user(session, "0000-0012")
 
         auth_as("0000-0012", groups=[])
         resp = client.post("/datasets", json={"dataset_name": "d7", "instrument_name": "XRD ID 1"})
@@ -216,10 +234,9 @@ class TestInstrumentIdOnDataset:
         self._register(client, auth_as)
         with Session(db_engine) as session:
             _user(session, "0000-0013")
-            ag = AccessGroup(group_name="0000-0013")
-            session.add(ag)
-            session.commit()
-            session.refresh(ag)
+            ag = session.exec(select(AccessGroup).where(
+                AccessGroup.group_name == "0000-0013"
+            )).one()
             ag_id = ag.id
 
         auth_as("0000-0013", groups=[("0000-0013", ag_id, Role.OWNER)])
@@ -233,10 +250,9 @@ class TestInstrumentIdOnDataset:
     def test_patch_dataset_with_unregistered_instrument_id_is_400(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             _user(session, "0000-0014")
-            ag = AccessGroup(group_name="0000-0014")
-            session.add(ag)
-            session.commit()
-            session.refresh(ag)
+            ag = session.exec(select(AccessGroup).where(
+                AccessGroup.group_name == "0000-0014"
+            )).one()
             ag_id = ag.id
 
         auth_as("0000-0014", groups=[("0000-0014", ag_id, Role.OWNER)])
@@ -254,7 +270,7 @@ class TestProjectMfidOnDataset:
             session.add(proj)
             session.commit()
             session.refresh(proj)
-            ag = AccessGroup(group_name=proj.unique_id)
+            ag = AccessGroup(group_name=proj.unique_id, group_type=AccessGroupType.PROJECT.value)
             session.add(ag)
             user = _user(session, "0000-0015")
             session.commit()

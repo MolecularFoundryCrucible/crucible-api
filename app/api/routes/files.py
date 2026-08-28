@@ -16,7 +16,6 @@ from app.models.core_models import (
     AssociatedFile,
     Dataset,
     IngestionRequest,
-    ResourceACL,
 )
 from app.general_utils import get_secret, get_utc_isoformat
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
@@ -157,6 +156,7 @@ def create_file_ingestion_request(
 
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
+        require_permission(session, auth_res, ds.unique_id, Permission.CREATE)
 
         if af.storage_backend != "gcs":
             raise HTTPException(

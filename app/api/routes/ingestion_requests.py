@@ -1,7 +1,7 @@
-from typing import Annotated, List, Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, join
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -9,18 +9,17 @@ from app.models.core_models import (
     AssociatedFile,
     Dataset,
     IngestionRequest,
-    ResourceACL,
 )
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, require_platform_admin
-from app.utils.permissions import Principal
+from app.utils.auth_utils import authorize_user, has_platform_admin_access, require_permission, require_platform_admin
+from app.utils.permissions import Permission, Principal
 from app.utils.sql_utils import only_update
 
 router = APIRouter(tags=["ingestion_requests"])
 engine = get_engine()
 
 
-def _get_ir_with_read_access(session: Session, reqid: int, ag_ids: list) -> IngestionRequest:
+def _get_ir_with_read_access(session: Session, reqid: int, principal: Principal) -> IngestionRequest:
     """Fetch an IngestionRequest and verify the caller has read access to its parent dataset."""
     ir = session.exec(
         select(IngestionRequest).where(IngestionRequest.id == reqid)
@@ -28,15 +27,10 @@ def _get_ir_with_read_access(session: Session, reqid: int, ag_ids: list) -> Inge
     if ir is None:
         raise HTTPException(status_code=404, detail="Ingestion request not found")
 
-    ds = session.exec(
-        select(Dataset)
-        .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
-        .where(Dataset.unique_id == ir.dataset_mfid)
-        .filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True))
-        .distinct()
-    ).one_or_none()
+    ds = session.exec(select(Dataset).where(Dataset.unique_id == ir.dataset_mfid)).one_or_none()
     if ds is None:
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    require_permission(session, principal, ds.unique_id, Permission.READ)
     return ir
 
 
@@ -52,9 +46,7 @@ def list_ingestion_requests(
     List ingestion requests, paginated. Requires file_id or dataset_id for non-admins.
     Admins may omit both filters to list all ingestion requests.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
-    is_admin = any(ag.group_name == "admin" for ag in ag_list)
+    is_admin = has_platform_admin_access(auth_res)
 
     if file_id is None and dataset_id is None and not is_admin:
         raise HTTPException(status_code=400, detail="Either file_id or dataset_id must be provided")
@@ -67,28 +59,18 @@ def list_ingestion_requests(
             if af is None:
                 raise HTTPException(status_code=404, detail="File not found")
 
-            ds = session.exec(
-                select(Dataset)
-                .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
-                .where(Dataset.id == af.dataset_id)
-                .filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True))
-                .distinct()
-            ).one_or_none()
+            ds = session.exec(select(Dataset).where(Dataset.id == af.dataset_id)).one_or_none()
             if ds is None:
-                raise HTTPException(status_code=403, detail="Access denied")
+                raise HTTPException(status_code=404, detail="Dataset not found")
+            require_permission(session, auth_res, ds.unique_id, Permission.READ)
 
             query = select(IngestionRequest).where(IngestionRequest.file_mfid == af.mfid)
 
         elif dataset_id is not None:
-            ds = session.exec(
-                select(Dataset)
-                .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
-                .where(Dataset.unique_id == dataset_id)
-                .filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True))
-                .distinct()
-            ).one_or_none()
+            ds = session.exec(select(Dataset).where(Dataset.unique_id == dataset_id)).one_or_none()
             if ds is None:
-                raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+                raise HTTPException(status_code=404, detail="Dataset not found")
+            require_permission(session, auth_res, ds.unique_id, Permission.READ)
 
             query = select(IngestionRequest).where(IngestionRequest.dataset_mfid == ds.unique_id)
 
@@ -108,11 +90,8 @@ def get_ingestion_request(
     reqid: int,
 ):
     '''Returns a specific ingestion request. Requires read access to the parent dataset.'''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
-
     with Session(engine) as session:
-        return _get_ir_with_read_access(session, reqid, ag_ids)
+        return _get_ir_with_read_access(session, reqid, auth_res)
 
 
 @router.patch("/ingestion_requests/{reqid}", response_model=IngestionRequest)

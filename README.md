@@ -2,8 +2,11 @@
 
 A FastAPI-based REST API for managing scientific datasets, samples, and metadata. The Crucible API provides comprehensive endpoints for data management, authentication, and integration with external services.
 
-## Staging Branch
-https://crucible.lbl.gov/testapi-staging/docs
+## Staging API documentation
+
+- [Swagger UI](https://crucible.lbl.gov/testapi-staging/docs)
+- [ReDoc](https://crucible.lbl.gov/testapi-staging/redoc)
+- [OpenAPI JSON](https://crucible.lbl.gov/testapi-staging/openapi.json)
 
 ## Features
 
@@ -102,64 +105,7 @@ Authorization: Bearer your_api_key_here
 
 ## API Endpoints
 
-### Authentication & Users
-- `GET /login` - Initiate ORCID login
-- `GET /auth` - ORCID callback handler
-- `GET /user_apikey` - Generate API key
-- `GET /regenerate_apikey` - Regenerate existing API key
-- `GET /account` - Get current user account info
-- `GET /users` - List all users (admin only)
-- `GET /users/{orcid}` - Get user by ORCID
-- `POST /users` - Create new user
-
-### Datasets
-- `POST /datasets` - Create new dataset
-- `GET /datasets` - List datasets with filtering
-- `GET /datasets/{dsid}` - Get specific dataset
-- `PATCH /datasets/{dsid}` - Update dataset
-- `DELETE /datasets/{dsid}` - Delete dataset
-- `GET /datasets/{dsid}/download/{file_name}` - Download dataset file
-- `POST /datasets/{dsid}/upload` - Upload files to dataset
-- `POST /datasets/{dsid}/ingest` - Start ingestion process
-
-### Scientific Metadata
-- `GET /resources/{unique_id}/metadata` - Get resource metadata
-- `POST /resources/{unique_id}/metadata` - Add metadata
-- `PATCH /resources/{unique_id}/metadata` - Update metadata
-- `GET /resources/metadata/search` - Search resource metadata
-
-### Thumbnails & Files
-- `GET /datasets/{dsid}/thumbnails` - Get dataset thumbnails
-- `POST /datasets/{dsid}/thumbnails` - Add thumbnail
-- `GET /datasets/{dsid}/associated_files` - Get associated files
-- `POST /datasets/{dsid}/associated_files` - Add associated file
-
-### Samples
-- `POST /samples` - Create new sample
-- `GET /samples` - List samples
-- `GET /samples/{sample_id}` - Get specific sample
-- `POST /datasets/{dsid}/samples/{sample_id}` - Link sample to dataset
-- `GET /datasets/{dsid}/samples` - Get dataset samples
-- `GET /samples/{sample_id}/datasets` - Get sample datasets
-- `POST /samples/{parent_sample_id}/children/{child_sample_id}` - Create sample hierarchy
-
-### Projects
-- `POST /projects` - Create project
-- `GET /projects` - List projects
-- `GET /projects/{proj_id}` - Get project details
-
-### Access Control
-- `POST /access_groups` - Create access group
-- `GET /access_groups/{group_name}` - Get access group
-- `POST /users/{orcid}/access_groups/{group_name}` - Add user to group
-- `GET /users/{orcid}/access_groups` - Get user's access groups
-
-
-### Instruments & Keywords
-- `GET /instruments` - List instruments
-- `POST /instruments` - Add instrument
-- `GET /keywords/{keyword}` - Search keywords
-- `POST /datasets/{dsid}/keywords` - Add keyword to dataset
+Use the generated [Swagger UI](https://crucible.lbl.gov/testapi-staging/docs), [ReDoc](https://crucible.lbl.gov/testapi-staging/redoc), or [OpenAPI JSON](https://crucible.lbl.gov/testapi-staging/openapi.json) as the authoritative route inventory. See [`docs/resource_identifier_routes.md`](docs/resource_identifier_routes.md) for the canonical identifier, exact lookup, compatibility, and Python client dispatch contract.
 
 ## Data Models
 
@@ -298,4 +244,3 @@ Start the app:
 ```sh
 uvicorn app.api.main:app --reload --port 7777
 ```
-

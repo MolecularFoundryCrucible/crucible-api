@@ -1,20 +1,32 @@
-# migrations/
+# Database migrations
 
-Two different things, kept apart on purpose:
+Use Alembic for schema changes and `migrations/data/` for reviewed data changes.
 
-- **`versions/`** — Alembic-managed schema history. Every change to a table's
-  shape (`ALTER TABLE`, `CREATE TYPE`, indexes) is a revision here from
-  2026-08-10 onward. Generate with `alembic revision --autogenerate -m "..."`,
-  review the diff, apply with `alembic upgrade head`. See `env.py` for how it
-  connects (through the app's own `get_engine()`, not a URL in `alembic.ini`).
+## Schema changes
 
-- **`data/`** — one-off scripts: backfills, precondition audits, cleanup.
-  Deliberately *not* Alembic revisions — these mutate data with real
-  judgment calls (dry-run by default, production guarded, often
-  self-verifying), which doesn't fit an upgrade/downgrade model. Files
-  predating 2026-08-10 are the pre-Alembic migration history, renamed
-  `YYYYMMDD_` by first-commit date; new one-off scripts keep landing here
-  the same way.
+Alembic revisions live in `migrations/versions/`. Generate and review a revision before applying it:
 
-Full operational detail, including the staging/production schema gap at the
-time of the Alembic switch, is in `docs/permission_migration_runbook.md`.
+```bash
+DB_CONF_FILE=.env .venv/bin/alembic revision --autogenerate -m "describe the change"
+DB_CONF_FILE=.env .venv/bin/alembic upgrade head
+```
+
+Production commands require the explicit safety flag:
+
+```bash
+DB_CONF_FILE=.env .venv/bin/alembic -x yes-this-is-production=true upgrade head
+```
+
+## Data changes
+
+Backfills, audits, and one-time cleanup scripts live in `migrations/data/`. Scripts that write data default to a dry run and require `--commit`. Production writes also require `--yes-this-is-production`.
+
+Run the permission migration only from `docs/permission_migration_runbook.md`. It contains required application deployment checkpoints between schema and data steps, so a plain `alembic upgrade head` is not a safe substitute.
+
+Revision `91f3c8a4d2e7` adds nullable `accessgroup.group_type` from the additive migration checkpoint. Apply it before running the project and instrument identity scripts. Audit and reconcile legacy groups with `20260827_audit_legacy_access_groups.py` and `20260827_merge_legacy_entity_groups.py`, then run `20260827_backfill_access_group_types.py`. Revision `c4a7e9d2b615` merges that branch with the main permission migration and makes the column non-null.
+
+Revision `7b2d4e6f8a10` is the permission-invariant enforcement step. It refuses to run while either role column contains nulls or any resource has multiple owner ACLs. Revision `c4a7e9d2b615` is the final permission migration head. Both enforcement revisions are transactional and must run with writes paused unless compatible writers are already fully deployed.
+
+Run `20260828_audit_permission_cutover_preconditions.py` immediately before final enforcement. It is read-only and checks every data invariant required by revisions `7b2d4e6f8a10` and `c4a7e9d2b615`.
+
+Revision `454c96264cfb` preserves existing access-group join requests while replacing `group_name` with `accessgroup_id`. Staging applied the same final schema when the table was empty; production may contain rows and uses the data-preserving path.

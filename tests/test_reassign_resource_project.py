@@ -1,7 +1,7 @@
 from sqlmodel import Session, select
 
 from app.models.core_models import AccessGroup, Dataset, Project, Resource, ResourceACL, User, UserAccessGroupLink
-from app.utils.permissions import Role
+from app.utils.permissions import AccessGroupType, Role
 
 
 def _user(session, orcid):
@@ -13,7 +13,7 @@ def _user(session, orcid):
 
 
 def _group(session, name):
-    ag = AccessGroup(group_name=name)
+    ag = AccessGroup(group_name=name, group_type=AccessGroupType.PROJECT.value)
     session.add(ag)
     session.commit()
     session.refresh(ag)

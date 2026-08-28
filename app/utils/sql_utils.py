@@ -121,7 +121,7 @@ def touch_resource_modification_time(session, mfid):
     return resource
 
 
-def sql_create_resource_acl(ag, mfid, read, write, session, permission=None):
+def sql_create_resource_acl(ag, mfid, read, write, session, permission):
     """Create an ACL entry. `permission` is the granted role; read/write are
     the pre-role columns, kept in step until they are dropped in phase 5."""
     from app.models.core_models import ResourceACL
@@ -135,7 +135,11 @@ def sql_create_resource_acl(ag, mfid, read, write, session, permission=None):
     ).one_or_none()
     if not acl:
         acl = ResourceACL(accessgroup_id=ag.id, mfid=mfid, read=read, write=write,
-                          permission=permission.db_value if permission is not None else None)
+                          permission=permission.db_value)
+        session.add(acl)
+        session.flush()
+    elif acl.permission is None:
+        acl.permission = permission.db_value
         session.add(acl)
         session.flush()
     return acl
@@ -156,28 +160,38 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None)
     project group; a row per creator per resource expresses nothing.
     '''
     from app.models.core_models import AccessGroup, Project
-    from app.utils.permissions import Role
+    from app.utils.permissions import AccessGroupType, Role
     from sqlmodel import select
 
     if owner_id:
-        owner_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == owner_id)).one_or_none()
+        owner_ag = session.exec(select(AccessGroup).where(
+            AccessGroup.group_name == owner_id,
+            AccessGroup.group_type == AccessGroupType.IDENTITY.value,
+        )).one_or_none()
         if owner_ag is None:
-            logger.warning("create_standard_acls: no AccessGroup for owner '%s' — skipping owner ACL for resource '%s'", owner_id, mfid)
-        else:
-            sql_create_resource_acl(owner_ag, mfid, read=True, write=True,
-                                    session=session, permission=Role.OWNER)
+            raise HTTPException(
+                status_code=409,
+                detail=f"Owner '{owner_id}' has no personal access group",
+            )
+        sql_create_resource_acl(owner_ag, mfid, read=True, write=True,
+                                session=session, permission=Role.OWNER)
 
     if project_id:
         project = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
         proj_ag = (
-            session.exec(select(AccessGroup).where(AccessGroup.group_name == project.unique_id)).one_or_none()
+            session.exec(select(AccessGroup).where(
+                AccessGroup.group_name == project.unique_id,
+                AccessGroup.group_type == AccessGroupType.PROJECT.value,
+            )).one_or_none()
             if project else None
         )
         if proj_ag is None:
-            logger.warning("create_standard_acls: no AccessGroup for project '%s' — skipping project ACL for resource '%s'", project_id, mfid)
-        else:
-            sql_create_resource_acl(proj_ag, mfid, read=True, write=True,
-                                    session=session, permission=Role.ADMIN)
+            raise HTTPException(
+                status_code=409,
+                detail=f"Project '{project_id}' has no access group",
+            )
+        sql_create_resource_acl(proj_ag, mfid, read=True, write=True,
+                                session=session, permission=Role.ADMIN)
 
 
 def set_public(session, mfid: str, is_public: bool):
@@ -189,16 +203,21 @@ def set_public(session, mfid: str, is_public: bool):
     public that nobody outside can actually reach.
     """
     from app.models.core_models import AccessGroup, ResourceACL
-    from app.utils.permissions import PUBLIC_GROUP_NAME, Role
+    from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, Role
     from sqlmodel import select
 
     pub = session.exec(
-        select(AccessGroup).where(AccessGroup.group_name == PUBLIC_GROUP_NAME)
+        select(AccessGroup).where(
+            AccessGroup.group_name == PUBLIC_GROUP_NAME,
+            AccessGroup.group_type == AccessGroupType.SYSTEM.value,
+        )
     ).one_or_none()
     if pub is None:
-        logger.warning("set_public: no '%s' access group — has the phase 1 "
-                       "migration run? Skipping for resource '%s'",
-                       PUBLIC_GROUP_NAME, mfid)
+        if is_public:
+            raise HTTPException(
+                status_code=409,
+                detail="Public access group is not provisioned",
+            )
         return
 
     existing = session.exec(
@@ -207,11 +226,20 @@ def set_public(session, mfid: str, is_public: bool):
         .where(ResourceACL.accessgroup_id == pub.id)
     ).one_or_none()
 
-    if is_public and existing is None:
-        # write=False deliberately: standing in the public group is viewer, so
-        # min() caps it there anyway, but a write row would be misleading.
-        session.add(ResourceACL(mfid=mfid, accessgroup_id=pub.id,
-                                read=True, write=False, role=Role.VIEWER.db_value))
+    if is_public:
+        if existing is None:
+            existing = ResourceACL(
+                mfid=mfid,
+                accessgroup_id=pub.id,
+                read=True,
+                write=False,
+                permission=Role.VIEWER.db_value,
+            )
+        else:
+            existing.read = True
+            existing.write = False
+            existing.permission = Role.VIEWER.db_value
+        session.add(existing)
     elif not is_public and existing is not None:
         session.delete(existing)
 
@@ -249,12 +277,15 @@ def visibility_filter_for(resource_model, visibility: str):
     """
     from sqlalchemy import exists
     from app.models.core_models import AccessGroup, ResourceACL
-    from app.utils.permissions import PUBLIC_GROUP_NAME
+    from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType
 
     is_public = exists().where(
         ResourceACL.mfid == resource_model.unique_id,
         ResourceACL.accessgroup_id == (
-            select(AccessGroup.id).where(AccessGroup.group_name == PUBLIC_GROUP_NAME).scalar_subquery()
+            select(AccessGroup.id).where(
+                AccessGroup.group_name == PUBLIC_GROUP_NAME,
+                AccessGroup.group_type == AccessGroupType.SYSTEM.value,
+            ).scalar_subquery()
         ),
     )
     return is_public if visibility == "public" else ~is_public
@@ -278,5 +309,3 @@ def generate_kw_query(session, base_query, keyword_filter):
         ).filter(DatasetKeywordLink.keyword_id.in_(keyword_ids))
     )
     return query
-
-

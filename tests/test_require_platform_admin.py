@@ -1,13 +1,8 @@
-"""Platform-wide bypass check.
-
-Replaces require_admin / bare require_groups on the 16 routes that are genuinely
-platform-level: user creation, API keys, service accounts, deletion audit,
-access-group management.
-"""
+"""Platform-wide bypass checks for platform-level routes."""
 import pytest
 from fastapi import HTTPException
 
-from app.utils.auth_utils import require_platform_admin
+from app.utils.auth_utils import has_platform_admin_access, require_platform_admin
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
 
 
@@ -65,3 +60,9 @@ def test_returns_none_rather_than_a_truthy_value():
     """It is a guard, not a predicate — `if require_platform_admin(p):` would
     silently never fire."""
     assert require_platform_admin(principal(platform_role=PlatformRole.ADMIN)) is None
+
+
+def test_predicate_matches_the_transitional_admin_policy():
+    assert has_platform_admin_access(principal(platform_role=PlatformRole.ADMIN))
+    assert has_platform_admin_access(principal(groups=[ADMIN_GROUP]))
+    assert not has_platform_admin_access(principal(groups=[PROJECT_GROUP]))

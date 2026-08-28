@@ -1,10 +1,4 @@
-"""Self-or-admin check on /users/{orcid}/*.
-
-Behaviour is unchanged from require_groups(ag_list, {'admin', orcid}) so no
-client breaks. What changes is how identity is established: directly from
-principal.user_id, rather than inferred from membership of the group named
-after that ORCID — an inference nothing enforces.
-"""
+"""Self-or-platform-admin checks on user-scoped routes."""
 import pytest
 from fastapi import HTTPException
 

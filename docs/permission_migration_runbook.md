@@ -154,28 +154,23 @@ Run the read-only audit:
 .venv/bin/python migrations/data/20260806_audit_permission_preconditions.py
 ```
 
-The last production audit found one orphaned `idtype` row with an empty MFID. Confirm that it is still an orphan before deleting it:
-
-```sql
-SELECT i.*
-FROM idtype i
-LEFT JOIN sample s ON s.unique_id = i.mfid
-WHERE i.mfid = '' AND i.resource_type = 'sample' AND s.id IS NULL;
-```
-
-If and only if that query returns the known orphan, delete it:
-
-```sql
-DELETE FROM idtype WHERE mfid = '' AND resource_type = 'sample';
-```
-
-Run the audit again. Continue only when it reports no blockers.
+The audit also checks for the previously observed empty-MFID `idtype` row. If it reports that row, do not delete it yet. Continue to the first snapshot, then use the guarded cleanup in step 4. If it reports any dependent row or any shape other than the reviewed orphaned sample resource, stop and investigate.
 
 ### 3. Take the first snapshot
 
 Take a Cloud SQL snapshot immediately before the first production write. Record its name and timestamp in the rollout ticket.
 
 ### 4. Add the permission columns
+
+If the preflight reported the reviewed empty-MFID orphan, run the cleanup first as a dry run and then commit it. Skip these two commands when the audit reported no empty-MFID resource.
+
+```bash
+.venv/bin/python migrations/data/20260831_cleanup_empty_mfid_resource.py --yes-this-is-production
+.venv/bin/python migrations/data/20260831_cleanup_empty_mfid_resource.py --commit --yes-this-is-production
+.venv/bin/python migrations/data/20260806_audit_permission_preconditions.py
+```
+
+Continue only when the audit reports no blockers.
 
 ```bash
 .venv/bin/python migrations/data/20260806_apply_sql.py migrations/data/20260806_add_permission_roles.sql --yes-this-is-production

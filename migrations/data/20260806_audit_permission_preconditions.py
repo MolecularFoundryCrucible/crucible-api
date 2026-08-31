@@ -170,6 +170,35 @@ def check_duplicate_group_owners(session):
     return dupes
 
 
+def check_empty_mfid_resources(session):
+    print("\n[5] resources with an empty MFID")
+    rows = _rows(session, """
+        SELECT
+            resource_type,
+            (SELECT count(*) FROM sample WHERE unique_id = '') AS samples,
+            (SELECT count(*) FROM dataset WHERE unique_id = '') AS datasets,
+            (SELECT count(*) FROM instrument WHERE unique_id = '') AS instruments,
+            (SELECT count(*) FROM project WHERE unique_id = '') AS projects,
+            (SELECT count(*) FROM resourceacl WHERE mfid = '') AS acl_rows,
+            (SELECT count(*) FROM scientific_metadata_new WHERE unique_id = '') AS metadata_rows,
+            (SELECT count(*) FROM deletionrequest WHERE resource_id = '') AS deletion_requests
+        FROM idtype
+        WHERE mfid = ''
+    """)
+    if not rows:
+        print("    no empty-MFID resources")
+        return rows
+
+    for row in rows:
+        print(
+            f"    type={row.resource_type!r} samples={row.samples} datasets={row.datasets} "
+            f"instruments={row.instruments} projects={row.projects} acl_rows={row.acl_rows} "
+            f"metadata_rows={row.metadata_rows} deletion_requests={row.deletion_requests}"
+        )
+    print("    -> take the first snapshot, then run the guarded cleanup script")
+    return rows
+
+
 def main():
     engine = get_engine()
     print(f"permission migration precondition audit — {engine.url.database} "
@@ -186,6 +215,7 @@ def main():
         dangling = check_dangling_sample_projects(session)
         check_acl_read_write_mix(session)
         dupe_owners = check_duplicate_group_owners(session)
+        empty_mfids = check_empty_mfid_resources(session)
 
     print("\n" + "=" * 60)
     blockers = []
@@ -195,6 +225,8 @@ def main():
         blockers.append(f"{dangling} samples naming a nonexistent project")
     if dupe_owners:
         blockers.append(f"{len(dupe_owners)} ORCID groups with multiple members")
+    if empty_mfids:
+        blockers.append(f"{len(empty_mfids)} resources with an empty MFID")
 
     if blockers:
         print("RESOLVE BEFORE PHASE 1:")

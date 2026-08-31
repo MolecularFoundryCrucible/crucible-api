@@ -102,7 +102,7 @@ Both now return **409** if `?role=owner` (`role=5`) is requested. A project has 
 
 ### `PATCH /datasets/{dsid}`
 
-Body now rejects `owner_orcid` and `project_id` with **422**. Use `transfer_ownership` / `POST /resources/{mfid}/project` instead. Accepted fields: `dataset_name`, `instrument_name`, `instrument_id`, `data_format`, `measurement`, `data_type`, `session_name`, `timestamp`, `public`.
+Body now rejects `owner_orcid` and `project_id` with **422**. Use `transfer_ownership` / `POST /resources/{mfid}/project` instead. Instrument reassignment is frozen until a dedicated atomic operation is available. The deprecated `instrument_name` and `instrument_id` fields accept only the current value for compatibility; changing or clearing either returns **409**. Other accepted fields are `dataset_name`, `data_format`, `measurement`, `data_type`, `session_name`, `timestamp`, and `public`.
 
 ### `PATCH /samples/{sample_id}`
 
@@ -182,9 +182,13 @@ Nano Crucible's `client.users.add_to_access_group()` and `remove_from_access_gro
 
 Now 404s if the target group name isn't a real project.
 
-## `POST /datasets`, `POST /samples`: flexible `owner` field (unrelated to the permission redesign, noted here anyway since this is the one doc client services check)
+## `POST /datasets`, `POST /samples`: creation ownership contract
 
-New optional `owner` field, alongside the existing `owner_orcid`. It accepts an ORCID, username, email, or service-account MFID and resolves it server-side the same way `POST /resources/{mfid}/transfer_ownership` resolves `new_owner`. `owner_orcid` is unchanged and still works exactly as before (strict ORCID/MFID match, no resolution); `owner` is the flexible superset, not a replacement. Pick whichever your integration prefers. Providing both in the same request is a **400**. All existing create-on-behalf authorization (project standing, service-account bypass) applies identically regardless of which field named the owner.
+Use `owner` for new integrations. It accepts an ORCID, service-account MFID, username, or email and resolves it to the canonical user identity. The deprecated `owner_orcid` compatibility field remains an exact canonical identity lookup and may contain a human ORCID or service-account MFID despite its name. Omitting both assigns ownership to the authenticated identity, including service accounts. Providing both returns **422**.
+
+The API stores both the canonical `owner_orcid` string and internal `owner_user_id`, then creates the owner ACL for that identity. `owner_user_id` is not a public request field and unknown create fields now return **422**. Successful responses continue to include `owner_orcid`; `owner` is the optional expanded public-safe user object when the route supports `include_owner`.
+
+A human caller may create only for themselves. Service accounts and platform administrators may create for another registered identity. When `project_id` is supplied, the effective owner must have contributor-or-above standing in that project. The existing deferred instrument authorization behavior is unchanged.
 
 The deprecated dataset `source_folder` field has been removed from `DatasetCreate`, `DatasetRead`, and dataset responses. File locations belong to associated-file records. Existing database columns and historical revision records are unchanged, while new dataset revision records omit the field.
 
@@ -196,7 +200,7 @@ New optional `project_lead` field, alongside the existing three explicit `projec
 
 ### `POST /datasets` / `POST /samples`
 
-`owner_orcid` and `project_id` remain accepted on create. A human caller may create only for themselves, and the effective owner must have contributor-or-above standing in the named project. Creating for another user returns 403 unless the caller is a service account or platform administrator. With no project given and a different named owner, the request is rejected with 400 unless the caller is a service account, which still needs the named owner to be a registered user. Service-account authorization for a target project is not enforced yet and remains deferred until instrument-to-project authorization is implemented. Expect new 400/403/404 responses on payloads that previously succeeded unvalidated.
+`project_id` remains accepted on create. Service-account authorization for a target project is not enforced yet and remains deferred until instrument-to-project authorization is implemented. Expect 400, 403, or 404 responses on payloads that previously succeeded without owner or project validation.
 
 ## Behavior fixes (no schema change)
 
@@ -240,13 +244,19 @@ These read routes no longer authorize from the legacy `Dataset.public` Boolean. 
 
 ### Relationship lists and graphs
 
-Sample parent, child, and dataset relationship routes now require read access to the starting resource and filter every returned resource through the canonical read-permission and deletion filters. Dataset-to-sample lists apply the same filtering. Sample, dataset, project, and combined entity graphs omit inaccessible nodes and any edges connected to them.
+Sample parent, child, and dataset relationship routes now require read access to the starting resource and filter every returned resource through the canonical read-permission and deletion filters. Dataset-to-sample lists apply the same filtering. Expanded `include_links` responses, `GET /resources/{mfid}/links`, and the legacy `SampleResponse.datasets` field independently filter every linked target. Sample, dataset, project, and combined entity graphs omit inaccessible nodes and any edges connected to them.
 
 Response schemas are unchanged. Callers may receive 403 for an inaccessible starting resource or fewer related items and graph nodes where the previous implementation exposed relationships to inaccessible resources.
 
 ### Legacy authorization and shadow-mode removal
 
 All active routes now use the role-based permission evaluator. The unused binary read/write helpers and permission shadow mode have been removed from the application and staging deployment configuration. This does not change an API contract or drop the legacy database columns, which remain available for rollback until the later contract migration.
+
+### Database deletion
+
+Approving a dataset or sample deletion request now commits the permanent audit and database deletion in one transaction. A database deletion failure rolls back both. Projects and instruments are rejected before audit or mutation.
+
+Direct `DELETE /resources/{mfid}` now requires the explicit `?force=true` flag and effective owner permission or platform-admin authority. Resource admins retain the ability to approve deletion requests but cannot use the direct bypass. Database deletion currently leaves GCS objects in place.
 
 ### `POST /access_groups/{group_name}/join`
 

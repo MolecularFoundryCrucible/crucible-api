@@ -12,7 +12,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.general_utils import get_utc_isoformat, is_orcid
+from app.general_utils import get_utc_isoformat
 from app.models.core_models import (
     Dataset, DatasetSampleLink,
     DeletionRequest, Project, Resource, Sample, SampleLink, ScientificMetadataBinary, User,
@@ -23,11 +23,12 @@ from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import access_selector_filter, authorize_user, permission_filter, require_permission
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
+from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import Principal, Permission, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
 from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, sample_record
-from app.utils.user_utils import resolve_user_by_identifier
+from app.utils.user_utils import resolve_create_owner
 from app.models.users import UserPublicRead
 
 router = APIRouter(tags=["samples"])
@@ -153,15 +154,18 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
     if not S.sample_name.strip():
         raise HTTPException(status_code=400, detail="sample_name must not be empty.")
 
+    sample_details = S.model_dump(exclude_unset=True)
     with Session(engine) as session:
         if S.unique_id:
             assert_mfid_available(session, S.unique_id, "sample")
 
-        if S.owner and S.owner_orcid:
-            raise HTTPException(status_code=400, detail="Provide owner or owner_orcid, not both")
-        resolved_owner_orcid = S.owner_orcid
-        if S.owner:
-            resolved_owner_orcid = resolve_user_by_identifier(session, S.owner).unique_id
+        owner_user = resolve_create_owner(
+            session,
+            sample_details.get('owner'),
+            sample_details.get('owner_orcid'),
+            user_unique_id,
+        )
+        resolved_owner_orcid = owner_user.unique_id
 
         project_mfid = None
         if S.project_id:
@@ -200,27 +204,16 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
                     raise HTTPException(
                         status_code=400,
                         detail="Creating on behalf of another user requires project_id, to verify their standing there")
-                if session.exec(select(User).where(User.unique_id == owner_orcid)).one_or_none() is None:
-                    raise HTTPException(status_code=404, detail=f"Owner '{owner_orcid}' not found")
 
-        sample_details = S.model_dump(exclude_unset=True)
         sample_details.pop('owner', None)
-        if resolved_owner_orcid is not None:
-            sample_details['owner_orcid'] = resolved_owner_orcid
+        sample_details['owner_orcid'] = resolved_owner_orcid
+        sample_details['owner_user_id'] = owner_user.id
         if project_mfid is not None:
             sample_details['project_mfid'] = project_mfid
 
         sample = Sample(**sample_details)
         session.add(sample)
         session.flush()
-
-        # Resolve owner from auth if not explicitly provided
-        if sample.owner_orcid is None and is_orcid(user_unique_id):
-            sample.owner_orcid = user_unique_id
-        if sample.owner_user_id is None and sample.owner_orcid:
-            sample.owner_user_id = session.exec(
-                select(User.id).where(User.unique_id == sample.owner_orcid)
-            ).one_or_none()
 
         now = get_utc_isoformat()
         existing_ri = session.exec(select(Resource).where(Resource.mfid == sample.unique_id)).one_or_none()
@@ -235,7 +228,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
             ri.creation_time = now
         ri.modification_time = now
         ri.public = S.public
-        set_public(session, S.unique_id, bool(S.public))
+        set_public(session, sample.unique_id, bool(S.public))
 
         create_standard_acls(session, sample.unique_id,
                              owner_id=sample.owner_orcid,
@@ -371,6 +364,9 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     select(SampleLink.sample_id, Sample)
                     .join(Sample, Sample.id == SampleLink.parent_sample_id)
                     .where(SampleLink.sample_id.in_(sample_ids))
+                    .where(permission_filter(auth_res, Sample, Permission.READ))
+                    .where(deletion_filter_for(Sample))
+                    .order_by(SampleLink.sample_id, Sample.unique_id)
                 ).all():
                     parents_by_sample.setdefault(child_id, []).append(
                         LinkedResource(unique_id=parent.unique_id, resource_type="sample", name=parent.sample_name, relationship="parent")
@@ -379,6 +375,9 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     select(SampleLink.parent_sample_id, Sample)
                     .join(Sample, Sample.id == SampleLink.sample_id)
                     .where(SampleLink.parent_sample_id.in_(sample_ids))
+                    .where(permission_filter(auth_res, Sample, Permission.READ))
+                    .where(deletion_filter_for(Sample))
+                    .order_by(SampleLink.parent_sample_id, Sample.unique_id)
                 ).all():
                     children_by_sample.setdefault(parent_id, []).append(
                         LinkedResource(unique_id=child.unique_id, resource_type="sample", name=child.sample_name, relationship="child")
@@ -387,6 +386,9 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     select(DatasetSampleLink.sample_id, Dataset)
                     .join(Dataset, Dataset.id == DatasetSampleLink.dataset_id)
                     .where(DatasetSampleLink.sample_id.in_(sample_ids))
+                    .where(permission_filter(auth_res, Dataset, Permission.READ))
+                    .where(deletion_filter_for(Dataset))
+                    .order_by(DatasetSampleLink.sample_id, Dataset.unique_id)
                 ).all()
                 instrument_ids = resolve_instrument_mfids_to_ids(
                     [ds.instrument_mfid for _, ds in sample_dataset_rows], session)
@@ -506,15 +508,10 @@ def read_sample(sample_mfid: str, auth_res: Annotated[Principal, Depends(authori
             selectinload(Sample.resource).selectinload(Resource.scientific_metadata)
             if include_metadata else selectinload(Sample.resource)
         )
-        link_opts = (
-            [selectinload(Sample.parents), selectinload(Sample.children)]
-            if include_links else []
-        )
-
         # fetch resource
         samp = session.exec(
             select(Sample)
-            .options(selectinload(Sample.datasets), resource_opts, *link_opts)
+            .options(resource_opts)
             .where(Sample.unique_id == sample_mfid)
         ).first()
 
@@ -528,13 +525,18 @@ def read_sample(sample_mfid: str, auth_res: Annotated[Principal, Depends(authori
         # check deletion request
         deletion_req = get_active_deletion_request(session, sample_mfid)
 
-        # fetch all linked resources (datasets reuse already-loaded relationship)
+        readable_datasets = fetch_readable_sample_datasets(
+            session, auth_res, samp.id
+        )
+
         links = None
         if include_links:
-            links = (
-                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="parent") for s in samp.parents] +
-                [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="child") for s in samp.children] +
-                [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="associated") for d in samp.datasets]
+            links = fetch_readable_links(
+                session,
+                auth_res,
+                "sample",
+                samp,
+                associated_entities=readable_datasets,
             )
 
         resource_md = samp.resource.scientific_metadata if samp.resource else None
@@ -544,9 +546,9 @@ def read_sample(sample_mfid: str, auth_res: Annotated[Principal, Depends(authori
             if owner_user:
                 owner = UserPublicRead.model_validate(owner_user)
         instrument_ids = resolve_instrument_mfids_to_ids(
-            [ds.instrument_mfid for ds in samp.datasets], session)
+            [ds.instrument_mfid for ds in readable_datasets], session)
         ds_project_ids = resolve_project_mfids_to_ids(
-            [ds.project_mfid for ds in samp.datasets] + [samp.project_mfid], session)
+            [ds.project_mfid for ds in readable_datasets] + [samp.project_mfid], session)
         return SampleResponse.model_validate({
             **samp.model_dump(),
             "project_id": ds_project_ids.get(samp.project_mfid, samp.project_id),
@@ -555,7 +557,7 @@ def read_sample(sample_mfid: str, auth_res: Annotated[Principal, Depends(authori
                 **ds.model_dump(),
                 "instrument_id": instrument_ids.get(ds.instrument_mfid),
                 "project_id": ds_project_ids.get(ds.project_mfid, ds.project_id),
-            }) for ds in samp.datasets],
+            }) for ds in readable_datasets],
             "creation_time": samp.resource.creation_time if samp.resource else None,
             "modification_time": samp.resource.modification_time if samp.resource else None,
             "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,

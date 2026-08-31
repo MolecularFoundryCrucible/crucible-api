@@ -333,7 +333,7 @@ class TestCreateOnBehalfByIdentifier:
         resp = client.post("/datasets", json={
             "dataset_name": "d23", "owner": "0000-0024@x.com", "owner_orcid": "0000-0024",
         })
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     def test_unresolvable_owner_is_404(self, client, db_engine, auth_as):
         auth_as("sa-instrument-14", groups=[], is_service_account=True)
@@ -364,4 +364,4 @@ class TestCreateOnBehalfByIdentifier:
         resp = client.post("/samples", json={
             "sample_name": "s21", "owner": "0000-0026@x.com", "owner_orcid": "0000-0026",
         })
-        assert resp.status_code == 400
+        assert resp.status_code == 422

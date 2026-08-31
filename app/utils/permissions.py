@@ -53,6 +53,7 @@ class Permission(str, Enum):
     CREATE = "create"
     EDIT = "edit"
     DELETE = "delete"
+    HARD_DELETE = "hard_delete"
     MANAGE_ACL = "manage_acl"
     TRANSFER = "transfer"
 
@@ -62,6 +63,7 @@ _THRESHOLDS: dict[Permission, Role] = {
     Permission.CREATE: Role.CONTRIBUTOR,
     Permission.EDIT: Role.EDITOR,
     Permission.DELETE: Role.ADMIN,
+    Permission.HARD_DELETE: Role.OWNER,
     Permission.MANAGE_ACL: Role.ADMIN,
     Permission.TRANSFER: Role.OWNER,
 }

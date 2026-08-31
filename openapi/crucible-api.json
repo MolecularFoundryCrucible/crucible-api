@@ -533,7 +533,7 @@
         "type": "object"
       },
       "DatasetCreate": {
-        "description": "Fields accepted when creating or upserting a dataset.\nProvide unique_id to create a record under a pre-assigned ID (must be a\nvalid mfid, e.g. one generated client-side by an instrument using the\nsame mfid library); omit it to auto-generate one.",
+        "additionalProperties": false,
         "properties": {
           "data_format": {
             "anyOf": [
@@ -610,6 +610,7 @@
                 "type": "null"
               }
             ],
+            "description": "Owner reference: ORCID, service-account MFID, username, or email. Defaults to the authenticated identity.",
             "title": "Owner"
           },
           "owner_orcid": {
@@ -621,6 +622,8 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
+            "description": "Deprecated canonical owner identity (human ORCID or service-account MFID). Use owner.",
             "title": "Owner Orcid"
           },
           "project_id": {
@@ -1151,6 +1154,8 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
+            "description": "Deprecated for dataset updates. Only the current value is accepted.",
             "title": "Instrument Id"
           },
           "instrument_name": {
@@ -1162,6 +1167,8 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
+            "description": "Deprecated for dataset updates. Only the current value is accepted.",
             "title": "Instrument Name"
           },
           "measurement": {
@@ -3643,7 +3650,7 @@
         "type": "integer"
       },
       "SampleCreate": {
-        "description": "Fields accepted when registering a new sample.\n\nProvide unique_id to register a sample under a pre-assigned ID (must be a\nvalid mfid, e.g. one generated client-side by an instrument using the\nsame mfid library); omit it to create a new one with an auto-generated MFID.",
+        "additionalProperties": false,
         "properties": {
           "description": {
             "anyOf": [
@@ -3665,6 +3672,7 @@
                 "type": "null"
               }
             ],
+            "description": "Owner reference: ORCID, service-account MFID, username, or email. Defaults to the authenticated identity.",
             "title": "Owner"
           },
           "owner_orcid": {
@@ -3676,6 +3684,8 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
+            "description": "Deprecated canonical owner identity (human ORCID or service-account MFID). Use owner.",
             "title": "Owner Orcid"
           },
           "project_id": {
@@ -9174,7 +9184,7 @@
     },
     "/project_graph/{project_id}": {
       "get": {
-        "description": "Returns all samples and authorized datasets belonging to project_id\nas a single node-link graph.",
+        "description": "Returns all authorized samples and datasets belonging to project_id\nas a single node-link graph.",
         "operationId": "project_graph_project_graph__project_id__get",
         "parameters": [
           {
@@ -10689,7 +10699,7 @@
     },
     "/resources/{resource_id}": {
       "delete": {
-        "description": "Hard-delete a resource and all related data. Requires admin on the resource.\nRequires an approved deletion request unless ?force=true.",
+        "description": "Permanently delete a dataset or sample from the database without a deletion request.\nRequires force=true and resource owner or platform-admin authority.\nStored GCS objects are not deleted.",
         "operationId": "hard_delete_resource_route_resources__resource_id__delete",
         "parameters": [
           {
@@ -10702,11 +10712,13 @@
             }
           },
           {
+            "description": "Required acknowledgement for direct permanent deletion.",
             "in": "query",
             "name": "force",
-            "required": false,
+            "required": true,
             "schema": {
-              "default": false,
+              "const": true,
+              "description": "Required acknowledgement for direct permanent deletion.",
               "title": "Force",
               "type": "boolean"
             }
@@ -10835,7 +10847,7 @@
     },
     "/resources/{resource_id}/delete": {
       "post": {
-        "description": "Request deletion of a resource. Any authenticated user with access to the resource may submit.\nReturns 409 if an active deletion request already exists for this resource.",
+        "description": "Request deletion of a resource. Requires contributor access to the resource.\nReturns 409 if an active deletion request already exists for this resource.",
         "operationId": "create_deletion_request_resources__resource_id__delete_post",
         "parameters": [
           {

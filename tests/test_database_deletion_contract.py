@@ -1,0 +1,174 @@
+import pytest
+from fastapi import HTTPException
+from sqlmodel import Session, select
+
+import app.api.routes.deletion as deletion_routes
+import app.utils.deletion_utils as deletion_utils
+from app.models.core_models import (
+    AccessGroup,
+    Dataset,
+    DeletionAuditLog,
+    DeletionRequest,
+    Resource,
+    ResourceACL,
+    Sample,
+)
+from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role
+
+
+def _setup(db_engine, permission=Role.OWNER, resource_type="dataset", request=False):
+    with Session(db_engine) as session:
+        group = session.exec(
+            select(AccessGroup).where(AccessGroup.group_name == "resource-owner")
+        ).one_or_none()
+        if group is None:
+            group = AccessGroup(group_name="resource-owner", group_type=AccessGroupType.IDENTITY.value)
+            session.add(group)
+        resource = Resource(mfid="resource-to-delete", resource_type=resource_type)
+        session.add(resource)
+        if resource_type == "dataset":
+            session.add(Dataset(unique_id=resource.mfid, dataset_name="delete me"))
+        elif resource_type == "sample":
+            session.add(Sample(unique_id=resource.mfid, sample_name="delete me"))
+        session.commit()
+        session.refresh(group)
+        session.add(ResourceACL(
+            mfid=resource.mfid,
+            accessgroup_id=group.id,
+            read=True,
+            write=True,
+            permission=permission.db_value,
+        ))
+        deletion_request = None
+        if request:
+            deletion_request = DeletionRequest(
+                resource_id=resource.mfid,
+                resource_name="delete me",
+                requester_id="requester",
+                status="pending",
+            )
+            session.add(deletion_request)
+        session.commit()
+        if deletion_request is not None:
+            session.refresh(deletion_request)
+        return group.id, deletion_request.id if deletion_request else None
+
+
+def _principal(group_id):
+    return Principal(
+        user_id="actor",
+        groups=(GroupMembership(group_id, "resource-owner", Role.OWNER),),
+    )
+
+
+def test_approval_deletes_database_rows_and_writes_audit_atomically(db_engine):
+    group_id, request_id = _setup(db_engine, permission=Role.ADMIN, request=True)
+
+    response = deletion_routes.review_deletion_request(
+        auth_res=_principal(group_id),
+        request_id=request_id,
+        status="approved",
+    )
+
+    assert response.status == "approved"
+    with Session(db_engine) as session:
+        assert session.get(Resource, "resource-to-delete") is None
+        assert session.exec(select(Dataset).where(Dataset.unique_id == "resource-to-delete")).one_or_none() is None
+        assert session.exec(select(DeletionRequest)).all() == []
+        audit = session.exec(select(DeletionAuditLog)).one()
+        assert audit.resource_id == "resource-to-delete"
+
+
+def test_approval_rolls_back_audit_and_status_when_deletion_fails(db_engine, monkeypatch):
+    group_id, request_id = _setup(db_engine, permission=Role.ADMIN, request=True)
+
+    def fail_delete(*args, **kwargs):
+        raise RuntimeError("delete failed")
+
+    monkeypatch.setattr(deletion_utils, "hard_delete_resource", fail_delete)
+
+    with pytest.raises(RuntimeError, match="delete failed"):
+        deletion_routes.review_deletion_request(
+            auth_res=_principal(group_id),
+            request_id=request_id,
+            status="approved",
+        )
+
+    with Session(db_engine) as session:
+        assert session.get(Resource, "resource-to-delete") is not None
+        assert session.get(DeletionRequest, request_id).status == "pending"
+        assert session.exec(select(DeletionAuditLog)).all() == []
+
+
+def test_forced_deletion_requires_owner_not_admin(db_engine):
+    group_id, _ = _setup(db_engine, permission=Role.ADMIN)
+
+    with pytest.raises(HTTPException) as exc:
+        deletion_routes.hard_delete_resource_route(
+            resource_id="resource-to-delete",
+            auth_res=_principal(group_id),
+            force=True,
+        )
+
+    assert exc.value.status_code == 403
+
+
+def test_forced_deletion_requires_explicit_true_flag(db_engine):
+    group_id, _ = _setup(db_engine)
+
+    with pytest.raises(HTTPException) as exc:
+        deletion_routes.hard_delete_resource_route(
+            resource_id="resource-to-delete",
+            auth_res=_principal(group_id),
+            force=False,
+        )
+
+    assert exc.value.status_code == 422
+
+
+def test_owner_and_platform_admin_can_force_delete(db_engine):
+    group_id, _ = _setup(db_engine)
+    result = deletion_routes.hard_delete_resource_route(
+        resource_id="resource-to-delete",
+        auth_res=_principal(group_id),
+        force=True,
+    )
+    assert "permanently deleted" in result["detail"]
+
+    group_id, _ = _setup(db_engine)
+    result = deletion_routes.hard_delete_resource_route(
+        resource_id="resource-to-delete",
+        auth_res=Principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
+        force=True,
+    )
+    assert "permanently deleted" in result["detail"]
+
+
+def test_forced_deletion_rejects_unsupported_resource_before_audit(db_engine):
+    group_id, _ = _setup(db_engine, resource_type="project")
+
+    with pytest.raises(HTTPException) as exc:
+        deletion_routes.hard_delete_resource_route(
+            resource_id="resource-to-delete",
+            auth_res=_principal(group_id),
+            force=True,
+        )
+
+    assert exc.value.status_code == 400
+    with Session(db_engine) as session:
+        assert session.get(Resource, "resource-to-delete") is not None
+        assert session.exec(select(DeletionAuditLog)).all() == []
+
+
+def test_forced_deletion_supports_samples(db_engine):
+    group_id, _ = _setup(db_engine, resource_type="sample")
+
+    deletion_routes.hard_delete_resource_route(
+        resource_id="resource-to-delete",
+        auth_res=_principal(group_id),
+        force=True,
+    )
+
+    with Session(db_engine) as session:
+        assert session.get(Resource, "resource-to-delete") is None
+        assert session.exec(select(Sample).where(Sample.unique_id == "resource-to-delete")).one_or_none() is None

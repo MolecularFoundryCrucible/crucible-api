@@ -315,6 +315,16 @@ class Resource(SQLModel, table=True):
 
 class DeletionRequest(SQLModel, table=True):
     """Tracks a request to soft-delete a Dataset or Sample."""
+    __table_args__ = (
+        Index(
+            "one_active_deletion_request_per_resource",
+            "resource_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'approved')"),
+            sqlite_where=text("status IN ('pending', 'approved')"),
+        ),
+    )
+
     id: Optional[int] = Field(default=None, primary_key=True)
     resource_id: str = Field(foreign_key="idtype.mfid", index=True)
     resource: Optional["Resource"] = Relationship(

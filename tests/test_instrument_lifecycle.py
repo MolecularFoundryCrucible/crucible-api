@@ -154,6 +154,9 @@ class TestDatasetInstrumentResolution:
             assert acl.permission == Role.CONTRIBUTOR.db_value
 
     def test_unregistered_instrument_name_is_rejected(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "0000-0005")
+
         auth_as("0000-0005", groups=[])
         resp = client.post("/datasets", json={"dataset_name": "d2", "instrument_name": "no-such-instrument"})
         assert resp.status_code == 400
@@ -214,6 +217,9 @@ class TestInstrumentIdOnDataset:
             assert ds.instrument_mfid == inst.unique_id
 
     def test_create_dataset_with_unregistered_instrument_id_is_400(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "0000-0011")
+
         auth_as("0000-0011", groups=[])
         resp = client.post("/datasets", json={"dataset_name": "d6", "instrument_id": "no-such-slug"})
         assert resp.status_code == 400
@@ -292,6 +298,9 @@ class TestProjectMfidOnDataset:
         """A non-admin caller with no standing in a nonexistent project hits
         the standing check first — 403, not 404 (see test_create_on_behalf.py
         for the platform-admin case, which does reach the 404)."""
+        with Session(db_engine) as session:
+            _user(session, "0000-0016")
+
         auth_as("0000-0016", groups=[])
         resp = client.post("/datasets", json={"dataset_name": "d11", "project_id": "no-such-project"})
         assert resp.status_code == 403

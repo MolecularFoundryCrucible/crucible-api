@@ -10,6 +10,14 @@ def test_dataset_creation_rolls_back_when_owner_group_is_missing(
     db_engine,
     auth_as,
 ):
+    with Session(db_engine) as session:
+        session.add(User(
+            first_name="Missing",
+            last_name="Group",
+            email="dataset-owner@example.org",
+            unique_id="0000-0001-2345-6789",
+        ))
+        session.commit()
     auth_as("0000-0001-2345-6789", groups=[])
     response = client.post("/datasets", json={"dataset_name": "missing-owner-group"})
     assert response.status_code == 409
@@ -27,6 +35,14 @@ def test_sample_creation_rolls_back_when_owner_group_is_missing(
     db_engine,
     auth_as,
 ):
+    with Session(db_engine) as session:
+        session.add(User(
+            first_name="Missing",
+            last_name="Group",
+            email="sample-owner@example.org",
+            unique_id="0000-0002-3456-7890",
+        ))
+        session.commit()
     auth_as("0000-0002-3456-7890", groups=[])
     response = client.post("/samples", json={"sample_name": "missing-owner-group"})
     assert response.status_code == 409
@@ -82,6 +98,15 @@ def test_publishing_rolls_back_when_public_group_is_missing(
     db_engine,
     auth_as,
 ):
+    with Session(db_engine) as session:
+        session.add(User(
+            first_name="Service",
+            last_name="Account",
+            email="service-account@example.org",
+            unique_id="service-account",
+            is_service_account=True,
+        ))
+        session.commit()
     auth_as("service-account", groups=[], is_service_account=True)
     response = client.post("/samples", json={
         "sample_name": "missing-public-group",

@@ -42,12 +42,13 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
-from app.utils.auth_utils import access_selector_filter, authorize_user, require_permission
+from app.utils.auth_utils import access_selector_filter, authorize_user, permission_filter, require_permission
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
+from app.utils.link_utils import fetch_readable_links
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
-from app.utils.user_utils import resolve_user_by_identifier
+from app.utils.user_utils import resolve_create_owner
 from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
@@ -153,14 +154,14 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         if dataset_details.get('unique_id'):
             assert_mfid_available(session, dataset_details['unique_id'], "dataset")
 
-        owner_identifier = dataset_details.pop('owner', None)
-        if owner_identifier:
-            if dataset.owner_orcid:
-                raise HTTPException(status_code=400, detail="Provide owner or owner_orcid, not both")
-            dataset_details['owner_orcid'] = resolve_user_by_identifier(session, owner_identifier).unique_id
-
-        if not dataset_details.get('owner_orcid'):
-            dataset_details['owner_orcid'] = user_unique_id
+        owner_user = resolve_create_owner(
+            session,
+            dataset_details.pop('owner', None),
+            dataset_details.get('owner_orcid'),
+            user_unique_id,
+        )
+        dataset_details['owner_orcid'] = owner_user.unique_id
+        dataset_details['owner_user_id'] = owner_user.id
 
         if not auth_res.is_platform_admin:
             owner_orcid = dataset_details['owner_orcid']
@@ -180,12 +181,6 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                     raise HTTPException(
                         status_code=400,
                         detail="Creating on behalf of another user requires project_id, to verify their standing there")
-                if session.exec(select(User).where(User.unique_id == owner_orcid)).one_or_none() is None:
-                    raise HTTPException(status_code=404, detail=f"Owner '{owner_orcid}' not found")
-
-        if dataset_details.get('owner_orcid', None) is not None:
-            user = session.exec(select(User).where(User.unique_id == dataset_details['owner_orcid'])).one_or_none()
-            dataset_details['owner_user_id'] = user.id if user else None
 
         if dataset_details.get('project_id', None):
             mfid = resolve_project_id_to_mfid(dataset_details['project_id'], session)
@@ -282,24 +277,41 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
         require_permission(session, auth_res, dsid, Permission.EDIT)
 
         update_dict = updated_dataset.model_dump(exclude_unset=True)
-        instrument = None
-        instrument_id_slug = update_dict.pop('instrument_id', None)
-        if instrument_id_slug:
-            instrument = session.exec(select(Instrument).where(Instrument.instrument_id == instrument_id_slug)).one_or_none()
-            if instrument is None:
-                raise HTTPException(status_code=400, detail=f"Instrument '{instrument_id_slug}' is not registered")
-            update_dict['instrument_name'] = instrument.instrument_name
-        elif update_dict.get('instrument_name', None):
-            instrument = session.exec(
-                select(Instrument).where(func.lower(Instrument.instrument_name) == update_dict['instrument_name'].lower())
-            ).one_or_none()
-            if instrument is None:
+        instrument_updates = {
+            field: update_dict.pop(field)
+            for field in ("instrument_id", "instrument_name")
+            if field in update_dict
+        }
+        if instrument_updates:
+            current_instrument = None
+            if ds.instrument_mfid is not None:
+                current_instrument = session.exec(
+                    select(Instrument).where(Instrument.unique_id == ds.instrument_mfid)
+                ).one_or_none()
+            elif ds.instrument_id is not None:
+                current_instrument = session.get(Instrument, ds.instrument_id)
+
+            current_instrument_id = current_instrument.instrument_id if current_instrument else None
+            current_instrument_name = ds.instrument_name
+            if current_instrument_name is None and current_instrument is not None:
+                current_instrument_name = current_instrument.instrument_name
+            requested_instrument_id = instrument_updates.get("instrument_id", current_instrument_id)
+            requested_instrument_name = instrument_updates.get("instrument_name", current_instrument_name)
+            name_matches = (
+                requested_instrument_name is None and current_instrument_name is None
+            ) or (
+                isinstance(requested_instrument_name, str)
+                and isinstance(current_instrument_name, str)
+                and requested_instrument_name.casefold() == current_instrument_name.casefold()
+            )
+            if requested_instrument_id != current_instrument_id or not name_matches:
                 raise HTTPException(
-                    status_code=400,
-                    detail=f"Instrument '{update_dict['instrument_name']}' is not registered")
-        if instrument is not None:
-            update_dict['instrument_id'] = instrument.id
-            update_dict['instrument_mfid'] = instrument.unique_id
+                    status_code=409,
+                    detail=(
+                        "Dataset instrument reassignment is temporarily unavailable. "
+                        "Omit instrument_id and instrument_name unless resubmitting the current value."
+                    ),
+                )
 
         upds = add_or_update(session, Dataset, Dataset.unique_id == dsid, **update_dict)
 
@@ -308,18 +320,6 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
             ri.modification_time = get_utc_isoformat()
             ri.public = upds.public
             set_public(session, upds.unique_id, bool(upds.public))
-
-        if instrument is not None:
-            inst_ag = session.exec(select(AccessGroup).where(
-                AccessGroup.group_name == instrument.unique_id,
-                AccessGroup.group_type == AccessGroupType.INSTRUMENT.value,
-            )).one_or_none()
-            if inst_ag is None:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Instrument '{instrument.instrument_name}' has no operator group provisioned")
-            sql_create_resource_acl(inst_ag, upds.unique_id, read=True, write=True,
-                                    session=session, permission=Role.CONTRIBUTOR)
 
         session.commit()
         session.refresh(upds)
@@ -457,6 +457,9 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                     select(DatasetLink.child_dataset_id, Dataset)
                     .join(Dataset, Dataset.id == DatasetLink.parent_dataset_id)
                     .where(DatasetLink.child_dataset_id.in_(dataset_ids))
+                    .where(permission_filter(auth_res, Dataset, Permission.READ))
+                    .where(deletion_filter_for(Dataset))
+                    .order_by(DatasetLink.child_dataset_id, Dataset.unique_id)
                 ).all():
                     parents_by_dataset.setdefault(child_id, []).append(
                         LinkedResource(unique_id=parent.unique_id, resource_type="dataset", name=parent.dataset_name, relationship="parent")
@@ -465,6 +468,9 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                     select(DatasetLink.parent_dataset_id, Dataset)
                     .join(Dataset, Dataset.id == DatasetLink.child_dataset_id)
                     .where(DatasetLink.parent_dataset_id.in_(dataset_ids))
+                    .where(permission_filter(auth_res, Dataset, Permission.READ))
+                    .where(deletion_filter_for(Dataset))
+                    .order_by(DatasetLink.parent_dataset_id, Dataset.unique_id)
                 ).all():
                     children_by_dataset.setdefault(parent_id, []).append(
                         LinkedResource(unique_id=child.unique_id, resource_type="dataset", name=child.dataset_name, relationship="child")
@@ -473,6 +479,9 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                     select(DatasetSampleLink.dataset_id, Sample)
                     .join(Sample, Sample.id == DatasetSampleLink.sample_id)
                     .where(DatasetSampleLink.dataset_id.in_(dataset_ids))
+                    .where(permission_filter(auth_res, Sample, Permission.READ))
+                    .where(deletion_filter_for(Sample))
+                    .order_by(DatasetSampleLink.dataset_id, Sample.unique_id)
                 ).all():
                     samples_by_dataset.setdefault(ds_id, []).append(
                         LinkedResource(unique_id=samp.unique_id, resource_type="sample", name=samp.sample_name, relationship="associated")
@@ -586,15 +595,10 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], datase
             selectinload(Dataset.resource).selectinload(Resource.scientific_metadata)
             if include_metadata else selectinload(Dataset.resource)
         )
-        link_opts = (
-            [selectinload(Dataset.parents), selectinload(Dataset.children), selectinload(Dataset.samples)]
-            if include_links else []
-        )
-
         # fetch resource
         ds = session.exec(
             select(Dataset)
-            .options(resource_opts, *link_opts)
+            .options(resource_opts)
             .where(Dataset.unique_id == dataset_mfid)
         ).one_or_none()
 
@@ -611,14 +615,7 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], datase
         # fetch all linked resources
         links = None
         if include_links:
-            links = (
-                [LinkedResource(unique_id=d.unique_id, resource_type="dataset",
-                                name=d.dataset_name, relationship="parent") for d in ds.parents] +
-                [LinkedResource(unique_id=d.unique_id, resource_type="dataset",
-                                name=d.dataset_name, relationship="child") for d in ds.children] +
-                [LinkedResource(unique_id=s.unique_id, resource_type="sample",
-                                name=s.sample_name, relationship="associated") for s in ds.samples]
-            )
+            links = fetch_readable_links(session, auth_res, "dataset", ds)
 
         resource_md = ds.resource.scientific_metadata if ds.resource else None
         owner = None

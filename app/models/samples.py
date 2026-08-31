@@ -1,5 +1,5 @@
 from typing import Any, List, Optional
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
 
 from app.general_utils import blank_to_none, is_valid_mfid
@@ -8,6 +8,8 @@ from app.models.links import LinkedResource
 
 
 class SampleCreate(SQLModel):
+    model_config = ConfigDict(extra="forbid")
+
     '''Fields accepted when registering a new sample.
 
     Provide unique_id to register a sample under a pre-assigned ID (must be a
@@ -28,10 +30,15 @@ class SampleCreate(SQLModel):
     description: Optional[str] = None
     timestamp: Optional[str] = None
     public: bool = False
-    owner_orcid: Optional[str] = None  # falls back to the authenticated user if not provided
-    owner: Optional[str] = None        # ORCID, username, email, or SA MFID; resolved server-side.
-                                        # Prefer over owner_orcid, kept for existing integrations.
-                                        # Provide at most one of owner/owner_orcid.
+    owner_orcid: Optional[str] = Field(
+        default=None,
+        deprecated=True,
+        description="Deprecated canonical owner identity (human ORCID or service-account MFID). Use owner.",
+    )
+    owner: Optional[str] = Field(
+        default=None,
+        description="Owner reference: ORCID, service-account MFID, username, or email. Defaults to the authenticated identity.",
+    )
 
     @field_validator("project_id", "owner_orcid", "owner", mode="before", check_fields=False)
     @classmethod
@@ -39,6 +46,13 @@ class SampleCreate(SQLModel):
         """Uploaders that send "" instead of omitting the field would otherwise
         attach the resource to a nameless project. See general_utils."""
         return blank_to_none(v)
+
+    @model_validator(mode="after")
+    def validate_owner_reference(self):
+        values = self.model_dump()
+        if values.get("owner") is not None and values.get("owner_orcid") is not None:
+            raise ValueError("Provide owner or owner_orcid, not both")
+        return self
 
 class SampleUpdate(SQLModel):
     '''Partial update schema for Sample. Only provided fields are modified.

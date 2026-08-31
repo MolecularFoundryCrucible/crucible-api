@@ -2,6 +2,7 @@ from typing import Annotated, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import desc, func, join, text, Text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import attributes, selectinload
 from sqlalchemy.sql import and_, exists
 from sqlmodel import Session, select
@@ -10,10 +11,10 @@ from app.api.dependencies import get_engine
 from app.general_utils import get_utc_isoformat
 from app.models.core_models import (
     AccessGroup,
-    Dataset, DatasetLink, DatasetSampleLink,
+    Dataset,
     DeletionRequest,
     Instrument, Project, Resource,
-    ResourceACL, Sample, SampleLink,
+    ResourceACL, Sample,
     ScientificMetadataBinary, User, UserAccessGroupLink,
 )
 from app.models.access import AccessGrantRead, AccessGrantWrite
@@ -33,67 +34,16 @@ from app.utils.auth_utils import (
     authorize_user, require_grant, permission_filter, require_permission, require_platform_admin)
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
-from app.utils.sql_utils import add_or_update, deletion_filter_for, get_active_deletion_request, set_public, sql_create_resource_acl, touch_resource_modification_time
+from app.utils.sql_utils import add_or_update, get_active_deletion_request, set_public, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
+from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.project_utils import is_project_group, resolve_project_mfids_to_ids
 from app.utils.user_utils import resolve_user_by_identifier
 
 
 router = APIRouter(tags=["resources"])
 engine = get_engine()
-
-
-def _fetch_links(session, resource_type: str, entity) -> List[LinkedResource]:
-    results: List[LinkedResource] = []
-    ds_del = deletion_filter_for(Dataset)
-    s_del = deletion_filter_for(Sample)
-
-    if resource_type == "dataset":
-        parents = session.exec(
-            select(Dataset).join(DatasetLink, DatasetLink.parent_dataset_id == Dataset.id)
-            .where(DatasetLink.child_dataset_id == entity.id)
-            .where(ds_del)
-        ).all()
-        results += [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="parent") for d in parents]
-
-        children = session.exec(
-            select(Dataset).join(DatasetLink, DatasetLink.child_dataset_id == Dataset.id)
-            .where(DatasetLink.parent_dataset_id == entity.id)
-            .where(ds_del)
-        ).all()
-        results += [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="child") for d in children]
-
-        samples = session.exec(
-            select(Sample).join(DatasetSampleLink, DatasetSampleLink.sample_id == Sample.id)
-            .where(DatasetSampleLink.dataset_id == entity.id)
-            .where(s_del)
-        ).all()
-        results += [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="associated") for s in samples]
-
-    elif resource_type == "sample":
-        parents = session.exec(
-            select(Sample).join(SampleLink, SampleLink.parent_sample_id == Sample.id)
-            .where(SampleLink.sample_id == entity.id)
-            .where(s_del)
-        ).all()
-        results += [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="parent") for s in parents]
-
-        children = session.exec(
-            select(Sample).join(SampleLink, SampleLink.sample_id == Sample.id)
-            .where(SampleLink.parent_sample_id == entity.id)
-            .where(s_del)
-        ).all()
-        results += [LinkedResource(unique_id=s.unique_id, resource_type="sample", name=s.sample_name, relationship="child") for s in children]
-
-        datasets = session.exec(
-            select(Dataset).join(DatasetSampleLink, DatasetSampleLink.dataset_id == Dataset.id)
-            .where(DatasetSampleLink.sample_id == entity.id)
-            .where(ds_del)
-        ).all()
-        results += [LinkedResource(unique_id=d.unique_id, resource_type="dataset", name=d.dataset_name, relationship="associated") for d in datasets]
-
-    return results
 
 
 @router.get("/resources/metadata/search", response_model=PaginatedResponse[ResourceSearchResult])
@@ -228,22 +178,26 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
                 "modification_time": resource.modification_time,
                 "scientific_metadata": sci_md,
                 "deletion_request": deletion_req.model_dump() if deletion_req else None,
-                "links": _fetch_links(session, "dataset", ds) if include_links else None,
+                "links": fetch_readable_links(
+                    session, auth_res, "dataset", ds
+                ) if include_links else None,
                 "owner": _resolve_owner(ds.owner_orcid),
             })
 
         elif resource.resource_type == "sample":
             samp = session.exec(
                 select(Sample)
-                .options(selectinload(Sample.datasets))
                 .where(Sample.unique_id == resource_id)
             ).one_or_none()
             if samp is None:
                 raise HTTPException(status_code=404, detail="Sample not found")
+            readable_datasets = fetch_readable_sample_datasets(
+                session, auth_res, samp.id
+            )
             instrument_ids = resolve_instrument_mfids_to_ids(
-                [ds.instrument_mfid for ds in samp.datasets], session)
+                [ds.instrument_mfid for ds in readable_datasets], session)
             ds_project_ids = resolve_project_mfids_to_ids(
-                [ds.project_mfid for ds in samp.datasets] + [samp.project_mfid], session)
+                [ds.project_mfid for ds in readable_datasets] + [samp.project_mfid], session)
             return SampleResponse.model_validate({
                 **samp.model_dump(),
                 "project_id": ds_project_ids.get(samp.project_mfid, samp.project_id),
@@ -252,12 +206,18 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
                     **ds.model_dump(),
                     "instrument_id": instrument_ids.get(ds.instrument_mfid),
                     "project_id": ds_project_ids.get(ds.project_mfid, ds.project_id),
-                }) for ds in samp.datasets],
+                }) for ds in readable_datasets],
                 "creation_time": resource.creation_time,
                 "modification_time": resource.modification_time,
                 "scientific_metadata": sci_md,
                 "deletion_request": deletion_req.model_dump() if deletion_req else None,
-                "links": _fetch_links(session, "sample", samp) if include_links else None,
+                "links": fetch_readable_links(
+                    session,
+                    auth_res,
+                    "sample",
+                    samp,
+                    associated_entities=readable_datasets,
+                ) if include_links else None,
                 "owner": _resolve_owner(samp.owner_orcid),
             })
 
@@ -324,7 +284,12 @@ def get_resource_links(resource_id: str, auth_res: Annotated[Principal, Depends(
         else:
             raise HTTPException(status_code=400, detail=f"Links not supported for resource type '{resource.resource_type}'")
 
-        return _fetch_links(session, resource.resource_type, entity)
+        return fetch_readable_links(
+            session,
+            auth_res,
+            resource.resource_type,
+            entity,
+        )
 
 
 @router.get("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
@@ -430,7 +395,7 @@ def create_deletion_request(
     reason: Optional[str] = None,
 ):
     '''
-    Request deletion of a resource. Any authenticated user with access to the resource may submit.
+    Request deletion of a resource. Requires contributor access to the resource.
     Returns 409 if an active deletion request already exists for this resource.
     '''
     requester_id = auth_res.user_id
@@ -447,11 +412,13 @@ def create_deletion_request(
                 detail=f"Deletion requests are not supported for resource type '{resource.resource_type}'."
             )
 
+        require_permission(session, auth_res, resource_id, Permission.CREATE)
+
         existing = session.exec(
             select(DeletionRequest)
             .where(DeletionRequest.resource_id == resource_id)
             .where(DeletionRequest.status.in_(["pending", "approved"]))
-        ).one_or_none()
+        ).first()
         if existing:
             raise HTTPException(
                 status_code=409,
@@ -475,7 +442,21 @@ def create_deletion_request(
         )
         session.add(deletion_req)
         touch_resource_modification_time(session, resource_id)
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            existing = session.exec(
+                select(DeletionRequest)
+                .where(DeletionRequest.resource_id == resource_id)
+                .where(DeletionRequest.status.in_(["pending", "approved"]))
+            ).first()
+            if existing:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"A deletion request for {resource_id} already exists (status: {existing.status}).",
+                )
+            raise
         session.refresh(deletion_req)
         return DeletionRequestRead(
             **deletion_req.model_dump(),

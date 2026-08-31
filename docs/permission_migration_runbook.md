@@ -8,7 +8,7 @@ Verified on 2026-08-28.
 
 | Environment | Status |
 |---|---|
-| Staging database | Final permission head `c4a7e9d2b615` is applied. All 9,880 access groups are classified, permission roles are non-null, duplicate owner ACLs are rejected, and the duplicate-owner `unknown` group has been removed. |
+| Staging database | Permission head `c4a7e9d2b615` is applied. All 9,880 access groups are classified, permission roles are non-null, duplicate owner ACLs are rejected, and the duplicate-owner `unknown` group has been removed. The local candidate adds revision `d6e1f8a2c4b7`, which has not been applied to staging. |
 | Staging API | API commit `297144c` is deployed. Its live OpenAPI was verified against the generated contract. Typed access selectors and stricter email redaction are in the next local deployment candidate and are not live yet. |
 | Production | Not queried during this review. The existing rollout record says the migration has not started. Re-run every preflight check against production before rollout. |
 
@@ -39,6 +39,7 @@ Staging is structurally migrated. These accepted operational follow-ups remain:
 1. Of 6,756 projects, 4,362 have no owner member in their project group. For 3,049 of them the recorded lead is a registered user but is not a group member. The remaining 1,313 name an unregistered lead. This historical state is accepted for the current staging rollout and does not block deployment. Any later owner assignment changes authorization and requires a separately reviewed policy and data operation.
 2. Seven service accounts still have `platform_role='admin'`, and no human has that role. This preserved ingestion during cutover. The absence of a human platform administrator is accepted for the current staging rollout. Assigning a human administrator and removing service-account bypasses remain later operational work after instrument bindings are verified.
 3. The confirmed duplicate-owner `unknown` group was removed with `20260828_remove_staging_unknown_group.py`, including its owner ACL and membership. Forty-seven inert custom groups remain for case-by-case cleanup: four empty ORCID-shaped orphans and 43 other groups with no ACLs or join requests.
+4. Run `20260828_audit_active_deletion_requests.py`, then apply revision `d6e1f8a2c4b7` after the corresponding API candidate is ready for staging verification.
 
 None of these accepted follow-ups blocks the current API deployment.
 
@@ -320,6 +321,7 @@ Before starting:
 .venv/bin/python migrations/data/20260827_merge_legacy_entity_groups.py --yes-this-is-production
 .venv/bin/python migrations/data/20260827_backfill_access_group_types.py --yes-this-is-production
 .venv/bin/python migrations/data/20260828_audit_permission_cutover_preconditions.py
+.venv/bin/python migrations/data/20260828_audit_active_deletion_requests.py
 ```
 
 The access-group classifier must report no identifier collisions, missing entity-owned groups, conflicting stored types, or malformed identity groups. Record any accepted suspicious custom groups for later case-by-case cleanup.
@@ -333,7 +335,7 @@ Keep these commands and the deploy in the same maintenance window:
 .venv/bin/python migrations/data/20260827_backfill_access_group_types.py --commit --accept-custom-groups --accept-suspicious-custom-groups --yes-this-is-production
 .venv/bin/python migrations/data/20260828_audit_permission_cutover_preconditions.py
 .venv/bin/python migrations/data/20260813_repoint_project_resource_identity.py --commit --yes-this-is-production
-.venv/bin/alembic -x yes-this-is-production=true upgrade c4a7e9d2b615
+.venv/bin/alembic -x yes-this-is-production=true upgrade d6e1f8a2c4b7
 ```
 
 Revision `ecfa70615e54` verifies that `resourceacl.permission` already exists and is otherwise a no-op on the unified production path. The maintenance boundary remains necessary because revision `454c96264cfb` removes the legacy join-request column.
@@ -358,7 +360,7 @@ After the final application is live, rerun the identity scripts as dry runs. Com
 .venv/bin/alembic current
 ```
 
-Expected revision: `c4a7e9d2b615 (head)`.
+Expected revision: `d6e1f8a2c4b7 (head)`.
 
 Run these database checks:
 
@@ -371,6 +373,8 @@ SELECT count(*) FROM useraccessgrouplink WHERE role IS NULL;
 SELECT count(*) FROM resourceacl WHERE permission IS NULL;
 SELECT count(*) FROM (SELECT mfid FROM resourceacl WHERE permission = 'owner' GROUP BY mfid HAVING count(*) > 1) duplicate_owner_acls;
 SELECT count(*) FROM pg_indexes WHERE tablename = 'resourceacl' AND indexname = 'one_owner_acl_per_resource';
+SELECT count(*) FROM (SELECT resource_id FROM deletionrequest WHERE status IN ('pending', 'approved') GROUP BY resource_id HAVING count(*) > 1) duplicate_active_deletion_requests;
+SELECT count(*) FROM pg_indexes WHERE tablename = 'deletionrequest' AND indexname = 'one_active_deletion_request_per_resource';
 SELECT count(*) FROM resourceacl a JOIN accessgroup g ON g.id = a.accessgroup_id WHERE g.group_name IN ('admin', 'read_only');
 SELECT count(*) FROM project p LEFT JOIN idtype i ON i.mfid = p.unique_id AND i.resource_type = 'project' WHERE i.mfid IS NULL;
 SELECT count(*) FROM project p WHERE NOT EXISTS (SELECT 1 FROM resourceacl a WHERE a.mfid = p.unique_id);
@@ -416,6 +420,7 @@ These are separate follow-up changes, not reasons to extend the production maint
 | During step 12 | Keep traffic paused. Either complete the final deploy or restore the second snapshot and redeploy the identity build. |
 | After `7b2d4e6f8a10`, before resuming writes | Downgrade to `ecfa70615e54` while writes remain paused if an old writer must be restored. The downgrade removes the resource-owner index and makes the role columns nullable again; it does not alter existing role values. |
 | After `c4a7e9d2b615`, before resuming writes | Downgrade the merge revision while writes remain paused to make `group_type` nullable again. Restore the snapshot if the old application must run without the access-group column or if classification data must be reverted. |
+| After `d6e1f8a2c4b7`, before resuming writes | Downgrade to `c4a7e9d2b615` to remove the active deletion-request index if the new application must be rolled back. Existing deletion requests are not changed. |
 | After old compatibility columns are eventually dropped | Restore from backup. A code revert is no longer sufficient. |
 
 ## Related documents

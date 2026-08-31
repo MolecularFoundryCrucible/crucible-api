@@ -140,6 +140,12 @@ def resolve_user_by_identifier(session, identifier: str) -> User:
     return resolve_user(session, username=identifier)
 
 
+def resolve_create_owner(session, owner: str | None, owner_orcid: str | None, authenticated_user_id: str) -> User:
+    if owner is not None:
+        return resolve_user_by_identifier(session, owner)
+    return resolve_user(session, orcid=owner_orcid or authenticated_user_id)
+
+
 def sql_add_user_to_access_group(orcid, group_name, session, role=None, group_type=None):
     """Add a user to an access group by ORCID, creating the group if needed.
 

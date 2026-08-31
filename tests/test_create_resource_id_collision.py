@@ -11,7 +11,7 @@ in one query.
 """
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Dataset, Resource, Sample
+from app.models.core_models import AccessGroup, Dataset, Resource, Sample, User
 from app.utils.permissions import AccessGroupType, PlatformRole
 
 
@@ -22,6 +22,12 @@ def test_dataset_same_type_collision_is_409(client, db_engine, auth_as):
         session.add(AccessGroup(
             group_name="0000-0001",
             group_type=AccessGroupType.IDENTITY.value,
+        ))
+        session.add(User(
+            first_name="Collision",
+            last_name="Owner",
+            email="collision-owner@example.org",
+            unique_id="0000-0001",
         ))
         session.commit()
 

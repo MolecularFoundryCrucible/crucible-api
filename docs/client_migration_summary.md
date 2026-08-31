@@ -85,6 +85,14 @@ Content-Type: application/json
 
 Use `?confirm=true` to execute. Dataset and sample PATCH requests no longer accept project reassignment fields. Dataset PATCH also rejects `owner_orcid`, and project PATCH rejects all project-lead identity fields.
 
+Dataset instrument assignment is also no longer mutable through generic PATCH. Omit `instrument_id` and `instrument_name` when updating a dataset. Existing clients may temporarily resubmit the current value, but changing or clearing it returns `409 Conflict`. Both fields are marked deprecated in the PATCH request schema. See [`docs/dataset_instrument_assignment.md`](dataset_instrument_assignment.md) for the planned dedicated operation.
+
+## Deletion contract
+
+Deletion requests remain the normal reviewed workflow. Contributor or above may request deletion, and admin or above may approve or reject it. Approval permanently removes the dataset or sample database records.
+
+Direct deletion is a separate bypass and now always requires `DELETE /resources/{mfid}?force=true`. It is allowed only for the effective resource owner or a platform administrator. Calls without the explicit flag, calls by resource admins, and calls targeting projects or instruments are rejected. Database deletion does not remove GCS objects.
+
 ## ACL contract
 
 Use these routes for new integrations:
@@ -174,7 +182,10 @@ Replace uses of the removed `read` and `write` Booleans. `effective_access` is o
 ## Create and update payloads
 
 - `POST /instruments` requires `instrument_id`, the 3-to-25-character instrument slug.
-- `POST /datasets` and `POST /samples` accept either the existing `owner_orcid` field or the flexible `owner` field. `owner` accepts ORCID, username, email, or service-account MFID. Sending both fields returns 400.
+- `POST /datasets` and `POST /samples` use `owner` as the preferred owner reference. It accepts ORCID, service-account MFID, username, or email. The deprecated `owner_orcid` field remains an exact canonical identity lookup. Omitting both makes the authenticated identity the owner, including for service accounts. Sending both or sending unknown fields such as `owner_user_id` returns 422.
+- Create responses include canonical `owner_orcid`. The optional `owner` response field is an expanded public-safe user object, not an echo of the request string.
+- Service accounts and platform administrators may create for another registered identity. Human callers may create only for themselves. With `project_id`, the effective owner must be contributor-or-above in that project.
+- `crucible-upload-uis/prefect_backend.py` currently maps its `owner_orcid` argument to the removed `owner_user_id` request key. That client must send `owner` or `owner_orcid`; otherwise its intended researcher owner is discarded before the request and the authenticated service account becomes owner.
 - `POST /projects` accepts either one existing explicit lead field or the flexible `project_lead` field. Sending both forms, or neither form, returns 400.
 - `PATCH /projects/{project_ref}` accepts `project_id`, `organization`, `status`, and `title`. Updating `project_id` renames the project slug without changing its MFID.
 - `PATCH /datasets/{dsid}` accepts dataset descriptive and publication fields but not owner or project reassignment.
@@ -193,6 +204,7 @@ Replace uses of the removed `read` and `write` Booleans. `effective_access` is o
 
 - Dataset, sample, project, and combined entity graphs omit resources the caller cannot read and omit edges attached to those resources.
 - Relationship list routes require read access to the starting resource and filter their results by read permission and deletion state.
+- `include_links=true`, `GET /resources/{mfid}/links`, and the legacy `SampleResponse.datasets` field omit linked targets the caller cannot read or that have an active deletion request. Clients must treat omitted links as an authorized view.
 - Public visibility comes from the public viewer ACL. Clients must not infer authorization from a legacy `public` Boolean alone.
 - Fewer nodes or related items are an authorized view, not evidence that records were deleted.
 

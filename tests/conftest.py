@@ -8,13 +8,14 @@ from app.models.core_models import (
     User, AccessGroup, UserAccessGroupLink, ResourceACL, Resource, Dataset,
     AssociatedFile, IngestionRequest, Project, UserProjectLink, Sample,
     DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
-    DatasetLink, ApiToken,
+    DatasetLink, ApiToken, UploadSession, DeletionAuditLog, DatasetKeywordLink, Thumbnail,
 )
 from app.utils.auth_utils import authorize_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
 import app.api.routes.access_groups as access_groups_routes
 import app.api.routes.files as files_routes
 import app.api.routes.datasets as datasets_routes
+import app.api.routes.deletion as deletion_routes
 import app.api.routes.instruments as instruments_routes
 import app.api.routes.ingestion_requests as ingestion_requests_routes
 import app.api.routes.projects as projects_routes
@@ -30,7 +31,8 @@ TEST_TABLES = [
     AssociatedFile.__table__, IngestionRequest.__table__, Project.__table__,
     UserProjectLink.__table__, Sample.__table__, DeletionRequest.__table__,
     Instrument.__table__, AccessGroupJoinRequest.__table__, DatasetSampleLink.__table__,
-    SampleLink.__table__, DatasetLink.__table__, ApiToken.__table__,
+    SampleLink.__table__, DatasetLink.__table__, ApiToken.__table__, UploadSession.__table__,
+    DeletionAuditLog.__table__, DatasetKeywordLink.__table__, Thumbnail.__table__,
 ]
 
 
@@ -55,6 +57,7 @@ def db_engine():
     access_groups_routes.engine = engine
     files_routes.engine = engine
     datasets_routes.engine = engine
+    deletion_routes.engine = engine
     instruments_routes.engine = engine
     ingestion_requests_routes.engine = engine
     projects_routes.engine = engine

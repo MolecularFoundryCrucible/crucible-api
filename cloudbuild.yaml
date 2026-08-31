@@ -13,6 +13,7 @@ steps:
       - >
         docker build
         --build-arg githash=$(git rev-parse HEAD)
+        --build-arg api_version=$(awk -F '"' '/^version = / {print $2; exit}' pyproject.toml)
         --build-arg BRANCH_NAME=${BRANCH_NAME}
         -t ${_IMAGE_PATH}:${SHORT_SHA}
         -t ${_IMAGE_PATH}:latest

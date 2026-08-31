@@ -120,6 +120,8 @@ Production requires staged application builds. Do not deploy the current branch 
 
 Build and identify all three deployable artifacts before changing production data. Production is blocked until the two pending checkpoint rows contain tested commit IDs. Rebuilding a checkpoint means changing the ResourceACL model and every ResourceACL grant reader or writer from `role` to `permission`; `useraccessgrouplink.role` remains unchanged.
 
+After every checkpoint deployment, inspect `GET /health/ready`. Continue only when it returns HTTP 200, `status="ok"`, the full expected Git SHA in `build.git_commit`, and the expected Alembic heads in `database.schema_revisions`. Treat `build.branch` as descriptive only. A 503 response or unexpected revision blocks the next rollout step.
+
 ## Production recipe
 
 ### 1. Connect and confirm the target

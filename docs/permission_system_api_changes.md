@@ -49,6 +49,10 @@ Requires admin on the instrument. In practice this is platform-admin only for no
 
 `instrument_id` is now a **required** request field (did not exist before). It must contain 3 to 25 characters, start with a letter or digit, and contain only letters, digits, underscores, or hyphens. It is checked for uniqueness and returns 409 on collision. The response (`InstrumentResponse`) includes `instrument_id` alongside the existing `unique_id` (MFID) and `instrument_name` (free-text display).
 
+Any authenticated user may create an instrument. `owner` is optional and uses the same flexible identity resolution as dataset and sample creation. Omit it to make the authenticated caller the owner. The deprecated `owner_orcid` field remains an exact canonical identity lookup, and providing both fields returns 422. Human callers may create only for themselves; service accounts and platform administrators may create for another registered identity.
+
+The response exposes the canonical identity as `owner_orcid`, matching dataset and sample responses despite the legacy field name. Pass `include_owner=true` on instrument collection, search, singleton, or generic resource reads to populate `owner` with a public-safe user object. Collection expansion uses one batched user query. The API creates an owner ACL for that identity as well as the separate editor ACL for the instrument operator group. Arbitrary labels such as `"facility"` are no longer valid owner values unless they resolve to a registered username. Instrument PATCH no longer accepts `owner`; use `POST /resources/{instrument_mfid}/transfer_ownership`.
+
 ### `PATCH /projects/{project_ref}`
 
 Body now rejects `project_lead_orcid`, `project_lead_email`, `project_lead_username` with **422** (`extra="forbid"`). Use `POST /resources/{mfid}/transfer_ownership` for leadership changes instead.
@@ -182,13 +186,23 @@ Nano Crucible's `client.users.add_to_access_group()` and `remove_from_access_gro
 
 Now 404s if the target group name isn't a real project.
 
-## `POST /datasets`, `POST /samples`: creation ownership contract
+## `POST /datasets`, `POST /samples`, `POST /instruments`: creation ownership contract
 
 Use `owner` for new integrations. It accepts an ORCID, service-account MFID, username, or email and resolves it to the canonical user identity. The deprecated `owner_orcid` compatibility field remains an exact canonical identity lookup and may contain a human ORCID or service-account MFID despite its name. Omitting both assigns ownership to the authenticated identity, including service accounts. Providing both returns **422**.
 
-The API stores both the canonical `owner_orcid` string and internal `owner_user_id`, then creates the owner ACL for that identity. `owner_user_id` is not a public request field and unknown create fields now return **422**. Successful responses continue to include `owner_orcid`; `owner` is the optional expanded public-safe user object when the route supports `include_owner`.
+Dataset and sample rows store both the canonical `owner_orcid` string and internal `owner_user_id`. Instrument rows store the canonical identity in their existing database `owner` column. All three create an owner ACL for that identity. `owner_user_id` is not a public request field and unknown create fields return **422**. Dataset, sample, and instrument responses expose the canonical identity as `owner_orcid`; their optional `owner` field is an expanded public-safe user object.
 
-A human caller may create only for themselves. Service accounts and platform administrators may create for another registered identity. When `project_id` is supplied, the effective owner must have contributor-or-above standing in that project. The existing deferred instrument authorization behavior is unchanged.
+Instrument responses now follow the same read shape: `owner_orcid` contains the canonical identity and `owner` contains the optional public-safe expansion. Instrument creation returns the already-resolved owner object without another database query.
+
+## `POST /users`: ORCID-less human identities
+
+Platform administrators may omit `unique_id` when creating a human user. The API generates an MFID, skips proposal-service discovery, creates the user's identity group at owner standing, and stores `is_service_account=false`. When `unique_id` or its compatibility alias `orcid` is supplied, it must be an ORCID and proposal discovery retains its existing purpose.
+
+`is_service_account` is no longer accepted by human user creation, self-profile update, or administrator user update schemas. Principal type is immutable through public user routes. Service accounts continue to be created only through `POST /service_accounts`.
+
+The route now performs proposal lookup before opening a database transaction, uses a bounded timeout, returns 502 on upstream failure, deduplicates project IDs, fetches projects and their groups in bounded queries, rejects unknown explicitly requested projects, and creates identity and project memberships atomically. ORCID-less users make no external request.
+
+A human caller may create only for themselves. Service accounts and platform administrators may create for another registered identity. For datasets and samples, when `project_id` is supplied, the effective owner must have contributor-or-above standing in that project. The existing deferred instrument-to-project authorization behavior is unchanged.
 
 The deprecated dataset `source_folder` field has been removed from `DatasetCreate`, `DatasetRead`, and dataset responses. File locations belong to associated-file records. Existing database columns and historical revision records are unchanged, while new dataset revision records omit the field.
 

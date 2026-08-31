@@ -2,9 +2,9 @@
 
 ## Status
 
-Deferred. This document records the agreed repair for `POST /users`. The current route behavior remains unchanged.
+Implemented in the API v3 candidate.
 
-## Current defects
+## Previous defects
 
 The route combines explicitly requested project IDs with proposal-database results using `project_ids.append(user_proposal_ids)`. This creates a nested list instead of one list of project IDs. The nested list is later compared with `Project.project_id`, which can fail in SQLAlchemy or the database driver. An empty proposal result still appends `[]`, so the defect is not limited to users with proposals.
 
@@ -12,9 +12,13 @@ The proposal-service request also runs while the database transaction and connec
 
 Project records are then queried one at a time, duplicate identifiers are not removed, and unknown projects are only logged and skipped.
 
-## Agreed behavior
+## Implemented behavior
 
-`POST /users` remains platform-admin-only and retains its current request and response models. Automatically discovered and explicitly requested project memberships retain their current contributor standing.
+`POST /users` remains platform-admin-only. Automatically discovered and explicitly requested project memberships retain contributor standing. `unique_id` is optional: supplying it requires an ORCID, while omission generates an MFID for an ORCID-less human identity. The compatibility request name `orcid` remains accepted.
+
+Human user creation and update schemas do not accept `is_service_account`. Service accounts are created only through `POST /service_accounts`, and principal type cannot be changed through profile or administrator PATCH routes.
+
+The compatibility request body remains `{ "user_info": UserCreate, "project_ids": string[] | null }`. ORCID-less creation omits `user_info.unique_id`; the response returns the generated MFID as `unique_id`.
 
 The corrected flow should:
 
@@ -27,7 +31,8 @@ The corrected flow should:
 7. Fetch all matching projects in one `IN (...)` query.
 8. Reject unknown explicitly requested project IDs rather than reporting a partially successful request.
 9. Log and ignore discovered proposal IDs that do not yet have a local project because proposal and Crucible project provisioning may not occur at the same time.
-10. Create or update the user, identity group, project relationships, and project access-group memberships in one transaction.
+10. Create the user, identity group, and project access-group memberships in one transaction.
+11. Skip proposal lookup entirely for generated MFID identities.
 
 The route should not create a user without proposal memberships when the proposal lookup fails. Returning success for an incomplete account would make the failure difficult to detect and repair. A `502` response leaves the operation retryable.
 

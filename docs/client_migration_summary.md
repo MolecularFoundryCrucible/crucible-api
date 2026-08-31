@@ -8,6 +8,26 @@ Use this document to update Crucible clients for the identifier, permission, own
 
 The generated `crucible-api` OpenAPI document is the authoritative HTTP contract. This guide explains migration intent and client actions, but it does not replace OpenAPI for paths, methods, fields, nullability, authentication, pagination, or deprecation metadata.
 
+`GET /health/ready` reports the deployed API version, full Git commit, descriptive branch, and sorted Alembic schema revisions alongside database readiness. Deployment and smoke-test records should capture the commit and revisions rather than relying on an operator-supplied local checkout. The commit is authoritative for the deployed source; the branch is informational. `GET /health/live` remains a minimal process check, and `/metrics` remains the Prometheus scrape endpoint.
+
+```json
+{
+  "status": "ok",
+  "build": {
+    "api_version": "3.0.0",
+    "git_commit": "fa20ff1f705cc12439f488800a6fb70437647d1d",
+    "branch": "staging"
+  },
+  "database": {
+    "status": "ok",
+    "latency_ms": 2.5,
+    "schema_revisions": ["d6e1f8a2c4b7"]
+  }
+}
+```
+
+Database or schema-revision lookup failure returns HTTP 503 with `status="degraded"`, `database.status="error"`, `database.latency_ms=null`, and an empty `database.schema_revisions` list. Build information remains present.
+
 | Concern | Owner |
 |---|---|
 | HTTP schema, authorization, and error behavior | `crucible-api` |
@@ -181,7 +201,8 @@ Replace uses of the removed `read` and `write` Booleans. `effective_access` is o
 
 ## Create and update payloads
 
-- `POST /instruments` requires `instrument_id`, the 3-to-25-character instrument slug.
+- `POST /instruments` requires `instrument_id`, the 3-to-25-character instrument slug. It is available to every authenticated caller. Omit `owner` to assign the caller, or supply a registered ORCID, service-account MFID, username, or email. `owner_orcid` is the deprecated exact canonical alias. Human callers cannot create for another identity. Arbitrary descriptive owner labels are no longer accepted.
+- Instrument responses expose the canonical identity as `owner_orcid`. Pass `include_owner=true` to collection, search, singleton, or generic resource reads to populate the public-safe `owner` object. Creation responses include the resolved owner object directly.
 - `POST /datasets` and `POST /samples` use `owner` as the preferred owner reference. It accepts ORCID, service-account MFID, username, or email. The deprecated `owner_orcid` field remains an exact canonical identity lookup. Omitting both makes the authenticated identity the owner, including for service accounts. Sending both or sending unknown fields such as `owner_user_id` returns 422.
 - Create responses include canonical `owner_orcid`. The optional `owner` response field is an expanded public-safe user object, not an echo of the request string.
 - Service accounts and platform administrators may create for another registered identity. Human callers may create only for themselves. With `project_id`, the effective owner must be contributor-or-above in that project.
@@ -190,7 +211,25 @@ Replace uses of the removed `read` and `write` Booleans. `effective_access` is o
 - `PATCH /projects/{project_ref}` accepts `project_id`, `organization`, `status`, and `title`. Updating `project_id` renames the project slug without changing its MFID.
 - `PATCH /datasets/{dsid}` accepts dataset descriptive and publication fields but not owner or project reassignment.
 - `PATCH /samples/{sample_id}` accepts sample descriptive and publication fields but not project reassignment.
+- `PATCH /instruments/{instrument_mfid}` no longer accepts `owner`. Use the ownership-transfer route.
+- Platform administrators may create an ORCID-less human through `POST /users` by omitting `unique_id`; the API returns a generated MFID and sets `is_service_account=false`. Supplied `unique_id` or `orcid` values must be ORCIDs. Human user create and update payloads no longer accept `is_service_account`. Retrieve a test user's key through `POST /users/{mfid}/apikey`.
 - Resource creation now fails atomically with 409 when a required owner, project, or public access group is missing. Clients should surface the error and must not assume that a partial resource was created.
+
+The existing `POST /users` compatibility body remains wrapped:
+
+```json
+{
+  "user_info": {
+    "first_name": "Test",
+    "last_name": "User One",
+    "username": "test-user-one",
+    "email": null
+  },
+  "project_ids": []
+}
+```
+
+Use the returned `unique_id` MFID for canonical user routes. To authenticate as that user during staging tests, a platform administrator can retrieve its key once with `POST /users/{unique_id}/apikey`.
 
 ## Files and ingestion
 

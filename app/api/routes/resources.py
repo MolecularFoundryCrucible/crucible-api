@@ -228,7 +228,9 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
             if inst is None:
                 raise HTTPException(status_code=404, detail="Instrument not found")
             return InstrumentResponse.model_validate({
-                **inst.model_dump(),
+                **inst.model_dump(exclude={"owner"}),
+                "owner_orcid": inst.owner,
+                "owner": _resolve_owner(inst.owner),
                 "creation_time": resource.creation_time,
                 "modification_time": resource.modification_time,
                 "scientific_metadata": sci_md,
@@ -905,6 +907,11 @@ def _transfer_resource_owner_acl(session, resource: Resource, mfid: str, new_own
             entity.owner_orcid = new_owner.unique_id
             entity.owner_user_id = new_owner.id
             session.add(entity)
+    elif resource.resource_type == "instrument":
+        instrument = session.exec(select(Instrument).where(Instrument.unique_id == mfid)).one_or_none()
+        if instrument is not None:
+            instrument.owner = new_owner.unique_id
+            session.add(instrument)
 
     return previous_owner
 
@@ -954,9 +961,8 @@ def transfer_ownership(mfid: str, body: TransferOwnershipRequest,
     let them undo it themselves. Recovery needs the (possibly wrong) new
     owner's cooperation or a platform admin.
 
-    This is the only way to change who owns a resource. PATCH /projects
-    rejects project_lead fields, and PATCH /datasets and PATCH /samples reject
-    ownership fields.
+    This is the only way to change who owns a resource. Project, dataset,
+    sample, and instrument PATCH schemas reject ownership fields.
     """
     with Session(engine) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()

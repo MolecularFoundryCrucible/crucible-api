@@ -13,7 +13,7 @@ ENV GITHASH=$githash
 
 ARG api_version
 ENV API_VERSION=$api_version
-RUN echo "API_VERSION: $(API_VERSION)"
+RUN echo "API_VERSION: $API_VERSION"
 
 ARG BRANCH_NAME
 ENV BRANCH_NAME=$BRANCH_NAME
@@ -39,4 +39,3 @@ CMD exec /bin/uv run gunicorn app.api.main:app \
   --worker-class uvicorn.workers.UvicornWorker \
   --workers 4 \
   --bind 0.0.0.0:$(cat /root/.port)
-

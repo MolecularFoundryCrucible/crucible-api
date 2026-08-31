@@ -11,10 +11,12 @@ from app.models.access_groups import AccessGroupMemberRead
 from app.models.core_models import AccessGroup, Instrument, Resource, ScientificMetadataBinary, User, UserAccessGroupLink
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, require_permission, require_platform_admin
+from app.models.users import UserPublicRead
+from app.utils.auth_utils import authorize_user, require_permission
 from app.utils.instrument_utils import assert_instrument_id_available
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
-from app.utils.sql_utils import add_or_update, sql_create_resource_acl, touch_resource_modification_time
+from app.utils.sql_utils import add_or_update, create_standard_acls, sql_create_resource_acl, touch_resource_modification_time
+from app.utils.user_utils import resolve_create_owner
 from app.utils.gcs_record_utils import write_record, instrument_record
 
 router = APIRouter(tags=["instruments"])
@@ -23,10 +25,32 @@ engine = get_engine()
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
+
+def _instrument_response(instrument, resource=None, scientific_metadata=None, owner=None):
+    return InstrumentResponse.model_validate({
+        **instrument.model_dump(exclude={"owner"}),
+        "owner_orcid": instrument.owner,
+        "owner": owner,
+        "creation_time": resource.creation_time if resource else None,
+        "modification_time": resource.modification_time if resource else None,
+        "scientific_metadata": scientific_metadata,
+    })
+
+
+def _instrument_owners(session, instruments):
+    owner_ids = {instrument.owner for instrument in instruments if instrument.owner}
+    if not owner_ids:
+        return {}
+    return {
+        user.unique_id: UserPublicRead.model_validate(user)
+        for user in session.exec(select(User).where(User.unique_id.in_(owner_ids))).all()
+    }
+
 @router.get("/instruments", response_model=PaginatedResponse[InstrumentResponse])
 def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
                      instrument_id: Optional[str] = Query(default=None, description="Exact instrument slug."),
                      include_metadata: bool = False,
+                     include_owner: bool = False,
                      limit: int = Query(default=100, ge=1, le=1000),
                      offset: int = Query(default=0, ge=0)):
     '''
@@ -39,7 +63,7 @@ def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], re
     An exact instrument_id lookup searches every status unless status is also provided.
     '''
     query_params = dict(request.query_params)
-    for k in ('instrument_id', 'include_metadata', 'limit', 'offset'):
+    for k in ('instrument_id', 'include_metadata', 'include_owner', 'limit', 'offset'):
         query_params.pop(k, None)
     if instrument_id is None:
         query_params.setdefault('status', 'active')
@@ -67,24 +91,21 @@ def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], re
             statement = statement.where(f)
 
         rows = session.exec(statement.order_by(Resource.creation_time.desc()).offset(offset).limit(limit)).all()
+        owners = _instrument_owners(session, (row[0] for row in rows)) if include_owner else {}
 
         items = []
         for row in rows:
             if include_metadata:
                 inst, ri, smb = row
-                items.append(InstrumentResponse.model_validate({
-                    **inst.model_dump(),
-                    "creation_time": ri.creation_time if ri else None,
-                    "modification_time": ri.modification_time if ri else None,
-                    "scientific_metadata": smb.scientific_metadata if smb else None,
-                }))
+                items.append(_instrument_response(
+                    inst,
+                    ri,
+                    smb.scientific_metadata if smb else None,
+                    owners.get(inst.owner),
+                ))
             else:
                 inst, ri = row
-                items.append(InstrumentResponse.model_validate({
-                    **inst.model_dump(),
-                    "creation_time": ri.creation_time if ri else None,
-                    "modification_time": ri.modification_time if ri else None,
-                }))
+                items.append(_instrument_response(inst, ri, owner=owners.get(inst.owner)))
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
@@ -92,6 +113,7 @@ def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], re
 def search_instruments(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     q: str = Query(min_length=3, description="Search term matched against instrument_name, instrument_type, and manufacturer."),
+    include_owner: bool = False,
     limit: int = Query(default=20, ge=1, le=50),
 ):
     '''
@@ -119,19 +141,17 @@ def search_instruments(
             ).desc()
         ).limit(limit)
         rows = session.exec(statement).all()
+        owners = _instrument_owners(session, (inst for inst, _ in rows)) if include_owner else {}
         items = [
-            InstrumentResponse.model_validate({
-                **inst.model_dump(),
-                "creation_time": ri.creation_time if ri else None,
-                "modification_time": ri.modification_time if ri else None,
-            })
+            _instrument_response(inst, ri, owner=owners.get(inst.owner))
             for inst, ri in rows
         ]
         return PaginatedResponse(limit=limit, items=items)
 
 
 @router.get("/instruments/{instrument_mfid}", response_model=InstrumentResponse)
-def read_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], instrument_mfid: str, include_metadata: bool = False):
+def read_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], instrument_mfid: str,
+                    include_metadata: bool = False, include_owner: bool = False):
     '''
     Returns the instrument with the provided unique ID, or 404 if not found.
     '''
@@ -146,12 +166,8 @@ def read_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], ins
             if result is None:
                 raise HTTPException(status_code=404, detail="Instrument not found")
             inst, ri, smb = result
-            return InstrumentResponse.model_validate({
-                **inst.model_dump(),
-                "creation_time": ri.creation_time if ri else None,
-                "modification_time": ri.modification_time if ri else None,
-                "scientific_metadata": smb.scientific_metadata if smb else None,
-            })
+            owner = _instrument_owners(session, [inst]).get(inst.owner) if include_owner else None
+            return _instrument_response(inst, ri, smb.scientific_metadata if smb else None, owner)
         else:
             result = session.exec(
                 select(Instrument, Resource)
@@ -161,25 +177,39 @@ def read_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], ins
             if result is None:
                 raise HTTPException(status_code=404, detail="Instrument not found")
             inst, ri = result
-            return InstrumentResponse.model_validate({
-                **inst.model_dump(),
-                "creation_time": ri.creation_time if ri else None,
-                "modification_time": ri.modification_time if ri else None,
-            })
+            owner = _instrument_owners(session, [inst]).get(inst.owner) if include_owner else None
+            return _instrument_response(inst, ri, owner=owner)
 
 
 @router.post("/instruments", response_model=InstrumentResponse)
 def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], instrument: InstrumentCreate,
                       background_tasks: BackgroundTasks):
     '''
-    Register a new instrument in the database. Platform admin only.
+    Register a new instrument in the database.
     '''
-    require_platform_admin(auth_res)
     user_unique_id = auth_res.user_id
     with Session(engine) as session:
         assert_instrument_id_available(session, instrument.instrument_id)
 
-        db_instrument = Instrument(**instrument.model_dump())
+        instrument_details = instrument.model_dump(exclude_unset=True)
+        owner_user = resolve_create_owner(
+            session,
+            instrument_details.pop("owner", None),
+            instrument_details.pop("owner_orcid", None),
+            user_unique_id,
+        )
+        if (
+            owner_user.unique_id != user_unique_id
+            and not auth_res.is_service_account
+            and not auth_res.is_platform_admin
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Only service accounts and platform administrators may create an instrument on behalf of another user",
+            )
+
+        instrument_details["owner"] = owner_user.unique_id
+        db_instrument = Instrument(**instrument_details)
         db_instrument.instrument_name = db_instrument.instrument_name.lower()
         session.add(db_instrument)
         session.flush()
@@ -199,17 +229,23 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
                            AccessGroup.group_name == db_instrument.unique_id,
                            group_name=db_instrument.unique_id,
                            group_type=AccessGroupType.INSTRUMENT.value)
+        create_standard_acls(
+            session,
+            db_instrument.unique_id,
+            owner_id=owner_user.unique_id,
+            requestor_id=user_unique_id,
+        )
         sql_create_resource_acl(ag, db_instrument.unique_id, read=True, write=True,
                                 session=session, permission=Role.EDITOR)
 
         session.commit()
         session.refresh(db_instrument)
         background_tasks.add_task(write_record, db_instrument.unique_id, instrument_record(db_instrument, ri), user_unique_id, "create")
-        return InstrumentResponse.model_validate({
-            **db_instrument.model_dump(),
-            "creation_time": ri.creation_time,
-            "modification_time": ri.modification_time,
-        })
+        return _instrument_response(
+            db_instrument,
+            ri,
+            owner=UserPublicRead.model_validate(owner_user),
+        )
 
 
 @router.patch("/instruments/{instrument_mfid}", response_model=InstrumentResponse)
@@ -254,11 +290,7 @@ def update_instrument(
         session.commit()
         session.refresh(instrument)
         background_tasks.add_task(write_record, instrument.unique_id, instrument_record(instrument, ri), user_unique_id, "update")
-        return InstrumentResponse.model_validate({
-            **instrument.model_dump(),
-            "creation_time": ri.creation_time if ri else None,
-            "modification_time": ri.modification_time if ri else None,
-        })
+        return _instrument_response(instrument, ri)
 
 
 VALID_INSTRUMENT_STATUSES = ("active", "maintenance", "decommissioned")
@@ -301,11 +333,7 @@ def set_instrument_status(
 
         ri = session.exec(select(Resource).where(
             Resource.mfid == instrument_mfid)).one_or_none()
-        return InstrumentResponse.model_validate({
-            **instrument.model_dump(),
-            "creation_time": ri.creation_time if ri else None,
-            "modification_time": ri.modification_time if ri else None,
-        })
+        return _instrument_response(instrument, ri)
 
 
 def _get_instrument_operators(instrument_mfid: str, session) -> List[AccessGroupMemberRead]:

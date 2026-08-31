@@ -10,14 +10,13 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select, col
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.general_utils import get_secret
+from app.general_utils import get_secret, is_orcid
 from app.models.core_models import (
-    AccessGroup, Dataset, Project, Sample, User,
-    UserAccessGroupLink,
+    AccessGroup, Dataset, Project, Sample, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
 )
 from app.utils.auth_utils import authorize_user, fetch_acl_rows, find_or_add_api_access, has_platform_admin_access, is_instrument_group_member, permission_filter, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
 from app.utils.permissions import AccessGroupType, effective_role, Principal, Role
-from app.utils.sql_utils import add_or_update, deletion_filter_for, table_obj_to_dict
+from app.utils.sql_utils import deletion_filter_for, table_obj_to_dict
 from app.utils.user_utils import assert_username_available, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
@@ -277,92 +276,122 @@ def find_mf_user_proposals(orcid):
     mf_user_db_url = "https://foundry-admin.lbl.gov/api/JSON/sciCat-GetUser.aspx?"
     apikey = get_secret("PROPDB_APIKEY", "propdb-apikey/versions/1")
     request_url = f"{mf_user_db_url}key={apikey}&orcid={orcid}"
-    assert apikey is not None
-    print(f"{mf_user_db_url}key=****&orcid={orcid}")
-    response = requests.request(method="get", url=request_url)
-
-    found_proposals = []
-    if len(response.json()) > 0 and response.status_code == 200:
-        logger.info(f'{response.json()=}')
-        for u in response.json():
-            found_proposals += u.get('proposals', [])
-        
-        found_proposals = list(set(found_proposals))
-        
-    return found_proposals
+    if apikey is None:
+        raise HTTPException(status_code=502, detail="Proposal service credentials are unavailable")
+    try:
+        response = requests.get(request_url, timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        raise HTTPException(status_code=502, detail="Proposal service lookup failed") from None
+    if not isinstance(payload, list) or any(not isinstance(item, dict) for item in payload):
+        raise HTTPException(status_code=502, detail="Proposal service returned an invalid response")
+    if any(not isinstance(item.get("proposals", []), list) for item in payload):
+        raise HTTPException(status_code=502, detail="Proposal service returned invalid proposals")
+    proposals = {
+        proposal
+        for item in payload
+        for proposal in item.get("proposals", [])
+        if isinstance(proposal, str)
+    }
+    return sorted(proposals)
 
 
 @router.post("/users", response_model=UserRead)
-def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_info: UserCreate, project_ids: List[str] = Body(...)):
+def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_info: UserCreate,
+                project_ids: Optional[List[str]] = Body(default=None)):
     require_platform_admin(auth_res)
 
-    # Validate required fields
     missing_fields = []
     if not user_info.first_name or not user_info.first_name.strip():
         missing_fields.append("first_name")
     if not user_info.last_name or not user_info.last_name.strip():
         missing_fields.append("last_name")
-    if not user_info.unique_id or not user_info.unique_id.strip():
-        missing_fields.append("unique_id")
 
     if missing_fields:
         raise HTTPException(
             status_code=400,
-            detail=f"Missing required user information: {', '.join(missing_fields)}. Please provide all required fields: first_name, last_name, and unique_id."
+            detail=f"Missing required user information: {', '.join(missing_fields)}."
         )
+
+    unique_id = user_info.unique_id.strip() if user_info.unique_id else get_mfid_value()
+    explicit_project_ids = set(project_ids or [])
+    discovered_project_ids = set(find_mf_user_proposals(unique_id)) if is_orcid(unique_id) else set()
+    requested_project_ids = explicit_project_ids | discovered_project_ids
 
     with Session(engine) as session:
+        if session.exec(select(User).where(User.unique_id == unique_id)).one_or_none() is not None:
+            raise HTTPException(status_code=409, detail=f"unique_id '{unique_id}' already exists")
+        if session.exec(select(AccessGroup).where(AccessGroup.group_name == unique_id)).one_or_none() is not None:
+            raise HTTPException(status_code=409, detail=f"Identity group '{unique_id}' already exists")
         if user_info.username:
-            assert_username_available(session, user_info.username, exclude_orcid=user_info.unique_id)
-        user_dict = table_obj_to_dict(user_info)
-        if user_dict.get('email', None) is not None:
-            user_dict['email'] = user_dict['email'].lower().strip()
-            
-        user = add_or_update(session, User, User.unique_id == user_info.unique_id, **user_dict)
+            assert_username_available(session, user_info.username)
 
-        sql_add_user_to_access_group(
-            user.unique_id,
-            user.unique_id,
-            session,
-            role=Role.OWNER,
-            group_type=AccessGroupType.IDENTITY,
-        )
+        projects = session.exec(
+            select(Project).where(Project.project_id.in_(requested_project_ids))
+        ).all() if requested_project_ids else []
+        projects_by_id = {project.project_id: project for project in projects}
+        missing_explicit = sorted(explicit_project_ids - projects_by_id.keys())
+        if missing_explicit:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Projects not found: {', '.join(missing_explicit)}",
+            )
+        missing_discovered = sorted(discovered_project_ids - projects_by_id.keys())
+        if missing_discovered:
+            logger.warning("Ignoring proposal projects not provisioned in Crucible: %s", missing_discovered)
 
-        # check if the user is in the MF Proposal Database and should be added to any proposals
-        user_proposal_ids = find_mf_user_proposals(user.unique_id)
-        project_ids.append(user_proposal_ids)
-
-        # for each project that the user is a USER on:
-        # 1. get the project object from the database
-        # 2. add the project to the user object
-        # 3. add an access group for the project, named by the project and add the user to the access group
-        for pname in project_ids:
-            props = session.exec(select(Project).where(Project.project_id == pname)).all()
-            if len(props) != 1:
-                logger.warning(f"Projects found for {pname}: {props} — skipping. Please ensure a project exists with a unique name.")
-                continue
-
-            prop = props[-1]
-
-            # add project to user
-            if prop not in user.projects:
-                user.projects.append(prop)
-
-            # add user to access group
-            sql_add_user_to_access_group(
-                user.unique_id,
-                prop.unique_id,
-                session,
-                group_type=AccessGroupType.PROJECT,
+        project_group_names = {project.unique_id for project in projects}
+        project_groups = session.exec(
+            select(AccessGroup).where(
+                AccessGroup.group_name.in_(project_group_names),
+                AccessGroup.group_type == AccessGroupType.PROJECT.value,
+            )
+        ).all() if project_group_names else []
+        groups_by_name = {group.group_name: group for group in project_groups}
+        missing_project_groups = sorted(project.project_id for project in projects if project.unique_id not in groups_by_name)
+        if missing_project_groups:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Projects have no access group: {', '.join(missing_project_groups)}",
             )
 
+        user_dict = table_obj_to_dict(user_info)
+        user_dict["unique_id"] = unique_id
+        user_dict["is_service_account"] = False
+        if user_dict.get('email', None) is not None:
+            user_dict['email'] = user_dict['email'].lower().strip()
+        user = User(**user_dict)
         session.add(user)
+        identity_group = AccessGroup(
+            group_name=unique_id,
+            group_type=AccessGroupType.IDENTITY.value,
+        )
+        session.add(identity_group)
+        session.flush()
+        session.add(UserAccessGroupLink(
+            user_id=user.id,
+            accessgroup_id=identity_group.id,
+            role=Role.OWNER.db_value,
+        ))
+        session.add_all([
+            UserAccessGroupLink(
+                user_id=user.id,
+                accessgroup_id=groups_by_name[project.unique_id].id,
+                role=Role.CONTRIBUTOR.db_value,
+            )
+            for project in projects
+        ])
+        session.add_all([
+            UserProjectLink(user_id=user.id, project_id=project.project_id)
+            for project in projects
+        ])
         session.commit()
         session.refresh(user)
 
     # Mirror the canonical /auth/apikey flow: provisioning a user also mints
     # their API key (idempotent) so they can authenticate immediately.
-    find_or_add_api_access(user_info.unique_id, engine, regenerate=False)
+    find_or_add_api_access(unique_id, engine, regenerate=False)
     return user
 
 

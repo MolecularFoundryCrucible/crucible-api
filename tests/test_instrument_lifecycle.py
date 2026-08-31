@@ -1,10 +1,4 @@
-"""POST /instruments creates the instrument's operator group (named by its
-MFID) and an editor ACL entry on the instrument resource, instead of the
-group coming into existence lazily inside create_dataset. create_dataset and
-update_dataset reject an unregistered instrument_name instead of minting a
-group for it. POST/DELETE .../service_accounts/{sa_id} bind an SA to that
-group at admin standing.
-"""
+"""Instrument ownership, operator groups, service-account bindings, and dataset provenance grants."""
 from sqlmodel import Session, select
 
 from app.models.core_models import AccessGroup, Dataset, Instrument, Project, ResourceACL, User, UserAccessGroupLink
@@ -32,25 +26,37 @@ def _user(session, orcid, is_service_account=False):
 INSTRUMENT_PAYLOAD = {
     "instrument_id": "xrd-1",
     "instrument_name": "XRD-1",
-    "owner": "facility",
     "location": "b30",
 }
 
 
 class TestCreateInstrument:
     def test_creates_operator_group_with_editor_acl(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            owner = _user(session, "admin-1")
+            owner_group_id = session.exec(select(AccessGroup.id).where(
+                AccessGroup.group_name == owner.unique_id
+            )).one()
+
         auth_as("admin-1", groups=[], platform_role=PlatformRole.ADMIN)
         resp = client.post("/instruments", json=INSTRUMENT_PAYLOAD)
         assert resp.status_code == 200, resp.text
         mfid = resp.json()["unique_id"]
+        assert resp.json()["owner_orcid"] == "admin-1"
+        assert resp.json()["owner"]["unique_id"] == "admin-1"
 
         with Session(db_engine) as session:
             ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == mfid)).one()
-            acl = session.exec(select(ResourceACL).where(
+            operator_acl = session.exec(select(ResourceACL).where(
                 ResourceACL.accessgroup_id == ag.id, ResourceACL.mfid == mfid)).one()
-            assert acl.permission == Role.EDITOR.db_value
+            owner_acl = session.exec(select(ResourceACL).where(
+                ResourceACL.accessgroup_id == owner_group_id, ResourceACL.mfid == mfid)).one()
+            assert operator_acl.permission == Role.EDITOR.db_value
+            assert owner_acl.permission == Role.OWNER.db_value
 
     def test_rejects_duplicate_instrument_id(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "admin-2")
         auth_as("admin-2", groups=[], platform_role=PlatformRole.ADMIN)
         client.post("/instruments", json=INSTRUMENT_PAYLOAD)
         resp = client.post("/instruments", json={**INSTRUMENT_PAYLOAD, "instrument_name": "a different name"})
@@ -61,20 +67,44 @@ class TestCreateInstrument:
         resp = client.post("/instruments", json={**INSTRUMENT_PAYLOAD, "instrument_id": "has a space"})
         assert resp.status_code == 422
 
-    def test_non_admin_is_rejected(self, client, db_engine, auth_as):
+    def test_authenticated_user_can_create_and_becomes_owner(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "0000-0001")
         auth_as("0000-0001", groups=[])
         resp = client.post("/instruments", json=INSTRUMENT_PAYLOAD)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["owner_orcid"] == "0000-0001"
+        assert resp.json()["owner"]["unique_id"] == "0000-0001"
+
+    def test_human_cannot_create_for_another_user(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "0000-0002")
+            _user(session, "0000-0003")
+        auth_as("0000-0002", groups=[])
+        resp = client.post("/instruments", json={**INSTRUMENT_PAYLOAD, "owner": "0000-0003"})
         assert resp.status_code == 403
+
+    def test_platform_admin_can_create_for_another_user(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "admin-3")
+            _user(session, "0000-0004")
+        auth_as("admin-3", groups=[], platform_role=PlatformRole.ADMIN)
+        resp = client.post("/instruments", json={**INSTRUMENT_PAYLOAD, "owner_orcid": "0000-0004"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["owner_orcid"] == "0000-0004"
+        assert resp.json()["owner"]["unique_id"] == "0000-0004"
 
 
 class TestServiceAccountBinding:
-    def _create_instrument(self, client, auth_as):
+    def _create_instrument(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "admin-4")
         auth_as("admin-4", groups=[], platform_role=PlatformRole.ADMIN)
         resp = client.post("/instruments", json=INSTRUMENT_PAYLOAD)
         return resp.json()["unique_id"]
 
     def test_bind_adds_sa_at_admin_standing(self, client, db_engine, auth_as):
-        mfid = self._create_instrument(client, auth_as)
+        mfid = self._create_instrument(client, db_engine, auth_as)
         with Session(db_engine) as session:
             _user(session, "sa-1", is_service_account=True)
 
@@ -87,7 +117,7 @@ class TestServiceAccountBinding:
         assert members[0]["role"] == "admin"
 
     def test_bind_rejects_non_service_account(self, client, db_engine, auth_as):
-        mfid = self._create_instrument(client, auth_as)
+        mfid = self._create_instrument(client, db_engine, auth_as)
         with Session(db_engine) as session:
             _user(session, "0000-0002")
 
@@ -104,7 +134,7 @@ class TestServiceAccountBinding:
         assert resp.status_code == 404
 
     def test_non_admin_cannot_bind(self, client, db_engine, auth_as):
-        mfid = self._create_instrument(client, auth_as)
+        mfid = self._create_instrument(client, db_engine, auth_as)
         with Session(db_engine) as session:
             _user(session, "sa-3", is_service_account=True)
 
@@ -113,7 +143,7 @@ class TestServiceAccountBinding:
         assert resp.status_code == 403
 
     def test_unbind_removes_the_sa(self, client, db_engine, auth_as):
-        mfid = self._create_instrument(client, auth_as)
+        mfid = self._create_instrument(client, db_engine, auth_as)
         with Session(db_engine) as session:
             _user(session, "sa-4", is_service_account=True)
 
@@ -124,7 +154,7 @@ class TestServiceAccountBinding:
         assert resp.json() == []
 
     def test_unbind_a_never_bound_sa_is_404(self, client, db_engine, auth_as):
-        mfid = self._create_instrument(client, auth_as)
+        mfid = self._create_instrument(client, db_engine, auth_as)
         with Session(db_engine) as session:
             _user(session, "sa-5", is_service_account=True)
 
@@ -135,6 +165,8 @@ class TestServiceAccountBinding:
 
 class TestDatasetInstrumentResolution:
     def test_registered_instrument_grants_contributor_to_its_operator_group(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "admin-10")
         auth_as("admin-10", groups=[], platform_role=PlatformRole.ADMIN)
         resp = client.post("/instruments", json=INSTRUMENT_PAYLOAD)
         mfid = resp.json()["unique_id"]
@@ -192,15 +224,17 @@ class TestInstrumentIdOnDataset:
     """POST/PATCH /datasets accept the validated instrument_id slug as an
     alternative to free-text instrument_name; responses resolve back to it."""
 
-    def _register(self, client, auth_as):
+    def _register(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "admin-id-1")
         auth_as("admin-id-1", groups=[], platform_role=PlatformRole.ADMIN)
         resp = client.post("/instruments", json={
-            "instrument_id": "xrd-id-1", "instrument_name": "XRD ID 1", "owner": "facility", "location": "b30",
+            "instrument_id": "xrd-id-1", "instrument_name": "XRD ID 1", "location": "b30",
         })
         return resp.json()
 
     def test_create_dataset_with_instrument_id_resolves_and_echoes_it(self, client, db_engine, auth_as):
-        self._register(client, auth_as)
+        self._register(client, db_engine, auth_as)
         with Session(db_engine) as session:
             _user(session, "0000-0010")
 
@@ -227,7 +261,7 @@ class TestInstrumentIdOnDataset:
     def test_create_dataset_via_instrument_name_still_echoes_instrument_id(self, client, db_engine, auth_as):
         """A dataset created the legacy way (free-text instrument_name) still
         gets instrument_id resolved in the response, for clients that adopt it."""
-        self._register(client, auth_as)
+        self._register(client, db_engine, auth_as)
         with Session(db_engine) as session:
             _user(session, "0000-0012")
 
@@ -237,7 +271,7 @@ class TestInstrumentIdOnDataset:
         assert resp.json()["instrument_id"] == "xrd-id-1"
 
     def test_patch_dataset_with_instrument_id(self, client, db_engine, auth_as):
-        self._register(client, auth_as)
+        self._register(client, db_engine, auth_as)
         with Session(db_engine) as session:
             _user(session, "0000-0013")
             ag = session.exec(select(AccessGroup).where(

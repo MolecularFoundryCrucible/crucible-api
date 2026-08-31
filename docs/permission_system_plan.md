@@ -540,6 +540,8 @@ What managers keep regardless is `viewer` on *public* datasets, through the virt
 
 `POST /instruments` creates the instrument, its resource row and its operator group. It does **not** create a service account.
 
+Any authenticated identity may create an instrument and becomes its owner when no owner is supplied. The flexible `owner` reference and deprecated exact `owner_orcid` alias follow the dataset and sample creation contract. Only service accounts and platform administrators may create on behalf of another registered identity. The owner's identity group receives `owner` on the instrument resource; the separate operator group receives `editor`.
+
 Minting one is a deliberate second step, so a live credential exists only where something is actually writing rather than for every instrument anyone ever registered. `POST /instruments?create_service_account=true` keeps the one-call ergonomics available for the common case without leaving unused keys lying around by default.
 
 ### Status lifecycle
@@ -559,7 +561,7 @@ Discovered while mapping existing routes. These take `auth_res` — so authentic
 | Route | Today | Should require |
 |---|---|---|
 | `POST /projects` | none | decide: any user, or a registrar role |
-| `POST /instruments` | none | platform admin or instrument registrar |
+| `POST /instruments` | authenticated | caller owns the instrument; only service accounts and platform administrators may create on behalf |
 | `PATCH /instruments/{instrument_unique_id}` | none | instrument `admin`/`owner` |
 | `POST /datasets`, `POST /samples` | none | `>= contributor` in the target project, plus create-on-behalf verification |
 | setting `public = true` | none | resolved by construction — see below |
@@ -817,12 +819,12 @@ No join against `useraccessgrouplink` is required in list queries.
 - [x] Move `_is_group_lead`, the project-listing filter, and project member removal off `Project.project_lead_orcid` onto an `owner` standing check; add the FK; make `transfer_ownership` its only write path (column stays permanently — see "Project lead becomes a role")
 - [ ] `POST /projects` — create the project's `Resource` row and its single ACL entry (own group at `owner`)
 - [ ] `POST /resources/{id}/share`, `DELETE /resources/{id}/share/{orcid}`
-- [x] `POST /resources/{mfid}/transfer_ownership` requires `owner` and moves the owner ACL entry and both owner columns atomically. It defaults to a no-op preview, with `?confirm=true` required to execute. `PATCH /projects`, `PATCH /datasets`, and `PATCH /samples` reject direct ownership or project reassignment fields.
+- [x] `POST /resources/{mfid}/transfer_ownership` requires `owner` and moves the owner ACL entry and denormalized owner identity atomically. It defaults to a no-op preview, with `?confirm=true` required to execute. Project, dataset, sample, and instrument PATCH schemas reject direct ownership fields.
 - [x] `POST /resources/{mfid}/project` — requires `admin` on the resource and `>= contributor` in the target; adds the new project ACL entry and removes the old. Same preview/`?confirm=true` pattern as `transfer_ownership`
 - [x] `PATCH /datasets/{dsid}` and `PATCH /samples/{sample_id}` — reject `owner_orcid` and `project_id` with `422` (`extra="forbid"`, same as `ProjectUpdate`), pointing at `transfer_ownership`/`POST /resources/{mfid}/project`
 - [ ] **Deferred, tracked separately:** the `instrument_name` change on `PATCH /datasets/{dsid}` must revoke the old instrument group's ACL entry — it currently only adds the new one. Stays on `PATCH` (not a new route) since re-pointing an instrument is an ordinary edit, not an ownership/membership transfer
 - [x] Replace global-admin deletion with `require_permission(..., 'delete')`
-- [x] `POST /instruments` — create the instrument group, **named after the instrument MFID**, and its `editor` ACL entry on the instrument resource. Pulled the instrument half of the MFID group rename forward into this (see below) since the group has to be named by MFID from day one for `create_dataset`'s new registration check to have anything consistent to look up; existing instruments are covered by `migrations/data/20260810_provision_instrument_operator_groups.py`, which renames each legacy `instrument_name`-keyed group in place (or creates fresh + flags for manual review if that name is shared with a project/user/other instrument)
+- [x] `POST /instruments`: allow any authenticated caller, resolve the owner with the shared creation contract, create the owner's `owner` ACL, then create the MFID-named instrument operator group and its `editor` ACL entry. Existing instruments are covered only for operator-group provisioning by `migrations/data/20260810_provision_instrument_operator_groups.py`; descriptive legacy owner values remain case-by-case cleanup.
 - [x] `instrument` — add an `instrument_id` handle, validated like `project_id` (no group-namespace collision check needed — groups are keyed by `unique_id`, not `instrument_id`); backfilled via `migrations/data/20260810_backfill_instrument_id.py`, slugified from `instrument_name`, which stays free text
 - [x] Validate `project_id` on `POST /projects`: grammar, reserved names, cross-namespace collision — `validate_project_id`/`assert_project_id_available` in `app/utils/project_utils.py`, case-insensitive, checks `AccessGroup` and `Instrument.instrument_name` directly (the latter needed until every instrument has a group — see above)
 - [x] Rename existing project access groups to MFIDs — `project_utils.py`, `projects.py`, `resources.py`, `access_groups.py`, `users.py`, `sql_utils.py` now resolve a project's group via `Project.unique_id`, not `project_id`; `migrations/data/20260810_rename_project_groups_to_mfid.py` renames existing groups in place (or creates fresh + flags for manual review on collision, same policy as the instrument version). **Not yet cut over** — this code cannot go live until `Project.unique_id` is backfilled (`20260810_backfill_project_unique_id.py`) and the rename script above has run, in that order; a half-migrated state breaks every project route (see the scripts' own docstrings)

@@ -68,7 +68,7 @@ These should require contributor permission, return `202 Accepted`, and produce 
 
 ### 8. User creation contains a definite list-handling bug
 
-Status: Deferred. The agreed repair moves proposal lookup outside the database transaction, fails with 502 on upstream errors, flattens and deduplicates project IDs, and batches project and membership queries. See [`docs/user_creation_reliability_migration.md`](user_creation_reliability_migration.md).
+Status: Fixed locally. Proposal lookup occurs before the database transaction with bounded failure handling. Project IDs are flattened and deduplicated, project and group loading is batched, and user, identity-group, and membership creation is atomic. ORCID-less human creation generates an MFID and skips the proposal service. See [`docs/user_creation_reliability_migration.md`](user_creation_reliability_migration.md).
 
 User creation in [`app/api/routes/users.py`](../app/api/routes/users.py) appends the entire proposal list into `project_ids`, creating a nested list that is subsequently compared against `Project.project_id`.
 
@@ -163,7 +163,8 @@ The generated OpenAPI contains 147 operations, no duplicate operation IDs, and 1
 - Thumbnail creation deduplicates globally by base64 content and can move an existing thumbnail from one dataset to another.
 - Instruments are readable without ACL checks through instrument routes but require READ through generic resource routes. Decide whether instruments are an authenticated public directory and document that explicitly.
 - Instrument filter code claims case-insensitive matching but lowercases only the input, not the SQL column.
-- Instrument ownership remains intentionally unfinished. It should not be changed as an incidental part of this production migration.
+- New instrument creation now resolves a registered owner, defaults to the caller, and creates the corresponding owner ACL. Existing instruments with descriptive legacy `owner` values are unchanged and may still require case-by-case ownership transfer or cleanup.
+- Projects have no cleanup lifecycle suitable for staging tests or inactive work. A dedicated archive subresource is preferred over deletion or reuse of the domain `status` field, but it is deferred to avoid adding complexity to the permission migration. See [`docs/project_archiving.md`](project_archiving.md).
 - OAuth login does not properly generate and verify random `state` and `nonce` values.
 - API-key retrieval uses GET and returns a secret, which risks browser and intermediary caching.
 - Resource timestamps are strings rather than database timestamps. This is a later schema improvement, not something to add to the permission cutover.

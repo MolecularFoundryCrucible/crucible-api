@@ -7,60 +7,67 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
+from app.build_info import api_version, branch_name, git_commit
 from app.models.core_models import Keyword
+from app.models.health import LivenessResponse, ReadinessResponse
 from app.utils.auth_utils import authorize_user
 
 router = APIRouter(tags=["misc"])
 engine = get_engine()
 
 
-def _api_version():
-    try:
-        from importlib.metadata import version
-        return version("crucible-api")
-    except Exception:
-        return None
-
-
 def _check_db():
-    """Returns (status, latency_ms). status is 'ok' or 'error'."""
     t0 = time.monotonic()
     try:
         with Session(engine) as session:
-            session.execute(text("SELECT 1"))
-        return "ok", round((time.monotonic() - t0) * 1000, 1)
+            revisions = session.execute(
+                text("SELECT version_num FROM alembic_version ORDER BY version_num")
+            ).scalars().all()
+        return "ok", round((time.monotonic() - t0) * 1000, 1), sorted(revisions)
     except Exception:
-        return "error", None
+        return "error", None, []
 
 
-@router.get("/health/live")
+@router.get("/health/live", response_model=LivenessResponse)
 def liveness():
-    """Liveness probe — no auth, no DB check. Returns 200 if the process is running."""
+    """Liveness probe. Returns 200 when the process is running."""
     return {"status": "ok"}
 
 
-@router.get("/health/ready")
+@router.get(
+    "/health/ready",
+    response_model=ReadinessResponse,
+    responses={503: {"model": ReadinessResponse}},
+)
 def readiness():
-    """
-    Readiness probe — no auth. Checks DB connectivity and returns 503 if unreachable.
-    Includes DB response latency in ms.
-    """
-    db_status, db_ms = _check_db()
+    """Readiness probe with database, schema, and build provenance."""
+    db_status, db_ms, schema_revisions = _check_db()
     ok = db_status == "ok"
     return JSONResponse(
         status_code=200 if ok else 503,
         content={
             "status": "ok" if ok else "degraded",
-            "db": db_status,
-            "db_ms": db_ms,
-            "version": _api_version(),
+            "build": {
+                "api_version": api_version(),
+                "git_commit": git_commit(),
+                "branch": branch_name(),
+            },
+            "database": {
+                "status": db_status,
+                "latency_ms": db_ms,
+                "schema_revisions": schema_revisions,
+            },
         },
     )
 
 
-@router.get("/health")
+@router.get(
+    "/health",
+    response_model=ReadinessResponse,
+    responses={503: {"model": ReadinessResponse}},
+)
 def health():
-    """Alias for /health/ready — kept for backwards compatibility."""
+    """Compatibility alias for /health/ready."""
     return readiness()
 
 
@@ -134,5 +141,3 @@ def list_ingestors():
                 'H5Ingestor']
     
     return ingestors
-
-

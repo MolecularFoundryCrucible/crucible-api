@@ -90,9 +90,9 @@ Both create schemas reject unknown fields, reject `owner` together with `owner_o
 
 ### 11. Project resource identity is joined through the wrong field
 
-The project resource relationship in [`app/models/core_models.py`](../app/models/core_models.py) joins `Resource.mfid` to the legacy `Project.project_id`, while migrated project resources are keyed by `Project.unique_id`.
+Status: Fixed locally with a focused singleton response test.
 
-This can omit timestamps and resource metadata from project responses. Project metadata search has the same legacy identifier assumption.
+The project resource relationship now joins `Resource.mfid` to `Project.unique_id`, matching project creation and the production identity backfill. Project singleton and collection loaders therefore resolve timestamps and metadata through the canonical project MFID rather than the mutable slug.
 
 ## SQL and performance
 

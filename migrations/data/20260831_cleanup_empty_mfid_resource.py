@@ -43,7 +43,7 @@ def main() -> int:
                 (SELECT count(*) FROM sample WHERE unique_id = '') AS samples,
                 (SELECT count(*) FROM dataset WHERE unique_id = '') AS datasets,
                 (SELECT count(*) FROM instrument WHERE unique_id = '') AS instruments,
-                (SELECT count(*) FROM project WHERE unique_id = '') AS projects,
+                (SELECT count(*) FROM project WHERE project_id = '') AS projects,
                 (SELECT count(*) FROM resourceacl WHERE mfid = '') AS acl_rows,
                 (SELECT count(*) FROM scientific_metadata_new WHERE unique_id = '') AS metadata_rows,
                 (SELECT count(*) FROM deletionrequest WHERE resource_id = '') AS deletion_requests

@@ -28,7 +28,7 @@ SAMPLE_LIMIT = 20
 
 
 def _rows(session, sql):
-    # session.execute, not SQLModel's session.exec — exec() scalarises results
+    # session.execute, not SQLModel's session.exec - exec() scalarises results
     # and would silently collapse these multi-column selects to one column.
     return session.execute(text(sql)).all()
 
@@ -142,7 +142,7 @@ def check_acl_read_write_mix(session):
 
 
 def check_duplicate_group_owners(session):
-    """Find ORCID groups with more than one member — each would get two `owner`
+    """Find ORCID groups with more than one member - each would get two `owner`
     standings and break one_owner_per_group."""
     print("\n[4] groups that would end up with more than one owner")
 
@@ -178,7 +178,7 @@ def check_empty_mfid_resources(session):
             (SELECT count(*) FROM sample WHERE unique_id = '') AS samples,
             (SELECT count(*) FROM dataset WHERE unique_id = '') AS datasets,
             (SELECT count(*) FROM instrument WHERE unique_id = '') AS instruments,
-            (SELECT count(*) FROM project WHERE unique_id = '') AS projects,
+            (SELECT count(*) FROM project WHERE project_id = '') AS projects,
             (SELECT count(*) FROM resourceacl WHERE mfid = '') AS acl_rows,
             (SELECT count(*) FROM scientific_metadata_new WHERE unique_id = '') AS metadata_rows,
             (SELECT count(*) FROM deletionrequest WHERE resource_id = '') AS deletion_requests
@@ -201,7 +201,7 @@ def check_empty_mfid_resources(session):
 
 def main():
     engine = get_engine()
-    print(f"permission migration precondition audit — {engine.url.database} "
+    print(f"permission migration precondition audit - {engine.url.database} "
           f"on {engine.url.host}")
     print("read-only; nothing is written")
 

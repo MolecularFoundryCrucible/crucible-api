@@ -88,10 +88,13 @@ def main() -> int:
                     GROUP BY acl.mfid, resource.resource_type
                     HAVING count(*) > 1
                     ORDER BY acl.mfid
+                    LIMIT 50
                 """)).all()
                 print("duplicate owner ACL details:")
                 for row in duplicate_owners:
                     print(f"  {row.mfid!r} ({row.resource_type}): {row.owner_groups!r}")
+                if counts.duplicate_owner_acls > len(duplicate_owners):
+                    print(f"  showing {len(duplicate_owners)} of {counts.duplicate_owner_acls}")
             print(f"BLOCKED: {blockers} permission cutover preconditions failed")
             return 1
         print("PASS: permission cutover preconditions are satisfied")

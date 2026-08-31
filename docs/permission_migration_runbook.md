@@ -4,19 +4,19 @@ This is the operational recipe for the permission migration. Follow it in order.
 
 ## Current status
 
-Verified on 2026-08-28.
+Verified on 2026-08-31.
 
 | Environment | Status |
 |---|---|
-| Staging database | Permission head `c4a7e9d2b615` is applied. All 9,880 access groups are classified, permission roles are non-null, duplicate owner ACLs are rejected, and the duplicate-owner `unknown` group has been removed. The local candidate adds revision `d6e1f8a2c4b7`, which has not been applied to staging. |
-| Staging API | API commit `297144c` is deployed. Its live OpenAPI was verified against the generated contract. Typed access selectors and stricter email redaction are in the next local deployment candidate and are not live yet. |
+| Staging database | Revision `d6e1f8a2c4b7` is applied. All 9,880 access groups are classified, permission roles are non-null, duplicate owner ACLs are rejected, and the duplicate-owner `unknown` group has been removed. Revision `a9f3c2e7b614` must be applied before testing project creation for an MFID-backed human without an email. |
+| Staging API | API commit `66f90a35ef2e516c527ed1cb87c69e74bbe157df` is deployed. Project creation for an MFID-backed human exposed the legacy `NOT NULL` constraint on `project.project_lead_email`; revision `a9f3c2e7b614` corrects it. |
 | Production | Not queried during this review. The existing rollout record says the migration has not started. Re-run every preflight check against production before rollout. |
 
 All counts in the staging sections describe staging only. Production is substantially larger, so do not use staging row counts as production expectations or anomaly thresholds. For production, compare each dry run with its immediately following committed run and enforce only the documented structural invariants and zero-result blockers.
 
 ### Staging checks that passed
 
-- Alembic is at final head `c4a7e9d2b615`.
+- Alembic is at revision `d6e1f8a2c4b7`; the next candidate advances it to `a9f3c2e7b614`.
 - `resourceacl.permission` exists and the old `resourceacl.role` column is gone.
 - `accessgroupjoinrequest.accessgroup_id` exists and the old `group_name` column is gone.
 - All 6,756 projects have `idtype` and ACL rows keyed by `Project.unique_id`.
@@ -39,7 +39,7 @@ Staging is structurally migrated. These accepted operational follow-ups remain:
 1. Of 6,756 projects, 4,362 have no owner member in their project group. For 3,049 of them the recorded lead is a registered user but is not a group member. The remaining 1,313 name an unregistered lead. This historical state is accepted for the current staging rollout and does not block deployment. Any later owner assignment changes authorization and requires a separately reviewed policy and data operation.
 2. Seven service accounts still have `platform_role='admin'`, and no human has that role. This preserved ingestion during cutover. The absence of a human platform administrator is accepted for the current staging rollout. Assigning a human administrator and removing service-account bypasses remain later operational work after instrument bindings are verified.
 3. The confirmed duplicate-owner `unknown` group was removed with `20260828_remove_staging_unknown_group.py`, including its owner ACL and membership. Forty-seven inert custom groups remain for case-by-case cleanup: four empty ORCID-shaped orphans and 43 other groups with no ACLs or join requests.
-4. Run `20260828_audit_active_deletion_requests.py`, then apply revision `d6e1f8a2c4b7` after the corresponding API candidate is ready for staging verification.
+4. Revision `d6e1f8a2c4b7` and its active-deletion-request preflight are complete. Apply revision `a9f3c2e7b614` before rerunning project creation with an email-less MFID-backed human.
 
 None of these accepted follow-ups blocks the current API deployment.
 
@@ -337,7 +337,7 @@ Keep these commands and the deploy in the same maintenance window:
 .venv/bin/python migrations/data/20260827_backfill_access_group_types.py --commit --accept-custom-groups --accept-suspicious-custom-groups --yes-this-is-production
 .venv/bin/python migrations/data/20260828_audit_permission_cutover_preconditions.py
 .venv/bin/python migrations/data/20260813_repoint_project_resource_identity.py --commit --yes-this-is-production
-.venv/bin/alembic -x yes-this-is-production=true upgrade d6e1f8a2c4b7
+.venv/bin/alembic -x yes-this-is-production=true upgrade a9f3c2e7b614
 ```
 
 Revision `ecfa70615e54` verifies that `resourceacl.permission` already exists and is otherwise a no-op on the unified production path. The maintenance boundary remains necessary because revision `454c96264cfb` removes the legacy join-request column.
@@ -362,7 +362,7 @@ After the final application is live, rerun the identity scripts as dry runs. Com
 .venv/bin/alembic current
 ```
 
-Expected revision: `d6e1f8a2c4b7 (head)`.
+Expected revision: `a9f3c2e7b614 (head)`.
 
 Run these database checks:
 
@@ -423,6 +423,7 @@ These are separate follow-up changes, not reasons to extend the production maint
 | After `7b2d4e6f8a10`, before resuming writes | Downgrade to `ecfa70615e54` while writes remain paused if an old writer must be restored. The downgrade removes the resource-owner index and makes the role columns nullable again; it does not alter existing role values. |
 | After `c4a7e9d2b615`, before resuming writes | Downgrade the merge revision while writes remain paused to make `group_type` nullable again. Restore the snapshot if the old application must run without the access-group column or if classification data must be reverted. |
 | After `d6e1f8a2c4b7`, before resuming writes | Downgrade to `c4a7e9d2b615` to remove the active deletion-request index if the new application must be rolled back. Existing deletion requests are not changed. |
+| After `a9f3c2e7b614`, before resuming writes | Downgrade to `d6e1f8a2c4b7` only if no project has been created with a null `project_lead_email`; otherwise restoring the `NOT NULL` constraint will fail. |
 | After old compatibility columns are eventually dropped | Restore from backup. A code revert is no longer sufficient. |
 
 ## Related documents

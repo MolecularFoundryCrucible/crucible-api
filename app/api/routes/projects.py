@@ -9,14 +9,13 @@ import networkx as nx
 from networkx.readwrite import json_graph
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.general_utils import is_orcid
 from app.models.core_models import (
     AccessGroup, Project, Resource, Sample, User, UserProjectLink, UserAccessGroupLink,
     Dataset, DatasetSampleLink,
 )
 from app.utils.auth_utils import (
     access_selector_filter, authorize_user, has_platform_admin_access,
-    permission_filter, require_grant, require_permission, require_platform_admin)
+    permission_filter, require_grant, require_permission)
 from app.utils.permissions import (
     AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
@@ -41,7 +40,7 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
     """
     Create a new project. One of project_lead (ORCID, username, or email) or
     project_lead_orcid/_email/_username must be provided and must correspond
-    to an existing user. The resolved ORCID is stored on the project.
+    to an existing user. The resolved canonical user identifier is stored on the project.
     Returns 409 if a project with the given project_id already exists.
     """
     named_lead_fields = [P.project_lead, P.project_lead_orcid, P.project_lead_email, P.project_lead_username]
@@ -133,7 +132,9 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
                 base = base.where(Project.project_id == project_id)
         elif project_id is not None:
             base = select(Project).where(Project.project_id == project_id)
-        elif is_orcid(user_unique_id):
+        elif has_platform_admin_access(auth_res):
+            base = select(Project)
+        else:
             user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
             if user is None:
                 return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
@@ -145,9 +146,6 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
                     UserAccessGroupLink.user_id == user.id,
                 ))
             )
-        else:
-            require_platform_admin(auth_res)
-            base = select(Project)
 
         total = session.exec(select(func.count()).select_from(base.subquery())).one()
 

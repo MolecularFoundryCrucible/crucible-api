@@ -18,11 +18,17 @@ This direct deployment blocker is fixed in the working tree.
 
 ### 2. Resource deletion requests are not authorization-checked
 
-Status: Fixed locally with eight focused tests passing. Deletion requests now require contributor access. A partial unique index prevents more than one pending or approved request per resource, and concurrent index conflicts return `409`. Revision `d6e1f8a2c4b7` and its read-only preflight have not been run on staging.
+Status: Fixed and deployed to staging. Deletion requests now require contributor access. A partial unique index prevents more than one pending or approved request per resource, and concurrent index conflicts return `409`. Revision `d6e1f8a2c4b7` and its read-only preflight have been applied on staging.
 
 Deletion request creation in [`app/api/routes/resources.py`](../app/api/routes/resources.py) previously verified that the resource existed but did not require access to it. An authenticated caller who knew an MFID could request deletion of another user's resource. Pending requests were then omitted from normal listings.
 
 This authorization and duplicate-request blocker is fixed in the working tree.
+
+### 2a. Email-less project leads fail database insertion
+
+Status: Fixed locally by revision `a9f3c2e7b614`; not yet applied to staging.
+
+`POST /projects` correctly resolves an ORCID-less human by username and stores the canonical MFID in `project_lead_orcid`. The SQLModel field already permits `project_lead_email=None`, but the database retained a legacy `NOT NULL` constraint. PostgreSQL therefore rejected project creation before any access-group or ACL rows were committed. The revision makes the denormalized email column nullable and leaves `project_lead_orcid` as the canonical identity reference.
 
 ### 3. Graph routes can disclose inaccessible resources
 

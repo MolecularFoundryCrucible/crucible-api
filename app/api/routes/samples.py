@@ -146,8 +146,8 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
 def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: SampleCreate,
                   background_tasks: BackgroundTasks):
     '''
-    Create a new sample. If a sample with the same project_id and sample_name already
-    exists, the existing record is returned without modification.
+    Create a new sample. Sample names are not unique within a project, so repeating one
+    creates a second sample.
     '''
     user_unique_id = auth_res.user_id
 
@@ -172,20 +172,6 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
             project_mfid = resolve_project_id_to_mfid(S.project_id, session)
             if project_mfid is None:
                 raise HTTPException(status_code=404, detail=f"Project '{S.project_id}' not found")
-
-        if session.exec(
-            select(Sample).where(
-                and_(
-                    Sample.project_mfid == project_mfid,
-                    Sample.sample_name == S.sample_name,
-                    deletion_filter_for(Sample),
-                )
-            )
-        ).one_or_none():
-            raise HTTPException(
-                status_code=409,
-                detail=f"A sample named '{S.sample_name}' already exists in project '{S.project_id}'.",
-            )
 
         if not auth_res.is_platform_admin:
             owner_orcid = resolved_owner_orcid or user_unique_id

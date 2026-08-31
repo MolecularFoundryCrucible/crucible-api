@@ -6,14 +6,15 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
+from app.general_utils import is_orcid
 from app.models.core_models import AccessGroupJoinRequest, ApiToken, User
 from app.models.join_requests import JoinRequestRead
 from app.models.pagination import PaginatedResponse
-from app.models.response_schemas import AccountInfo, ApiKeyRead, ApiKeyVerify
+from app.models.response_schemas import AccountInfo, ApiKeyRead, ApiKeyVerify, ProjectSyncResult
 from app.models.users import AccountProfileUpdate, UserRead
 from app.utils.auth_utils import authorize_user
 from app.utils.permissions import Principal
-from app.utils.user_utils import assert_username_available
+from app.utils.user_utils import assert_username_available, assign_projects_to_user, find_mf_user_proposals
 
 router = APIRouter(tags=["account"])
 engine = get_engine()
@@ -58,6 +59,17 @@ def update_account_profile(auth_res: Annotated[Principal, Depends(authorize_user
         session.commit()
         session.refresh(user)
         return user
+
+
+@router.post("/account/sync-projects", response_model=ProjectSyncResult)
+def sync_account_projects(auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Add project memberships discovered from the MF proposal database."""
+    user_unique_id = auth_res.user_id
+    proposal_ids = find_mf_user_proposals(user_unique_id) if is_orcid(user_unique_id) else []
+    with Session(engine) as session:
+        result = assign_projects_to_user(session, user_unique_id, proposal_ids)
+        session.commit()
+    return ProjectSyncResult(orcid=user_unique_id, **result)
 
 
 @router.get("/account/join_requests", response_model=PaginatedResponse[JoinRequestRead])

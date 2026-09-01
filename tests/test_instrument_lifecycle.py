@@ -243,7 +243,7 @@ class TestInstrumentIdOnDataset:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["instrument_id"] == "xrd-id-1"
-        assert body["instrument_name"] == "xrd id 1"
+        assert body["instrument_name"] == "XRD ID 1"
 
         with Session(db_engine) as session:
             ds = session.exec(select(Dataset).where(Dataset.dataset_name == "d5")).one()

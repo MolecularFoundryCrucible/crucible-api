@@ -31,6 +31,7 @@ from app.models.core_models import (
     ScientificMetadataBinary,
     Thumbnail,
     User,
+    UserAccessGroupLink,
 )
 from app.models.response_schemas import DatasetSampleLinkResponse
 from app.models.datasets import (
@@ -191,7 +192,9 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         instrument = None
         instrument_id_slug = dataset_details.pop('instrument_id', None)
         if instrument_id_slug:
-            instrument = session.exec(select(Instrument).where(Instrument.instrument_id == instrument_id_slug)).one_or_none()
+            instrument = session.exec(
+                select(Instrument).where(func.lower(Instrument.instrument_id) == instrument_id_slug.lower())
+            ).one_or_none()
             if instrument is None:
                 raise HTTPException(status_code=400, detail=f"Instrument '{instrument_id_slug}' is not registered")
             dataset_details['instrument_name'] = instrument.instrument_name
@@ -249,6 +252,26 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
 
         session.commit()
         session.refresh(ds)
+        is_bound = True
+        if instrument is not None and auth_res.is_service_account:
+            is_bound = session.exec(
+                select(UserAccessGroupLink.user_id)
+                .join(User, User.id == UserAccessGroupLink.user_id)
+                .join(AccessGroup, AccessGroup.id == UserAccessGroupLink.accessgroup_id)
+                .where(
+                    User.unique_id == user_unique_id,
+                    AccessGroup.group_name == instrument.unique_id,
+                    AccessGroup.group_type == AccessGroupType.INSTRUMENT.value,
+                )
+            ).first() is not None
+        if not is_bound:
+            logger.warning(
+                "Unbound service account %s created dataset %s for instrument %s (%s)",
+                user_unique_id,
+                ds.unique_id,
+                instrument.instrument_id,
+                instrument.unique_id,
+            )
         background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri), user_unique_id, "create")
         return DatasetResponse.model_validate({
             **ds.model_dump(),
@@ -304,7 +327,14 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
                 and isinstance(current_instrument_name, str)
                 and requested_instrument_name.casefold() == current_instrument_name.casefold()
             )
-            if requested_instrument_id != current_instrument_id or not name_matches:
+            id_matches = (
+                requested_instrument_id is None and current_instrument_id is None
+            ) or (
+                isinstance(requested_instrument_id, str)
+                and isinstance(current_instrument_id, str)
+                and requested_instrument_id.casefold() == current_instrument_id.casefold()
+            )
+            if not id_matches or not name_matches:
                 raise HTTPException(
                     status_code=409,
                     detail=(

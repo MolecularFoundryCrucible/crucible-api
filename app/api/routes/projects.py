@@ -25,7 +25,8 @@ from app.utils.project_utils import (
     sql_get_projects_for_user, resolve_project_reference)
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
-from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
+from app.models.projects import (
+    ProjectCreate, ProjectMembershipRole, ProjectRead, ProjectUpdate, ProjectWithLead)
 from app.models.users import UserPublicRead
 
 router = APIRouter(tags=["projects"])
@@ -350,7 +351,7 @@ def add_users_to_project(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     email: Optional[str] = None,
     username: Optional[str] = None,
-    role: Role = Role.CONTRIBUTOR,
+    role: ProjectMembershipRole = ProjectMembershipRole.CONTRIBUTOR,
 ):
     '''
     Add a user to a project at `role`, defaulting to contributor.
@@ -360,7 +361,8 @@ def add_users_to_project(
     Cannot seat someone as owner this way; a project has exactly one owner,
     changed only via POST /resources/{mfid}/transfer_ownership.
     '''
-    if role == Role.OWNER:
+    internal_role = Role.from_db(role.value)
+    if internal_role == Role.OWNER:
         raise HTTPException(
             status_code=409,
             detail="Cannot appoint an owner this way; use POST /resources/{mfid}/transfer_ownership")
@@ -371,11 +373,11 @@ def add_users_to_project(
             raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')
 
         require_permission(session, auth_res, proj.unique_id, Permission.EDIT, legacy_group=proj.unique_id)
-        require_grant(session, auth_res, proj.unique_id, role, floor=Role.EDITOR)
+        require_grant(session, auth_res, proj.unique_id, internal_role, floor=Role.EDITOR)
 
         user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
 
-        sql_add_user_to_project(user, proj.project_id, session, role=role)
+        sql_add_user_to_project(user, proj.project_id, session, role=internal_role)
         session.commit()
 
         return _get_project_users(proj.project_id, session)
@@ -386,7 +388,7 @@ def set_project_user_role(
     project_ref: str,
     orcid: str,
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    role: Role,
+    role: ProjectMembershipRole,
 ):
     '''
     Change a member's role in a project.
@@ -399,7 +401,8 @@ def set_project_user_role(
     a project has exactly one owner, changed only via
     POST /resources/{mfid}/transfer_ownership.
     '''
-    if role == Role.OWNER:
+    internal_role = Role.from_db(role.value)
+    if internal_role == Role.OWNER:
         raise HTTPException(
             status_code=409,
             detail="Cannot appoint an owner this way; use POST /resources/{mfid}/transfer_ownership")
@@ -430,9 +433,9 @@ def set_project_user_role(
             raise HTTPException(
                 status_code=409,
                 detail="Cannot change the owner's standing this way; use POST /resources/{mfid}/transfer_ownership")
-        require_grant(session, auth_res, proj.unique_id, role, current=current, floor=Role.EDITOR)
+        require_grant(session, auth_res, proj.unique_id, internal_role, current=current, floor=Role.EDITOR)
 
-        link.role = role.db_value
+        link.role = internal_role.db_value
         session.add(link)
         touch_resource_modification_time(session, proj.unique_id)
         session.commit()

@@ -34,7 +34,9 @@ def assert_instrument_id_available(session, instrument_id: str, exclude_unique_i
 def resolve_instrument_id_to_mfid(instrument_id: str, session) -> "str | None":
     """Resolve an instrument_id slug to its Instrument.unique_id (MFID).
     None if instrument_id does not name a real instrument."""
-    instrument = session.exec(select(Instrument).where(Instrument.instrument_id == instrument_id)).one_or_none()
+    instrument = session.exec(
+        select(Instrument).where(func.lower(Instrument.instrument_id) == instrument_id.lower())
+    ).one_or_none()
     return instrument.unique_id if instrument else None
 
 

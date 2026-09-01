@@ -46,7 +46,7 @@ def test_cannot_appoint_a_new_owner_via_post(client, db_engine, auth_as):
     ag_id, mfid = _setup(db_engine)
     auth_as("0000-0001-1111-1111", groups=[(mfid, ag_id, Role.OWNER)])
 
-    resp = client.post("/projects/proj_x/users/0000-0003-3333-3333", params={"role": Role.OWNER.value})
+    resp = client.post("/projects/proj_x/users/0000-0003-3333-3333", params={"role": Role.OWNER.db_value})
     assert resp.status_code == 409
 
     with Session(db_engine) as session:
@@ -62,7 +62,7 @@ def test_cannot_promote_an_existing_member_to_owner_via_patch(client, db_engine,
     ag_id, mfid = _setup(db_engine)
     auth_as("0000-0001-1111-1111", groups=[(mfid, ag_id, Role.OWNER)])
 
-    resp = client.patch("/projects/proj_x/users/0000-0002-2222-2222", params={"role": Role.OWNER.value})
+    resp = client.patch("/projects/proj_x/users/0000-0002-2222-2222", params={"role": Role.OWNER.db_value})
     assert resp.status_code == 409
 
     with Session(db_engine) as session:
@@ -79,7 +79,7 @@ def test_cannot_demote_the_owner_via_patch(client, db_engine, auth_as):
     ag_id, mfid = _setup(db_engine)
     auth_as("0000-0001-1111-1111", groups=[(mfid, ag_id, Role.OWNER)])
 
-    resp = client.patch("/projects/proj_x/users/0000-0001-1111-1111", params={"role": Role.ADMIN.value})
+    resp = client.patch("/projects/proj_x/users/0000-0001-1111-1111", params={"role": Role.ADMIN.db_value})
     assert resp.status_code == 409
 
     with Session(db_engine) as session:
@@ -94,5 +94,5 @@ def test_ordinary_role_changes_still_work(client, db_engine, auth_as):
     ag_id, mfid = _setup(db_engine)
     auth_as("0000-0001-1111-1111", groups=[(mfid, ag_id, Role.OWNER)])
 
-    resp = client.patch("/projects/proj_x/users/0000-0002-2222-2222", params={"role": Role.EDITOR.value})
+    resp = client.patch("/projects/proj_x/users/0000-0002-2222-2222", params={"role": Role.EDITOR.db_value})
     assert resp.status_code == 200, resp.text

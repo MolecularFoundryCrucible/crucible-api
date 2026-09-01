@@ -2060,26 +2060,12 @@
             "title": "Description"
           },
           "instrument_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Instrument Id"
+            "title": "Instrument Id",
+            "type": "string"
           },
           "instrument_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Instrument Name"
+            "title": "Instrument Name",
+            "type": "string"
           },
           "instrument_type": {
             "anyOf": [
@@ -2093,15 +2079,8 @@
             "title": "Instrument Type"
           },
           "location": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Location"
+            "title": "Location",
+            "type": "string"
           },
           "manufacturer": {
             "anyOf": [
@@ -3330,6 +3309,17 @@
         "title": "ProjectCreate",
         "type": "object"
       },
+      "ProjectMembershipRole": {
+        "enum": [
+          "viewer",
+          "contributor",
+          "editor",
+          "admin",
+          "owner"
+        ],
+        "title": "ProjectMembershipRole",
+        "type": "string"
+      },
       "ProjectMinimalRead": {
         "properties": {
           "project_id": {
@@ -3815,18 +3805,6 @@
         ],
         "title": "ResourceSearchResult",
         "type": "object"
-      },
-      "Role": {
-        "description": "Mirrors the Postgres `resource_role` enum. Ascending order is load-bearing:\ncomparisons and min() are the model.",
-        "enum": [
-          1,
-          2,
-          3,
-          4,
-          5
-        ],
-        "title": "Role",
-        "type": "integer"
       },
       "SampleCreate": {
         "additionalProperties": false,
@@ -8918,6 +8896,57 @@
         ]
       }
     },
+    "/instruments/{instrument_mfid}/service_accounts": {
+      "get": {
+        "operationId": "list_instrument_service_accounts_instruments__instrument_mfid__service_accounts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instrument_mfid",
+            "required": true,
+            "schema": {
+              "title": "Instrument Mfid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AccessGroupMemberRead"
+                  },
+                  "title": "Response List Instrument Service Accounts Instruments  Instrument Mfid  Service Accounts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Instrument Service Accounts",
+        "tags": [
+          "instruments"
+        ]
+      }
+    },
     "/instruments/{instrument_mfid}/service_accounts/{sa_unique_id}": {
       "delete": {
         "description": "Unbind a service account from an instrument's operator group.\nRequires admin on the instrument.",
@@ -10178,7 +10207,7 @@
             "name": "role",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/Role"
+              "$ref": "#/components/schemas/ProjectMembershipRole"
             }
           }
         ],
@@ -10277,8 +10306,8 @@
             "name": "role",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/Role",
-              "default": 2
+              "$ref": "#/components/schemas/ProjectMembershipRole",
+              "default": "contributor"
             }
           }
         ],

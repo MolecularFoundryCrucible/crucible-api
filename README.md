@@ -7,6 +7,7 @@ A FastAPI-based REST API for managing scientific datasets, samples, and metadata
 - [Swagger UI](https://crucible.lbl.gov/testapi-staging/docs)
 - [ReDoc](https://crucible.lbl.gov/testapi-staging/redoc)
 - [OpenAPI JSON](https://crucible.lbl.gov/testapi-staging/openapi.json)
+- [Changelog](CHANGELOG.md)
 
 ## Features
 

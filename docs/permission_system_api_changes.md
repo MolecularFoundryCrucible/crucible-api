@@ -43,6 +43,10 @@ AccessGroupMemberRead = {
 
 Requires admin on the instrument. In practice this is platform-admin only for now because no group otherwise holds admin on an instrument. `DELETE` on a binding that doesn't exist returns 404.
 
+### `GET /instruments/{instrument_mfid}/service_accounts`
+
+Returns the current service accounts bound to the instrument's operator group using the same `AccessGroupMemberRead` response as the binding routes. Requires admin on the instrument.
+
 ## Changed routes
 
 ### `POST /instruments`
@@ -50,6 +54,8 @@ Requires admin on the instrument. In practice this is platform-admin only for no
 `instrument_id` is now a **required** request field (did not exist before). It must contain 3 to 25 characters, start with a letter or digit, and contain only letters, digits, underscores, or hyphens. It is checked for uniqueness and returns 409 on collision. The response (`InstrumentResponse`) includes `instrument_id` alongside the existing `unique_id` (MFID) and `instrument_name` (free-text display).
 
 Any authenticated user may create an instrument. `owner` is optional and uses the same flexible identity resolution as dataset and sample creation. Omit it to make the authenticated caller the owner. The deprecated `owner_orcid` field remains an exact canonical identity lookup, and providing both fields returns 422. Human callers may create only for themselves; service accounts and platform administrators may create for another registered identity.
+
+Instrument display names preserve the casing supplied by the caller. Exact filters and dataset assignment by `instrument_id` remain case-insensitive. `PATCH /instruments/{instrument_mfid}` rejects explicit null values for `instrument_id`, `instrument_name`, and `location` with 422; omit a field to leave it unchanged.
 
 The response exposes the canonical identity as `owner_orcid`, matching dataset and sample responses despite the legacy field name. Pass `include_owner=true` on instrument collection, search, singleton, or generic resource reads to populate `owner` with a public-safe user object. Collection expansion uses one batched user query. The API creates an owner ACL for that identity as well as the separate editor ACL for the instrument operator group. Arbitrary labels such as `"facility"` are no longer valid owner values unless they resolve to a registered username. Instrument PATCH no longer accepts `owner`; use `POST /resources/{instrument_mfid}/transfer_ownership`.
 
@@ -102,7 +108,7 @@ The exact collection lookup `GET /projects?project_id={slug}&include_members=tru
 
 ### `POST/PATCH /projects/{project_ref}/users/{orcid}`
 
-Both now return **409** if `?role=owner` (`role=5`) is requested. A project has exactly one owner, and appointing or changing one now only happens through `POST /resources/{mfid}/transfer_ownership`. Previously an existing owner could grant a second member `owner` via either route (or change their own standing away from it), silently desyncing `Project.project_lead_orcid` from who actually held owner standing.
+Both accept named role query values: `viewer`, `contributor`, `editor`, `admin`, and `owner`. Integer role values are no longer accepted. Both return **409** if `?role=owner` is requested. A project has exactly one owner, and appointing or changing one now only happens through `POST /resources/{mfid}/transfer_ownership`. Previously an existing owner could grant a second member `owner` via either route (or change their own standing away from it), silently desyncing `Project.project_lead_orcid` from who actually held owner standing.
 
 ### `PATCH /datasets/{dsid}`
 

@@ -1,6 +1,6 @@
-from typing import Annotated, List, Optional, Union
-
+from enum import Enum
 import os
+from typing import Annotated, List, Optional, Union
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from sqlalchemy import func, join, literal, text
 from sqlmodel import Session, select
@@ -37,6 +37,15 @@ INSTRUMENT_FILTER_FIELDS = {
     "instrument_type",
     "status",
 }
+
+
+class InstrumentStatus(str, Enum):
+    ACTIVE = "active"
+    MAINTENANCE = "maintenance"
+    DECOMMISSIONED = "decommissioned"
+
+
+VALID_INSTRUMENT_STATUSES = tuple(status.value for status in InstrumentStatus)
 
 
 def _instrument_capabilities(session, principal, instrument):
@@ -149,6 +158,7 @@ def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], re
 def search_instruments(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     q: str = Query(min_length=3, description="Search term matched against instrument_name, instrument_type, and manufacturer."),
+    status: Optional[InstrumentStatus] = Query(default=None, description="Restrict results to one lifecycle status."),
     include_owner: bool = False,
     limit: int = Query(default=20, ge=1, le=50),
 ):
@@ -162,6 +172,8 @@ def search_instruments(
             select(Instrument, Resource)
             .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
         )
+        if status is not None:
+            base = base.where(Instrument.status == status.value)
         for token in q.lower().split():
             base = base.where(
                 Instrument.instrument_name.ilike(f"{token}%") |
@@ -345,9 +357,6 @@ def update_instrument(
             ri,
             capabilities=_instrument_capabilities(session, auth_res, instrument),
         )
-
-
-VALID_INSTRUMENT_STATUSES = ("active", "maintenance", "decommissioned")
 
 
 @router.post("/instruments/{instrument_mfid}/status", response_model=InstrumentResponse)

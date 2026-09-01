@@ -119,5 +119,6 @@ def test_status_is_not_editable_through_patch():
 
 
 def test_status_values_are_constrained():
-    from app.api.routes.instruments import VALID_INSTRUMENT_STATUSES
+    from app.api.routes.instruments import InstrumentStatus, VALID_INSTRUMENT_STATUSES
     assert set(VALID_INSTRUMENT_STATUSES) == {"active", "maintenance", "decommissioned"}
+    assert {status.value for status in InstrumentStatus} == set(VALID_INSTRUMENT_STATUSES)

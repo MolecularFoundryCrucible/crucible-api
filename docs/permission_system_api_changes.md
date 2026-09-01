@@ -57,6 +57,8 @@ Authenticated human users may create an instrument for themselves. Human platfor
 
 Instrument display names preserve the casing supplied by the caller. Exact filters and dataset assignment by `instrument_id` remain case-insensitive. `PATCH /instruments/{instrument_mfid}` rejects explicit null values for `instrument_id`, `instrument_name`, and `location` with 422; omit a field to leave it unchanged.
 
+`GET /instruments/search` accepts an optional `status` query with `active`, `maintenance`, or `decommissioned`. Omitting the query preserves the existing behavior and searches across every status.
+
 The response exposes the canonical identity as `owner_orcid`, matching dataset and sample responses despite the legacy field name. Pass `include_owner=true` on instrument collection, search, singleton, or generic resource reads to populate `owner` with a public-safe user object. Collection expansion uses one batched user query. The API creates an owner ACL for that identity as well as the separate editor ACL for the instrument operator group. Arbitrary labels such as `"facility"` are no longer valid owner values unless they resolve to a registered username. Instrument PATCH no longer accepts `owner`; use `POST /resources/{instrument_mfid}/transfer_ownership`.
 
 Project and instrument responses now share an optional caller-specific `capabilities` object:

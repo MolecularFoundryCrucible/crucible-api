@@ -37,7 +37,7 @@ No Flask BFF. The hub talks directly to the Crucible API. User resolution
 
 ## Auth Flow
 
-1. User visits hub → no token in memory → redirect to `GET /api/v2/auth/login`
+1. User visits hub → no token in memory → redirect to `GET /api/v3/auth/login`
 2. ORCID OAuth dance → Crucible API returns API key via `/auth/apikey`
 3. Hub receives API key, stores in React state (not localStorage — XSS risk)
 4. All API calls attach `Authorization: Bearer <key>`

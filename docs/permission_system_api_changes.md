@@ -53,11 +53,25 @@ Returns the current service accounts bound to the instrument's operator group us
 
 `instrument_id` is now a **required** request field (did not exist before). It must contain 3 to 25 characters, start with a letter or digit, and contain only letters, digits, underscores, or hyphens. It is checked for uniqueness and returns 409 on collision. The response (`InstrumentResponse`) includes `instrument_id` alongside the existing `unique_id` (MFID) and `instrument_name` (free-text display).
 
-Any authenticated user may create an instrument. `owner` is optional and uses the same flexible identity resolution as dataset and sample creation. Omit it to make the authenticated caller the owner. The deprecated `owner_orcid` field remains an exact canonical identity lookup, and providing both fields returns 422. Human callers may create only for themselves; service accounts and platform administrators may create for another registered identity.
+Authenticated human users may create an instrument for themselves. Human platform administrators may create one for another registered identity. Service accounts cannot register instruments, including when they hold platform-admin status. `owner` is optional and uses the same flexible identity resolution as dataset and sample creation. Omit it to make the authenticated caller the owner. The deprecated `owner_orcid` field remains an exact canonical identity lookup, and providing both fields returns 422.
 
 Instrument display names preserve the casing supplied by the caller. Exact filters and dataset assignment by `instrument_id` remain case-insensitive. `PATCH /instruments/{instrument_mfid}` rejects explicit null values for `instrument_id`, `instrument_name`, and `location` with 422; omit a field to leave it unchanged.
 
 The response exposes the canonical identity as `owner_orcid`, matching dataset and sample responses despite the legacy field name. Pass `include_owner=true` on instrument collection, search, singleton, or generic resource reads to populate `owner` with a public-safe user object. Collection expansion uses one batched user query. The API creates an owner ACL for that identity as well as the separate editor ACL for the instrument operator group. Arbitrary labels such as `"facility"` are no longer valid owner values unless they resolve to a registered username. Instrument PATCH no longer accepts `owner`; use `POST /resources/{instrument_mfid}/transfer_ownership`.
+
+Project and instrument responses now share an optional caller-specific `capabilities` object:
+
+```json
+{
+  "can_edit": true,
+  "can_manage_access": true,
+  "can_change_status": true,
+  "can_transfer": false,
+  "max_grant_role": "editor"
+}
+```
+
+`max_grant_role` is `viewer`, `contributor`, `editor`, `admin`, or null. Ownership is never grantable and continues to require the ownership-transfer route. Capabilities are populated by canonical singleton reads, exact `instrument_id` and `project_id` collection lookups, create and update responses, and instrument-status responses. General collection and search responses leave the field null. Clients should use these values for presentation and preflight guidance while continuing to handle authorization failures from mutation routes.
 
 ### `PATCH /projects/{project_ref}`
 

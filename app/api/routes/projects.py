@@ -15,7 +15,8 @@ from app.models.core_models import (
 )
 from app.utils.auth_utils import (
     access_selector_filter, authorize_user, has_platform_admin_access,
-    permission_filter, require_grant, require_permission)
+    load_principal, permission_filter, require_grant, require_permission,
+    resource_capabilities)
 from app.utils.permissions import (
     AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
@@ -34,6 +35,18 @@ engine = get_engine()
 
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
+
+
+def _project_capabilities(session, principal, project):
+    return resource_capabilities(
+        session,
+        principal,
+        project.unique_id,
+        legacy_edit_group=project.unique_id,
+        manage_access_floor=Role.EDITOR,
+        status_permission=Permission.EDIT,
+        legacy_status_group=project.unique_id,
+    )
 
 
 @router.post("/projects", response_model=ProjectRead)
@@ -95,7 +108,14 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
 
         session.commit()
         session.refresh(prop)
-        return prop
+        capability_principal = (
+            auth_res if auth_res.is_platform_admin
+            else load_principal(session, auth_res.user_id)
+        )
+        return ProjectRead(
+            **prop.model_dump(),
+            capabilities=_project_capabilities(session, capability_principal, prop),
+        )
 
 
 @router.get("/projects", response_model=PaginatedResponse[ProjectWithLead])
@@ -174,6 +194,7 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
                 modification_time=proj.resource.modification_time if proj.resource else None,
                 scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
                 members=members,
+                capabilities=_project_capabilities(session, auth_res, proj) if project_id is not None else None,
             ))
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
@@ -255,6 +276,7 @@ def read_project(project_ref: str, response: Response,
             creation_time=prop.resource.creation_time if prop.resource else None,
             modification_time=prop.resource.modification_time if prop.resource else None,
             scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
+            capabilities=_project_capabilities(session, auth_res, prop),
         )
 
 
@@ -303,6 +325,7 @@ def update_project(project_ref: str, auth_res: Annotated[Principal, Depends(auth
             lead=lead,
             creation_time=resource.creation_time if resource else None,
             modification_time=resource.modification_time if resource else None,
+            capabilities=_project_capabilities(session, auth_res, project),
         )
 
 

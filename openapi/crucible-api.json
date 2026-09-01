@@ -3416,6 +3416,43 @@
         "title": "ProjectRead",
         "type": "object"
       },
+      "ProjectSyncResult": {
+        "properties": {
+          "orcid": {
+            "title": "Orcid",
+            "type": "string"
+          },
+          "projects_added": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Projects Added",
+            "type": "array"
+          },
+          "projects_already_member": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Projects Already Member",
+            "type": "array"
+          },
+          "projects_not_found": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Projects Not Found",
+            "type": "array"
+          }
+        },
+        "required": [
+          "orcid"
+        ],
+        "title": "ProjectSyncResult",
+        "type": "object"
+      },
       "ProjectUpdate": {
         "additionalProperties": false,
         "description": "Partial update schema for Project. Only provided fields are modified.\n\nNo project_lead_orcid/email/username: leadership changes only through\nPOST /resources/{proj_id}/transfer_ownership, which moves the owner\nstanding and the denormalized lead pointer atomically — a bare field\nedit here never touched the actual owner standing at all. extra=\"forbid\"\nmeans sending one of those fields 422s at the schema layer rather than\nbeing silently dropped or requiring a runtime check in the route.",
@@ -5227,6 +5264,33 @@
           }
         ],
         "summary": "Update Account Profile",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/account/sync-projects": {
+      "post": {
+        "description": "Add project memberships discovered from the MF proposal database.",
+        "operationId": "sync_account_projects_account_sync_projects_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSyncResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Sync Account Projects",
         "tags": [
           "account"
         ]
@@ -9556,7 +9620,7 @@
         ]
       },
       "post": {
-        "description": "Create a new project. One of project_lead (ORCID, username, or email) or\nproject_lead_orcid/_email/_username must be provided and must correspond\nto an existing user. The resolved ORCID is stored on the project.\nReturns 409 if a project with the given project_id already exists.",
+        "description": "Create a new project. One of project_lead (ORCID, username, or email) or\nproject_lead_orcid/_email/_username must be provided and must correspond\nto an existing user. The resolved canonical user identifier is stored on the project.\nReturns 409 if a project with the given project_id already exists.",
         "operationId": "create_project_projects_post",
         "requestBody": {
           "content": {
@@ -10901,7 +10965,6 @@
             "name": "force",
             "required": true,
             "schema": {
-              "const": true,
               "description": "Required acknowledgement for direct permanent deletion.",
               "title": "Force",
               "type": "boolean"
@@ -11555,7 +11618,7 @@
         ]
       },
       "post": {
-        "description": "Create a new sample. If a sample with the same project_id and sample_name already\nexists, the existing record is returned without modification.",
+        "description": "Create a new sample. Sample names are not unique within a project, so repeating one\ncreates a second sample.",
         "operationId": "create_sample_samples_post",
         "requestBody": {
           "content": {
@@ -13379,5 +13442,10 @@
         ]
       }
     }
-  }
+  },
+  "servers": [
+    {
+      "url": "/api/v3"
+    }
+  ]
 }

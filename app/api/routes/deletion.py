@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -214,7 +214,7 @@ def review_deletion_request(
 def hard_delete_resource_route(
     resource_id: str,
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    force: Literal[True] = Query(
+    force: bool = Query(
         ...,
         description="Required acknowledgement for direct permanent deletion.",
     ),

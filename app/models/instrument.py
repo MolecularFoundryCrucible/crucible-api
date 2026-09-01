@@ -3,6 +3,7 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
 
 from app.general_utils import blank_to_none
+from app.models.resource import ResourceCapabilities
 from app.models.users import UserPublicRead
 
 
@@ -92,3 +93,4 @@ class InstrumentResponse(InstrumentRead):
     modification_time: Optional[str] = None
     scientific_metadata: Optional[dict] = None
     status: Optional[str] = None
+    capabilities: Optional[ResourceCapabilities] = None

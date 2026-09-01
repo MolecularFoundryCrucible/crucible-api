@@ -4,6 +4,7 @@ from typing import List, Optional
 from pydantic import ConfigDict, field_validator, model_validator
 from sqlmodel import SQLModel
 from app.models.access_groups import AccessGroupMemberRead
+from app.models.resource import ResourceCapabilities
 from app.models.users import UserPublicRead
 
 
@@ -47,6 +48,7 @@ class ProjectRead(SQLModel):
     project_lead_orcid: Optional[str] = None
     status: Optional[str] = None
     title: Optional[str] = None
+    capabilities: Optional[ResourceCapabilities] = None
 
     @model_validator(mode="after")
     def warn_missing_lead(self):

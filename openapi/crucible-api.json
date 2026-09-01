@@ -1873,6 +1873,16 @@
       "InstrumentResponse": {
         "description": "InstrumentRead extended with Resource timestamps.",
         "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "creation_time": {
             "anyOf": [
               {
@@ -3352,6 +3362,16 @@
       "ProjectRead": {
         "description": "Response model for Project.",
         "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "organization": {
             "title": "Organization",
             "type": "string"
@@ -3498,6 +3518,16 @@
       "ProjectWithLead": {
         "description": "ProjectRead extended with a public-safe lead profile. Project metadata and\nmembers remain restricted to project members and platform administrators.",
         "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "creation_time": {
             "anyOf": [
               {
@@ -3715,6 +3745,51 @@
           "permission"
         ],
         "title": "ResourceACL",
+        "type": "object"
+      },
+      "ResourceCapabilities": {
+        "properties": {
+          "can_change_status": {
+            "title": "Can Change Status",
+            "type": "boolean"
+          },
+          "can_edit": {
+            "title": "Can Edit",
+            "type": "boolean"
+          },
+          "can_manage_access": {
+            "title": "Can Manage Access",
+            "type": "boolean"
+          },
+          "can_transfer": {
+            "title": "Can Transfer",
+            "type": "boolean"
+          },
+          "max_grant_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "viewer",
+                  "contributor",
+                  "editor",
+                  "admin"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Grant Role"
+          }
+        },
+        "required": [
+          "can_edit",
+          "can_manage_access",
+          "can_change_status",
+          "can_transfer"
+        ],
+        "title": "ResourceCapabilities",
         "type": "object"
       },
       "ResourceSearchResult": {

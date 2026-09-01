@@ -61,6 +61,13 @@ def test_canonical_get_uses_project_mfid(client, db_engine, auth_as):
     assert response.status_code == 200, response.text
     assert response.json()["unique_id"] == project_mfid
     assert "content-location" not in response.headers
+    assert response.json()["capabilities"] == {
+        "can_edit": False,
+        "can_manage_access": False,
+        "can_change_status": False,
+        "can_transfer": False,
+        "max_grant_role": None,
+    }
 
 
 def test_legacy_slug_get_returns_canonical_location(client, db_engine, auth_as):
@@ -86,6 +93,7 @@ def test_exact_slug_query_returns_one_public_safe_project(client, db_engine, aut
     assert len(body["items"]) == 1
     assert body["items"][0]["unique_id"] == project_mfid
     assert "email" not in body["items"][0]["lead"]
+    assert body["items"][0]["capabilities"]["can_edit"] is False
 
 
 def test_exact_slug_query_returns_empty_collection_when_missing(client, db_engine, auth_as):
@@ -111,13 +119,20 @@ def test_exact_slug_query_keeps_lead_email_private_for_members(client, db_engine
 
 def test_project_update_accepts_canonical_mfid(client, db_engine, auth_as):
     project_mfid, group_id = _setup(db_engine)
-    auth_as("0000-0001-1111-1111", groups=[(project_mfid, group_id, Role.OWNER)])
+    auth_as("0000-0001-1111-1111", groups=[(project_mfid, group_id, Role.EDITOR)])
 
     response = client.patch(f"/projects/{project_mfid}", json={"title": "Updated title"})
 
     assert response.status_code == 200, response.text
     assert response.json()["unique_id"] == project_mfid
     assert response.json()["title"] == "Updated title"
+    assert response.json()["capabilities"] == {
+        "can_edit": True,
+        "can_manage_access": True,
+        "can_change_status": True,
+        "can_transfer": False,
+        "max_grant_role": "editor",
+    }
 
 
 def test_project_membership_read_accepts_canonical_mfid(client, db_engine, auth_as):

@@ -12,7 +12,7 @@ from app.models.core_models import AccessGroup, Instrument, Resource, Scientific
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
 from app.models.users import UserPublicRead
-from app.utils.auth_utils import authorize_user, require_permission
+from app.utils.auth_utils import authorize_user, require_permission, resource_capabilities
 from app.utils.instrument_utils import assert_instrument_id_available
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.sql_utils import add_or_update, create_standard_acls, sql_create_resource_acl, touch_resource_modification_time
@@ -39,7 +39,19 @@ INSTRUMENT_FILTER_FIELDS = {
 }
 
 
-def _instrument_response(instrument, resource=None, scientific_metadata=None, owner=None):
+def _instrument_capabilities(session, principal, instrument):
+    legacy_group = (instrument.instrument_name or "").lower()
+    return resource_capabilities(
+        session,
+        principal,
+        instrument.unique_id,
+        legacy_edit_group=legacy_group,
+        legacy_status_group=legacy_group,
+    )
+
+
+def _instrument_response(instrument, resource=None, scientific_metadata=None, owner=None,
+                         capabilities=None):
     return InstrumentResponse.model_validate({
         **instrument.model_dump(exclude={"owner"}),
         "owner_orcid": instrument.owner,
@@ -47,6 +59,7 @@ def _instrument_response(instrument, resource=None, scientific_metadata=None, ow
         "creation_time": resource.creation_time if resource else None,
         "modification_time": resource.modification_time if resource else None,
         "scientific_metadata": scientific_metadata,
+        "capabilities": capabilities,
     })
 
 
@@ -119,10 +132,16 @@ def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], re
                     ri,
                     smb.scientific_metadata if smb else None,
                     owners.get(inst.owner),
+                    _instrument_capabilities(session, auth_res, inst) if instrument_id is not None else None,
                 ))
             else:
                 inst, ri = row
-                items.append(_instrument_response(inst, ri, owner=owners.get(inst.owner)))
+                items.append(_instrument_response(
+                    inst,
+                    ri,
+                    owner=owners.get(inst.owner),
+                    capabilities=_instrument_capabilities(session, auth_res, inst) if instrument_id is not None else None,
+                ))
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
@@ -184,7 +203,13 @@ def read_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], ins
                 raise HTTPException(status_code=404, detail="Instrument not found")
             inst, ri, smb = result
             owner = _instrument_owners(session, [inst]).get(inst.owner) if include_owner else None
-            return _instrument_response(inst, ri, smb.scientific_metadata if smb else None, owner)
+            return _instrument_response(
+                inst,
+                ri,
+                smb.scientific_metadata if smb else None,
+                owner,
+                _instrument_capabilities(session, auth_res, inst),
+            )
         else:
             result = session.exec(
                 select(Instrument, Resource)
@@ -195,7 +220,12 @@ def read_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], ins
                 raise HTTPException(status_code=404, detail="Instrument not found")
             inst, ri = result
             owner = _instrument_owners(session, [inst]).get(inst.owner) if include_owner else None
-            return _instrument_response(inst, ri, owner=owner)
+            return _instrument_response(
+                inst,
+                ri,
+                owner=owner,
+                capabilities=_instrument_capabilities(session, auth_res, inst),
+            )
 
 
 @router.post("/instruments", response_model=InstrumentResponse)
@@ -204,6 +234,12 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
     '''
     Register a new instrument in the database.
     '''
+    if auth_res.is_service_account:
+        raise HTTPException(
+            status_code=403,
+            detail="Service accounts cannot register instruments",
+        )
+
     user_unique_id = auth_res.user_id
     with Session(engine) as session:
         assert_instrument_id_available(session, instrument.instrument_id)
@@ -217,7 +253,6 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
         )
         if (
             owner_user.unique_id != user_unique_id
-            and not auth_res.is_service_account
             and not auth_res.is_platform_admin
         ):
             raise HTTPException(
@@ -261,6 +296,7 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
             db_instrument,
             ri,
             owner=UserPublicRead.model_validate(owner_user),
+            capabilities=_instrument_capabilities(session, auth_res, db_instrument),
         )
 
 
@@ -304,7 +340,11 @@ def update_instrument(
         session.commit()
         session.refresh(instrument)
         background_tasks.add_task(write_record, instrument.unique_id, instrument_record(instrument, ri), user_unique_id, "update")
-        return _instrument_response(instrument, ri)
+        return _instrument_response(
+            instrument,
+            ri,
+            capabilities=_instrument_capabilities(session, auth_res, instrument),
+        )
 
 
 VALID_INSTRUMENT_STATUSES = ("active", "maintenance", "decommissioned")
@@ -347,7 +387,11 @@ def set_instrument_status(
 
         ri = session.exec(select(Resource).where(
             Resource.mfid == instrument_mfid)).one_or_none()
-        return _instrument_response(instrument, ri)
+        return _instrument_response(
+            instrument,
+            ri,
+            capabilities=_instrument_capabilities(session, auth_res, instrument),
+        )
 
 
 def _get_instrument_operators(instrument_mfid: str, session) -> List[AccessGroupMemberRead]:

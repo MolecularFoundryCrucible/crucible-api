@@ -10,12 +10,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Added `GET /instruments/{instrument_mfid}/service_accounts` for authorized administrators to inspect instrument bindings.
 - Added a server warning when an unbound service account successfully creates a dataset for a registered instrument. Enforcement remains deferred.
+- Added optional caller-specific `capabilities` to project and instrument responses, including the highest non-owner role the caller may grant. Capabilities are populated for singleton, exact-slug, create, update, and instrument-status responses, and remain null on general collection and search results.
 
 ### Changed
 
 - Instrument display names now preserve caller-supplied casing instead of being forced to lowercase.
 - Instrument collection filters and dataset assignment by `instrument_id` now resolve case-insensitively.
 - Project membership mutation routes now accept named roles (`viewer`, `contributor`, `editor`, `admin`, and `owner`) instead of integer enum values. `owner` remains rejected with 409 and requires the ownership-transfer route.
+- Service accounts may no longer register instruments, including when they hold platform-admin status. Human platform administrators may continue registering an instrument for another identity.
 
 ### Fixed
 

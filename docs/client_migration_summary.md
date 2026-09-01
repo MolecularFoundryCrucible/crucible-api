@@ -45,6 +45,7 @@ Clients may remain handwritten, but their CI should compare declared routes and 
 - Project and instrument slugs are human-readable lookup values, not stable identifiers. New or renamed slugs must contain 3 to 25 characters.
 - Use a canonical singleton route when the input is an MFID. Use an exact collection filter when the input is a slug, username, or email. The collection result already contains the complete authorized representation, so do not resolve and then make a second GET.
 - Normal ACL grants stop at `admin`. The `owner` permission is exclusive and can only be changed through the ownership-transfer route.
+- Exact project and instrument responses include optional caller-specific `capabilities` for UI guidance. General collection and search results leave it null.
 - Relationship lists and graphs are permission-filtered. A client may receive 403 for an inaccessible starting resource or fewer related resources than before.
 - The deprecated dataset `source_folder` field no longer exists in create or read schemas. Use associated-file records for file locations.
 
@@ -80,6 +81,22 @@ The client should classify a supplied reference locally and issue one request.
 | Email | `GET /users?email={email}` | Apply exact-result handling. Another user's public-safe response does not echo the email. |
 
 The compatibility routes `GET /projects/{project_slug}`, `GET /users/{username}`, `GET /users/{email}`, and `GET /users/by-username/{username}` remain available temporarily. Compatible singleton responses include `Content-Location` pointing to the canonical route. New clients should not depend on these aliases.
+
+Project and instrument singleton responses, exact slug-filter results, and create or update responses may include:
+
+```json
+{
+  "capabilities": {
+    "can_edit": true,
+    "can_manage_access": true,
+    "can_change_status": true,
+    "can_transfer": false,
+    "max_grant_role": "editor"
+  }
+}
+```
+
+`max_grant_role` is the highest non-owner role the caller may assign, or null when the caller cannot grant access. Clients should use capabilities to enable or hide actions but must still handle 403 and 409 responses because authorization is enforced server-side.
 
 ## Ownership and project assignment
 

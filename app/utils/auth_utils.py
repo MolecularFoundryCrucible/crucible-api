@@ -20,9 +20,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.general_utils import  get_secret
 from app.api.dependencies import get_engine, get_api_path, get_api_url
 from app.models.core_models import ApiToken
+from app.models.resource import ResourceCapabilities
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, THRESHOLDS, GroupMembership, Permission, PlatformRole,
-    Principal, Role, effective_role)
+    Principal, Role, can_grant, effective_role, has_permission)
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import join
@@ -289,6 +290,44 @@ def fetch_acl_rows(session, mfid: str):
     return [(gid, Role.from_db(r)) for gid, r in rows if r is not None]
 
 
+def _has_resource_permission(principal: Principal, acl_rows, permission: Permission,
+                             legacy_group: Optional[str] = None) -> bool:
+    if principal.is_platform_admin:
+        return True
+    if not acl_rows and legacy_group is not None:
+        return any(g.group_name in ("admin", legacy_group) for g in principal.groups)
+    return has_permission(principal, acl_rows, permission)
+
+
+def resource_capabilities(session, principal: Principal, mfid: str, *,
+                          legacy_edit_group: Optional[str] = None,
+                          manage_access_floor: Role = THRESHOLDS[Permission.MANAGE_ACL],
+                          status_permission: Permission = Permission.DELETE,
+                          legacy_status_group: Optional[str] = None) -> ResourceCapabilities:
+    acl_rows = fetch_acl_rows(session, mfid)
+    actor_role = effective_role(principal, acl_rows)
+
+    max_grant_role = None
+    if principal.is_platform_admin:
+        max_grant_role = Role.ADMIN.db_value
+    else:
+        for target in (Role.ADMIN, Role.EDITOR, Role.CONTRIBUTOR, Role.VIEWER):
+            if can_grant(actor_role, target, floor=manage_access_floor):
+                max_grant_role = target.db_value
+                break
+
+    return ResourceCapabilities(
+        can_edit=_has_resource_permission(
+            principal, acl_rows, Permission.EDIT, legacy_edit_group),
+        can_manage_access=max_grant_role is not None,
+        can_change_status=_has_resource_permission(
+            principal, acl_rows, status_permission, legacy_status_group),
+        can_transfer=_has_resource_permission(
+            principal, acl_rows, Permission.TRANSFER),
+        max_grant_role=max_grant_role,
+    )
+
+
 def require_permission(session, principal: Principal, mfid: str,
                        permission: Permission,
                        legacy_group: Optional[str] = None) -> Optional[Role]:
@@ -304,20 +343,15 @@ def require_permission(session, principal: Principal, mfid: str,
     instead, so deploying before the backfill does not lock the routes out.
     Drop it in phase 5.
     """
-    from app.utils.permissions import has_permission
-
+    acl_rows = fetch_acl_rows(session, mfid)
+    if not acl_rows and legacy_group is not None:
+        if not _has_resource_permission(principal, acl_rows, permission, legacy_group):
+            raise HTTPException(status_code=403, detail="Not authorized")
+        return None
+    if not _has_resource_permission(principal, acl_rows, permission, legacy_group):
+        raise HTTPException(status_code=403, detail="Access denied")
     if principal.is_platform_admin:
         return None
-
-    acl_rows = fetch_acl_rows(session, mfid)
-
-    if not acl_rows and legacy_group is not None:
-        if any(g.group_name in ("admin", legacy_group) for g in principal.groups):
-            return None
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    if not has_permission(principal, acl_rows, permission):
-        raise HTTPException(status_code=403, detail="Access denied")
     return effective_role(principal, acl_rows)
 
 

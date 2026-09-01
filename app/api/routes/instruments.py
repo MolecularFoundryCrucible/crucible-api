@@ -257,7 +257,7 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
         ):
             raise HTTPException(
                 status_code=403,
-                detail="Only service accounts and platform administrators may create an instrument on behalf of another user",
+                detail="Only platform administrators may create an instrument on behalf of another user",
             )
 
         instrument_details["owner"] = owner_user.unique_id

@@ -94,6 +94,7 @@ class TestCreateInstrument:
         auth_as("0000-0002", groups=[])
         resp = client.post("/instruments", json={**INSTRUMENT_PAYLOAD, "owner": "0000-0003"})
         assert resp.status_code == 403
+        assert resp.json()["detail"] == "Only platform administrators may create an instrument on behalf of another user"
 
     def test_platform_admin_can_create_for_another_user(self, client, db_engine, auth_as):
         with Session(db_engine) as session:

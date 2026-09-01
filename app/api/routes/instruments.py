@@ -25,6 +25,19 @@ engine = get_engine()
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
+INSTRUMENT_FILTER_FIELDS = {
+    "other_id",
+    "other_id_source",
+    "instrument_name",
+    "manufacturer",
+    "model",
+    "owner",
+    "location",
+    "description",
+    "instrument_type",
+    "status",
+}
+
 
 def _instrument_response(instrument, resource=None, scientific_metadata=None, owner=None):
     return InstrumentResponse.model_validate({
@@ -67,7 +80,11 @@ def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], re
         query_params.pop(k, None)
     if instrument_id is None:
         query_params.setdefault('status', 'active')
-    filters = [getattr(Instrument, k) == v.lower().strip() for k, v in query_params.items() if hasattr(Instrument, k)]
+    filters = [
+        func.lower(getattr(Instrument, key)) == value.lower().strip()
+        for key, value in query_params.items()
+        if key in INSTRUMENT_FILTER_FIELDS
+    ]
     if instrument_id is not None:
         filters.append(func.lower(Instrument.instrument_id) == instrument_id.lower().strip())
 
@@ -210,7 +227,6 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
 
         instrument_details["owner"] = owner_user.unique_id
         db_instrument = Instrument(**instrument_details)
-        db_instrument.instrument_name = db_instrument.instrument_name.lower()
         session.add(db_instrument)
         session.flush()
         now = get_utc_isoformat()
@@ -273,8 +289,6 @@ def update_instrument(
                            legacy_group=(instrument.instrument_name or "").lower())
 
         update_data = instrument_update.model_dump(exclude_unset=True)
-        if "instrument_name" in update_data:
-            update_data["instrument_name"] = update_data["instrument_name"].lower()
         if update_data.get("instrument_id"):
             assert_instrument_id_available(session, update_data["instrument_id"],
                                            exclude_unique_id=instrument_mfid)
@@ -342,12 +356,32 @@ def _get_instrument_operators(instrument_mfid: str, session) -> List[AccessGroup
         select(User, UserAccessGroupLink.role)
         .select_from(join(AccessGroup, UserAccessGroupLink, UserAccessGroupLink.accessgroup_id == AccessGroup.id))
         .join(User, User.id == UserAccessGroupLink.user_id)
-        .where(AccessGroup.group_name == instrument_mfid)
+        .where(
+            AccessGroup.group_name == instrument_mfid,
+            AccessGroup.group_type == AccessGroupType.INSTRUMENT.value,
+            User.is_service_account == True,
+        )
     ).all()
     return [
         AccessGroupMemberRead.model_validate(user, update={"role": role or "unknown"})
         for user, role in rows
     ]
+
+
+@router.get("/instruments/{instrument_mfid}/service_accounts", response_model=List[AccessGroupMemberRead])
+def list_instrument_service_accounts(
+    instrument_mfid: str,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+):
+    with Session(engine) as session:
+        instrument = session.exec(
+            select(Instrument).where(Instrument.unique_id == instrument_mfid)
+        ).one_or_none()
+        if instrument is None:
+            raise HTTPException(status_code=404, detail="Instrument not found")
+
+        require_permission(session, auth_res, instrument_mfid, Permission.MANAGE_ACL)
+        return _get_instrument_operators(instrument_mfid, session)
 
 
 @router.post("/instruments/{instrument_mfid}/service_accounts/{sa_unique_id}", response_model=List[AccessGroupMemberRead])
@@ -408,7 +442,10 @@ def remove_instrument_service_account(
 
         require_permission(session, auth_res, instrument_mfid, Permission.MANAGE_ACL)
 
-        sa = session.exec(select(User).where(User.unique_id == sa_unique_id)).one_or_none()
+        sa = session.exec(select(User).where(
+            User.unique_id == sa_unique_id,
+            User.is_service_account == True,
+        )).one_or_none()
         if sa is None:
             raise HTTPException(status_code=404, detail="Service account not found")
 

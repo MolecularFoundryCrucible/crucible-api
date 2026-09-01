@@ -51,9 +51,9 @@ class InstrumentUpdate(SQLModel):
     '''Partial update schema for Instrument. Only provided fields are modified.'''
     model_config = ConfigDict(extra="forbid")
 
-    instrument_id: Optional[str] = None
-    instrument_name: Optional[str] = None
-    location: Optional[str] = None
+    instrument_id: str = None
+    instrument_name: str = None
+    location: str = None
     other_id: Optional[str] = None
     other_id_source: Optional[str] = None
     manufacturer: Optional[str] = None
@@ -65,7 +65,7 @@ class InstrumentUpdate(SQLModel):
     @classmethod
     def check_instrument_id(cls, v):
         from app.utils.instrument_utils import validate_instrument_id_format
-        return validate_instrument_id_format(v) if v is not None else v
+        return validate_instrument_id_format(v)
 
 
 class InstrumentRead(SQLModel):

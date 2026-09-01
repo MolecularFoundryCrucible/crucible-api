@@ -110,6 +110,8 @@ The exact collection lookup `GET /projects?project_id={slug}&include_members=tru
 
 Both accept named role query values: `viewer`, `contributor`, `editor`, `admin`, and `owner`. Integer role values are no longer accepted. Both return **409** if `?role=owner` is requested. A project has exactly one owner, and appointing or changing one now only happens through `POST /resources/{mfid}/transfer_ownership`. Previously an existing owner could grant a second member `owner` via either route (or change their own standing away from it), silently desyncing `Project.project_lead_orcid` from who actually held owner standing.
 
+Repeating `POST` for an existing member with the same requested role returns 200 without changing the membership. If the requested role differs from the member's current role, `POST` returns 409 and directs the caller to `PATCH`. Omitting `role` means `contributor` for this comparison.
+
 ### `PATCH /datasets/{dsid}`
 
 Body now rejects `owner_orcid` and `project_id` with **422**. Use `transfer_ownership` / `POST /resources/{mfid}/project` instead. Instrument reassignment is frozen until a dedicated atomic operation is available. The deprecated `instrument_name` and `instrument_id` fields accept only the current value for compatibility; changing or clearing either returns **409**. Other accepted fields are `dataset_name`, `data_format`, `measurement`, `data_type`, `session_name`, `timestamp`, and `public`.

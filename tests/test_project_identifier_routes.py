@@ -140,6 +140,17 @@ def test_project_membership_mutations_accept_canonical_mfid(client, db_engine, a
     assert added.status_code == 200, added.text
     assert any(item["unique_id"] == member_id for item in added.json())
 
+    repeated = client.post(f"/projects/{project_mfid}/users/{member_id}")
+    assert repeated.status_code == 200, repeated.text
+    assert next(item for item in repeated.json() if item["unique_id"] == member_id)["role"] == "contributor"
+
+    conflicting = client.post(
+        f"/projects/{project_mfid}/users/{member_id}",
+        params={"role": Role.VIEWER.db_value},
+    )
+    assert conflicting.status_code == 409, conflicting.text
+    assert "Use PATCH" in conflicting.json()["detail"]
+
     updated = client.patch(
         f"/projects/{project_mfid}/users/{member_id}",
         params={"role": Role.VIEWER.db_value},

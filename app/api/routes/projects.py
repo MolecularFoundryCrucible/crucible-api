@@ -373,9 +373,31 @@ def add_users_to_project(
             raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')
 
         require_permission(session, auth_res, proj.unique_id, Permission.EDIT, legacy_group=proj.unique_id)
-        require_grant(session, auth_res, proj.unique_id, internal_role, floor=Role.EDITOR)
-
         user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
+        ag = session.exec(
+            select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)
+        ).one_or_none()
+        if ag is not None:
+            existing_link = session.exec(
+                select(UserAccessGroupLink)
+                .where(UserAccessGroupLink.user_id == user.id)
+                .where(UserAccessGroupLink.accessgroup_id == ag.id)
+            ).one_or_none()
+            if existing_link is not None and existing_link.role is not None:
+                current_role = Role.from_db(existing_link.role)
+                if current_role == internal_role:
+                    return _get_project_users(proj.project_id, session)
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"User '{user.unique_id}' is already a member of project "
+                        f"'{proj.project_id}' with role '{current_role.db_value}'. "
+                        f"Use PATCH /projects/{proj.unique_id}/users/{user.unique_id}"
+                        f"?role={internal_role.db_value} to change it."
+                    ),
+                )
+
+        require_grant(session, auth_res, proj.unique_id, internal_role, floor=Role.EDITOR)
 
         sql_add_user_to_project(user, proj.project_id, session, role=internal_role)
         session.commit()

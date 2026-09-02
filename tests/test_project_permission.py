@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.models.core_models import (
     AccessGroup, Project, Resource, ResourceACL, User, UserAccessGroupLink)
-from app.utils.auth_utils import require_permission, resource_capabilities
+from app.utils.auth_utils import fetch_acl_rows, require_permission, resource_capabilities
 from app.utils.permissions import GroupMembership, Permission, PlatformRole, Principal, Role
 
 PROJ = "proj_x"
@@ -63,20 +63,26 @@ class TestAfterMigration:
     def test_standing_decides(self, session, standing, permission, allowed):
         migrated(session)
         principal = member(standing)
+        acl_rows = fetch_acl_rows(session, PROJ)
         if allowed:
-            require_permission(session, principal, PROJ, permission, legacy_group=PROJ)
+            require_permission(
+                None, principal, PROJ, permission, legacy_group=PROJ,
+                acl_rows=acl_rows)
         else:
             with pytest.raises(HTTPException):
-                require_permission(session, principal, PROJ, permission, legacy_group=PROJ)
+                require_permission(
+                    None, principal, PROJ, permission, legacy_group=PROJ,
+                    acl_rows=acl_rows)
 
         capabilities = resource_capabilities(
-            session,
+            None,
             principal,
             PROJ,
             legacy_edit_group=PROJ,
             manage_access_floor=Role.EDITOR,
             status_permission=Permission.EDIT,
             legacy_status_group=PROJ,
+            acl_rows=acl_rows,
         )
         expected_max = None
         if standing >= Role.ADMIN:

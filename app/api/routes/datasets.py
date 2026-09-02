@@ -43,7 +43,9 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
-from app.utils.auth_utils import access_selector_filter, authorize_user, permission_filter, require_permission
+from app.utils.auth_utils import (
+    access_selector_filter, authorize_user, fetch_acl_rows, permission_filter,
+    require_permission, resource_capabilities)
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
@@ -643,7 +645,9 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], datase
             raise HTTPException(status_code=404, detail="Dataset not found")
 
         # check that requester has read access
-        require_permission(session, auth_res, dataset_mfid, Permission.READ)
+        acl_rows = fetch_acl_rows(session, dataset_mfid)
+        require_permission(
+            session, auth_res, dataset_mfid, Permission.READ, acl_rows=acl_rows)
 
         # check deletion request
         deletion_req = get_active_deletion_request(session, dataset_mfid)
@@ -672,6 +676,13 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], datase
             "deletion_request": deletion_req.model_dump() if deletion_req else None,
             "links": links,
             "owner": owner,
+            "capabilities": resource_capabilities(
+                session,
+                auth_res,
+                dataset_mfid,
+                status_permission=None,
+                acl_rows=acl_rows,
+            ),
         })
 
 

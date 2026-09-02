@@ -49,7 +49,15 @@ def test_get_resource_resolves_instrument_id_slug(client, db_engine, auth_as):
 
     resp = client.get("/resources/samp_1")
     assert resp.status_code == 200, resp.text
-    datasets = resp.json()["datasets"]
+    body = resp.json()
+    assert body["capabilities"] == {
+        "can_edit": True,
+        "can_manage_access": True,
+        "can_change_status": False,
+        "can_transfer": True,
+        "max_grant_role": "admin",
+    }
+    datasets = body["datasets"]
     assert len(datasets) == 1
     assert datasets[0]["instrument_id"] == slug
 
@@ -60,9 +68,24 @@ def test_get_sample_resolves_instrument_id_slug(client, db_engine, auth_as):
 
     resp = client.get("/samples/samp_1")
     assert resp.status_code == 200, resp.text
-    datasets = resp.json()["datasets"]
+    body = resp.json()
+    assert body["capabilities"] == {
+        "can_edit": True,
+        "can_manage_access": True,
+        "can_change_status": False,
+        "can_transfer": True,
+        "max_grant_role": "admin",
+    }
+    datasets = body["datasets"]
     assert len(datasets) == 1
     assert datasets[0]["instrument_id"] == slug
+
+    dataset = client.get("/datasets/ds_1")
+    generic_dataset = client.get("/resources/ds_1")
+    assert dataset.status_code == 200, dataset.text
+    assert generic_dataset.status_code == 200, generic_dataset.text
+    assert dataset.json()["capabilities"] == body["capabilities"]
+    assert generic_dataset.json()["capabilities"] == body["capabilities"]
 
 
 def test_list_samples_resolves_instrument_id_slug(client, db_engine, auth_as):
@@ -74,3 +97,4 @@ def test_list_samples_resolves_instrument_id_slug(client, db_engine, auth_as):
     items = resp.json()["items"]
     sample = next(s for s in items if s["unique_id"] == "samp_1")
     assert sample["datasets"][0]["instrument_id"] == slug
+    assert sample["capabilities"] is None

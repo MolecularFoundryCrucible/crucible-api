@@ -31,7 +31,8 @@ from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import (
-    authorize_user, require_grant, permission_filter, require_permission, require_platform_admin)
+    authorize_user, fetch_acl_rows, permission_filter, require_grant,
+    require_permission, require_platform_admin, resource_capabilities)
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, get_active_deletion_request, set_public, sql_create_resource_acl, touch_resource_modification_time
@@ -144,7 +145,9 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
 
-        require_permission(session, auth_res, resource_id, Permission.READ)
+        acl_rows = fetch_acl_rows(session, resource_id)
+        require_permission(
+            session, auth_res, resource_id, Permission.READ, acl_rows=acl_rows)
 
         deletion_req = get_active_deletion_request(session, resource_id)
 
@@ -182,6 +185,13 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
                     session, auth_res, "dataset", ds
                 ) if include_links else None,
                 "owner": _resolve_owner(ds.owner_orcid),
+                "capabilities": resource_capabilities(
+                    session,
+                    auth_res,
+                    resource_id,
+                    status_permission=None,
+                    acl_rows=acl_rows,
+                ),
             })
 
         elif resource.resource_type == "sample":
@@ -219,6 +229,13 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
                     associated_entities=readable_datasets,
                 ) if include_links else None,
                 "owner": _resolve_owner(samp.owner_orcid),
+                "capabilities": resource_capabilities(
+                    session,
+                    auth_res,
+                    resource_id,
+                    status_permission=None,
+                    acl_rows=acl_rows,
+                ),
             })
 
         elif resource.resource_type == "instrument":
@@ -234,6 +251,14 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
                 "creation_time": resource.creation_time,
                 "modification_time": resource.modification_time,
                 "scientific_metadata": sci_md,
+                "capabilities": resource_capabilities(
+                    session,
+                    auth_res,
+                    resource_id,
+                    legacy_edit_group=(inst.instrument_name or "").lower(),
+                    legacy_status_group=(inst.instrument_name or "").lower(),
+                    acl_rows=acl_rows,
+                ),
             })
 
         elif resource.resource_type == "project":
@@ -253,6 +278,16 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
                 scientific_metadata=sci_md,
                 creation_time=resource.creation_time,
                 modification_time=resource.modification_time,
+                capabilities=resource_capabilities(
+                    session,
+                    auth_res,
+                    resource_id,
+                    legacy_edit_group=proj.unique_id,
+                    manage_access_floor=Role.EDITOR,
+                    status_permission=Permission.EDIT,
+                    legacy_status_group=proj.unique_id,
+                    acl_rows=acl_rows,
+                ),
             )
 
         else:

@@ -302,9 +302,11 @@ def _has_resource_permission(principal: Principal, acl_rows, permission: Permiss
 def resource_capabilities(session, principal: Principal, mfid: str, *,
                           legacy_edit_group: Optional[str] = None,
                           manage_access_floor: Role = THRESHOLDS[Permission.MANAGE_ACL],
-                          status_permission: Permission = Permission.DELETE,
-                          legacy_status_group: Optional[str] = None) -> ResourceCapabilities:
-    acl_rows = fetch_acl_rows(session, mfid)
+                          status_permission: Optional[Permission] = Permission.DELETE,
+                          legacy_status_group: Optional[str] = None,
+                          acl_rows: Optional[Sequence[tuple[int, Role]]] = None) -> ResourceCapabilities:
+    if acl_rows is None:
+        acl_rows = fetch_acl_rows(session, mfid)
     actor_role = effective_role(principal, acl_rows)
 
     max_grant_role = None
@@ -320,8 +322,11 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
         can_edit=_has_resource_permission(
             principal, acl_rows, Permission.EDIT, legacy_edit_group),
         can_manage_access=max_grant_role is not None,
-        can_change_status=_has_resource_permission(
-            principal, acl_rows, status_permission, legacy_status_group),
+        can_change_status=(
+            status_permission is not None
+            and _has_resource_permission(
+                principal, acl_rows, status_permission, legacy_status_group)
+        ),
         can_transfer=_has_resource_permission(
             principal, acl_rows, Permission.TRANSFER),
         max_grant_role=max_grant_role,
@@ -330,7 +335,8 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
 
 def require_permission(session, principal: Principal, mfid: str,
                        permission: Permission,
-                       legacy_group: Optional[str] = None) -> Optional[Role]:
+                       legacy_group: Optional[str] = None,
+                       acl_rows: Optional[Sequence[tuple[int, Role]]] = None) -> Optional[Role]:
     """Raise 403 unless `principal` may perform `permission` on `mfid`.
 
     Returns the effective role, so a caller needing to branch further does not
@@ -343,7 +349,8 @@ def require_permission(session, principal: Principal, mfid: str,
     instead, so deploying before the backfill does not lock the routes out.
     Drop it in phase 5.
     """
-    acl_rows = fetch_acl_rows(session, mfid)
+    if acl_rows is None:
+        acl_rows = fetch_acl_rows(session, mfid)
     if not acl_rows and legacy_group is not None:
         if not _has_resource_permission(principal, acl_rows, permission, legacy_group):
             raise HTTPException(status_code=403, detail="Not authorized")

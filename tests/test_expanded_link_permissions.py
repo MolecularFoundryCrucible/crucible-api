@@ -248,6 +248,15 @@ def test_singleton_and_generic_routes_filter_expanded_links(
     }
     assert [dataset.unique_id for dataset in sample.datasets] == ["dataset-root"]
     assert [dataset.unique_id for dataset in generic_sample.datasets] == ["dataset-root"]
+    assert dataset.capabilities.model_dump() == {
+        "can_edit": False,
+        "can_manage_access": False,
+        "can_change_status": False,
+        "can_transfer": False,
+        "max_grant_role": None,
+    }
+    assert sample.capabilities == dataset.capabilities
+    assert generic_sample.capabilities == dataset.capabilities
     assert _link_ids(generic_links) == _link_ids(dataset.links)
 
 
@@ -298,6 +307,8 @@ def test_collection_link_expansion_stays_filtered_and_batched(
 
     dataset_root = next(item for item in datasets.items if item.unique_id == "dataset-root")
     sample_root = next(item for item in samples.items if item.unique_id == "sample-root")
+    assert dataset_root.capabilities is None
+    assert sample_root.capabilities is None
     assert _link_ids(dataset_root.links) == {
         ("dataset-visible-parent", "parent"),
         ("dataset-visible-child", "child"),

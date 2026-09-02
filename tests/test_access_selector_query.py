@@ -223,3 +223,6 @@ def test_access_selectors_are_repeated_openapi_arrays():
     assert dataset_parameters["instrument_mfid"]["description"] == (
         "Filter datasets assigned to this canonical instrument MFID."
     )
+    for schema_name in ("DatasetResponse", "SampleResponse"):
+        capabilities = schema["components"]["schemas"][schema_name]["properties"]["capabilities"]
+        assert capabilities["anyOf"][0]["$ref"] == "#/components/schemas/ResourceCapabilities"

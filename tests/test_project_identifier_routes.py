@@ -133,6 +133,9 @@ def test_project_update_accepts_canonical_mfid(client, db_engine, auth_as):
         "can_transfer": False,
         "max_grant_role": "editor",
     }
+    generic_response = client.get(f"/resources/{project_mfid}")
+    assert generic_response.status_code == 200, generic_response.text
+    assert generic_response.json()["capabilities"] == response.json()["capabilities"]
 
 
 def test_project_membership_read_accepts_canonical_mfid(client, db_engine, auth_as):

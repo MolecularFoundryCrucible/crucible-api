@@ -51,6 +51,9 @@ class TestCreateInstrument:
             "can_transfer": True,
             "max_grant_role": "admin",
         }
+        generic_response = client.get(f"/resources/{mfid}")
+        assert generic_response.status_code == 200, generic_response.text
+        assert generic_response.json()["capabilities"] == resp.json()["capabilities"]
 
         with Session(db_engine) as session:
             ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == mfid)).one()

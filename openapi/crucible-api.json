@@ -931,6 +931,16 @@
       "DatasetResponse": {
         "description": "DatasetRead extended with Resource timestamps, optional scientific metadata, and deletion status.",
         "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "creation_time": {
             "anyOf": [
               {
@@ -4099,6 +4109,16 @@
       "SampleResponse": {
         "description": "SampleRead extended with Resource timestamps, associated datasets, and deletion status.",
         "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "creation_time": {
             "anyOf": [
               {

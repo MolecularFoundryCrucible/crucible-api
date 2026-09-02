@@ -21,7 +21,9 @@ from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
-from app.utils.auth_utils import access_selector_filter, authorize_user, permission_filter, require_permission
+from app.utils.auth_utils import (
+    access_selector_filter, authorize_user, fetch_acl_rows, permission_filter,
+    require_permission, resource_capabilities)
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import Principal, Permission, Role
@@ -506,7 +508,9 @@ def read_sample(sample_mfid: str, auth_res: Annotated[Principal, Depends(authori
             raise HTTPException(status_code=404, detail="Sample not found")
 
         # check that requester has read access
-        require_permission(session, auth_res, sample_mfid, Permission.READ)
+        acl_rows = fetch_acl_rows(session, sample_mfid)
+        require_permission(
+            session, auth_res, sample_mfid, Permission.READ, acl_rows=acl_rows)
 
         # check deletion request
         deletion_req = get_active_deletion_request(session, sample_mfid)
@@ -550,6 +554,13 @@ def read_sample(sample_mfid: str, auth_res: Annotated[Principal, Depends(authori
             "deletion_request": deletion_req.model_dump() if deletion_req else None,
             "links": links,
             "owner": owner,
+            "capabilities": resource_capabilities(
+                session,
+                auth_res,
+                sample_mfid,
+                status_permission=None,
+                acl_rows=acl_rows,
+            ),
         })
 
 

@@ -5548,7 +5548,7 @@
     },
     "/datasets": {
       "get": {
-        "description": "Returns a paginated list of datasets the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nKeyset (cursor) pagination: results are ordered by unique_id descending, which is\ncreation order since unique_id is a time-sortable UUIDv7. To fetch the next page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only on the\nfirst page (cursor omitted); subsequent pages omit it to avoid a redundant count.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. cursor takes precedence when both are given. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass include_links=true to include parent, child, and associated resources for each dataset.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
+        "description": "Returns a paginated list of datasets the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nKeyset (cursor) pagination: results are ordered by unique_id descending, which is\ncreation order since unique_id is a time-sortable UUIDv7. To fetch the next page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only on the\nfirst page (cursor omitted); subsequent pages omit it to avoid a redundant count.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. cursor takes precedence when both are given. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass include_links=true to include parent, child, and associated resources for each dataset.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass instrument_mfid to filter by the instrument's canonical stable identity.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
         "operationId": "list_datasets_datasets_get",
         "parameters": [
           {
@@ -5739,6 +5739,24 @@
               ],
               "title": "Visibility",
               "type": "string"
+            }
+          },
+          {
+            "description": "Filter datasets assigned to this canonical instrument MFID.",
+            "in": "query",
+            "name": "instrument_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter datasets assigned to this canonical instrument MFID.",
+              "title": "Instrument Mfid"
             }
           }
         ],

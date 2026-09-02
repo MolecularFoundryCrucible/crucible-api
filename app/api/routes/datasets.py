@@ -378,7 +378,10 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                   offset: int = Query(default=0, ge=0),
                   creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                   modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None,
-                  visibility: Literal["all", "public", "private"] = "all"):
+                  visibility: Literal["all", "public", "private"] = "all",
+                  instrument_mfid: Annotated[Optional[str], Query(
+                      description="Filter datasets assigned to this canonical instrument MFID.",
+                  )] = None):
     '''
     Returns a paginated list of datasets the requesting user is authorized to view.
     Default limit is 100, max is 1000.
@@ -394,6 +397,7 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
     result sets, since deep offsets are slower.
     Pass include_links=true to include parent, child, and associated resources for each dataset.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
+    Pass instrument_mfid to filter by the instrument's canonical stable identity.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
     params_dict = dict(request.query_params)
@@ -403,7 +407,7 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
               'modification_time_lte', 'include_metadata', 'include_links', 'include_owner',
               'limit', 'cursor', 'offset', 'visibility', 'accessible_to_user',
-              'accessible_to_project'):
+              'accessible_to_project', 'instrument_mfid'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -429,6 +433,8 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 q = q.where(Resource.modification_time >= modification_time_gte)
             if modification_time_lte:
                 q = q.where(Resource.modification_time <= modification_time_lte)
+            if instrument_mfid is not None:
+                q = q.where(Dataset.instrument_mfid == instrument_mfid)
             for key, value in params_dict.items():
                 if hasattr(Dataset, key):
                     q = q.where(getattr(Dataset, key) == value)

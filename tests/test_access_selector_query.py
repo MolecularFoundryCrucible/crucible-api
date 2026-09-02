@@ -215,3 +215,14 @@ def test_access_selectors_are_repeated_openapi_arrays():
         if path == "/projects":
             assert parameters["include_members"]["schema"]["default"] is False
         assert "accessible_to" not in parameters
+    dataset_parameters = {
+        parameter["name"]: parameter
+        for parameter in schema["paths"]["/datasets"]["get"]["parameters"]
+    }
+    assert dataset_parameters["instrument_mfid"]["required"] is False
+    assert dataset_parameters["instrument_mfid"]["description"] == (
+        "Filter datasets assigned to this canonical instrument MFID."
+    )
+    for schema_name in ("DatasetResponse", "SampleResponse"):
+        capabilities = schema["components"]["schemas"][schema_name]["properties"]["capabilities"]
+        assert capabilities["anyOf"][0]["$ref"] == "#/components/schemas/ResourceCapabilities"

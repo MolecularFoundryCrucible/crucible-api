@@ -8,7 +8,7 @@ import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from sqlalchemy import exists, func, join, literal, text
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import joinedload
 from sqlmodel import and_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
@@ -21,15 +21,16 @@ from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
-from app.utils.auth_utils import access_selector_filter, authorize_user, permission_filter, require_permission
+from app.utils.auth_utils import (
+    access_selector_filter, authorize_user, permission_filter, require_permission)
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
-from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import Principal, Permission, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
-from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, visibility_filter_for
+from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
 from app.models.users import UserPublicRead
+from app.services.resource_details import ResourceDetailOptions, load_sample_detail
 
 router = APIRouter(tags=["samples"])
 engine = get_engine()
@@ -489,68 +490,16 @@ def read_sample(sample_mfid: str, auth_res: Annotated[Principal, Depends(authori
     Pass include_links=true to include parent, child, and associated resources.
     '''
     with Session(engine) as session:
-        # get with metadata or not
-        resource_opts = (
-            selectinload(Sample.resource).selectinload(Resource.scientific_metadata)
-            if include_metadata else selectinload(Sample.resource)
+        return load_sample_detail(
+            session,
+            auth_res,
+            sample_mfid,
+            options=ResourceDetailOptions(
+                include_metadata=include_metadata,
+                include_links=include_links,
+                include_owner=include_owner,
+            ),
         )
-        # fetch resource
-        samp = session.exec(
-            select(Sample)
-            .options(resource_opts)
-            .where(Sample.unique_id == sample_mfid)
-        ).first()
-
-        # if not existing, return error
-        if samp is None:
-            raise HTTPException(status_code=404, detail="Sample not found")
-
-        # check that requester has read access
-        require_permission(session, auth_res, sample_mfid, Permission.READ)
-
-        # check deletion request
-        deletion_req = get_active_deletion_request(session, sample_mfid)
-
-        readable_datasets = fetch_readable_sample_datasets(
-            session, auth_res, samp.id
-        )
-
-        links = None
-        if include_links:
-            links = fetch_readable_links(
-                session,
-                auth_res,
-                "sample",
-                samp,
-                associated_entities=readable_datasets,
-            )
-
-        resource_md = samp.resource.scientific_metadata if samp.resource else None
-        owner = None
-        if include_owner and samp.owner_orcid:
-            owner_user = session.exec(select(User).where(User.unique_id == samp.owner_orcid)).one_or_none()
-            if owner_user:
-                owner = UserPublicRead.model_validate(owner_user)
-        instrument_ids = resolve_instrument_mfids_to_ids(
-            [ds.instrument_mfid for ds in readable_datasets], session)
-        ds_project_ids = resolve_project_mfids_to_ids(
-            [ds.project_mfid for ds in readable_datasets] + [samp.project_mfid], session)
-        return SampleResponse.model_validate({
-            **samp.model_dump(),
-            "project_id": ds_project_ids.get(samp.project_mfid, samp.project_id),
-            "public": samp.resource.public if samp.resource else False,
-            "datasets": [DatasetRead.model_validate({
-                **ds.model_dump(),
-                "instrument_id": instrument_ids.get(ds.instrument_mfid),
-                "project_id": ds_project_ids.get(ds.project_mfid, ds.project_id),
-            }) for ds in readable_datasets],
-            "creation_time": samp.resource.creation_time if samp.resource else None,
-            "modification_time": samp.resource.modification_time if samp.resource else None,
-            "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
-            "deletion_request": deletion_req.model_dump() if deletion_req else None,
-            "links": links,
-            "owner": owner,
-        })
 
 
 @router.get("/samples/{sample_id}/datasets")

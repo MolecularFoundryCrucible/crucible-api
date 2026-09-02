@@ -1099,6 +1099,12 @@ On performance, the join is roughly a wash rather than a regression, provided th
 
 `POST/DELETE /instruments/{id}/projects/{proj_id}`, granting the instrument group `contributor` on the project resource. This remains deferred. Service-account create-on-behalf is temporarily allowed without project authorization to preserve ingestion, so the API does not yet prove that an instrument is approved for the target project. Implement this association before removing that transitional exception or granting instruments scoped access to existing project resources.
 
+### Enforcing service-account instrument bindings
+
+Dataset creation currently verifies that the selected instrument is registered but does not require a service-account caller to belong to that instrument's operator group. Enforcing the binding immediately would break credentials that have not yet been properly associated with their instruments, so this remains deferred until operators complete that setup.
+
+When an unbound service account successfully creates a dataset for a registered instrument, the API logs a warning containing the service-account identity, dataset MFID, instrument slug, and instrument MFID. The request remains successful and the response contract is unchanged. Once production warnings show that active service accounts are properly bound, replace the warning with a 403 for unbound service accounts while retaining the platform-admin bypass policy chosen at cutover.
+
 ### Deriving the instrument grant instead of storing it
 
 **Superseded.** This entry argued for computing the instrument grant from

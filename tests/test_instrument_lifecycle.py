@@ -44,6 +44,16 @@ class TestCreateInstrument:
         mfid = resp.json()["unique_id"]
         assert resp.json()["owner_orcid"] == "admin-1"
         assert resp.json()["owner"]["unique_id"] == "admin-1"
+        assert resp.json()["capabilities"] == {
+            "can_edit": True,
+            "can_manage_access": True,
+            "can_change_status": True,
+            "can_transfer": True,
+            "max_grant_role": "admin",
+        }
+        generic_response = client.get(f"/resources/{mfid}")
+        assert generic_response.status_code == 200, generic_response.text
+        assert generic_response.json()["capabilities"] == resp.json()["capabilities"]
 
         with Session(db_engine) as session:
             ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == mfid)).one()
@@ -69,12 +79,23 @@ class TestCreateInstrument:
 
     def test_authenticated_user_can_create_and_becomes_owner(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
-            _user(session, "0000-0001")
-        auth_as("0000-0001", groups=[])
+            owner = _user(session, "0000-0001")
+            owner_group_id = session.exec(select(AccessGroup.id).where(
+                AccessGroup.group_name == owner.unique_id
+            )).one()
+        auth_as("0000-0001", groups=[("0000-0001", owner_group_id, Role.OWNER)])
         resp = client.post("/instruments", json=INSTRUMENT_PAYLOAD)
         assert resp.status_code == 200, resp.text
         assert resp.json()["owner_orcid"] == "0000-0001"
         assert resp.json()["owner"]["unique_id"] == "0000-0001"
+        assert resp.json()["capabilities"]["can_transfer"] is True
+
+        auth_as("instrument-outsider", groups=[])
+        canonical = client.get(f"/instruments/{resp.json()['unique_id']}")
+        generic = client.get(f"/resources/{resp.json()['unique_id']}")
+        assert canonical.status_code == 200, canonical.text
+        assert generic.status_code == 200, generic.text
+        assert generic.json() == canonical.json()
 
     def test_human_cannot_create_for_another_user(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
@@ -83,6 +104,7 @@ class TestCreateInstrument:
         auth_as("0000-0002", groups=[])
         resp = client.post("/instruments", json={**INSTRUMENT_PAYLOAD, "owner": "0000-0003"})
         assert resp.status_code == 403
+        assert resp.json()["detail"] == "Only platform administrators may create an instrument on behalf of another user"
 
     def test_platform_admin_can_create_for_another_user(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
@@ -93,6 +115,18 @@ class TestCreateInstrument:
         assert resp.status_code == 200, resp.text
         assert resp.json()["owner_orcid"] == "0000-0004"
         assert resp.json()["owner"]["unique_id"] == "0000-0004"
+
+        auth_as(
+            "instrument-service-account",
+            groups=[],
+            platform_role=PlatformRole.ADMIN,
+            is_service_account=True,
+        )
+        rejected = client.post(
+            "/instruments",
+            json={**INSTRUMENT_PAYLOAD, "instrument_id": "xrd-2"},
+        )
+        assert rejected.status_code == 403, rejected.text
 
 
 class TestServiceAccountBinding:
@@ -115,6 +149,25 @@ class TestServiceAccountBinding:
         assert len(members) == 1
         assert members[0]["unique_id"] == "sa-1"
         assert members[0]["role"] == "admin"
+
+        with Session(db_engine) as session:
+            group_id = session.exec(select(AccessGroup.id).where(
+                AccessGroup.group_name == mfid
+            )).one()
+        auth_as(
+            "sa-1",
+            groups=[(mfid, group_id, Role.ADMIN)],
+            is_service_account=True,
+        )
+        instrument = client.get(f"/instruments/{mfid}")
+        assert instrument.status_code == 200, instrument.text
+        assert instrument.json()["capabilities"] == {
+            "can_edit": True,
+            "can_manage_access": False,
+            "can_change_status": False,
+            "can_transfer": False,
+            "max_grant_role": None,
+        }
 
     def test_bind_rejects_non_service_account(self, client, db_engine, auth_as):
         mfid = self._create_instrument(client, db_engine, auth_as)
@@ -243,7 +296,7 @@ class TestInstrumentIdOnDataset:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["instrument_id"] == "xrd-id-1"
-        assert body["instrument_name"] == "xrd id 1"
+        assert body["instrument_name"] == "XRD ID 1"
 
         with Session(db_engine) as session:
             ds = session.exec(select(Dataset).where(Dataset.dataset_name == "d5")).one()

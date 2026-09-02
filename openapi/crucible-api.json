@@ -931,6 +931,16 @@
       "DatasetResponse": {
         "description": "DatasetRead extended with Resource timestamps, optional scientific metadata, and deletion status.",
         "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "creation_time": {
             "anyOf": [
               {
@@ -1873,6 +1883,16 @@
       "InstrumentResponse": {
         "description": "InstrumentRead extended with Resource timestamps.",
         "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "creation_time": {
             "anyOf": [
               {
@@ -2044,6 +2064,15 @@
         "title": "InstrumentResponse",
         "type": "object"
       },
+      "InstrumentStatus": {
+        "enum": [
+          "active",
+          "maintenance",
+          "decommissioned"
+        ],
+        "title": "InstrumentStatus",
+        "type": "string"
+      },
       "InstrumentUpdate": {
         "additionalProperties": false,
         "description": "Partial update schema for Instrument. Only provided fields are modified.",
@@ -2060,26 +2089,12 @@
             "title": "Description"
           },
           "instrument_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Instrument Id"
+            "title": "Instrument Id",
+            "type": "string"
           },
           "instrument_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Instrument Name"
+            "title": "Instrument Name",
+            "type": "string"
           },
           "instrument_type": {
             "anyOf": [
@@ -2093,15 +2108,8 @@
             "title": "Instrument Type"
           },
           "location": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Location"
+            "title": "Location",
+            "type": "string"
           },
           "manufacturer": {
             "anyOf": [
@@ -3330,6 +3338,17 @@
         "title": "ProjectCreate",
         "type": "object"
       },
+      "ProjectMembershipRole": {
+        "enum": [
+          "viewer",
+          "contributor",
+          "editor",
+          "admin",
+          "owner"
+        ],
+        "title": "ProjectMembershipRole",
+        "type": "string"
+      },
       "ProjectMinimalRead": {
         "properties": {
           "project_id": {
@@ -3362,6 +3381,16 @@
       "ProjectRead": {
         "description": "Response model for Project.",
         "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "organization": {
             "title": "Organization",
             "type": "string"
@@ -3508,6 +3537,16 @@
       "ProjectWithLead": {
         "description": "ProjectRead extended with a public-safe lead profile. Project metadata and\nmembers remain restricted to project members and platform administrators.",
         "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "creation_time": {
             "anyOf": [
               {
@@ -3727,6 +3766,51 @@
         "title": "ResourceACL",
         "type": "object"
       },
+      "ResourceCapabilities": {
+        "properties": {
+          "can_change_status": {
+            "title": "Can Change Status",
+            "type": "boolean"
+          },
+          "can_edit": {
+            "title": "Can Edit",
+            "type": "boolean"
+          },
+          "can_manage_access": {
+            "title": "Can Manage Access",
+            "type": "boolean"
+          },
+          "can_transfer": {
+            "title": "Can Transfer",
+            "type": "boolean"
+          },
+          "max_grant_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "viewer",
+                  "contributor",
+                  "editor",
+                  "admin"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Grant Role"
+          }
+        },
+        "required": [
+          "can_edit",
+          "can_manage_access",
+          "can_change_status",
+          "can_transfer"
+        ],
+        "title": "ResourceCapabilities",
+        "type": "object"
+      },
       "ResourceSearchResult": {
         "description": "Unified search result compatible across all search endpoints.\nscientific_metadata is populated by GET /resources/metadata/search; null on name-based endpoints.",
         "properties": {
@@ -3815,18 +3899,6 @@
         ],
         "title": "ResourceSearchResult",
         "type": "object"
-      },
-      "Role": {
-        "description": "Mirrors the Postgres `resource_role` enum. Ascending order is load-bearing:\ncomparisons and min() are the model.",
-        "enum": [
-          1,
-          2,
-          3,
-          4,
-          5
-        ],
-        "title": "Role",
-        "type": "integer"
       },
       "SampleCreate": {
         "additionalProperties": false,
@@ -4037,6 +4109,16 @@
       "SampleResponse": {
         "description": "SampleRead extended with Resource timestamps, associated datasets, and deletion status.",
         "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "creation_time": {
             "anyOf": [
               {
@@ -5486,7 +5568,7 @@
     },
     "/datasets": {
       "get": {
-        "description": "Returns a paginated list of datasets the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nKeyset (cursor) pagination: results are ordered by unique_id descending, which is\ncreation order since unique_id is a time-sortable UUIDv7. To fetch the next page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only on the\nfirst page (cursor omitted); subsequent pages omit it to avoid a redundant count.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. cursor takes precedence when both are given. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass include_links=true to include parent, child, and associated resources for each dataset.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
+        "description": "Returns a paginated list of datasets the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nKeyset (cursor) pagination: results are ordered by unique_id descending, which is\ncreation order since unique_id is a time-sortable UUIDv7. To fetch the next page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only on the\nfirst page (cursor omitted); subsequent pages omit it to avoid a redundant count.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. cursor takes precedence when both are given. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass include_links=true to include parent, child, and associated resources for each dataset.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass instrument_mfid to filter by the instrument's canonical stable identity.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
         "operationId": "list_datasets_datasets_get",
         "parameters": [
           {
@@ -5677,6 +5759,24 @@
               ],
               "title": "Visibility",
               "type": "string"
+            }
+          },
+          {
+            "description": "Filter datasets assigned to this canonical instrument MFID.",
+            "in": "query",
+            "name": "instrument_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter datasets assigned to this canonical instrument MFID.",
+              "title": "Instrument Mfid"
             }
           }
         ],
@@ -8739,6 +8839,24 @@
             }
           },
           {
+            "description": "Restrict results to one lifecycle status.",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/InstrumentStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict results to one lifecycle status.",
+              "title": "Status"
+            }
+          },
+          {
             "in": "query",
             "name": "include_owner",
             "required": false,
@@ -8913,6 +9031,57 @@
           }
         ],
         "summary": "Update Instrument",
+        "tags": [
+          "instruments"
+        ]
+      }
+    },
+    "/instruments/{instrument_mfid}/service_accounts": {
+      "get": {
+        "operationId": "list_instrument_service_accounts_instruments__instrument_mfid__service_accounts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instrument_mfid",
+            "required": true,
+            "schema": {
+              "title": "Instrument Mfid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AccessGroupMemberRead"
+                  },
+                  "title": "Response List Instrument Service Accounts Instruments  Instrument Mfid  Service Accounts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Instrument Service Accounts",
         "tags": [
           "instruments"
         ]
@@ -10178,7 +10347,7 @@
             "name": "role",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/Role"
+              "$ref": "#/components/schemas/ProjectMembershipRole"
             }
           }
         ],
@@ -10277,8 +10446,8 @@
             "name": "role",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/Role",
-              "default": 2
+              "$ref": "#/components/schemas/ProjectMembershipRole",
+              "default": "contributor"
             }
           }
         ],

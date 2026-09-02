@@ -29,6 +29,13 @@ def test_canonical_get_uses_instrument_mfid(client, db_engine, auth_as):
     assert response.status_code == 200, response.text
     assert response.json()["unique_id"] == instrument_mfid
     assert response.json()["instrument_id"] == "XRD_1"
+    assert response.json()["capabilities"] == {
+        "can_edit": False,
+        "can_manage_access": False,
+        "can_change_status": False,
+        "can_transfer": False,
+        "max_grant_role": None,
+    }
 
 
 def test_single_instrument_get_does_not_accept_slug(client, db_engine, auth_as):
@@ -50,6 +57,7 @@ def test_exact_slug_query_is_case_insensitive(client, db_engine, auth_as):
     body = response.json()
     assert body["total"] == 1
     assert body["items"][0]["unique_id"] == instrument_mfid
+    assert body["items"][0]["capabilities"]["can_edit"] is False
 
 
 def test_exact_slug_query_includes_non_active_instrument(client, db_engine, auth_as):

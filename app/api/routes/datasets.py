@@ -31,6 +31,7 @@ from app.models.core_models import (
     ScientificMetadataBinary,
     Thumbnail,
     User,
+    UserAccessGroupLink,
 )
 from app.models.response_schemas import DatasetSampleLinkResponse
 from app.models.datasets import (
@@ -42,14 +43,15 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
-from app.utils.auth_utils import access_selector_filter, authorize_user, permission_filter, require_permission
+from app.services.resource_details import ResourceDetailOptions, load_dataset_detail
+from app.utils.auth_utils import (
+    access_selector_filter, authorize_user, permission_filter, require_permission)
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
-from app.utils.link_utils import fetch_readable_links
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.user_utils import resolve_create_owner
-from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
+from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
@@ -191,7 +193,9 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         instrument = None
         instrument_id_slug = dataset_details.pop('instrument_id', None)
         if instrument_id_slug:
-            instrument = session.exec(select(Instrument).where(Instrument.instrument_id == instrument_id_slug)).one_or_none()
+            instrument = session.exec(
+                select(Instrument).where(func.lower(Instrument.instrument_id) == instrument_id_slug.lower())
+            ).one_or_none()
             if instrument is None:
                 raise HTTPException(status_code=400, detail=f"Instrument '{instrument_id_slug}' is not registered")
             dataset_details['instrument_name'] = instrument.instrument_name
@@ -249,6 +253,26 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
 
         session.commit()
         session.refresh(ds)
+        is_bound = True
+        if instrument is not None and auth_res.is_service_account:
+            is_bound = session.exec(
+                select(UserAccessGroupLink.user_id)
+                .join(User, User.id == UserAccessGroupLink.user_id)
+                .join(AccessGroup, AccessGroup.id == UserAccessGroupLink.accessgroup_id)
+                .where(
+                    User.unique_id == user_unique_id,
+                    AccessGroup.group_name == instrument.unique_id,
+                    AccessGroup.group_type == AccessGroupType.INSTRUMENT.value,
+                )
+            ).first() is not None
+        if not is_bound:
+            logger.warning(
+                "Unbound service account %s created dataset %s for instrument %s (%s)",
+                user_unique_id,
+                ds.unique_id,
+                instrument.instrument_id,
+                instrument.unique_id,
+            )
         background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri), user_unique_id, "create")
         return DatasetResponse.model_validate({
             **ds.model_dump(),
@@ -304,7 +328,14 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
                 and isinstance(current_instrument_name, str)
                 and requested_instrument_name.casefold() == current_instrument_name.casefold()
             )
-            if requested_instrument_id != current_instrument_id or not name_matches:
+            id_matches = (
+                requested_instrument_id is None and current_instrument_id is None
+            ) or (
+                isinstance(requested_instrument_id, str)
+                and isinstance(current_instrument_id, str)
+                and requested_instrument_id.casefold() == current_instrument_id.casefold()
+            )
+            if not id_matches or not name_matches:
                 raise HTTPException(
                     status_code=409,
                     detail=(
@@ -348,7 +379,10 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                   offset: int = Query(default=0, ge=0),
                   creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                   modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None,
-                  visibility: Literal["all", "public", "private"] = "all"):
+                  visibility: Literal["all", "public", "private"] = "all",
+                  instrument_mfid: Annotated[Optional[str], Query(
+                      description="Filter datasets assigned to this canonical instrument MFID.",
+                  )] = None):
     '''
     Returns a paginated list of datasets the requesting user is authorized to view.
     Default limit is 100, max is 1000.
@@ -364,6 +398,7 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
     result sets, since deep offsets are slower.
     Pass include_links=true to include parent, child, and associated resources for each dataset.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
+    Pass instrument_mfid to filter by the instrument's canonical stable identity.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
     params_dict = dict(request.query_params)
@@ -373,7 +408,7 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
               'modification_time_lte', 'include_metadata', 'include_links', 'include_owner',
               'limit', 'cursor', 'offset', 'visibility', 'accessible_to_user',
-              'accessible_to_project'):
+              'accessible_to_project', 'instrument_mfid'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -399,6 +434,8 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 q = q.where(Resource.modification_time >= modification_time_gte)
             if modification_time_lte:
                 q = q.where(Resource.modification_time <= modification_time_lte)
+            if instrument_mfid is not None:
+                q = q.where(Dataset.instrument_mfid == instrument_mfid)
             for key, value in params_dict.items():
                 if hasattr(Dataset, key):
                     q = q.where(getattr(Dataset, key) == value)
@@ -589,54 +626,16 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], datase
     '''
 
     with Session(engine) as session:
-        
-        # get with metadata or not
-        resource_opts = (
-            selectinload(Dataset.resource).selectinload(Resource.scientific_metadata)
-            if include_metadata else selectinload(Dataset.resource)
+        return load_dataset_detail(
+            session,
+            auth_res,
+            dataset_mfid,
+            options=ResourceDetailOptions(
+                include_metadata=include_metadata,
+                include_links=include_links,
+                include_owner=include_owner,
+            ),
         )
-        # fetch resource
-        ds = session.exec(
-            select(Dataset)
-            .options(resource_opts)
-            .where(Dataset.unique_id == dataset_mfid)
-        ).one_or_none()
-
-        # if not existing, return error
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
-        # check that requester has read access
-        require_permission(session, auth_res, dataset_mfid, Permission.READ)
-
-        # check deletion request
-        deletion_req = get_active_deletion_request(session, dataset_mfid)
-
-        # fetch all linked resources
-        links = None
-        if include_links:
-            links = fetch_readable_links(session, auth_res, "dataset", ds)
-
-        resource_md = ds.resource.scientific_metadata if ds.resource else None
-        owner = None
-        if include_owner and ds.owner_orcid:
-            owner_user = session.exec(select(User).where(User.unique_id == ds.owner_orcid)).one_or_none()
-            if owner_user:
-                owner = UserPublicRead.model_validate(owner_user)
-        instrument_ids = resolve_instrument_mfids_to_ids([ds.instrument_mfid], session)
-        project_ids = resolve_project_mfids_to_ids([ds.project_mfid], session)
-        return DatasetResponse.model_validate({
-            **ds.model_dump(),
-            "instrument_id": instrument_ids.get(ds.instrument_mfid),
-            "project_id": project_ids.get(ds.project_mfid, ds.project_id),
-            "public": ds.resource.public if ds.resource else ds.public,
-            "creation_time": ds.resource.creation_time if ds.resource else None,
-            "modification_time": ds.resource.modification_time if ds.resource else None,
-            "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
-            "deletion_request": deletion_req.model_dump() if deletion_req else None,
-            "links": links,
-            "owner": owner,
-        })
 
 
 @router.post("/datasets/{parent_dataset_id}/children/{child_dataset_id}", response_model=DatasetLink)

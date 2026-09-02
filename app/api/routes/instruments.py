@@ -1,6 +1,6 @@
-from typing import Annotated, List, Optional, Union
-
+from enum import Enum
 import os
+from typing import Annotated, List, Optional, Union
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from sqlalchemy import func, join, literal, text
 from sqlmodel import Session, select
@@ -12,7 +12,8 @@ from app.models.core_models import AccessGroup, Instrument, Resource, Scientific
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
 from app.models.users import UserPublicRead
-from app.utils.auth_utils import authorize_user, require_permission
+from app.services.resource_details import ResourceDetailOptions, load_instrument_detail
+from app.utils.auth_utils import authorize_user, require_permission, resource_capabilities
 from app.utils.instrument_utils import assert_instrument_id_available
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.sql_utils import add_or_update, create_standard_acls, sql_create_resource_acl, touch_resource_modification_time
@@ -25,8 +26,42 @@ engine = get_engine()
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
+INSTRUMENT_FILTER_FIELDS = {
+    "other_id",
+    "other_id_source",
+    "instrument_name",
+    "manufacturer",
+    "model",
+    "owner",
+    "location",
+    "description",
+    "instrument_type",
+    "status",
+}
 
-def _instrument_response(instrument, resource=None, scientific_metadata=None, owner=None):
+
+class InstrumentStatus(str, Enum):
+    ACTIVE = "active"
+    MAINTENANCE = "maintenance"
+    DECOMMISSIONED = "decommissioned"
+
+
+VALID_INSTRUMENT_STATUSES = tuple(status.value for status in InstrumentStatus)
+
+
+def _instrument_capabilities(session, principal, instrument):
+    legacy_group = (instrument.instrument_name or "").lower()
+    return resource_capabilities(
+        session,
+        principal,
+        instrument.unique_id,
+        legacy_edit_group=legacy_group,
+        legacy_status_group=legacy_group,
+    )
+
+
+def _instrument_response(instrument, resource=None, scientific_metadata=None, owner=None,
+                         capabilities=None):
     return InstrumentResponse.model_validate({
         **instrument.model_dump(exclude={"owner"}),
         "owner_orcid": instrument.owner,
@@ -34,6 +69,7 @@ def _instrument_response(instrument, resource=None, scientific_metadata=None, ow
         "creation_time": resource.creation_time if resource else None,
         "modification_time": resource.modification_time if resource else None,
         "scientific_metadata": scientific_metadata,
+        "capabilities": capabilities,
     })
 
 
@@ -67,7 +103,11 @@ def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], re
         query_params.pop(k, None)
     if instrument_id is None:
         query_params.setdefault('status', 'active')
-    filters = [getattr(Instrument, k) == v.lower().strip() for k, v in query_params.items() if hasattr(Instrument, k)]
+    filters = [
+        func.lower(getattr(Instrument, key)) == value.lower().strip()
+        for key, value in query_params.items()
+        if key in INSTRUMENT_FILTER_FIELDS
+    ]
     if instrument_id is not None:
         filters.append(func.lower(Instrument.instrument_id) == instrument_id.lower().strip())
 
@@ -102,10 +142,16 @@ def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], re
                     ri,
                     smb.scientific_metadata if smb else None,
                     owners.get(inst.owner),
+                    _instrument_capabilities(session, auth_res, inst) if instrument_id is not None else None,
                 ))
             else:
                 inst, ri = row
-                items.append(_instrument_response(inst, ri, owner=owners.get(inst.owner)))
+                items.append(_instrument_response(
+                    inst,
+                    ri,
+                    owner=owners.get(inst.owner),
+                    capabilities=_instrument_capabilities(session, auth_res, inst) if instrument_id is not None else None,
+                ))
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
@@ -113,6 +159,7 @@ def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], re
 def search_instruments(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     q: str = Query(min_length=3, description="Search term matched against instrument_name, instrument_type, and manufacturer."),
+    status: Optional[InstrumentStatus] = Query(default=None, description="Restrict results to one lifecycle status."),
     include_owner: bool = False,
     limit: int = Query(default=20, ge=1, le=50),
 ):
@@ -126,6 +173,8 @@ def search_instruments(
             select(Instrument, Resource)
             .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
         )
+        if status is not None:
+            base = base.where(Instrument.status == status.value)
         for token in q.lower().split():
             base = base.where(
                 Instrument.instrument_name.ilike(f"{token}%") |
@@ -156,29 +205,15 @@ def read_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], ins
     Returns the instrument with the provided unique ID, or 404 if not found.
     '''
     with Session(engine) as session:
-        if include_metadata:
-            result = session.exec(
-                select(Instrument, Resource, ScientificMetadataBinary)
-                .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
-                .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Instrument.unique_id, isouter=True)
-                .where(Instrument.unique_id == instrument_mfid)
-            ).one_or_none()
-            if result is None:
-                raise HTTPException(status_code=404, detail="Instrument not found")
-            inst, ri, smb = result
-            owner = _instrument_owners(session, [inst]).get(inst.owner) if include_owner else None
-            return _instrument_response(inst, ri, smb.scientific_metadata if smb else None, owner)
-        else:
-            result = session.exec(
-                select(Instrument, Resource)
-                .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
-                .where(Instrument.unique_id == instrument_mfid)
-            ).one_or_none()
-            if result is None:
-                raise HTTPException(status_code=404, detail="Instrument not found")
-            inst, ri = result
-            owner = _instrument_owners(session, [inst]).get(inst.owner) if include_owner else None
-            return _instrument_response(inst, ri, owner=owner)
+        return load_instrument_detail(
+            session,
+            auth_res,
+            instrument_mfid,
+            options=ResourceDetailOptions(
+                include_metadata=include_metadata,
+                include_owner=include_owner,
+            ),
+        )
 
 
 @router.post("/instruments", response_model=InstrumentResponse)
@@ -187,6 +222,12 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
     '''
     Register a new instrument in the database.
     '''
+    if auth_res.is_service_account:
+        raise HTTPException(
+            status_code=403,
+            detail="Service accounts cannot register instruments",
+        )
+
     user_unique_id = auth_res.user_id
     with Session(engine) as session:
         assert_instrument_id_available(session, instrument.instrument_id)
@@ -200,17 +241,15 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
         )
         if (
             owner_user.unique_id != user_unique_id
-            and not auth_res.is_service_account
             and not auth_res.is_platform_admin
         ):
             raise HTTPException(
                 status_code=403,
-                detail="Only service accounts and platform administrators may create an instrument on behalf of another user",
+                detail="Only platform administrators may create an instrument on behalf of another user",
             )
 
         instrument_details["owner"] = owner_user.unique_id
         db_instrument = Instrument(**instrument_details)
-        db_instrument.instrument_name = db_instrument.instrument_name.lower()
         session.add(db_instrument)
         session.flush()
         now = get_utc_isoformat()
@@ -245,6 +284,7 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
             db_instrument,
             ri,
             owner=UserPublicRead.model_validate(owner_user),
+            capabilities=_instrument_capabilities(session, auth_res, db_instrument),
         )
 
 
@@ -273,8 +313,6 @@ def update_instrument(
                            legacy_group=(instrument.instrument_name or "").lower())
 
         update_data = instrument_update.model_dump(exclude_unset=True)
-        if "instrument_name" in update_data:
-            update_data["instrument_name"] = update_data["instrument_name"].lower()
         if update_data.get("instrument_id"):
             assert_instrument_id_available(session, update_data["instrument_id"],
                                            exclude_unique_id=instrument_mfid)
@@ -290,10 +328,11 @@ def update_instrument(
         session.commit()
         session.refresh(instrument)
         background_tasks.add_task(write_record, instrument.unique_id, instrument_record(instrument, ri), user_unique_id, "update")
-        return _instrument_response(instrument, ri)
-
-
-VALID_INSTRUMENT_STATUSES = ("active", "maintenance", "decommissioned")
+        return _instrument_response(
+            instrument,
+            ri,
+            capabilities=_instrument_capabilities(session, auth_res, instrument),
+        )
 
 
 @router.post("/instruments/{instrument_mfid}/status", response_model=InstrumentResponse)
@@ -333,7 +372,11 @@ def set_instrument_status(
 
         ri = session.exec(select(Resource).where(
             Resource.mfid == instrument_mfid)).one_or_none()
-        return _instrument_response(instrument, ri)
+        return _instrument_response(
+            instrument,
+            ri,
+            capabilities=_instrument_capabilities(session, auth_res, instrument),
+        )
 
 
 def _get_instrument_operators(instrument_mfid: str, session) -> List[AccessGroupMemberRead]:
@@ -342,12 +385,32 @@ def _get_instrument_operators(instrument_mfid: str, session) -> List[AccessGroup
         select(User, UserAccessGroupLink.role)
         .select_from(join(AccessGroup, UserAccessGroupLink, UserAccessGroupLink.accessgroup_id == AccessGroup.id))
         .join(User, User.id == UserAccessGroupLink.user_id)
-        .where(AccessGroup.group_name == instrument_mfid)
+        .where(
+            AccessGroup.group_name == instrument_mfid,
+            AccessGroup.group_type == AccessGroupType.INSTRUMENT.value,
+            User.is_service_account == True,
+        )
     ).all()
     return [
         AccessGroupMemberRead.model_validate(user, update={"role": role or "unknown"})
         for user, role in rows
     ]
+
+
+@router.get("/instruments/{instrument_mfid}/service_accounts", response_model=List[AccessGroupMemberRead])
+def list_instrument_service_accounts(
+    instrument_mfid: str,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+):
+    with Session(engine) as session:
+        instrument = session.exec(
+            select(Instrument).where(Instrument.unique_id == instrument_mfid)
+        ).one_or_none()
+        if instrument is None:
+            raise HTTPException(status_code=404, detail="Instrument not found")
+
+        require_permission(session, auth_res, instrument_mfid, Permission.MANAGE_ACL)
+        return _get_instrument_operators(instrument_mfid, session)
 
 
 @router.post("/instruments/{instrument_mfid}/service_accounts/{sa_unique_id}", response_model=List[AccessGroupMemberRead])
@@ -408,7 +471,10 @@ def remove_instrument_service_account(
 
         require_permission(session, auth_res, instrument_mfid, Permission.MANAGE_ACL)
 
-        sa = session.exec(select(User).where(User.unique_id == sa_unique_id)).one_or_none()
+        sa = session.exec(select(User).where(
+            User.unique_id == sa_unique_id,
+            User.is_service_account == True,
+        )).one_or_none()
         if sa is None:
             raise HTTPException(status_code=404, detail="Service account not found")
 

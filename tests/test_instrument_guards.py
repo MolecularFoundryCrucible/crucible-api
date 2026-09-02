@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.models.core_models import AccessGroup, Instrument, Resource, ResourceACL, User
 from app.models.instrument import InstrumentUpdate
-from app.utils.auth_utils import require_permission
+from app.utils.auth_utils import require_permission, resource_capabilities
 from app.utils.permissions import GroupMembership, Permission, PlatformRole, Principal, Role
 
 MFID, NAME = "inst-1", "xrd-1"
@@ -50,8 +50,23 @@ def granted(session, role):
 class TestEditingTheRecord:
     def test_operator_with_editor_may_edit(self, session):
         granted(session, Role.EDITOR)
-        require_permission(session, op(session, Role.ADMIN), MFID, Permission.EDIT,
+        principal = op(session, Role.ADMIN)
+        require_permission(session, principal, MFID, Permission.EDIT,
                            legacy_group=NAME)
+        capabilities = resource_capabilities(
+            session,
+            principal,
+            MFID,
+            legacy_edit_group=NAME,
+            legacy_status_group=NAME,
+        )
+        assert capabilities.model_dump() == {
+            "can_edit": True,
+            "can_manage_access": False,
+            "can_change_status": False,
+            "can_transfer": False,
+            "max_grant_role": None,
+        }
 
     def test_a_stranger_may_not(self, session):
         granted(session, Role.EDITOR)
@@ -77,8 +92,20 @@ class TestRetiring:
 
     def test_an_admin_can(self, session):
         granted(session, Role.ADMIN)
-        require_permission(session, op(session, Role.ADMIN), MFID, Permission.DELETE,
+        principal = op(session, Role.ADMIN)
+        require_permission(session, principal, MFID, Permission.DELETE,
                            legacy_group=NAME)
+        capabilities = resource_capabilities(
+            session,
+            principal,
+            MFID,
+            legacy_edit_group=NAME,
+            legacy_status_group=NAME,
+        )
+        assert capabilities.can_manage_access is True
+        assert capabilities.can_change_status is True
+        assert capabilities.can_transfer is False
+        assert capabilities.max_grant_role == "admin"
 
     def test_platform_admin_can(self, session):
         granted(session, Role.EDITOR)
@@ -92,5 +119,6 @@ def test_status_is_not_editable_through_patch():
 
 
 def test_status_values_are_constrained():
-    from app.api.routes.instruments import VALID_INSTRUMENT_STATUSES
+    from app.api.routes.instruments import InstrumentStatus, VALID_INSTRUMENT_STATUSES
     assert set(VALID_INSTRUMENT_STATUSES) == {"active", "maintenance", "decommissioned"}
+    assert {status.value for status in InstrumentStatus} == set(VALID_INSTRUMENT_STATUSES)

@@ -43,16 +43,15 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
+from app.services.resource_details import ResourceDetailOptions, load_dataset_detail
 from app.utils.auth_utils import (
-    access_selector_filter, authorize_user, fetch_acl_rows, permission_filter,
-    require_permission, resource_capabilities)
+    access_selector_filter, authorize_user, permission_filter, require_permission)
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
 from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
-from app.utils.link_utils import fetch_readable_links
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.user_utils import resolve_create_owner
-from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
+from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
@@ -627,63 +626,16 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], datase
     '''
 
     with Session(engine) as session:
-        
-        # get with metadata or not
-        resource_opts = (
-            selectinload(Dataset.resource).selectinload(Resource.scientific_metadata)
-            if include_metadata else selectinload(Dataset.resource)
-        )
-        # fetch resource
-        ds = session.exec(
-            select(Dataset)
-            .options(resource_opts)
-            .where(Dataset.unique_id == dataset_mfid)
-        ).one_or_none()
-
-        # if not existing, return error
-        if ds is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
-        # check that requester has read access
-        acl_rows = fetch_acl_rows(session, dataset_mfid)
-        require_permission(
-            session, auth_res, dataset_mfid, Permission.READ, acl_rows=acl_rows)
-
-        # check deletion request
-        deletion_req = get_active_deletion_request(session, dataset_mfid)
-
-        # fetch all linked resources
-        links = None
-        if include_links:
-            links = fetch_readable_links(session, auth_res, "dataset", ds)
-
-        resource_md = ds.resource.scientific_metadata if ds.resource else None
-        owner = None
-        if include_owner and ds.owner_orcid:
-            owner_user = session.exec(select(User).where(User.unique_id == ds.owner_orcid)).one_or_none()
-            if owner_user:
-                owner = UserPublicRead.model_validate(owner_user)
-        instrument_ids = resolve_instrument_mfids_to_ids([ds.instrument_mfid], session)
-        project_ids = resolve_project_mfids_to_ids([ds.project_mfid], session)
-        return DatasetResponse.model_validate({
-            **ds.model_dump(),
-            "instrument_id": instrument_ids.get(ds.instrument_mfid),
-            "project_id": project_ids.get(ds.project_mfid, ds.project_id),
-            "public": ds.resource.public if ds.resource else ds.public,
-            "creation_time": ds.resource.creation_time if ds.resource else None,
-            "modification_time": ds.resource.modification_time if ds.resource else None,
-            "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
-            "deletion_request": deletion_req.model_dump() if deletion_req else None,
-            "links": links,
-            "owner": owner,
-            "capabilities": resource_capabilities(
-                session,
-                auth_res,
-                dataset_mfid,
-                status_permission=None,
-                acl_rows=acl_rows,
+        return load_dataset_detail(
+            session,
+            auth_res,
+            dataset_mfid,
+            options=ResourceDetailOptions(
+                include_metadata=include_metadata,
+                include_links=include_links,
+                include_owner=include_owner,
             ),
-        })
+        )
 
 
 @router.post("/datasets/{parent_dataset_id}/children/{child_dataset_id}", response_model=DatasetLink)

@@ -2,7 +2,7 @@ import os
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import and_, func, join, literal, text
+from sqlalchemy import and_, func, literal, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import Session, select, col
 import networkx as nx
@@ -29,6 +29,11 @@ from app.models.pagination import PaginatedResponse
 from app.models.projects import (
     ProjectCreate, ProjectMembershipRole, ProjectRead, ProjectUpdate, ProjectWithLead)
 from app.models.users import UserPublicRead
+from app.services.resource_details import (
+    ResourceDetailOptions,
+    load_project_detail,
+    load_project_members,
+)
 
 router = APIRouter(tags=["projects"])
 engine = get_engine()
@@ -250,33 +255,22 @@ def read_project(project_ref: str, response: Response,
     Non-members never get the member list, regardless of ?include_members=.
     '''
     with Session(engine) as session:
-        prop = resolve_project_reference(
-            project_ref,
-            session,
-            options=(selectinload(Project.resource).selectinload(Resource.scientific_metadata),),
-        )
+        prop = resolve_project_reference(project_ref, session)
         if prop is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
         if prop.project_id == project_ref:
             response.headers["Content-Location"] = f"/projects/{prop.unique_id}"
 
-        # Membership is standing in the project's own group, keyed by its
-        # MFID (Project.unique_id), not project_ref when it is a slug.
-        is_member = has_platform_admin_access(auth_res) or auth_res.role_in(prop.unique_id) is not None
-
-        lead_user = session.exec(select(User).where(User.unique_id == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
-        lead = UserPublicRead.model_validate(lead_user) if lead_user else None
-        resource_md = prop.resource.scientific_metadata if (prop.resource and is_member) else None
-        members = _get_project_users(prop.project_id, session) if (include_members and is_member) else None
-        return ProjectWithLead(
-            **prop.model_dump(),
-            lead=lead,
-            members=members,
-            creation_time=prop.resource.creation_time if prop.resource else None,
-            modification_time=prop.resource.modification_time if prop.resource else None,
-            scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
-            capabilities=_project_capabilities(session, auth_res, prop),
+        return load_project_detail(
+            session,
+            auth_res,
+            prop.unique_id,
+            project=prop,
+            options=ResourceDetailOptions(
+                include_metadata=include_metadata,
+                include_members=include_members,
+            ),
         )
 
 
@@ -329,25 +323,9 @@ def update_project(project_ref: str, auth_res: Annotated[Principal, Depends(auth
         )
 
 
-def _project_member_rows(proj_id: str, session):
-    '''(User, role) for every member of proj_id's own access group — the
-    authoritative membership record, not UserProjectLink (see
-    is_project_member). No auth check, for internal use only.'''
-    return session.exec(
-        select(User, UserAccessGroupLink.role)
-        .select_from(join(AccessGroup, UserAccessGroupLink, UserAccessGroupLink.accessgroup_id == AccessGroup.id))
-        .join(User, User.id == UserAccessGroupLink.user_id)
-        .join(Project, Project.unique_id == AccessGroup.group_name)
-        .where(Project.project_id == proj_id)
-    ).all()
-
-
 def _get_project_users(proj_id: str, session) -> List[AccessGroupMemberRead]:
     '''Public-safe project members and their role.'''
-    return [
-        AccessGroupMemberRead.model_validate(user, update={"role": role or "unknown"})
-        for user, role in _project_member_rows(proj_id, session)
-    ]
+    return load_project_members(session, proj_id)
 @router.get("/projects/{project_ref}/users", response_model=PaginatedResponse[AccessGroupMemberRead])
 def read_users_on_project(project_ref: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                           limit: int = Query(default=100, ge=1, le=1000),

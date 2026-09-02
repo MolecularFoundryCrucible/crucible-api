@@ -90,6 +90,13 @@ class TestCreateInstrument:
         assert resp.json()["owner"]["unique_id"] == "0000-0001"
         assert resp.json()["capabilities"]["can_transfer"] is True
 
+        auth_as("instrument-outsider", groups=[])
+        canonical = client.get(f"/instruments/{resp.json()['unique_id']}")
+        generic = client.get(f"/resources/{resp.json()['unique_id']}")
+        assert canonical.status_code == 200, canonical.text
+        assert generic.status_code == 200, generic.text
+        assert generic.json() == canonical.json()
+
     def test_human_cannot_create_for_another_user(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             _user(session, "0000-0002")

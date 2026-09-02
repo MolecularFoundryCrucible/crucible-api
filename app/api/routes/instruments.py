@@ -12,6 +12,7 @@ from app.models.core_models import AccessGroup, Instrument, Resource, Scientific
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
 from app.models.users import UserPublicRead
+from app.services.resource_details import ResourceDetailOptions, load_instrument_detail
 from app.utils.auth_utils import authorize_user, require_permission, resource_capabilities
 from app.utils.instrument_utils import assert_instrument_id_available
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
@@ -204,40 +205,15 @@ def read_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], ins
     Returns the instrument with the provided unique ID, or 404 if not found.
     '''
     with Session(engine) as session:
-        if include_metadata:
-            result = session.exec(
-                select(Instrument, Resource, ScientificMetadataBinary)
-                .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
-                .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Instrument.unique_id, isouter=True)
-                .where(Instrument.unique_id == instrument_mfid)
-            ).one_or_none()
-            if result is None:
-                raise HTTPException(status_code=404, detail="Instrument not found")
-            inst, ri, smb = result
-            owner = _instrument_owners(session, [inst]).get(inst.owner) if include_owner else None
-            return _instrument_response(
-                inst,
-                ri,
-                smb.scientific_metadata if smb else None,
-                owner,
-                _instrument_capabilities(session, auth_res, inst),
-            )
-        else:
-            result = session.exec(
-                select(Instrument, Resource)
-                .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
-                .where(Instrument.unique_id == instrument_mfid)
-            ).one_or_none()
-            if result is None:
-                raise HTTPException(status_code=404, detail="Instrument not found")
-            inst, ri = result
-            owner = _instrument_owners(session, [inst]).get(inst.owner) if include_owner else None
-            return _instrument_response(
-                inst,
-                ri,
-                owner=owner,
-                capabilities=_instrument_capabilities(session, auth_res, inst),
-            )
+        return load_instrument_detail(
+            session,
+            auth_res,
+            instrument_mfid,
+            options=ResourceDetailOptions(
+                include_metadata=include_metadata,
+                include_owner=include_owner,
+            ),
+        )
 
 
 @router.post("/instruments", response_model=InstrumentResponse)

@@ -68,6 +68,9 @@ def test_canonical_get_uses_project_mfid(client, db_engine, auth_as):
         "can_transfer": False,
         "max_grant_role": None,
     }
+    generic_response = client.get(f"/resources/{project_mfid}")
+    assert generic_response.status_code == 200, generic_response.text
+    assert generic_response.json() == response.json()
 
 
 def test_legacy_slug_get_returns_canonical_location(client, db_engine, auth_as):

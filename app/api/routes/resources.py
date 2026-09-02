@@ -19,7 +19,7 @@ from app.models.core_models import (
 )
 from app.models.access import AccessGrantRead, AccessGrantWrite
 from app.models.access_groups import AccessGroupRead
-from app.models.datasets import DatasetRead, DatasetResponse, ScientificMetadataBinaryRead
+from app.models.datasets import DatasetResponse, ScientificMetadataBinaryRead
 from app.models.deletion import DeletionRequestRead
 from app.models.instrument import InstrumentResponse
 from app.models.links import LinkedResource
@@ -30,16 +30,16 @@ from app.models.samples import SampleResponse
 from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
+from app.services.resource_details import ResourceDetailOptions, load_resource_detail
 from app.utils.auth_utils import (
-    authorize_user, fetch_acl_rows, permission_filter, require_grant,
-    require_permission, require_platform_admin, resource_capabilities)
+    authorize_user, permission_filter, require_grant, require_permission,
+    require_platform_admin)
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
-from app.utils.sql_utils import add_or_update, get_active_deletion_request, set_public, sql_create_resource_acl, touch_resource_modification_time
+from app.utils.sql_utils import add_or_update, set_public, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
-from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
-from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
-from app.utils.project_utils import is_project_group, resolve_project_mfids_to_ids
+from app.utils.link_utils import fetch_readable_links
+from app.utils.project_utils import is_project_group
 from app.utils.user_utils import resolve_user_by_identifier
 
 
@@ -107,8 +107,8 @@ def search_resource_metadata_v2(
             for i in session.exec(select(Instrument).where(Instrument.unique_id.in_(by_type["instrument"]))).all():
                 name_map[i.unique_id] = i.instrument_name
         if "project" in by_type:
-            for p in session.exec(select(Project).where(Project.project_id.in_(by_type["project"]))).all():
-                name_map[p.project_id] = p.title
+            for p in session.exec(select(Project).where(Project.unique_id.in_(by_type["project"]))).all():
+                name_map[p.unique_id] = p.title
 
         items = [
             ResourceSearchResult(
@@ -144,154 +144,16 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
         ).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
-
-        acl_rows = fetch_acl_rows(session, resource_id)
-        require_permission(
-            session, auth_res, resource_id, Permission.READ, acl_rows=acl_rows)
-
-        deletion_req = get_active_deletion_request(session, resource_id)
-
-        sci_md = None
-        if include_metadata:
-            smb = session.exec(
-                select(ScientificMetadataBinary).where(ScientificMetadataBinary.unique_id == resource_id)
-            ).one_or_none()
-            sci_md = smb.scientific_metadata if smb else None
-
-        def _resolve_owner(orcid):
-            if not include_owner or not orcid:
-                return None
-            u = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
-            return UserPublicRead.model_validate(u) if u else None
-
-        if resource.resource_type == "dataset":
-            ds = session.exec(
-                select(Dataset).where(Dataset.unique_id == resource_id)
-            ).one_or_none()
-            if ds is None:
-                raise HTTPException(status_code=404, detail="Dataset not found")
-            instrument_ids = resolve_instrument_mfids_to_ids([ds.instrument_mfid], session)
-            project_ids = resolve_project_mfids_to_ids([ds.project_mfid], session)
-            return DatasetResponse.model_validate({
-                **ds.model_dump(),
-                "instrument_id": instrument_ids.get(ds.instrument_mfid),
-                "project_id": project_ids.get(ds.project_mfid, ds.project_id),
-                "public": resource.public,
-                "creation_time": resource.creation_time,
-                "modification_time": resource.modification_time,
-                "scientific_metadata": sci_md,
-                "deletion_request": deletion_req.model_dump() if deletion_req else None,
-                "links": fetch_readable_links(
-                    session, auth_res, "dataset", ds
-                ) if include_links else None,
-                "owner": _resolve_owner(ds.owner_orcid),
-                "capabilities": resource_capabilities(
-                    session,
-                    auth_res,
-                    resource_id,
-                    status_permission=None,
-                    acl_rows=acl_rows,
-                ),
-            })
-
-        elif resource.resource_type == "sample":
-            samp = session.exec(
-                select(Sample)
-                .where(Sample.unique_id == resource_id)
-            ).one_or_none()
-            if samp is None:
-                raise HTTPException(status_code=404, detail="Sample not found")
-            readable_datasets = fetch_readable_sample_datasets(
-                session, auth_res, samp.id
-            )
-            instrument_ids = resolve_instrument_mfids_to_ids(
-                [ds.instrument_mfid for ds in readable_datasets], session)
-            ds_project_ids = resolve_project_mfids_to_ids(
-                [ds.project_mfid for ds in readable_datasets] + [samp.project_mfid], session)
-            return SampleResponse.model_validate({
-                **samp.model_dump(),
-                "project_id": ds_project_ids.get(samp.project_mfid, samp.project_id),
-                "public": resource.public,
-                "datasets": [DatasetRead.model_validate({
-                    **ds.model_dump(),
-                    "instrument_id": instrument_ids.get(ds.instrument_mfid),
-                    "project_id": ds_project_ids.get(ds.project_mfid, ds.project_id),
-                }) for ds in readable_datasets],
-                "creation_time": resource.creation_time,
-                "modification_time": resource.modification_time,
-                "scientific_metadata": sci_md,
-                "deletion_request": deletion_req.model_dump() if deletion_req else None,
-                "links": fetch_readable_links(
-                    session,
-                    auth_res,
-                    "sample",
-                    samp,
-                    associated_entities=readable_datasets,
-                ) if include_links else None,
-                "owner": _resolve_owner(samp.owner_orcid),
-                "capabilities": resource_capabilities(
-                    session,
-                    auth_res,
-                    resource_id,
-                    status_permission=None,
-                    acl_rows=acl_rows,
-                ),
-            })
-
-        elif resource.resource_type == "instrument":
-            inst = session.exec(
-                select(Instrument).where(Instrument.unique_id == resource_id)
-            ).one_or_none()
-            if inst is None:
-                raise HTTPException(status_code=404, detail="Instrument not found")
-            return InstrumentResponse.model_validate({
-                **inst.model_dump(exclude={"owner"}),
-                "owner_orcid": inst.owner,
-                "owner": _resolve_owner(inst.owner),
-                "creation_time": resource.creation_time,
-                "modification_time": resource.modification_time,
-                "scientific_metadata": sci_md,
-                "capabilities": resource_capabilities(
-                    session,
-                    auth_res,
-                    resource_id,
-                    legacy_edit_group=(inst.instrument_name or "").lower(),
-                    legacy_status_group=(inst.instrument_name or "").lower(),
-                    acl_rows=acl_rows,
-                ),
-            })
-
-        elif resource.resource_type == "project":
-            proj = session.exec(
-                select(Project).where(Project.unique_id == resource_id)
-            ).one_or_none()
-            if proj is None:
-                raise HTTPException(status_code=404, detail="Project not found")
-            lead = None
-            if proj.project_lead_orcid:
-                lead = session.exec(
-                    select(User).where(User.unique_id == proj.project_lead_orcid)
-                ).one_or_none()
-            return ProjectWithLead(
-                **proj.model_dump(),
-                lead=lead,
-                scientific_metadata=sci_md,
-                creation_time=resource.creation_time,
-                modification_time=resource.modification_time,
-                capabilities=resource_capabilities(
-                    session,
-                    auth_res,
-                    resource_id,
-                    legacy_edit_group=proj.unique_id,
-                    manage_access_floor=Role.EDITOR,
-                    status_permission=Permission.EDIT,
-                    legacy_status_group=proj.unique_id,
-                    acl_rows=acl_rows,
-                ),
-            )
-
-        else:
-            raise HTTPException(status_code=404, detail="Resource not found")
+        return load_resource_detail(
+            session,
+            auth_res,
+            resource,
+            ResourceDetailOptions(
+                include_metadata=include_metadata,
+                include_links=include_links,
+                include_owner=include_owner,
+            ),
+        )
 
 
 @router.get("/resources/{resource_id}/links", response_model=List[LinkedResource])

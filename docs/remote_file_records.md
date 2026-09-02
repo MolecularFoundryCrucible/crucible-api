@@ -21,8 +21,8 @@ Existing rows migrate to `storage_backend='gcs'` via a column default — zero b
 ## API Behavior
 
 - `GET /files/{file_id}/download_link` and `GET /datasets/{dsid}/download_links` return a `null` URL for non-GCS files, with **no change to either route's response shape** — a client checks `storage_backend` (via `GET /files/{file_id}` / `GET /datasets/{dsid}/files`) to know what to expect, rather than the download-link routes growing new fields.
-- `POST /files/{file_id}/ingest` rejects non-GCS files with `400` — ingestion assumes a file is reachable from the GCS FUSE mount, which isn't true for catalog-only entries.
-- No access-control changes. Remote file entries use the exact same `require_read_access`/`require_write_access` checks as GCS files today.
+- `POST /files/{file_id}/ingest` requires contributor-or-above on the parent dataset and rejects non-GCS files with `400` because ingestion assumes a file is reachable from the GCS FUSE mount, which is not true for catalog-only entries.
+- Remote and GCS file entries use the same ACL evaluator. Reading or downloading requires viewer-or-above, updating requires editor-or-above, requesting ingestion requires contributor-or-above, and deleting requires admin-or-above on the parent dataset.
 
 ## What This Doesn't Do (and why)
 

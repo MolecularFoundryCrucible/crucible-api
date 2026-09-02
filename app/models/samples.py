@@ -1,5 +1,5 @@
 from typing import Any, List, Optional
-from pydantic import field_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
 
 from app.general_utils import blank_to_none, is_valid_mfid
@@ -8,6 +8,8 @@ from app.models.links import LinkedResource
 
 
 class SampleCreate(SQLModel):
+    model_config = ConfigDict(extra="forbid")
+
     '''Fields accepted when registering a new sample.
 
     Provide unique_id to register a sample under a pre-assigned ID (must be a
@@ -28,30 +30,42 @@ class SampleCreate(SQLModel):
     description: Optional[str] = None
     timestamp: Optional[str] = None
     public: bool = False
-    owner_orcid: Optional[str] = None  # falls back to the authenticated user if not provided
+    owner_orcid: Optional[str] = Field(
+        default=None,
+        deprecated=True,
+        description="Deprecated canonical owner identity (human ORCID or service-account MFID). Use owner.",
+    )
+    owner: Optional[str] = Field(
+        default=None,
+        description="Owner reference: ORCID, service-account MFID, username, or email. Defaults to the authenticated identity.",
+    )
 
-    @field_validator("project_id", "owner_orcid", mode="before", check_fields=False)
+    @field_validator("project_id", "owner_orcid", "owner", mode="before", check_fields=False)
     @classmethod
     def blank_identifiers_to_none(cls, v):
         """Uploaders that send "" instead of omitting the field would otherwise
         attach the resource to a nameless project. See general_utils."""
         return blank_to_none(v)
 
+    @model_validator(mode="after")
+    def validate_owner_reference(self):
+        values = self.model_dump()
+        if values.get("owner") is not None and values.get("owner_orcid") is not None:
+            raise ValueError("Provide owner or owner_orcid, not both")
+        return self
+
 class SampleUpdate(SQLModel):
-    '''Partial update schema for Sample. Only provided fields are modified.'''
+    '''Partial update schema for Sample. Only provided fields are modified.
+
+    No project_id — use POST /resources/{mfid}/project.
+    '''
+    model_config = ConfigDict(extra="forbid")
+
     sample_name: Optional[str] = None
     sample_type: Optional[str] = None
-    project_id: Optional[str] = None
     description: Optional[str] = None
     timestamp: Optional[str] = None
     public: Optional[bool] = None
-
-    @field_validator("project_id", "owner_orcid", mode="before", check_fields=False)
-    @classmethod
-    def blank_identifiers_to_none(cls, v):
-        """Uploaders that send "" instead of omitting the field would otherwise
-        attach the resource to a nameless project. See general_utils."""
-        return blank_to_none(v)
 
 class SampleRead(SQLModel):
     '''Response model for Sample. Includes server-generated fields.'''

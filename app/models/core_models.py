@@ -86,6 +86,7 @@ class Sample(SQLModel, table = True):
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     timestamp: Optional[str] = Field(default_factory=get_utc_isoformat, alias="date_created")
     project_id: Optional[str] = None
+    project_mfid: Optional[str] = Field(default=None, index=True, foreign_key="project.unique_id")
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
     resource: Optional["Resource"] = Relationship(
@@ -123,8 +124,10 @@ class Dataset(SQLModel, table=True):
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     owner_orcid: Optional[str] = Field(default = None)
     project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")
+    project_mfid: Optional[str] = Field(default=None, index=True, foreign_key="project.unique_id")
     instrument_id: Optional[int]  = Field(default = None, index = True, foreign_key = "instrument.id")
-    source_folder: Optional[str] 
+    instrument_mfid: Optional[str] = Field(default=None, index=True, foreign_key="instrument.unique_id")
+    source_folder: Optional[str]
     instrument_name: Optional[str]
     timestamp: Optional[str] = Field(default_factory=get_utc_isoformat)
     size: Optional[int] = Field(sa_column=Column(BigInteger())) 
@@ -158,21 +161,50 @@ class Dataset(SQLModel, table=True):
 
 
 class ResourceACL(SQLModel, table=True):
+    __table_args__ = (
+        Index(
+            "ix_resourceacl_group_mfid_permission",
+            "accessgroup_id",
+            "mfid",
+            "permission",
+        ),
+        Index(
+            "one_owner_acl_per_resource",
+            "mfid",
+            unique=True,
+            postgresql_where=text("permission = 'owner'"),
+            sqlite_where=text("permission = 'owner'"),
+        ),
+    )
+
     mfid: str = Field(foreign_key="idtype.mfid", primary_key=True, index=True)
     accessgroup_id: Optional[int] = Field(
         default=None, foreign_key="accessgroup.id", primary_key=True
     )
     read: bool = Field(index=True)
     write: bool = Field(index=True)
-    # Postgres enum resource_role; declared as str so SQLite-backed tests can
-    # still create the table. Converted with Role.from_db on read.
-    # read/write stay until phase 5 — see docs/permission_system_plan.md.
-    role: Optional[str] = Field(default=None)
+    # What the group was granted on this resource -- distinct from a user's
+    # standing within the group (UserAccessGroupLink.role). Postgres enum
+    # resource_role, shared with that column; declared as str so
+    # SQLite-backed tests can still create the table. Converted with
+    # Role.from_db on read. read/write stay until phase 5 — see
+    # docs/permission_system_plan.md.
+    permission: str
 
     accessgroup: "AccessGroup" = Relationship(back_populates="acl")
 
 
 class UserAccessGroupLink(SQLModel, table=True):
+    __table_args__ = (
+        Index(
+            "one_owner_per_group",
+            "accessgroup_id",
+            unique=True,
+            postgresql_where=text("role = 'owner'"),
+            sqlite_where=text("role = 'owner'"),
+        ),
+    )
+
     user_id: Optional[int] = Field(
         default=None, foreign_key="user.id", primary_key=True
     )
@@ -180,12 +212,13 @@ class UserAccessGroupLink(SQLModel, table=True):
         default=None, foreign_key="accessgroup.id", primary_key=True
     )
     # Standing in the group, not a grant. Postgres enum resource_role.
-    role: Optional[str] = Field(default=None)
+    role: str
 
 
 class AccessGroup(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     group_name: str = Field(index=True, unique=True)
+    group_type: str = Field(default="custom", index=True)
     users: List["User"] = Relationship(back_populates="accessgroups", link_model=UserAccessGroupLink)
     acl: List["ResourceACL"] = Relationship(back_populates="accessgroup")
 
@@ -222,15 +255,16 @@ class ApiToken(SQLModel, table = True):
 
 class Project(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    unique_id: Optional[str] = Field(default_factory=get_mfid_value, index=True, unique=True)
     project_id: str = Field(index=True, unique=True)
     organization: str
     status: Optional[str]
     title: Optional[str]
-    project_lead_orcid: str = Field(index=True)
+    project_lead_orcid: str = Field(foreign_key="user.orcid", index=True)
     project_lead_email: Optional[str] = None  # stored for old-API backward compat; not exposed in new response schemas
     users: List[User] = Relationship(back_populates="projects", link_model=UserProjectLink)
     resource: Optional["Resource"] = Relationship(
-        sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Project.project_id", "lazy": "noload"}
+        sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Project.unique_id", "lazy": "noload"}
     )
 
 
@@ -281,6 +315,16 @@ class Resource(SQLModel, table=True):
 
 class DeletionRequest(SQLModel, table=True):
     """Tracks a request to soft-delete a Dataset or Sample."""
+    __table_args__ = (
+        Index(
+            "one_active_deletion_request_per_resource",
+            "resource_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'approved')"),
+            sqlite_where=text("status IN ('pending', 'approved')"),
+        ),
+    )
+
     id: Optional[int] = Field(default=None, primary_key=True)
     resource_id: str = Field(foreign_key="idtype.mfid", index=True)
     resource: Optional["Resource"] = Relationship(
@@ -301,7 +345,7 @@ class AccessGroupJoinRequest(SQLModel, table=True):
     """Tracks a request to join an access group. Currently only used for projects,
     but modeled generically since any access group could support this in the future."""
     id: Optional[int] = Field(default=None, primary_key=True)
-    group_name: str = Field(foreign_key="accessgroup.group_name", index=True)
+    accessgroup_id: int = Field(foreign_key="accessgroup.id", index=True)
     requester_id: str = Field(foreign_key="user.orcid", index=True)
     reason: Optional[str] = Field(default=None)
     status: str = Field(default="pending", index=True)
@@ -331,7 +375,8 @@ class DeletionAuditLog(SQLModel, table=True):
 
 class Instrument(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
-    unique_id: Optional[str] = Field(default_factory=get_mfid_value)
+    unique_id: Optional[str] = Field(default_factory=get_mfid_value, index=True, unique=True)
+    instrument_id: Optional[str] = Field(default=None, index=True, unique=True)
     other_id: Optional[str]
     other_id_source: Optional[str]
     instrument_name: str
@@ -341,6 +386,10 @@ class Instrument(SQLModel, table=True):
     location: str
     description: Optional[str]
     instrument_type: Optional[str]
+    # Instruments are not deleted; status tracks lifecycle. Changed through
+    # POST /instruments/{id}/status, not PATCH — it is a lifecycle transition
+    # with a higher bar than a metadata edit.
+    status: Optional[str] = Field(default="active")
 
 
 # --- Task tracking ---
@@ -367,4 +416,3 @@ class UploadSession(SQLModel, table=True):
     owner_user_id: str
     expires_at: str         # written as ISO 8601 string; DB returns datetime, handle both
     size: Optional[int] = Field(default=None, sa_column=Column(BigInteger()))
-

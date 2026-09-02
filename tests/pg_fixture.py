@@ -12,6 +12,7 @@ Set CRUCIBLE_TEST_PG_URL to run those modules:
     CRUCIBLE_TEST_PG_URL=postgresql+psycopg2://postgres:test@127.0.0.1:55432/crucible_test \\
         .venv/bin/python -m pytest
 """
+import importlib.util
 import os
 from pathlib import Path
 
@@ -26,7 +27,19 @@ from app.models.core_models import (
 PG_URL = os.getenv("CRUCIBLE_TEST_PG_URL")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MIGRATION_SQL = REPO_ROOT / "migrations" / "add_permission_roles.sql"
+MIGRATION_SQL = REPO_ROOT / "migrations" / "data" / "20260806_add_permission_roles.sql"
+BACKFILL_SCRIPT = REPO_ROOT / "migrations" / "data" / "20260806_backfill_permission_roles.py"
+
+
+def load_backfill_module():
+    """migrations/data files are named YYYYMMDD_... — not valid Python
+    identifiers, and deliberately so: they're addressed by path, the same way
+    Alembic loads everything in migrations/versions/. Load this one the same
+    way rather than `import migrations.backfill_permission_roles`."""
+    spec = importlib.util.spec_from_file_location("backfill_permission_roles", BACKFILL_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 TABLES = [User, Project, Instrument, Resource, Dataset, Sample, AccessGroup,
           ResourceACL, UserAccessGroupLink, UserProjectLink]
@@ -54,7 +67,7 @@ def drop_new_columns(engine):
     """
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE useraccessgrouplink DROP COLUMN IF EXISTS role"))
-        conn.execute(text("ALTER TABLE resourceacl DROP COLUMN IF EXISTS role"))
+        conn.execute(text("ALTER TABLE resourceacl DROP COLUMN IF EXISTS permission"))
         conn.execute(text('ALTER TABLE "user" DROP COLUMN IF EXISTS platform_role'))
 
 
@@ -72,7 +85,7 @@ def run_migration_sql(engine):
 
 
 def run_backfill(engine):
-    import migrations.backfill_permission_roles as backfill
+    backfill = load_backfill_module()
 
     with Session(engine) as session:
         backfill.backfill_standings(session)
@@ -103,7 +116,7 @@ def acl_for(engine, mfid):
     from app.utils.permissions import Role
     with Session(engine) as session:
         return [(gid, Role.from_db(role)) for gid, role in session.execute(
-            text("SELECT accessgroup_id, role FROM resourceacl WHERE mfid = :m"),
+            text("SELECT accessgroup_id, permission FROM resourceacl WHERE mfid = :m"),
             {"m": mfid}).all()]
 
 

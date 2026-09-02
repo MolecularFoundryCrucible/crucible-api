@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, List, Optional
+from typing import Annotated, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -9,11 +9,12 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import Dataset, DeletionAuditLog, DeletionRequest, Resource, Sample
+from app.models.core_models import (
+    Dataset, DeletionAuditLog, DeletionRequest, Resource, ResourceACL, Sample)
 from app.models.deletion import DeletionAuditLogRead, DeletionRequestRead
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, require_admin, require_groups
-from app.utils.permissions import Principal
+from app.utils.auth_utils import authorize_user, require_permission, require_platform_admin
+from app.utils.permissions import Permission, Principal, Role, THRESHOLDS
 from app.utils.sql_utils import touch_resource_modification_time
 from app.general_utils import get_utc_isoformat
 
@@ -52,14 +53,30 @@ def list_deletion_requests(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ):
-    ag_list = auth_res.groups
-    require_groups(ag_list)
     with Session(engine) as session:
         count_query = select(func.count(DeletionRequest.id))
         data_query = select(DeletionRequest).options(selectinload(DeletionRequest.resource))
         if status is not None:
             count_query = count_query.where(DeletionRequest.status == status)
             data_query = data_query.where(DeletionRequest.status == status)
+
+        # Scoped, not admin-only: you see requests you raised, plus any on a
+        # resource you administer. Platform admins see everything.
+        if not auth_res.is_platform_admin:
+            visible = (
+                (DeletionRequest.requester_id == auth_res.user_id)
+                | DeletionRequest.resource_id.in_(
+                    select(ResourceACL.mfid).where(
+                        ResourceACL.accessgroup_id.in_(
+                            auth_res.group_ids_at_or_above(THRESHOLDS[Permission.DELETE])),
+                        ResourceACL.permission.in_(
+                            [r.db_value for r in Role
+                             if r >= THRESHOLDS[Permission.DELETE]]),
+                    )
+                )
+            )
+            count_query = count_query.where(visible)
+            data_query = data_query.where(visible)
         total = session.exec(count_query).one()
         items = [_to_read(req, session) for req in session.exec(
             data_query.order_by(DeletionRequest.request_time.desc()).offset(offset).limit(limit)
@@ -76,8 +93,6 @@ def get_deletion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     request_id: int,
 ):
-    ag_list = auth_res.groups
-    require_groups(ag_list)
     with Session(engine) as session:
         req = session.exec(
             select(DeletionRequest)
@@ -86,6 +101,8 @@ def get_deletion_request(
         ).one_or_none()
         if req is None:
             raise HTTPException(status_code=404, detail="Deletion request not found.")
+        # Reviewing a deletion sits at the same bar as performing one.
+        require_permission(session, auth_res, req.resource_id, Permission.DELETE)
         return _to_read(req, session)
 
 
@@ -100,19 +117,21 @@ def review_deletion_request(
     status: str,                          # must be "approved" or "rejected"
     reviewer_notes: Optional[str] = None,
 ):
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    require_groups(ag_list)
+    user_unique_id = auth_res.user_id
     if status not in ("approved", "rejected"):
         raise HTTPException(status_code=422, detail="status must be 'approved' or 'rejected'.")
 
     with Session(engine) as session:
         req = session.exec(
             select(DeletionRequest)
-            .options(selectinload(DeletionRequest.resource))
             .where(DeletionRequest.id == request_id)
+            .with_for_update()
         ).one_or_none()
         if req is None:
             raise HTTPException(status_code=404, detail="Deletion request not found.")
+        resource = session.exec(
+            select(Resource).where(Resource.mfid == req.resource_id).with_for_update()
+        ).one_or_none()
         if req.status == "rejected":
             raise HTTPException(
                 status_code=409,
@@ -123,6 +142,16 @@ def review_deletion_request(
                 status_code=409,
                 detail="Request is already approved.",
             )
+        resource_type = resource.resource_type if resource else None
+        if resource_type not in ("dataset", "sample"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Deletion is not supported for resource type '{resource_type}'.",
+            )
+
+        # Approving a deletion is the deletion decision, so it sits at the same
+        # bar as performing one: admin on the resource, or platform admin.
+        require_permission(session, auth_res, req.resource_id, Permission.DELETE)
 
         # Update the request record.
         req.status = status
@@ -130,13 +159,15 @@ def review_deletion_request(
         req.reviewer_notes = reviewer_notes
         req.review_time = get_utc_isoformat()
         session.add(req)
+        project_id = _resolve_project_id(req.resource_id, resource_type, session)
 
         # Snapshot fields before hard delete removes the rows
         snapshot = DeletionRequestRead(
             id=req.id,
             resource_id=req.resource_id,
-            resource_type=req.resource.resource_type if req.resource else None,
+            resource_type=resource_type,
             resource_name=req.resource_name,
+            project_id=project_id,
             requester_id=req.requester_id,
             reason=req.reason,
             status=req.status,
@@ -147,13 +178,11 @@ def review_deletion_request(
         )
 
         if status == "approved":
-            resource_type = req.resource.resource_type if req.resource else None
-            # Write a durable audit record before destroying any rows.
             audit = DeletionAuditLog(
                 resource_id=req.resource_id,
                 resource_type=resource_type,
                 resource_name=req.resource_name,
-                project_id=_resolve_project_id(req.resource_id, resource_type, session),
+                project_id=project_id,
                 requester_id=req.requester_id,
                 reason=req.reason,
                 request_time=req.request_time,
@@ -163,10 +192,9 @@ def review_deletion_request(
                 deleted_at=get_utc_isoformat(),
             )
             session.add(audit)
-            session.commit()  # persists both the status update and the audit row
 
             from app.utils.deletion_utils import hard_delete_resource
-            hard_delete_resource(req.resource_id, session)
+            hard_delete_resource(req.resource_id, session, resource)
             session.commit()
         else:
             # Rejection makes the resource visible again in filtered list/search
@@ -180,37 +208,39 @@ def review_deletion_request(
 
 # ---------------------------------------------------------------------------
 # DELETE /resources/{resource_id}
-# Admin-only. Hard-delete immediately; requires approved request unless ?force=true.
+# Owner or platform-admin direct deletion with explicit acknowledgement.
 # ---------------------------------------------------------------------------
 @router.delete("/resources/{resource_id}")
 def hard_delete_resource_route(
     resource_id: str,
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    force: bool = False,
+    force: Literal[True] = Query(
+        ...,
+        description="Required acknowledgement for direct permanent deletion.",
+    ),
 ):
     """
-    Hard-delete a resource and all related data. Admin only.
-    Requires an approved deletion request unless ?force=true.
+    Permanently delete a dataset or sample from the database without a deletion request.
+    Requires force=true and resource owner or platform-admin authority.
+    Stored GCS objects are not deleted.
     """
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    require_admin(ag_list)
+    user_unique_id = auth_res.user_id
+    if force is not True:
+        raise HTTPException(status_code=422, detail="Direct deletion requires force=true.")
 
     with Session(engine) as session:
-        resource = session.exec(select(Resource).where(Resource.mfid == resource_id)).one_or_none()
+        resource = session.exec(
+            select(Resource).where(Resource.mfid == resource_id).with_for_update()
+        ).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
+        if resource.resource_type not in ("dataset", "sample"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Deletion is not supported for resource type '{resource.resource_type}'.",
+            )
 
-        if not force:
-            approved = session.exec(
-                select(DeletionRequest)
-                .where(DeletionRequest.resource_id == resource_id)
-                .where(DeletionRequest.status == "approved")
-            ).one_or_none()
-            if approved is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail="No approved deletion request found for this resource. Submit one via POST /resources/{id}/delete and have it approved, or use ?force=true to bypass.",
-                )
+        require_permission(session, auth_res, resource_id, Permission.HARD_DELETE)
 
         # Resolve resource name from the entity before destroying rows
         resource_name = None
@@ -227,18 +257,17 @@ def hard_delete_resource_route(
             resource_name=resource_name,
             project_id=_resolve_project_id(resource_id, resource.resource_type, session),
             requester_id=user_unique_id,
-            reason="direct hard delete",
+            reason="direct forced deletion",
             request_time=None,
             reviewer_id=user_unique_id,
-            reviewer_notes="force=True" if force else "approved request exists",
+            reviewer_notes="force=True",
             review_time=get_utc_isoformat(),
             deleted_at=get_utc_isoformat(),
         )
         session.add(audit)
-        session.commit()  # persist audit log before destroying rows
 
         from app.utils.deletion_utils import hard_delete_resource
-        hard_delete_resource(resource_id, session)
+        hard_delete_resource(resource_id, session, resource)
         session.commit()
 
     return {"detail": f"Resource {resource_id} permanently deleted"}
@@ -257,8 +286,7 @@ def list_deletion_audit(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ):
-    ag_list = auth_res.groups
-    require_admin(ag_list)
+    require_platform_admin(auth_res)
     with Session(engine) as session:
         count_query = select(func.count(DeletionAuditLog.id))
         data_query = select(DeletionAuditLog)
@@ -287,8 +315,7 @@ def get_deletion_audit(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     audit_id: int,
 ):
-    ag_list = auth_res.groups
-    require_admin(ag_list)
+    require_platform_admin(auth_res)
     with Session(engine) as session:
         entry = session.exec(
             select(DeletionAuditLog).where(DeletionAuditLog.id == audit_id)

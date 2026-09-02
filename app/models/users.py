@@ -1,26 +1,38 @@
 from typing import Any, List, Optional
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, ConfigDict, Field, field_validator
 from sqlmodel import SQLModel
+from app.general_utils import is_orcid
 from app.utils.user_utils import validate_username_format
 
 
 class UserCreate(SQLModel):
     '''Input schema for creating a user.'''
-    model_config = {"populate_by_name": True}
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     first_name: str
     last_name: str
-    unique_id: str = Field(validation_alias="orcid")
+    unique_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("unique_id", "orcid"),
+        description="Human ORCID. When omitted, the server assigns an MFID.",
+    )
     email: Optional[str] = None
-    username: Optional[str] = None
-    is_service_account: Optional[bool] = False
+    username: str
 
     @field_validator("username", mode="before")
     @classmethod
     def check_username(cls, v):
-        if v is None:
-            return v
         return validate_username_format(str(v))
+
+    @field_validator("unique_id", mode="before")
+    @classmethod
+    def check_unique_id(cls, v):
+        if v is None:
+            return None
+        value = str(v).strip()
+        if not is_orcid(value):
+            raise ValueError("unique_id must be an ORCID when supplied; omit it to generate an MFID")
+        return value
 
     @field_validator("email", mode="before")
     @classmethod
@@ -51,6 +63,8 @@ class UserPublicRead(SQLModel):
 
 class AccountProfileUpdate(SQLModel):
     '''Self-service profile update. Does not allow changing is_service_account.'''
+    model_config = ConfigDict(extra="forbid")
+
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: Optional[str] = None
@@ -72,12 +86,13 @@ class AccountProfileUpdate(SQLModel):
 
 
 class UserUpdate(SQLModel):
-    '''Admin partial update schema for User. All fields may be modified.'''
+    '''Admin partial update schema for mutable user profile fields.'''
+    model_config = ConfigDict(extra="forbid")
+
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: Optional[str] = None
     username: Optional[str] = None
-    is_service_account: Optional[bool] = None
 
     @field_validator("username", mode="before")
     @classmethod

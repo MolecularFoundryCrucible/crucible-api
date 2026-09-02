@@ -10,10 +10,6 @@ List all access groups. Deferred — no immediate use case. Group names mirror p
 
 Delete an access group. Deferred — requires deciding whether to cascade-delete linked ACLs and user memberships or reject if group is in use. No immediate use case.
 
-## `GET /resources/{id}/access_groups` and `POST /resources/{id}/access_groups`
-
-Resource-level ACL inspection and assignment (generalizing the existing dataset-specific routes to samples and instruments). Deferred — no immediate use case beyond datasets.
-
 ## `DELETE /users/{orcid}`
 
 User deactivation or removal. Deferred — requires a design decision on soft vs. hard delete. Hard delete must cascade `ApiToken`, `UserAccessGroupLink`, `UserProjectLink`. Also needs a policy for resources where the deleted user is stored as `owner_orcid` on datasets.

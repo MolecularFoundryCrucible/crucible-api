@@ -6,6 +6,7 @@ import urllib.parse
 from app.general_utils import get_secret, get_utc_isoformat, is_orcid
 
 logger = logging.getLogger(__name__)
+from fastapi import HTTPException
 from sqlalchemy import join
 from sqlmodel import create_engine, select
 from dotenv import load_dotenv
@@ -73,6 +74,28 @@ def add_or_update(session, cls, where, **kwargs):
     return obj
 
 
+def assert_mfid_available(session, mfid: str, resource_type: str) -> None:
+    """Raise 409 if a client-supplied mfid already names any resource in the
+    shared idtype table -- same-type or cross-type. Checked against the
+    shared table, not just the caller's own, so a collision with a resource
+    of a *different* type 409s here instead of reaching the add_or_update
+    that creates the idtype row, which would silently flip the existing
+    row's resource_type in place.
+
+    resource_type is the kind being created now (e.g. "dataset"), used only
+    to phrase the same-type message the way callers already expect.
+    """
+    from app.models.core_models import Resource
+    existing = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
+    if existing is None:
+        return
+    if existing.resource_type == resource_type:
+        raise HTTPException(status_code=409,
+                            detail=f"{resource_type.capitalize()} '{mfid}' already exists. Use PATCH to update it.")
+    raise HTTPException(status_code=409,
+                        detail=f"'{mfid}' is already in use by a {existing.resource_type}.")
+
+
 
 def delete_link(table, dataset_id, session):
     statement = select(table).where(table.dataset_id == dataset_id)
@@ -98,7 +121,9 @@ def touch_resource_modification_time(session, mfid):
     return resource
 
 
-def sql_create_resource_acl(ag, mfid, read, write, session):
+def sql_create_resource_acl(ag, mfid, read, write, session, permission):
+    """Create an ACL entry. `permission` is the granted role; read/write are
+    the pre-role columns, kept in step until they are dropped in phase 5."""
     from app.models.core_models import ResourceACL
     from sqlmodel import select
     if ag is None:
@@ -109,7 +134,12 @@ def sql_create_resource_acl(ag, mfid, read, write, session):
         .where(ResourceACL.mfid == mfid)
     ).one_or_none()
     if not acl:
-        acl = ResourceACL(accessgroup_id=ag.id, mfid=mfid, read=read, write=write)
+        acl = ResourceACL(accessgroup_id=ag.id, mfid=mfid, read=read, write=write,
+                          permission=permission.db_value)
+        session.add(acl)
+        session.flush()
+    elif acl.permission is None:
+        acl.permission = permission.db_value
         session.add(acl)
         session.flush()
     return acl
@@ -118,41 +148,100 @@ def sql_create_resource_acl(ag, mfid, read, write, session):
 def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None):
     '''
     Create the standard set of ResourceACL entries for a newly created resource.
-    - admin and read_only groups always get access
-    - owner gets read+write (if provided)
-    - requestor gets read+write if different from owner (e.g. service account acting on behalf)
-    - project group gets read+write (if provided)
+    - owner's ORCID group gets `owner`
+    - project group gets `admin`, so project roles apply at face value
     Extra resource-specific ACLs (e.g. instrument group for datasets) should be added by the caller.
+
+    No admin or read_only rows: platform admins bypass the ACL entirely and
+    read_only is gone. Writing them would recreate the ~720k rows the migration
+    just deleted.
+
+    No requestor row either. The creator reaches the resource through the
+    project group; a row per creator per resource expresses nothing.
     '''
-    from app.models.core_models import AccessGroup
+    from app.models.core_models import AccessGroup, Project
+    from app.utils.permissions import AccessGroupType, Role
     from sqlmodel import select
 
-    admin = session.exec(select(AccessGroup).where(AccessGroup.group_name == "admin")).one_or_none()
-    sql_create_resource_acl(admin, mfid, read=True, write=True, session=session)
-
-    ro = session.exec(select(AccessGroup).where(AccessGroup.group_name == "read_only")).one_or_none()
-    sql_create_resource_acl(ro, mfid, read=True, write=False, session=session)
-
     if owner_id:
-        owner_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == owner_id)).one_or_none()
+        owner_ag = session.exec(select(AccessGroup).where(
+            AccessGroup.group_name == owner_id,
+            AccessGroup.group_type == AccessGroupType.IDENTITY.value,
+        )).one_or_none()
         if owner_ag is None:
-            logger.warning("create_standard_acls: no AccessGroup for owner '%s' — skipping owner ACL for resource '%s'", owner_id, mfid)
-        else:
-            sql_create_resource_acl(owner_ag, mfid, read=True, write=True, session=session)
-
-    if requestor_id and is_orcid(requestor_id) and requestor_id != owner_id:
-        requestor_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == requestor_id)).one_or_none()
-        if requestor_ag is None:
-            logger.warning("create_standard_acls: no AccessGroup for requestor '%s' — skipping requestor ACL for resource '%s'", requestor_id, mfid)
-        else:
-            sql_create_resource_acl(requestor_ag, mfid, read=True, write=True, session=session)
+            raise HTTPException(
+                status_code=409,
+                detail=f"Owner '{owner_id}' has no personal access group",
+            )
+        sql_create_resource_acl(owner_ag, mfid, read=True, write=True,
+                                session=session, permission=Role.OWNER)
 
     if project_id:
-        proj_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == project_id)).one_or_none()
+        project = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
+        proj_ag = (
+            session.exec(select(AccessGroup).where(
+                AccessGroup.group_name == project.unique_id,
+                AccessGroup.group_type == AccessGroupType.PROJECT.value,
+            )).one_or_none()
+            if project else None
+        )
         if proj_ag is None:
-            logger.warning("create_standard_acls: no AccessGroup for project '%s' — skipping project ACL for resource '%s'", project_id, mfid)
+            raise HTTPException(
+                status_code=409,
+                detail=f"Project '{project_id}' has no access group",
+            )
+        sql_create_resource_acl(proj_ag, mfid, read=True, write=True,
+                                session=session, permission=Role.ADMIN)
+
+
+def set_public(session, mfid: str, is_public: bool):
+    """Add or remove the resource's ACL entry against the virtual public group.
+
+    Publishing is an ACL grant now, not a boolean. The Resource.public column is
+    still written alongside until phase 5 drops it, but nothing reads it for
+    authorization — so setting the flag without this leaves a resource marked
+    public that nobody outside can actually reach.
+    """
+    from app.models.core_models import AccessGroup, ResourceACL
+    from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, Role
+    from sqlmodel import select
+
+    pub = session.exec(
+        select(AccessGroup).where(
+            AccessGroup.group_name == PUBLIC_GROUP_NAME,
+            AccessGroup.group_type == AccessGroupType.SYSTEM.value,
+        )
+    ).one_or_none()
+    if pub is None:
+        if is_public:
+            raise HTTPException(
+                status_code=409,
+                detail="Public access group is not provisioned",
+            )
+        return
+
+    existing = session.exec(
+        select(ResourceACL)
+        .where(ResourceACL.mfid == mfid)
+        .where(ResourceACL.accessgroup_id == pub.id)
+    ).one_or_none()
+
+    if is_public:
+        if existing is None:
+            existing = ResourceACL(
+                mfid=mfid,
+                accessgroup_id=pub.id,
+                read=True,
+                write=False,
+                permission=Role.VIEWER.db_value,
+            )
         else:
-            sql_create_resource_acl(proj_ag, mfid, read=True, write=True, session=session)
+            existing.read = True
+            existing.write = False
+            existing.permission = Role.VIEWER.db_value
+        session.add(existing)
+    elif not is_public and existing is not None:
+        session.delete(existing)
 
 
 def get_active_deletion_request(session, resource_id: str):
@@ -178,6 +267,30 @@ def deletion_filter_for(resource_model):
     )
 
 
+def visibility_filter_for(resource_model, visibility: str):
+    """
+    Returns a SQLAlchemy filter narrowing to public or private resources.
+    `visibility` is 'public' or 'private'; callers skip this entirely for 'all'.
+
+    Public means an ACL entry exists for the virtual public group — the ACL
+    entry is authoritative, not the legacy `public` column that phase 5 drops.
+    """
+    from sqlalchemy import exists
+    from app.models.core_models import AccessGroup, ResourceACL
+    from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType
+
+    is_public = exists().where(
+        ResourceACL.mfid == resource_model.unique_id,
+        ResourceACL.accessgroup_id == (
+            select(AccessGroup.id).where(
+                AccessGroup.group_name == PUBLIC_GROUP_NAME,
+                AccessGroup.group_type == AccessGroupType.SYSTEM.value,
+            ).scalar_subquery()
+        ),
+    )
+    return is_public if visibility == "public" else ~is_public
+
+
 
 def generate_kw_query(session, base_query, keyword_filter):
     from app.models.core_models import Dataset, DatasetKeywordLink, Keyword
@@ -196,5 +309,3 @@ def generate_kw_query(session, base_query, keyword_filter):
         ).filter(DatasetKeywordLink.keyword_id.in_(keyword_ids))
     )
     return query
-
-

@@ -40,11 +40,20 @@ class PlatformRole(str, Enum):
     ADMIN = "admin"
 
 
+class AccessGroupType(str, Enum):
+    IDENTITY = "identity"
+    PROJECT = "project"
+    INSTRUMENT = "instrument"
+    CUSTOM = "custom"
+    SYSTEM = "system"
+
+
 class Permission(str, Enum):
     READ = "read"
     CREATE = "create"
     EDIT = "edit"
     DELETE = "delete"
+    HARD_DELETE = "hard_delete"
     MANAGE_ACL = "manage_acl"
     TRANSFER = "transfer"
 
@@ -54,6 +63,7 @@ _THRESHOLDS: dict[Permission, Role] = {
     Permission.CREATE: Role.CONTRIBUTOR,
     Permission.EDIT: Role.EDITOR,
     Permission.DELETE: Role.ADMIN,
+    Permission.HARD_DELETE: Role.OWNER,
     Permission.MANAGE_ACL: Role.ADMIN,
     Permission.TRANSFER: Role.OWNER,
 }
@@ -65,7 +75,7 @@ THRESHOLDS: Mapping[Permission, Role] = MappingProxyType(_THRESHOLDS)
 
 @dataclass(frozen=True)
 class GroupMembership:
-    """A principal's standing in one group — not a grant on a resource."""
+    """A principal's standing in one access group."""
     id: int
     group_name: str
     role: Role
@@ -162,6 +172,7 @@ def can_grant(
     actor_role: Optional[Role],
     target_role: Role,
     current_role: Optional[Role] = None,
+    floor: Role = Role.ADMIN,
 ) -> bool:
     """Whether `actor_role` may set an entry to `target_role`, replacing
     `current_role`.
@@ -169,10 +180,14 @@ def can_grant(
     The cap binds on both ends: an admin can neither mint an owner nor
     overwrite one. Omitting `current_role` checks only the creation direction,
     which would let an admin demote a lead to viewer.
+
+    `floor` is the minimum role that may manage at all, and differs by what is
+    being managed: `admin` for ACL entries, which share data outward without
+    bound, `editor` for project membership, which is bounded by the project.
     """
     if actor_role is None:
         return False
-    if actor_role < THRESHOLDS[Permission.MANAGE_ACL]:
+    if actor_role < floor:
         return False
     if target_role > actor_role:
         return False

@@ -1,11 +1,13 @@
 from typing import Any, List, Optional
-from pydantic import field_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
 from app.general_utils import blank_to_none, is_valid_mfid
 from app.models.links import LinkedResource
 
 
 class DatasetCreate(SQLModel):
+    model_config = ConfigDict(extra="forbid")
+
     '''
     Fields accepted when creating or upserting a dataset.
     Provide unique_id to create a record under a pre-assigned ID (must be a
@@ -22,42 +24,63 @@ class DatasetCreate(SQLModel):
         return v
     dataset_name: Optional[str] = None
     project_id: Optional[str] = None
-    source_folder: Optional[str] = None
     instrument_name: Optional[str] = None
+    instrument_id: Optional[str] = None  # instrument's validated slug; preferred over instrument_name when given
     data_format: Optional[str] = None
     measurement: Optional[str] = None
     data_type: Optional[str] = None
     session_name: Optional[str] = None
     timestamp: Optional[str] = None
     public: bool = False
-    owner_orcid: Optional[str] = None     # falls back to the authenticated user if not provided
+    owner_orcid: Optional[str] = Field(
+        default=None,
+        deprecated=True,
+        description="Deprecated canonical owner identity (human ORCID or service-account MFID). Use owner.",
+    )
+    owner: Optional[str] = Field(
+        default=None,
+        description="Owner reference: ORCID, service-account MFID, username, or email. Defaults to the authenticated identity.",
+    )
 
-    @field_validator("project_id", "owner_orcid", mode="before", check_fields=False)
+    @field_validator("project_id", "owner_orcid", "owner", mode="before", check_fields=False)
     @classmethod
     def blank_identifiers_to_none(cls, v):
         """Uploaders that send "" instead of omitting the field would otherwise
         attach the resource to a nameless project. See general_utils."""
         return blank_to_none(v)
 
+    @model_validator(mode="after")
+    def validate_owner_reference(self):
+        values = self.model_dump()
+        if values.get("owner") is not None and values.get("owner_orcid") is not None:
+            raise ValueError("Provide owner or owner_orcid, not both")
+        return self
+
 class DatasetUpdate(SQLModel):
-    '''Partial update schema for Dataset. Only provided fields are modified.'''
+    '''Partial update schema for Dataset. Only provided fields are modified.
+
+    No project_id/owner_orcid — use POST /resources/{mfid}/project and
+    POST /resources/{mfid}/transfer_ownership.
+    '''
+    model_config = ConfigDict(extra="forbid")
+
     dataset_name: Optional[str] = None
-    project_id: Optional[str] = None
-    instrument_name: Optional[str] = None
+    instrument_name: Optional[str] = Field(
+        default=None,
+        deprecated=True,
+        description="Deprecated for dataset updates. Only the current value is accepted.",
+    )
+    instrument_id: Optional[str] = Field(
+        default=None,
+        deprecated=True,
+        description="Deprecated for dataset updates. Only the current value is accepted.",
+    )
     data_format: Optional[str] = None
     measurement: Optional[str] = None
     data_type: Optional[str] = None
     session_name: Optional[str] = None
     timestamp: Optional[str] = None
     public: Optional[bool] = None
-    owner_orcid: Optional[str] = None
-
-    @field_validator("project_id", "owner_orcid", mode="before", check_fields=False)
-    @classmethod
-    def blank_identifiers_to_none(cls, v):
-        """Uploaders that send "" instead of omitting the field would otherwise
-        attach the resource to a nameless project. See general_utils."""
-        return blank_to_none(v)
 
 class DatasetRead(SQLModel):
     '''Response model for Dataset. Includes all server-generated fields.'''
@@ -67,8 +90,8 @@ class DatasetRead(SQLModel):
    # file_to_upload: Optional[str] = None
     owner_orcid: Optional[str] = None
     project_id: Optional[str] = None
-    source_folder: Optional[str] = None
     instrument_name: Optional[str] = None
+    instrument_id: Optional[str] = None  # instrument's validated slug, resolved server-side
     timestamp: Optional[str] = None
     size: Optional[int] = None
     data_format: Optional[str] = None
@@ -145,4 +168,3 @@ class DatasetResponse(DatasetRead):
     deletion_request: Optional[dict] = None
     links: Optional[List[LinkedResource]] = None
     owner: Optional[Any] = None  # UserPublicRead when include_owner=true
-

@@ -1,4 +1,7 @@
 .DS_Store
+# Claude memory notes belong in ~/.claude/projects/.../memory/, never here —
+# a stray local memory/ got swept into a commit by `git add -A` once already.
+/memory/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.ipynb
@@ -131,7 +134,8 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
+.env*
+!.env.example-localdev
 .venv
 env/
 venv/

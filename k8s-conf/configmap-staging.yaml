@@ -18,14 +18,6 @@ data:
   ANTHROPIC_BASE_URL: "https://api.cborg.lbl.gov"
   ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5"
 
-  # permission migration
-  # Runs the new permission check alongside the old one, acts on the old
-  # answer, logs disagreements. Set to "0" to switch off without a deploy.
-  PERMISSION_SHADOW_MODE: "1"
-  # Summary line after every N checks. Low while a single person is testing;
-  # raise it well before production, where it would be one line per request.
-  PERMISSION_SHADOW_SUMMARY_EVERY: "5"
-
   # database
   db_type: "postgresql"
   db_server: "172.31.16.10:5432"

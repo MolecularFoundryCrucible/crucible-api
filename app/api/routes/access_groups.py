@@ -6,41 +6,90 @@ from sqlmodel import Session, select, col
 
 from app.api.dependencies import get_engine
 from app.general_utils import get_utc_isoformat
-from app.models.core_models import AccessGroup, AccessGroupJoinRequest, Project, User, UserAccessGroupLink, UserProjectLink
-from app.models.access_groups import AccessGroupCreate, AccessGroupRead
+from app.models.core_models import AccessGroup, AccessGroupJoinRequest, Instrument, Project, User, UserAccessGroupLink
+from app.models.access_groups import AccessGroupCreate, AccessGroupMemberRead, AccessGroupRead
 from app.models.join_requests import JoinRequestCreate, JoinRequestRead, JoinRequestReview
 from app.models.pagination import PaginatedResponse
-from app.models.users import UserRead
-from app.utils.auth_utils import authorize_user, require_admin, require_groups
-from app.utils.permissions import Principal
-from app.utils.project_utils import sql_add_user_to_project
+from app.utils.auth_utils import authorize_user, has_platform_admin_access, require_platform_admin
+from app.utils.permissions import AccessGroupType, Principal, Role
+from app.utils.project_utils import is_project_member, is_project_owner, sql_add_user_to_project
 
 router = APIRouter(tags=["access_groups"])
 engine = get_engine()
 
 
-def _is_group_lead(user_unique_id: str, group_name: str, session: Session) -> bool:
-    """True if the caller is the project lead of group_name (only projects have a lead concept for now)."""
-    proj = session.exec(select(Project).where(Project.project_id == group_name)).one_or_none()
-    return proj is not None and proj.project_lead_orcid == user_unique_id
+def _resolve_group_project_id(accessgroup_id: int, session: Session) -> Optional[str]:
+    """The project_id of the project behind this access group, or None if
+    accessgroup_id does not name a project's own group."""
+    ag = session.exec(select(AccessGroup).where(AccessGroup.id == accessgroup_id)).one_or_none()
+    if ag is None or ag.group_type != AccessGroupType.PROJECT.value:
+        return None
+    proj = session.exec(select(Project).where(Project.unique_id == ag.group_name)).one_or_none()
+    return proj.project_id if proj else None
 
 
-def _led_group_names(user_unique_id: str, session: Session) -> List[str]:
-    """All group_names (project_ids) the caller is the project lead of."""
+def _to_join_request_read(req: AccessGroupJoinRequest, session: Session) -> JoinRequestRead:
+    return JoinRequestRead(
+        id=req.id,
+        group_name=_resolve_group_project_id(req.accessgroup_id, session),
+        requester_id=req.requester_id,
+        reason=req.reason,
+        status=req.status,
+        request_time=req.request_time,
+        review_time=req.review_time,
+        reviewer_id=req.reviewer_id,
+        reviewer_notes=req.reviewer_notes,
+    )
+
+
+def _is_group_lead(user_unique_id: str, accessgroup_id: int, session: Session) -> bool:
+    """True if the caller is the project lead of the group behind accessgroup_id
+    (only projects have a lead concept for now)."""
+    project_id = _resolve_group_project_id(accessgroup_id, session)
+    if project_id is None:
+        return False
+    return is_project_owner(user_unique_id, project_id, session)
+
+
+def _led_accessgroup_ids(user_unique_id: str, session: Session) -> List[int]:
+    """Ids of the access groups of every project the caller holds owner standing in."""
+    user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
+    if user is None:
+        return []
     return session.exec(
-        select(Project.project_id).where(Project.project_lead_orcid == user_unique_id)
+        select(AccessGroup.id)
+        .join(Project, AccessGroup.group_name == Project.unique_id)
+        .join(UserAccessGroupLink, UserAccessGroupLink.accessgroup_id == AccessGroup.id)
+        .where(
+            AccessGroup.group_type == AccessGroupType.PROJECT.value,
+            UserAccessGroupLink.user_id == user.id,
+            UserAccessGroupLink.role == Role.OWNER.db_value,
+        )
     ).all()
 
 
 @router.post("/access_groups", response_model=AccessGroupRead)
 def create_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], ag: AccessGroupCreate):
-    ag_list = auth_res.groups
-    require_groups(ag_list)
+    require_platform_admin(auth_res)
     if not ag.group_name.strip():
         raise HTTPException(status_code=400, detail="group_name must not be empty.")
 
     with Session(engine) as session:
-        db_ag = AccessGroup(group_name=ag.group_name)
+        if ag.group_name in {"admin", "public", "read_only"}:
+            raise HTTPException(status_code=409, detail="Reserved system group names cannot be created")
+        if session.exec(select(AccessGroup.id).where(AccessGroup.group_name == ag.group_name)).first():
+            raise HTTPException(status_code=409, detail="Access group already exists")
+        entity_collision = (
+            session.exec(select(User.id).where(User.unique_id == ag.group_name)).first()
+            or session.exec(select(Project.id).where(Project.unique_id == ag.group_name)).first()
+            or session.exec(select(Instrument.id).where(Instrument.unique_id == ag.group_name)).first()
+        )
+        if entity_collision:
+            raise HTTPException(status_code=409, detail="Entity-owned group names cannot be created as custom groups")
+        db_ag = AccessGroup(
+            group_name=ag.group_name,
+            group_type=AccessGroupType.CUSTOM.value,
+        )
         session.add(db_ag)
         session.commit()
         session.refresh(db_ag)
@@ -49,31 +98,33 @@ def create_access_group(auth_res: Annotated[Principal, Depends(authorize_user)],
 
 @router.get("/access_groups/{group_name}", response_model=Union[None, AccessGroupRead])
 def read_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], group_name: str):
-    ag_list = auth_res.groups
-    require_groups(ag_list)
+    require_platform_admin(auth_res)
     with Session(engine) as session:
         return session.exec(
             select(AccessGroup).where(AccessGroup.group_name == group_name)
         ).one_or_none()
 
 
-@router.get("/access_groups/{group_name}/users", response_model=List[UserRead])
+@router.get("/access_groups/{group_name}/users", response_model=List[AccessGroupMemberRead])
 def list_access_group_users(auth_res: Annotated[Principal, Depends(authorize_user)], group_name: str):
-    '''List all users who are members of the given access group. Admin only.'''
-    ag_list = auth_res.groups
-    require_admin(ag_list)
+    '''List all users who are members of the given access group, with their role. Admin only.'''
+    require_platform_admin(auth_res)
 
     with Session(engine) as session:
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
         if ag is None:
             raise HTTPException(status_code=404, detail="Access group not found")
 
-        return session.exec(
-            select(User)
+        rows = session.exec(
+            select(User, UserAccessGroupLink.role)
             .join(UserAccessGroupLink, UserAccessGroupLink.user_id == User.id)
             .where(UserAccessGroupLink.accessgroup_id == ag.id)
             .order_by(User.last_name, User.first_name)
         ).all()
+        return [
+            AccessGroupMemberRead.model_validate(user, update={"role": role or "unknown"})
+            for user, role in rows
+        ]
 
 
 @router.post("/access_groups/{group_name}/join", response_model=JoinRequestRead)
@@ -93,22 +144,23 @@ def request_to_join_access_group(
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Group {group_name} not found")
 
+        ag = session.exec(select(AccessGroup).where(
+            AccessGroup.group_name == proj.unique_id,
+            AccessGroup.group_type == AccessGroupType.PROJECT.value,
+        )).one_or_none()
+        if ag is None:
+            raise HTTPException(status_code=409, detail=f"No access group for project '{group_name}'")
+
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        existing_membership = session.exec(
-            select(UserProjectLink).where(
-                UserProjectLink.user_id == user.id,
-                UserProjectLink.project_id == group_name,
-            )
-        ).one_or_none()
-        if existing_membership is not None:
+        if is_project_member(user.id, group_name, session):
             raise HTTPException(status_code=409, detail=f"Already a member of {group_name}.")
 
         existing_pending = session.exec(
             select(AccessGroupJoinRequest).where(
-                AccessGroupJoinRequest.group_name == group_name,
+                AccessGroupJoinRequest.accessgroup_id == ag.id,
                 AccessGroupJoinRequest.requester_id == user_unique_id,
                 AccessGroupJoinRequest.status == "pending",
             )
@@ -117,14 +169,14 @@ def request_to_join_access_group(
             raise HTTPException(status_code=409, detail="A pending join request already exists for this group.")
 
         req = AccessGroupJoinRequest(
-            group_name=group_name,
+            accessgroup_id=ag.id,
             requester_id=user_unique_id,
             reason=body.reason,
         )
         session.add(req)
         session.commit()
         session.refresh(req)
-        return req
+        return _to_join_request_read(req, session)
 
 
 @router.get("/join_requests", response_model=PaginatedResponse[JoinRequestRead])
@@ -146,21 +198,28 @@ def list_join_requests(
       for someone leading multiple projects to fetch all their pending
       requests in one call instead of one request per project.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    is_admin = any(ag.group_name == 'admin' for ag in ag_list)
+    user_unique_id = auth_res.user_id
+    is_admin = has_platform_admin_access(auth_res)
 
     with Session(engine) as session:
         query = select(AccessGroupJoinRequest)
 
         if group_name:
-            if not is_admin and not _is_group_lead(user_unique_id, group_name, session):
+            proj = session.exec(select(Project).where(Project.project_id == group_name)).one_or_none()
+            ag = session.exec(select(AccessGroup).where(
+                AccessGroup.group_name == proj.unique_id,
+                AccessGroup.group_type == AccessGroupType.PROJECT.value,
+            )).one_or_none() if proj else None
+            if not is_admin and not (ag and _is_group_lead(user_unique_id, ag.id, session)):
                 raise HTTPException(status_code=403, detail="Only admins, or the lead of the requested group, can list join requests.")
-            query = query.where(AccessGroupJoinRequest.group_name == group_name)
-        elif not is_admin:
-            led_names = _led_group_names(user_unique_id, session)
-            if not led_names:
+            if ag is None:
                 return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
-            query = query.where(col(AccessGroupJoinRequest.group_name).in_(led_names))
+            query = query.where(AccessGroupJoinRequest.accessgroup_id == ag.id)
+        elif not is_admin:
+            led_ids = _led_accessgroup_ids(user_unique_id, session)
+            if not led_ids:
+                return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
+            query = query.where(col(AccessGroupJoinRequest.accessgroup_id).in_(led_ids))
 
         if status:
             query = query.where(AccessGroupJoinRequest.status == status)
@@ -168,9 +227,10 @@ def list_join_requests(
             query = query.where(AccessGroupJoinRequest.requester_id == requester_id)
 
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        items = session.exec(
+        rows = session.exec(
             query.order_by(col(AccessGroupJoinRequest.id).desc()).offset(offset).limit(limit)
         ).all()
+        items = [_to_join_request_read(req, session) for req in rows]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
@@ -183,8 +243,8 @@ def get_join_request(
     Fetch a single join request by id. Visible to admins, the lead of the
     request's group, or the user who submitted it.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    is_admin = any(ag.group_name == 'admin' for ag in ag_list)
+    user_unique_id = auth_res.user_id
+    is_admin = has_platform_admin_access(auth_res)
 
     with Session(engine) as session:
         req = session.exec(
@@ -193,10 +253,10 @@ def get_join_request(
         if req is None:
             raise HTTPException(status_code=404, detail="Join request not found.")
 
-        if not is_admin and user_unique_id != req.requester_id and not _is_group_lead(user_unique_id, req.group_name, session):
+        if not is_admin and user_unique_id != req.requester_id and not _is_group_lead(user_unique_id, req.accessgroup_id, session):
             raise HTTPException(status_code=403, detail="Only admins, the lead of this group, or the requester can view this join request.")
 
-        return req
+        return _to_join_request_read(req, session)
 
 
 @router.patch("/join_requests/{request_id}", response_model=JoinRequestRead)
@@ -210,8 +270,8 @@ def review_join_request(
     request's group only. Approving adds the requester to the group's
     project membership and access group.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    is_admin = any(ag.group_name == 'admin' for ag in ag_list)
+    user_unique_id = auth_res.user_id
+    is_admin = has_platform_admin_access(auth_res)
 
     with Session(engine) as session:
         req = session.exec(
@@ -220,7 +280,7 @@ def review_join_request(
         if req is None:
             raise HTTPException(status_code=404, detail="Join request not found.")
 
-        if not is_admin and not _is_group_lead(user_unique_id, req.group_name, session):
+        if not is_admin and not _is_group_lead(user_unique_id, req.accessgroup_id, session):
             raise HTTPException(status_code=403, detail="Only admins or the lead of this group can review join requests.")
 
         if req.status != "pending":
@@ -230,7 +290,8 @@ def review_join_request(
             requester = session.exec(select(User).where(User.unique_id == req.requester_id)).one_or_none()
             if requester is None:
                 raise HTTPException(status_code=404, detail="Requesting user no longer exists.")
-            sql_add_user_to_project(requester, req.group_name, session)
+            project_id = _resolve_group_project_id(req.accessgroup_id, session)
+            sql_add_user_to_project(requester, project_id, session)
 
         req.status = body.status
         req.review_time = get_utc_isoformat()
@@ -239,4 +300,4 @@ def review_join_request(
         session.add(req)
         session.commit()
         session.refresh(req)
-        return req
+        return _to_join_request_read(req, session)

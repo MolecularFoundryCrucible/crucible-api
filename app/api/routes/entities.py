@@ -3,17 +3,18 @@ from typing import Annotated
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import text, bindparam, ARRAY, Integer
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import joinedload
-from sqlmodel import or_, Session, select
+from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.models.core_models import (
-    AccessGroup, Dataset, DeletionRequest, Resource, ResourceACL,
-    DatasetLink, DatasetSampleLink, Sample, SampleLink,
+    Dataset, DatasetLink, DatasetSampleLink, Resource, Sample, SampleLink,
 )
-from app.utils.auth_utils import authorize_user, read_access_filter_list
-from app.utils.permissions import Principal
+from app.utils.auth_utils import authorize_user, permission_filter
+from app.utils.project_utils import resolve_project_reference
+from app.utils.sql_utils import deletion_filter_for
+from app.utils.permissions import Permission, Principal, Role
 
 router = APIRouter(tags=["entities"])
 engine = get_engine()
@@ -31,12 +32,12 @@ def entity_graph(entity_id: str, auth_res: Annotated[Principal, Depends(authoriz
     of broad queries, builds the combined graph in Python, then returns the weakly
     connected component containing the root entity.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        ds_auth, ds_del = read_access_filter_list(Dataset, ag_ids)
-        s_auth, s_del = read_access_filter_list(Sample, ag_ids)
+        ds_auth = permission_filter(auth_res, Dataset)
+        ds_del = deletion_filter_for(Dataset)
+        s_auth = permission_filter(auth_res, Sample)
+        s_del = deletion_filter_for(Sample)
 
         # Identify root entity type, enforce auth, and determine project scope
         sample_target = session.exec(
@@ -47,7 +48,7 @@ def entity_graph(entity_id: str, auth_res: Annotated[Principal, Depends(authoriz
         ).first()
 
         if sample_target is not None:
-            project_id = sample_target.project_id
+            project_mfid = sample_target.project_mfid
         else:
             dataset_target = session.exec(
                 select(Dataset)
@@ -57,15 +58,16 @@ def entity_graph(entity_id: str, auth_res: Annotated[Principal, Depends(authoriz
             ).first()
             if dataset_target is None:
                 raise HTTPException(status_code=404, detail="Entity not found")
-            project_id = dataset_target.project_id
+            project_mfid = dataset_target.project_mfid
 
-        # Load all authorized samples in the project with parent relationships
+        # Load all authorized samples in the project with parent relationships.
+        # Scoped by the project's MFID, not its (renamable) project_id.
         samp_list = session.exec(
             select(Sample)
             .options(joinedload(Sample.parents))
             .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
             .where(s_auth).where(s_del)
-            .where(Sample.project_id == project_id)
+            .where(Sample.project_mfid == project_mfid)
         ).unique().all()
 
         # Load all authorized datasets in the project with parent relationships
@@ -74,7 +76,7 @@ def entity_graph(entity_id: str, auth_res: Annotated[Principal, Depends(authoriz
             .options(joinedload(Dataset.parents))
             .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
             .where(ds_auth).where(ds_del)
-            .where(Dataset.project_id == project_id)
+            .where(Dataset.project_mfid == project_mfid)
         ).unique().all()
 
         # Map integer FK → unique_id for resolving DatasetSampleLink rows
@@ -164,12 +166,12 @@ def entity_graph_bfs(entity_id: str, auth_res: Annotated[Principal, Depends(auth
     associations. entity_id may be a sample or dataset unique_id.
     Nodes carry entity_type ('sample' or 'dataset') and name attributes.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        ds_auth, ds_del = read_access_filter_list(Dataset, ag_ids)
-        s_auth, s_del = read_access_filter_list(Sample, ag_ids)
+        ds_auth = permission_filter(auth_res, Dataset)
+        ds_del = deletion_filter_for(Dataset)
+        s_auth = permission_filter(auth_res, Sample)
+        s_del = deletion_filter_for(Sample)
 
         # Identify root entity type and enforce auth before traversal
         sample_target = session.exec(
@@ -412,18 +414,72 @@ def _build_graph(session: Session, sample_ids: set, dataset_ids: set) -> dict:
 # Default: first-degree neighbours only. Pass recursive=true for full traversal.
 # ---------------------------------------------------------------------------
 
-_SAMPLE_SEED_1HOP_SQL = text("""
+_VISIBLE_ENTITIES_SQL = """
+        visible_samples(id) AS (
+            SELECT s.id
+            FROM sample s
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM deletionrequest dr
+                WHERE dr.resource_id = s.unique_id
+                  AND dr.status IN ('pending', 'approved')
+            )
+              AND (
+                  :platform_admin
+                  OR EXISTS (
+                      SELECT 1
+                      FROM resourceacl acl
+                      WHERE acl.mfid = s.unique_id
+                        AND acl.accessgroup_id IN :group_ids
+                        AND acl.permission IN ('viewer', 'contributor', 'editor', 'admin', 'owner')
+                  )
+              )
+        ),
+        visible_datasets(id) AS (
+            SELECT d.id
+            FROM dataset d
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM deletionrequest dr
+                WHERE dr.resource_id = d.unique_id
+                  AND dr.status IN ('pending', 'approved')
+            )
+              AND (
+                  :platform_admin
+                  OR EXISTS (
+                      SELECT 1
+                      FROM resourceacl acl
+                      WHERE acl.mfid = d.unique_id
+                        AND acl.accessgroup_id IN :group_ids
+                        AND acl.permission IN ('viewer', 'contributor', 'editor', 'admin', 'owner')
+                  )
+              )
+        )
+"""
+
+
+def _graph_sql(statement: str):
+    return text(statement).bindparams(bindparam("group_ids", expanding=True))
+
+
+_SAMPLE_SEED_1HOP_SQL = _graph_sql(f"""
     WITH
+        {_VISIBLE_ENTITIES_SQL},
         s_neighbors(id) AS (
             SELECT CAST(:seed_id AS int)
             UNION
-            SELECT sl.sample_id        FROM samplelink sl WHERE sl.parent_sample_id = CAST(:seed_id AS int)
+            SELECT sl.sample_id FROM samplelink sl
+             WHERE sl.parent_sample_id = CAST(:seed_id AS int)
+               AND sl.sample_id IN (SELECT id FROM visible_samples)
             UNION
-            SELECT sl.parent_sample_id FROM samplelink sl WHERE sl.sample_id        = CAST(:seed_id AS int)
+            SELECT sl.parent_sample_id FROM samplelink sl
+             WHERE sl.sample_id = CAST(:seed_id AS int)
+               AND sl.parent_sample_id IN (SELECT id FROM visible_samples)
         ),
         d_neighbors(id) AS (
             SELECT DISTINCT dsl.dataset_id FROM datasetsamplelink dsl
              WHERE dsl.sample_id IN (SELECT id FROM s_neighbors)
+               AND dsl.dataset_id IN (SELECT id FROM visible_datasets)
         )
     SELECT 'sn' AS t, s.unique_id AS a, s.sample_name AS b
       FROM sample s WHERE s.id IN (SELECT id FROM s_neighbors)
@@ -453,18 +509,24 @@ _SAMPLE_SEED_1HOP_SQL = text("""
        AND dsl.dataset_id IN (SELECT id FROM d_neighbors)
 """)
 
-_DATASET_SEED_1HOP_SQL = text("""
+_DATASET_SEED_1HOP_SQL = _graph_sql(f"""
     WITH
+        {_VISIBLE_ENTITIES_SQL},
         d_neighbors(id) AS (
             SELECT CAST(:seed_id AS int)
             UNION
-            SELECT dl.child_dataset_id  FROM datasetlink dl WHERE dl.parent_dataset_id = CAST(:seed_id AS int)
+            SELECT dl.child_dataset_id FROM datasetlink dl
+             WHERE dl.parent_dataset_id = CAST(:seed_id AS int)
+               AND dl.child_dataset_id IN (SELECT id FROM visible_datasets)
             UNION
-            SELECT dl.parent_dataset_id FROM datasetlink dl WHERE dl.child_dataset_id  = CAST(:seed_id AS int)
+            SELECT dl.parent_dataset_id FROM datasetlink dl
+             WHERE dl.child_dataset_id = CAST(:seed_id AS int)
+               AND dl.parent_dataset_id IN (SELECT id FROM visible_datasets)
         ),
         s_neighbors(id) AS (
             SELECT DISTINCT dsl.sample_id FROM datasetsamplelink dsl
              WHERE dsl.dataset_id IN (SELECT id FROM d_neighbors)
+               AND dsl.sample_id IN (SELECT id FROM visible_samples)
         )
     SELECT 'sn' AS t, s.unique_id AS a, s.sample_name AS b
       FROM sample s WHERE s.id IN (SELECT id FROM s_neighbors)
@@ -494,32 +556,38 @@ _DATASET_SEED_1HOP_SQL = text("""
        AND dsl.dataset_id IN (SELECT id FROM d_neighbors)
 """)
 
-_SAMPLE_SEED_GRAPH_SQL = text("""
+_SAMPLE_SEED_GRAPH_SQL = _graph_sql(f"""
     WITH RECURSIVE
+        {_VISIBLE_ENTITIES_SQL},
         s_down(id) AS (
             SELECT CAST(:seed_id AS int)
-            UNION ALL
+            UNION
             SELECT sl.sample_id FROM samplelink sl JOIN s_down d ON sl.parent_sample_id = d.id
+             WHERE sl.sample_id IN (SELECT id FROM visible_samples)
         ),
         s_up(id) AS (
             SELECT CAST(:seed_id AS int)
-            UNION ALL
+            UNION
             SELECT sl.parent_sample_id FROM samplelink sl JOIN s_up u ON sl.sample_id = u.id
+             WHERE sl.parent_sample_id IN (SELECT id FROM visible_samples)
         ),
         s_ids(id) AS (SELECT id FROM s_down UNION SELECT id FROM s_up),
         d_seed(id) AS (
             SELECT DISTINCT dataset_id FROM datasetsamplelink
             WHERE sample_id IN (SELECT id FROM s_ids)
+              AND dataset_id IN (SELECT id FROM visible_datasets)
         ),
         d_down(id) AS (
             SELECT id FROM d_seed
-            UNION ALL
+            UNION
             SELECT dl.child_dataset_id FROM datasetlink dl JOIN d_down d ON dl.parent_dataset_id = d.id
+             WHERE dl.child_dataset_id IN (SELECT id FROM visible_datasets)
         ),
         d_up(id) AS (
             SELECT id FROM d_seed
-            UNION ALL
+            UNION
             SELECT dl.parent_dataset_id FROM datasetlink dl JOIN d_up u ON dl.child_dataset_id = u.id
+             WHERE dl.parent_dataset_id IN (SELECT id FROM visible_datasets)
         ),
         d_ids(id) AS (SELECT id FROM d_down UNION SELECT id FROM d_up)
     SELECT 'sn' AS t, s.unique_id AS a, s.sample_name AS b
@@ -550,48 +618,57 @@ _SAMPLE_SEED_GRAPH_SQL = text("""
        AND dsl.dataset_id IN (SELECT id FROM d_ids)
 """)
 
-_DATASET_SEED_GRAPH_SQL = text("""
+_DATASET_SEED_GRAPH_SQL = _graph_sql(f"""
     WITH RECURSIVE
+        {_VISIBLE_ENTITIES_SQL},
         d1_down(id) AS (
             SELECT CAST(:seed_id AS int)
-            UNION ALL
+            UNION
             SELECT dl.child_dataset_id FROM datasetlink dl JOIN d1_down d ON dl.parent_dataset_id = d.id
+             WHERE dl.child_dataset_id IN (SELECT id FROM visible_datasets)
         ),
         d1_up(id) AS (
             SELECT CAST(:seed_id AS int)
-            UNION ALL
+            UNION
             SELECT dl.parent_dataset_id FROM datasetlink dl JOIN d1_up u ON dl.child_dataset_id = u.id
+             WHERE dl.parent_dataset_id IN (SELECT id FROM visible_datasets)
         ),
         d1_ids(id) AS (SELECT id FROM d1_down UNION SELECT id FROM d1_up),
         s_seed(id) AS (
             SELECT DISTINCT sample_id FROM datasetsamplelink
             WHERE dataset_id IN (SELECT id FROM d1_ids)
+              AND sample_id IN (SELECT id FROM visible_samples)
         ),
         s_down(id) AS (
             SELECT id FROM s_seed
-            UNION ALL
+            UNION
             SELECT sl.sample_id FROM samplelink sl JOIN s_down d ON sl.parent_sample_id = d.id
+             WHERE sl.sample_id IN (SELECT id FROM visible_samples)
         ),
         s_up(id) AS (
             SELECT id FROM s_seed
-            UNION ALL
+            UNION
             SELECT sl.parent_sample_id FROM samplelink sl JOIN s_up u ON sl.sample_id = u.id
+             WHERE sl.parent_sample_id IN (SELECT id FROM visible_samples)
         ),
         s_ids(id) AS (SELECT id FROM s_down UNION SELECT id FROM s_up),
         d2_seed(id) AS (
             SELECT DISTINCT dataset_id FROM datasetsamplelink
              WHERE sample_id  IN (SELECT id FROM s_ids)
                AND dataset_id NOT IN (SELECT id FROM d1_ids)
+               AND dataset_id IN (SELECT id FROM visible_datasets)
         ),
         d2_down(id) AS (
             SELECT id FROM d2_seed
-            UNION ALL
+            UNION
             SELECT dl.child_dataset_id FROM datasetlink dl JOIN d2_down d ON dl.parent_dataset_id = d.id
+             WHERE dl.child_dataset_id IN (SELECT id FROM visible_datasets)
         ),
         d2_up(id) AS (
             SELECT id FROM d2_seed
-            UNION ALL
+            UNION
             SELECT dl.parent_dataset_id FROM datasetlink dl JOIN d2_up u ON dl.child_dataset_id = u.id
+             WHERE dl.parent_dataset_id IN (SELECT id FROM visible_datasets)
         ),
         d_ids(id) AS (
             SELECT id FROM d1_ids
@@ -652,31 +729,23 @@ def entity_graph_cte(
     and cross-linked entities). Pass recursive=true for the full connected component.
     Use /project_graph/{project_id} to get all entities in a project.
     """
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        # --- Auth + identify root (1 query) ---
         sample_target = session.exec(
-            select(Sample).where(Sample.unique_id == entity_id)
-        ).one_or_none()
+            select(Sample)
+            .where(permission_filter(auth_res, Sample, Permission.READ))
+            .where(deletion_filter_for(Sample))
+            .where(Sample.unique_id == entity_id)
+        ).first()
 
         if sample_target is not None:
-            acl_ok = session.exec(
-                select(ResourceACL)
-                .where(ResourceACL.mfid == entity_id)
-                .where(ResourceACL.accessgroup_id.in_(ag_ids))
-            ).first()
-            if acl_ok is None:
-                raise HTTPException(status_code=403, detail="Access denied")
             seed_id = sample_target.id
             sql = _SAMPLE_SEED_GRAPH_SQL if recursive else _SAMPLE_SEED_1HOP_SQL
         else:
-            auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
             dataset_target = session.exec(
                 select(Dataset)
-                .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
-                .filter(auth_filter)
+                .where(permission_filter(auth_res, Dataset, Permission.READ))
+                .where(deletion_filter_for(Dataset))
                 .where(Dataset.unique_id == entity_id)
             ).first()
             if dataset_target is None:
@@ -684,8 +753,11 @@ def entity_graph_cte(
             seed_id = dataset_target.id
             sql = _DATASET_SEED_GRAPH_SQL if recursive else _DATASET_SEED_1HOP_SQL
 
-        # --- Single query: traversal + nodes + edges ---
-        rows = session.execute(sql, {"seed_id": seed_id})
+        rows = session.execute(sql, {
+            "seed_id": seed_id,
+            "platform_admin": auth_res.is_platform_admin,
+            "group_ids": auth_res.group_ids_at_or_above(Role.VIEWER),
+        })
         return _parse_graph_rows(rows)
 
 
@@ -700,23 +772,29 @@ def project_graph(
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
     """
-    Returns all samples and authorized datasets belonging to project_id
+    Returns all authorized samples and datasets belonging to project_id
     as a single node-link graph.
     """
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
+        project = resolve_project_reference(project_id, session)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        project_mfid = project.unique_id
         sample_ids = set(
-            session.exec(select(Sample.id).where(Sample.project_id == project_id)).all()
+            session.exec(
+                select(Sample.id)
+                .where(permission_filter(auth_res, Sample, Permission.READ))
+                .where(deletion_filter_for(Sample))
+                .where(Sample.project_mfid == project_mfid)
+            ).all()
         )
-        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
         dataset_ids = set(
             session.exec(
                 select(Dataset.id)
-                .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
-                .filter(auth_filter)
-                .where(Dataset.project_id == project_id)
+                .where(permission_filter(auth_res, Dataset, Permission.READ))
+                .where(deletion_filter_for(Dataset))
+                .where(Dataset.project_mfid == project_mfid)
             ).unique().all()
         )
         return _build_graph(session, sample_ids, dataset_ids)

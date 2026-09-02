@@ -1,12 +1,12 @@
 import logging
-from sqlalchemy import or_, text
+from sqlalchemy import delete, or_
 from sqlmodel import Session, select
 
 from app.models.core_models import (
     AssociatedFile, Dataset, DatasetKeywordLink, DatasetLink,
     DatasetSampleLink, DeletionRequest, IngestionRequest, Resource,
     ResourceACL, Sample, ScientificMetadataBinary,
-    SampleLink, Thumbnail,
+    SampleLink, Thumbnail, UploadSession,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,110 +46,61 @@ def _delete_gcs_blobs_for_dataset(dataset_unique_id: str, associated_files: list
 def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Resource) -> None:
     dataset = session.exec(select(Dataset).where(Dataset.unique_id == dataset_unique_id)).one_or_none()
     if dataset is None:
-        return
+        raise RuntimeError(f"Dataset row missing for resource {dataset_unique_id}")
 
-    associated_files = session.exec(
-        select(AssociatedFile).where(AssociatedFile.dataset_id == dataset.id)
-    ).all()
-
-    for ing in session.exec(
-        select(IngestionRequest).where(IngestionRequest.dataset_mfid == dataset_unique_id)
-    ).all():
-        session.delete(ing)
-
-    for af in associated_files:
-        session.delete(af)
-
-    for link in session.exec(
-        select(DatasetKeywordLink).where(DatasetKeywordLink.dataset_id == dataset.id)
-    ).all():
-        session.delete(link)
-
-    for thumb in session.exec(
-        select(Thumbnail).where(Thumbnail.dataset_id == dataset.id)
-    ).all():
-        session.delete(thumb)
-
-    for link in session.exec(
-        select(DatasetSampleLink).where(DatasetSampleLink.dataset_id == dataset.id)
-    ).all():
-        session.delete(link)
-
-    for link in session.exec(
-        select(DatasetLink).where(
-            or_(DatasetLink.parent_dataset_id == dataset.id, DatasetLink.child_dataset_id == dataset.id)
+    session.execute(delete(IngestionRequest).where(
+        or_(
+            IngestionRequest.dataset_mfid == dataset_unique_id,
+            IngestionRequest.file_mfid.in_(
+                select(AssociatedFile.mfid).where(AssociatedFile.dataset_id == dataset.id)
+            ),
         )
-    ).all():
-        session.delete(link)
+    ))
+    session.execute(delete(UploadSession).where(UploadSession.dataset_mfid == dataset_unique_id))
+    session.execute(delete(AssociatedFile).where(AssociatedFile.dataset_id == dataset.id))
+    session.execute(delete(DatasetKeywordLink).where(DatasetKeywordLink.dataset_id == dataset.id))
+    session.execute(delete(Thumbnail).where(Thumbnail.dataset_id == dataset.id))
+    session.execute(delete(DatasetSampleLink).where(DatasetSampleLink.dataset_id == dataset.id))
+    session.execute(delete(DatasetLink).where(
+        or_(DatasetLink.parent_dataset_id == dataset.id, DatasetLink.child_dataset_id == dataset.id)
+    ))
+    session.execute(delete(ScientificMetadataBinary).where(
+        ScientificMetadataBinary.unique_id == dataset_unique_id
+    ))
+    session.execute(delete(ResourceACL).where(ResourceACL.mfid == dataset_unique_id))
+    session.execute(delete(DeletionRequest).where(DeletionRequest.resource_id == dataset_unique_id))
 
-    smb = session.exec(
-        select(ScientificMetadataBinary).where(ScientificMetadataBinary.unique_id == dataset_unique_id)
-    ).one_or_none()
-    if smb:
-        session.delete(smb)
-
-    for acl in session.exec(
-        select(ResourceACL).where(ResourceACL.mfid == dataset_unique_id)
-    ).all():
-        session.delete(acl)
-
-    for dr in session.exec(
-        select(DeletionRequest).where(DeletionRequest.resource_id == dataset_unique_id)
-    ).all():
-        session.delete(dr)
-
-    session.delete(resource)
-    session.delete(dataset)
+    session.execute(delete(Dataset).where(Dataset.id == dataset.id))
+    session.execute(delete(Resource).where(Resource.mfid == dataset_unique_id))
 
 
 def _hard_delete_sample(sample_unique_id: str, session: Session, resource: Resource) -> None:
     sample = session.exec(select(Sample).where(Sample.unique_id == sample_unique_id)).one_or_none()
     if sample is None:
-        return
+        raise RuntimeError(f"Sample row missing for resource {sample_unique_id}")
 
-    for link in session.exec(
-        select(DatasetSampleLink).where(DatasetSampleLink.sample_id == sample.id)
-    ).all():
-        session.delete(link)
+    session.execute(delete(DatasetSampleLink).where(DatasetSampleLink.sample_id == sample.id))
+    session.execute(delete(SampleLink).where(
+        or_(SampleLink.sample_id == sample.id, SampleLink.parent_sample_id == sample.id)
+    ))
+    session.execute(delete(ScientificMetadataBinary).where(
+        ScientificMetadataBinary.unique_id == sample_unique_id
+    ))
+    session.execute(delete(ResourceACL).where(ResourceACL.mfid == sample_unique_id))
+    session.execute(delete(DeletionRequest).where(DeletionRequest.resource_id == sample_unique_id))
 
-    for link in session.exec(
-        select(SampleLink).where(
-            or_(SampleLink.sample_id == sample.id, SampleLink.parent_sample_id == sample.id)
-        )
-    ).all():
-        session.delete(link)
-
-    smb = session.exec(
-        select(ScientificMetadataBinary).where(ScientificMetadataBinary.unique_id == sample_unique_id)
-    ).one_or_none()
-    if smb:
-        session.delete(smb)
-
-    for acl in session.exec(
-        select(ResourceACL).where(ResourceACL.mfid == sample_unique_id)
-    ).all():
-        session.delete(acl)
-
-    for dr in session.exec(
-        select(DeletionRequest).where(DeletionRequest.resource_id == sample_unique_id)
-    ).all():
-        session.delete(dr)
-
-    session.delete(resource)
-    session.delete(sample)
+    session.execute(delete(Sample).where(Sample.id == sample.id))
+    session.execute(delete(Resource).where(Resource.mfid == sample_unique_id))
 
 
-def hard_delete_resource(resource_id: str, session: Session) -> None:
-    """Determine resource type and dispatch to the appropriate hard delete. Caller must commit."""
-    resource = session.exec(select(Resource).where(Resource.mfid == resource_id)).one_or_none()
+def hard_delete_resource(resource_id: str, session: Session, resource: Resource | None = None) -> None:
+    """Delete a supported resource's database rows. Caller owns the transaction."""
+    resource = resource or session.exec(select(Resource).where(Resource.mfid == resource_id)).one_or_none()
     if resource is None:
-        return
+        raise RuntimeError(f"Resource {resource_id} not found")
     if resource.resource_type == "dataset":
         _hard_delete_dataset(resource_id, session, resource)
     elif resource.resource_type == "sample":
         _hard_delete_sample(resource_id, session, resource)
     else:
-        logger.warning(
-            "hard_delete_resource called on unsupported resource_type %r for %s — skipping",
-            resource.resource_type, resource_id,
-        )
+        raise ValueError(f"Unsupported resource type: {resource.resource_type}")

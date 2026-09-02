@@ -16,7 +16,6 @@ from app.models.core_models import (
     AssociatedFile,
     Dataset,
     IngestionRequest,
-    ResourceACL,
 )
 from app.general_utils import get_secret, get_utc_isoformat
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
@@ -25,14 +24,14 @@ from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.pagination import PaginatedResponse
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
-from app.utils.auth_utils import authorize_user, require_write_access
-from app.utils.permissions import Principal
+from app.utils.auth_utils import authorize_user, permission_filter, require_permission
+from app.utils.permissions import Principal, Permission
 
 router = APIRouter(tags=["files"])
 engine = get_engine()
 
 
-def _get_af_with_read_access(session: Session, file_id: str, ag_ids: list) -> tuple[AssociatedFile, Dataset]:
+def _get_af_with_read_access(session: Session, file_id: str, principal) -> tuple[AssociatedFile, Dataset]:
     """Fetch an AssociatedFile by mfid and verify the caller has read access to its parent dataset."""
     af = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == file_id)).one_or_none()
     if af is None:
@@ -40,10 +39,8 @@ def _get_af_with_read_access(session: Session, file_id: str, ag_ids: list) -> tu
 
     ds = session.exec(
         select(Dataset)
-        .select_from(join(Dataset, ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True))
         .where(Dataset.id == af.dataset_id)
-        .filter((ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True))
-        .distinct()
+        .where(permission_filter(principal, Dataset, Permission.READ))
     ).one_or_none()
     if ds is None:
         raise HTTPException(status_code=403, detail="Access denied")
@@ -58,18 +55,14 @@ def list_files(
     sha256_hash: Optional[str] = Query(default=None),
 ):
     '''Returns a paginated list of files the requesting user is authorized to view.'''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        auth_filter = (ResourceACL.accessgroup_id.in_(ag_ids)) | (Dataset.public == True)
+        auth_filter = permission_filter(auth_res, Dataset, Permission.READ)
         base_query = (
             select(AssociatedFile)
             .join(Dataset, Dataset.id == AssociatedFile.dataset_id)
-            .join(ResourceACL, ResourceACL.mfid == Dataset.unique_id, isouter=True)
             .filter(auth_filter)
             .options(selectinload(AssociatedFile.dataset))
-            .distinct()
         )
         if sha256_hash is not None:
             base_query = base_query.where(AssociatedFile.sha256_hash == sha256_hash)
@@ -84,11 +77,9 @@ def list_files(
 @router.get("/files/{file_id}", response_model=AssociatedFileRead)
 def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
     '''Returns a single file by its MFID.'''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        af, _ = _get_af_with_read_access(session, file_id, ag_ids)
+        af, _ = _get_af_with_read_access(session, file_id, auth_res)
         return AssociatedFileRead.model_validate(af, update={"dataset_mfid": af.dataset.unique_id})
 
 
@@ -96,11 +87,9 @@ def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: s
 def get_file_download_link(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
     '''Returns a signed GCS download URL (1-hour expiry) for a single file.
     Returns url=None for files whose storage_backend is not "gcs" (catalog-only).'''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        af, ds = _get_af_with_read_access(session, file_id, ag_ids)
+        af, ds = _get_af_with_read_access(session, file_id, auth_res)
 
         if af.storage_backend != "gcs":
             return {"url": None, "expires_in": None}
@@ -119,12 +108,10 @@ def update_file(
     updates: AssociatedFileUpdate,
 ):
     '''Partially updates a file record. Requires write access to the parent dataset.'''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        af, ds = _get_af_with_read_access(session, file_id, ag_ids)
-        require_write_access(session, ag_ids, [ds.unique_id])
+        af, ds = _get_af_with_read_access(session, file_id, auth_res)
+        require_permission(session, auth_res, ds.unique_id, Permission.EDIT)
 
         for field, value in updates.model_dump(exclude_unset=True).items():
             setattr(af, field, value)
@@ -137,13 +124,11 @@ def update_file(
 
 @router.delete("/files/{file_id}")
 def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
-    '''Deletes a file and its ingestion requests. Requires write access to the parent dataset.'''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
+    '''Deletes a file and its ingestion requests. Requires admin on the parent dataset.'''
 
     with Session(engine) as session:
-        af, ds = _get_af_with_read_access(session, file_id, ag_ids)
-        require_write_access(session, ag_ids, [ds.unique_id])
+        af, ds = _get_af_with_read_access(session, file_id, auth_res)
+        require_permission(session, auth_res, ds.unique_id, Permission.DELETE)
 
         for ir in session.exec(
             select(IngestionRequest).where(IngestionRequest.file_mfid == af.mfid)
@@ -168,11 +153,10 @@ def create_file_ingestion_request(
     Returns error if the dataset associated with the file is not found, or the user does not have access.
     Requires write access to the dataset.
     '''
-    ag_list = auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
 
     with Session(engine) as session:
-        af, ds = _get_af_with_read_access(session, file_id, ag_ids)
+        af, ds = _get_af_with_read_access(session, file_id, auth_res)
+        require_permission(session, auth_res, ds.unique_id, Permission.CREATE)
 
         if af.storage_backend != "gcs":
             raise HTTPException(

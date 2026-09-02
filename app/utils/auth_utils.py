@@ -1,4 +1,4 @@
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Sequence
 import logging
 import re
 import os
@@ -14,7 +14,6 @@ from jose import jwt, JWTError
 logger = logging.getLogger(__name__)
 
 from fastapi import Depends,  HTTPException
-from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -22,8 +21,8 @@ from app.general_utils import  get_secret
 from app.api.dependencies import get_engine, get_api_path, get_api_url
 from app.models.core_models import ApiToken
 from app.utils.permissions import (
-    PUBLIC_GROUP_NAME, GroupMembership, Permission, PlatformRole, Principal, Role)
-from app.utils import shadow
+    PUBLIC_GROUP_NAME, THRESHOLDS, GroupMembership, Permission, PlatformRole,
+    Principal, Role, effective_role)
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import join
@@ -192,19 +191,11 @@ def find_key(credentials, engine):
     return(api_acct)
 
 
-async def authorize_user(
+def authorize_user(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
 ) -> Principal:
-    """Resolve the caller to a Principal. Raises 401 if the key is invalid.
-
-    Async purely so shadow.current_principal is set in the request's own
-    context: FastAPI runs a *sync* dependency in a threadpool with a copied
-    context, so a ContextVar set there never reaches the route handler. The
-    blocking work stays off the event loop via run_in_threadpool.
-    """
-    principal = await run_in_threadpool(_authorize_user, credentials)
-    shadow.current_principal.set(principal)
-    return principal
+    """Resolve the caller to a Principal. Raises 401 if the key is invalid."""
+    return _authorize_user(credentials)
 
 
 def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
@@ -286,134 +277,232 @@ def _public_group_id(session) -> Optional[int]:
     return _PUBLIC_GROUP_ID
 
 
-def _admin_group_predicate(ag_ids):
-    """SQL predicate: is any of `ag_ids` the `admin` group?
+# ====== Role-based checks
 
-    Resolved per-query rather than from a cached id, which would answer for
-    whichever database the process started against.
-    """
-    from sqlalchemy import exists
-    from app.models.core_models import AccessGroup
-    return exists().where(
-        AccessGroup.id.in_(ag_ids),
-        AccessGroup.group_name == 'admin',
-    )
-
-
-def _is_admin_by_group(session, ag_ids) -> bool:
-    """Transitional bypass; removed with these helpers at cutover.
-
-    Admin-group members currently reach everything through ~360k identical ACL
-    rows. Honouring the membership directly makes those rows deletable without
-    cutting off the service accounts that live in that group. Grants access to
-    exactly the set that already has it.
-    """
-    from sqlalchemy import select as sa_select
-    if not ag_ids:
-        return False
-    return bool(session.execute(sa_select(_admin_group_predicate(ag_ids))).scalar())
-
-
-def require_read_access(session, mfid: str, ag_ids: list):
-    """Raise 403 if the user has no read access to the given MFID.
-
-    Access is granted if Resource.public is True OR the user has an ACL entry.
-    Call after a 404 check so the caller can distinguish not-found from forbidden.
-    """
-    from sqlalchemy import exists, select
-    from app.models.core_models import Resource, ResourceACL
-
-    if _is_admin_by_group(session, ag_ids):
-        shadow.compare(session, "require_read_access", mfid, Permission.READ, True)
-        return
-
-    acl_ok = session.exec(
-        select(Resource).where(Resource.mfid == mfid).where(
-            (Resource.public == True) |
-            exists().where(
-                ResourceACL.mfid == mfid,
-                ResourceACL.accessgroup_id.in_(ag_ids)
-            )
-        )
-    ).first()
-    shadow.compare(session, "require_read_access", mfid, Permission.READ, bool(acl_ok))
-    if not acl_ok:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-
-def read_access_filter_list(resource_model, ag_ids: list):
-    """
-    Returns (auth_filter, deletion_filter) for list queries on a resource model.
-
-    Requires the query to join Resource on Resource.mfid == resource_model.unique_id.
-    auth_filter: visible if Resource.public is True OR user has an ACL entry.
-    deletion_filter: excludes resources with a pending or approved deletion request.
-    """
-    from sqlalchemy import exists
-    from app.models.core_models import Resource, ResourceACL
-    from app.utils.sql_utils import deletion_filter_for
-
-    acl_subquery = exists().where(
-        ResourceACL.mfid == resource_model.unique_id,
-        ResourceACL.accessgroup_id.in_(ag_ids)
-    )
-    # Admin-group membership short-circuits, evaluated by the database so no
-    # cached group id can answer for the wrong one. See _is_admin_by_group.
-    auth_filter = (
-        _admin_group_predicate(ag_ids) | (Resource.public == True) | acl_subquery
-    )
-    return auth_filter, deletion_filter_for(resource_model)
-
-
-def require_write_access(session, ag_ids: list, mfids: list):
-    """Raise 403 if the user has no write ACL on any of the given MFIDs."""
+def fetch_acl_rows(session, mfid: str):
+    """(accessgroup_id, permission) for one resource."""
     from app.models.core_models import ResourceACL
-    from sqlmodel import select
-
-    if _is_admin_by_group(session, ag_ids):
-        for m in mfids:
-            shadow.compare(session, "require_write_access", m, Permission.EDIT, True)
-        return
-
-    acl_ok = session.exec(
-        select(ResourceACL).where(
-            ResourceACL.mfid.in_(mfids),
-            ResourceACL.accessgroup_id.in_(ag_ids),
-            ResourceACL.write == True
-        )
-    ).first()
-    # The old check passes if ANY mfid is writable, so the comparison is per
-    # resource against that same aggregate answer — a per-mfid mismatch here
-    # means the new model disagrees about that specific resource.
-    for m in mfids:
-        shadow.compare(session, "require_write_access", m, Permission.EDIT, bool(acl_ok))
-    if not acl_ok:
-        raise HTTPException(status_code=403, detail="Write access required to at least one of the resources")
+    rows = session.exec(
+        select(ResourceACL.accessgroup_id, ResourceACL.permission)
+        .where(ResourceACL.mfid == mfid)
+    ).all()
+    return [(gid, Role.from_db(r)) for gid, r in rows if r is not None]
 
 
-def require_groups(ag_list, allowed_groups={'admin'}):
-    if not any(ag.group_name in allowed_groups for ag in ag_list):
+def require_permission(session, principal: Principal, mfid: str,
+                       permission: Permission,
+                       legacy_group: Optional[str] = None) -> Optional[Role]:
+    """Raise 403 unless `principal` may perform `permission` on `mfid`.
+
+    Returns the effective role, so a caller needing to branch further does not
+    recompute it. None means a platform admin, whose access comes from bypass
+    rather than an ACL entry.
+
+    `legacy_group` names the pre-role group for resource types that only gained
+    ACL entries in the phase 1 backfill — projects and instruments. Where the
+    resource has no ACL rows at all, membership of that group is honoured
+    instead, so deploying before the backfill does not lock the routes out.
+    Drop it in phase 5.
+    """
+    from app.utils.permissions import has_permission
+
+    if principal.is_platform_admin:
+        return None
+
+    acl_rows = fetch_acl_rows(session, mfid)
+
+    if not acl_rows and legacy_group is not None:
+        if any(g.group_name in ("admin", legacy_group) for g in principal.groups):
+            return None
         raise HTTPException(status_code=403, detail="Not authorized")
 
+    if not has_permission(principal, acl_rows, permission):
+        raise HTTPException(status_code=403, detail="Access denied")
+    return effective_role(principal, acl_rows)
 
-def require_admin(ag_list):
-    require_groups(ag_list, {'admin'})
 
+def require_grant(session, principal: Principal, mfid: str, target: Role,
+                  current: Optional[Role] = None, floor: Role = Role.ADMIN) -> None:
+    """Raise 403 unless `principal` may set a grant on `mfid` to `target`.
 
-def is_admin(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    The cap binds on both ends — you may not grant above your own role, nor
+    overwrite one above it. `floor` is the minimum role that may manage at all:
+    admin for ACL entries, editor for project membership.
     """
-    Check if a user is an admin based on their API credentials.
-    
-    Args:
-        credentials: HTTPAuthorizationCredentials object containing the API token
-        
-    Returns:
-        "admin" if the user is an admin, raises HTTPException otherwise
-        
-    This function validates the provided API credentials and checks if the user belongs to the 'admin' access group.
+    from app.utils.permissions import can_grant
+
+    if principal.is_platform_admin:
+        return
+
+    actor = effective_role(principal, fetch_acl_rows(session, mfid))
+    if not can_grant(actor, target, current, floor=floor):
+        raise HTTPException(
+            status_code=403,
+            detail=(f"You hold {actor.name.lower() if actor else 'no role'} here "
+                    f"and cannot grant {target.name.lower()}"))
+
+
+def permission_filter(principal: Principal, resource_model,
+                      permission: Permission = Permission.READ):
+    """SQL filter restricting a list query to resources the caller may reach.
+
+    Relies on min(a,b) >= r being equivalent to a >= r and b >= r: the standing
+    side is filtered in Python, so only a single column comparison reaches SQL
+    and useraccessgrouplink never has to be joined.
     """
-    principal = _authorize_user(credentials)
+    from sqlalchemy import exists, false, true
+    from app.models.core_models import ResourceACL
 
-    if 'admin' in [ag.group_name for ag in principal.groups]:
-        return('admin')
+    if principal.is_platform_admin:
+        return true()
 
+    threshold = THRESHOLDS[permission]
+    group_ids = principal.group_ids_at_or_above(threshold)
+    if not group_ids:
+        return false()
+
+    # Set membership, not `role >= threshold`. The column is declared str so
+    # SQLite can create the table, and there `>=` compares alphabetically —
+    # 'owner' >= 'viewer' is false — so a range comparison is right on Postgres
+    # and silently wrong everywhere else. With at most five roles the IN list
+    # is trivially indexable and depends on no enum ordering at all.
+    allowed = [r.db_value for r in Role if r >= threshold]
+
+    # correlate() pins the subquery to the outer model. Without it SQLAlchemy
+    # auto-correlates ResourceACL too and the EXISTS ends up with no FROM
+    # clause wherever the outer query already mentions that table.
+    return (
+        exists()
+        .where(
+            ResourceACL.mfid == resource_model.unique_id,
+            ResourceACL.accessgroup_id.in_(group_ids),
+            ResourceACL.permission.in_(allowed),
+        )
+        .select_from(ResourceACL)
+        .correlate(resource_model)
+    )
+
+
+def access_group_permission_filter(accessgroup_id: int, resource_model,
+                                   permission: Permission = Permission.READ):
+    from sqlalchemy import exists
+    from app.models.core_models import ResourceACL
+
+    threshold = THRESHOLDS[permission]
+    allowed = [role.db_value for role in Role if role >= threshold]
+    return (
+        exists()
+        .where(
+            ResourceACL.mfid == resource_model.unique_id,
+            ResourceACL.accessgroup_id == accessgroup_id,
+            ResourceACL.permission.in_(allowed),
+        )
+        .select_from(ResourceACL)
+        .correlate(resource_model)
+    )
+
+
+def has_platform_admin_access(principal: Principal) -> bool:
+    return principal.is_platform_admin or any(
+        group.group_name == "admin" for group in principal.groups
+    )
+
+
+def require_platform_admin(principal: Principal) -> None:
+    """Raise 403 unless the caller has platform-wide bypass.
+
+    Accepts admin-group membership as well as platform_role for now. On a
+    database where the phase 1 backfill has not run, platform_role is 'none'
+    for everyone, and checking it alone would lock every admin route with no
+    recovery short of direct database access. Drop the group arm in phase 5.
+    """
+    if has_platform_admin_access(principal):
+        return
+    raise HTTPException(status_code=403, detail="Not authorized")
+
+
+def require_self_or_platform_admin(principal: Principal, orcid: str) -> None:
+    """Raise 403 unless the caller is `orcid` or a platform admin."""
+    if principal.user_id == orcid:
+        return
+    require_platform_admin(principal)
+
+
+def resolve_access_principal(session, caller: Principal, user_ref: Optional[str]) -> Principal:
+    if user_ref is None:
+        return caller
+
+    from app.utils.user_utils import resolve_user_by_identifier
+
+    user = resolve_user_by_identifier(session, user_ref)
+    require_self_or_platform_admin(caller, user.unique_id)
+    if caller.user_id == user.unique_id:
+        return caller
+    return load_principal(session, user.unique_id)
+
+
+def access_selector_filter(session, caller: Principal, resource_model,
+                           user_refs: Optional[Sequence[str]] = None,
+                           project_refs: Optional[Sequence[str]] = None,
+                           max_selectors: int = 10):
+    from app.models.core_models import AccessGroup
+    from app.utils.permissions import AccessGroupType
+    from app.utils.project_utils import resolve_project_reference
+
+    requested_users = list(user_refs or ())
+    requested_projects = list(project_refs or ())
+    if len(requested_users) + len(requested_projects) > max_selectors:
+        raise HTTPException(
+            status_code=422,
+            detail=f"At most {max_selectors} access selectors may be provided",
+        )
+
+    filters = [permission_filter(caller, resource_model)]
+    seen = set()
+
+    for user_ref in requested_users:
+        principal = resolve_access_principal(session, caller, user_ref)
+        key = ("user", principal.user_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        filters.append(permission_filter(principal, resource_model))
+
+    for project_ref in requested_projects:
+        project = resolve_project_reference(project_ref, session)
+        if project is None:
+            raise HTTPException(status_code=404, detail=f"Project '{project_ref}' not found")
+        if not has_platform_admin_access(caller) and caller.role_in(project.unique_id) is None:
+            raise HTTPException(status_code=403, detail="Not authorized to inspect project access")
+        key = ("project", project.unique_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        group = session.exec(
+            select(AccessGroup).where(
+                AccessGroup.group_name == project.unique_id,
+                AccessGroup.group_type == AccessGroupType.PROJECT.value,
+            )
+        ).one_or_none()
+        if group is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Project '{project.project_id}' has no project access group",
+            )
+        filters.append(access_group_permission_filter(group.id, resource_model))
+
+    return and_(*filters)
+
+
+def is_instrument_group_member(principal: Principal, session) -> bool:
+    """Whether the caller holds standing in any registered instrument's
+    operator group — named after the instrument's MFID (unique_id).
+    """
+    from app.models.core_models import Instrument
+
+    if not principal.groups:
+        return False
+    group_names = {g.group_name for g in principal.groups}
+    return session.exec(
+        select(Instrument).where(Instrument.unique_id.in_(group_names))
+    ).first() is not None

@@ -9,17 +9,19 @@ production produced a nameless project holding 1,292 datasets and 3 samples,
 plus an access group named `""`. See ~/crucible-audits/empty-project-datasets/.
 """
 import pytest
+from pydantic import ValidationError
 
 from app.general_utils import blank_to_none
 from app.models.datasets import DatasetCreate, DatasetUpdate
 from app.models.samples import SampleCreate, SampleUpdate
 
-# SampleCreate requires sample_name; the others take no required fields.
+# DatasetUpdate/SampleUpdate no longer accept project_id or owner_orcid at
+# all (POST /resources/{mfid}/project and .../transfer_ownership instead),
+# so the blank-coercion behavior below only applies to Create.
+# SampleCreate requires sample_name; DatasetCreate takes no required fields.
 MODELS = [
     (DatasetCreate, {}),
-    (DatasetUpdate, {}),
     (SampleCreate, {"sample_name": "s1"}),
-    (SampleUpdate, {}),
 ]
 
 
@@ -58,6 +60,20 @@ class TestModelsCoerceBlankProjectId:
         if "owner_orcid" not in model.model_fields:
             pytest.skip(f"{model.__name__} has no owner_orcid")
         assert model(**required, owner_orcid="").owner_orcid is None
+
+
+class TestUpdateModelsRejectReassignmentFields:
+    def test_dataset_update_rejects_project_id(self):
+        with pytest.raises(ValidationError):
+            DatasetUpdate(project_id="MFP00001")
+
+    def test_dataset_update_rejects_owner_orcid(self):
+        with pytest.raises(ValidationError):
+            DatasetUpdate(owner_orcid="0000-0001-2345-6789")
+
+    def test_sample_update_rejects_project_id(self):
+        with pytest.raises(ValidationError):
+            SampleUpdate(project_id="MFP00001")
 
 
 def test_the_specific_payload_that_caused_this():

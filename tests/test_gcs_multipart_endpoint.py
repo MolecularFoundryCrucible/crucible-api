@@ -46,11 +46,11 @@ def _fake_auth():
 
 class TestInitiateMultipartUpload:
 
-    @patch('app.api.routes.gcs_storage.require_write_access')
+    @patch('app.api.routes.gcs_storage.require_permission')
     @patch('app.api.routes.gcs_storage.Session')
     @patch('app.api.routes.gcs_storage._mint_upload_token')
     def test_returns_token_and_upload_id(
-        self, mock_mint, mock_session_cls, mock_write_access, client, app
+        self, mock_mint, mock_session_cls, mock_require_permission, client, app
     ):
         """Happy path: returns access token, upload_id, and GCS coordinates."""
         from app.utils.auth_utils import authorize_user
@@ -76,11 +76,11 @@ class TestInitiateMultipartUpload:
         assert data["upload_id"] is not None
         assert data["existing_file"] is None
 
-    @patch('app.api.routes.gcs_storage.require_write_access')
+    @patch('app.api.routes.gcs_storage.require_permission')
     @patch('app.api.routes.gcs_storage.Session')
     @patch('app.api.routes.gcs_storage._mint_upload_token')
     def test_dedup_returns_existing_file(
-        self, mock_mint, mock_session_cls, mock_write_access, client, app
+        self, mock_mint, mock_session_cls, mock_require_permission, client, app
     ):
         """When SHA256 matches an existing file, returns existing_file without minting a token."""
         from app.utils.auth_utils import authorize_user
@@ -142,11 +142,11 @@ class TestInitiateMultipartUpload:
         assert resp.status_code == 400
         assert "size" in resp.json()["detail"].lower()
 
-    @patch('app.api.routes.gcs_storage.require_write_access')
+    @patch('app.api.routes.gcs_storage.require_permission')
     @patch('app.api.routes.gcs_storage.Session')
     @patch('app.api.routes.gcs_storage._mint_upload_token')
     def test_gcs_failure_returns_503(
-        self, mock_mint, mock_session_cls, mock_write_access, client, app
+        self, mock_mint, mock_session_cls, mock_require_permission, client, app
     ):
         """Returns 503 when token minting fails."""
         from app.utils.auth_utils import authorize_user
@@ -165,11 +165,11 @@ class TestInitiateMultipartUpload:
 
         assert resp.status_code == 503
 
-    @patch('app.api.routes.gcs_storage.require_write_access')
+    @patch('app.api.routes.gcs_storage.require_permission')
     @patch('app.api.routes.gcs_storage.Session')
     @patch('app.api.routes.gcs_storage._mint_upload_token')
     def test_path_traversal_rejected(
-        self, mock_mint, mock_session_cls, mock_write_access, client, app
+        self, mock_mint, mock_session_cls, mock_require_permission, client, app
     ):
         """Returns 400 for filenames that strip to empty after removing traversal components."""
         from app.utils.auth_utils import authorize_user

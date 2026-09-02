@@ -12,8 +12,8 @@ from app.general_utils import get_secret
 from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
 from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead, UploadMultipartInitiateRead
-from app.utils.auth_utils import authorize_user, require_read_access, require_write_access
-from app.utils.permissions import Principal
+from app.utils.auth_utils import authorize_user, permission_filter, require_permission
+from app.utils.permissions import Principal, Permission
 from app.utils.sql_utils import add_or_update
 
 router = APIRouter(tags=["storage"])
@@ -117,7 +117,7 @@ def _validate_and_prepare_upload(
     dsid: str,
     body: "UploadInitiate",
     user_unique_id: str,
-    ag_ids: list,
+    principal,
 ) -> "AssociatedFile | tuple[str, str]":
     """Common preamble for both upload initiation routes.
     Validates size, checks write access, dedup-checks by SHA256, and sanitizes filename.
@@ -135,7 +135,7 @@ def _validate_and_prepare_upload(
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        require_write_access(session, ag_ids, [dsid])
+        require_permission(session, principal, dsid, Permission.EDIT)
 
         if body.sha256_hash:
             existing = session.exec(
@@ -192,10 +192,9 @@ def initiate_resumable_upload(
     (no API credentials needed for the chunk transfers).
     Call POST /datasets/{dsid}/upload/complete when all chunks are uploaded.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
+    user_unique_id = auth_res.user_id
 
-    result = _validate_and_prepare_upload(dsid, body, user_unique_id, ag_ids)
+    result = _validate_and_prepare_upload(dsid, body, user_unique_id, auth_res)
     if not isinstance(result, tuple):
         return UploadInitiateRead(existing_file=AssociatedFileRead.model_validate(result, update={"dataset_mfid": dsid}))
     gcs_path, safe_filename = result
@@ -239,10 +238,9 @@ def initiate_multipart_upload(
     Returns upload_id — pass it to POST /datasets/{dsid}/upload/complete after the transfer.
     If existing_file is set, the file already exists; skip the upload entirely.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
+    user_unique_id = auth_res.user_id
 
-    result = _validate_and_prepare_upload(dsid, body, user_unique_id, ag_ids)
+    result = _validate_and_prepare_upload(dsid, body, user_unique_id, auth_res)
     if not isinstance(result, tuple):
         return UploadMultipartInitiateRead(existing_file=AssociatedFileRead.model_validate(result, update={"dataset_mfid": dsid}))
     gcs_path, safe_filename = result
@@ -275,8 +273,7 @@ def complete_resumable_upload(
     Verifies the blob landed in GCS, registers it as an AssociatedFile on the dataset,
     and deletes the upload session record.
     '''
-    user_unique_id, ag_list = auth_res.user_id, auth_res.groups
-    ag_ids = [ag.id for ag in ag_list]
+    user_unique_id = auth_res.user_id
 
     with Session(engine) as session:
         us = session.exec(
@@ -297,7 +294,7 @@ def complete_resumable_upload(
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        require_write_access(session, ag_ids, [dsid])
+        require_permission(session, auth_res, dsid, Permission.EDIT)
 
         try:
             blob = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).blob(us.gcs_path)

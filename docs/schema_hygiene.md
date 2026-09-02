@@ -11,11 +11,11 @@ owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user
 owner_orcid:   Optional[str] = Field(default=None)   # no index, no FK
 ```
 
-Neither is documented as authoritative, and they drift — `samples.py:181` lazily backfills `owner_user_id` when it finds it null, which means the indexed column is *sometimes* unpopulated while the unindexed one is set.
+Historically these columns drifted because sample creation only populated `owner_user_id` for some owner shapes. Current dataset and sample creation resolves the canonical user once and writes both columns before ACL creation. Ownership transfer also updates both atomically, and the migration backfill repairs historical rows where possible.
 
 The practical consequence: **the indexed column is unreliable and the reliable column is unindexed.** A "resources I own" query (`GET /datasets?owner_orcid=<me>`) filters the string column and therefore sequentially scans. This matters because that query is the mechanism replacing personal projects (see Projects → Personal workspaces).
 
-The fix is *not* to index `owner_orcid`. It is to make `owner_user_id` trustworthy — backfill it, populate it on every write path — and then resolve ORCID → `user.id` in the route and filter on the existing integer index. No schema addition required.
+The query path should use the indexed `owner_user_id`: resolve the public identity reference to `user.id`, then filter on the integer column. `owner_orcid` remains the canonical public response value and denormalized compatibility pointer. No additional index is required.
 
 ## 2. `Sample.project_id` has neither index nor FK
 

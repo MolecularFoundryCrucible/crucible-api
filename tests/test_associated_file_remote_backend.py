@@ -1,10 +1,34 @@
 from unittest.mock import patch
-from sqlmodel import Session
+from sqlmodel import Session, select
+from app.utils.permissions import PUBLIC_GROUP_NAME, PlatformRole, Role
 from app.models.core_models import Resource, Dataset, AssociatedFile, AccessGroup, ResourceACL
 from app.models.datasets import AssociatedFileCreate, AssociatedFileRead, AssociatedFileUpdate
 
 
+def grant_public(session, mfid):
+    """Make a resource publicly readable and return the public group's id.
+
+    Public is an ACL grant against the virtual group now, not just the
+    Resource.public boolean. The caller also needs the group id: load_principal
+    injects public-group membership into every principal in production, but the
+    auth_as fixture does not.
+    """
+    pub = session.exec(
+        select(AccessGroup).where(AccessGroup.group_name == PUBLIC_GROUP_NAME)
+    ).one_or_none()
+    if pub is None:
+        pub = AccessGroup(group_name=PUBLIC_GROUP_NAME)
+        session.add(pub)
+        session.commit()
+        session.refresh(pub)
+    session.add(ResourceACL(mfid=mfid, accessgroup_id=pub.id,
+                            read=True, write=False, permission="viewer"))
+    session.commit()
+    return pub.id
+
+
 def _make_public_dataset_with_file(db_engine, dsid, storage_path="mf-storage-prod/x/f.txt"):
+    """Returns (file_mfid, public_group_id)."""
     with Session(db_engine) as session:
         session.add(Resource(mfid=dsid, resource_type="dataset", public=True))
         ds = Dataset(unique_id=dsid, dataset_name="test", public=True, owner_orcid="0000-0000-0000-0001")
@@ -18,12 +42,12 @@ def _make_public_dataset_with_file(db_engine, dsid, storage_path="mf-storage-pro
         session.add(af)
         session.commit()
         session.refresh(af)
-        return af.mfid
+        return af.mfid, grant_public(session, dsid)
 
 
 def test_gcs_backend_download_link_still_calls_generate_signed_url(client, db_engine, auth_as):
-    file_mfid = _make_public_dataset_with_file(db_engine, "ds_pub_1")
-    auth_as("0000-0000-0000-0001")
+    file_mfid, public_gid = _make_public_dataset_with_file(db_engine, "ds_pub_1")
+    auth_as("0000-0000-0000-0001", groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
 
     with patch(
         "app.api.routes.files._generate_signed_url_link",
@@ -95,7 +119,9 @@ def _grant_write_access(db_engine, dsid, user_id):
         session.add(ag)
         session.commit()
         session.refresh(ag)
-        session.add(ResourceACL(mfid=dsid, accessgroup_id=ag.id, read=True, write=True))
+        # role, not just read/write: the checks read the role column now.
+        session.add(ResourceACL(mfid=dsid, accessgroup_id=ag.id, read=True, write=True,
+                                permission="owner"))
         session.commit()
         return ag.id
 
@@ -146,8 +172,10 @@ def test_non_gcs_single_file_download_link_returns_null_without_calling_gcs(clie
         session.commit()
         session.refresh(af)
         file_mfid = af.mfid
+        public_gid = grant_public(session, "ds_pub_2")
 
-    auth_as("0000-0000-0000-0001")
+    auth_as("0000-0000-0000-0001",
+            groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
 
     with patch("app.api.routes.files._generate_signed_url_link") as mock_sign, \
          patch("app.api.routes.files._ensure_storage_path") as mock_ensure:
@@ -164,7 +192,15 @@ def test_non_gcs_file_in_batch_download_links_is_null(client, db_engine, auth_as
         session.add(Resource(mfid="ds_pub_3", resource_type="dataset", public=True))
         ds = Dataset(unique_id="ds_pub_3", dataset_name="test", public=True, owner_orcid="0000-0000-0000-0001")
         session.add(ds)
+        # Public is an ACL grant now, not just the boolean.
+        pub = AccessGroup(group_name=PUBLIC_GROUP_NAME)
+        session.add(pub)
         session.commit()
+        session.refresh(pub)
+        session.add(ResourceACL(mfid="ds_pub_3", accessgroup_id=pub.id,
+                                read=True, write=False, permission="viewer"))
+        session.commit()
+        public_gid = pub.id
         session.refresh(ds)
         gcs_af = AssociatedFile(
             filename="local.txt", storage_path="mf-storage-prod/ds_pub_3/local.txt",
@@ -180,7 +216,9 @@ def test_non_gcs_file_in_batch_download_links_is_null(client, db_engine, auth_as
         session.refresh(remote_af)
         gcs_mfid, remote_mfid = gcs_af.mfid, remote_af.mfid
 
-    auth_as("0000-0000-0000-0001")
+    # load_principal injects the public group into every principal; the fixture
+    # does not, so a test exercising public access has to say so.
+    auth_as("0000-0000-0000-0001", groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
 
     with patch(
         "app.api.routes.datasets._generate_signed_url_link",
@@ -209,8 +247,84 @@ def test_ingest_rejects_non_gcs_file(client, db_engine, auth_as):
         session.commit()
         session.refresh(af)
         file_mfid = af.mfid
+        grant_public(session, "ds_pub_4")
 
-    auth_as("0000-0000-0000-0001")
+    auth_as("0000-0000-0000-0001", platform_role=PlatformRole.ADMIN)
+
+    resp = client.post(f"/files/{file_mfid}/ingest")
+
+    assert resp.status_code == 400, resp.text
+    assert "globus" in resp.json()["detail"]
+
+
+def test_viewer_cannot_request_ingestion(client, db_engine, auth_as):
+    with Session(db_engine) as session:
+        session.add(Resource(mfid="ds_ingest_viewer", resource_type="dataset", public=False))
+        ds = Dataset(unique_id="ds_ingest_viewer", dataset_name="test", owner_orcid="0000-0000-0000-0001")
+        group = AccessGroup(group_name="ingest-viewers")
+        session.add_all([ds, group])
+        session.commit()
+        session.refresh(ds)
+        session.refresh(group)
+        session.add(ResourceACL(
+            mfid=ds.unique_id,
+            accessgroup_id=group.id,
+            read=True,
+            write=False,
+            permission=Role.VIEWER.db_value,
+        ))
+        af = AssociatedFile(
+            filename="remote.dat",
+            storage_backend="globus",
+            storage_path="globus://endpoint/remote.dat",
+            size=1,
+            sha256_hash="viewer-ingest",
+            dataset_id=ds.id,
+        )
+        session.add(af)
+        session.commit()
+        session.refresh(af)
+        file_mfid = af.mfid
+        group_id = group.id
+
+    auth_as("0000-0000-0000-0001", groups=[("ingest-viewers", group_id, Role.VIEWER)])
+
+    resp = client.post(f"/files/{file_mfid}/ingest")
+
+    assert resp.status_code == 403, resp.text
+
+
+def test_contributor_can_reach_ingestion_request_validation(client, db_engine, auth_as):
+    with Session(db_engine) as session:
+        session.add(Resource(mfid="ds_ingest_contributor", resource_type="dataset", public=False))
+        ds = Dataset(unique_id="ds_ingest_contributor", dataset_name="test", owner_orcid="0000-0000-0000-0001")
+        group = AccessGroup(group_name="ingest-contributors")
+        session.add_all([ds, group])
+        session.commit()
+        session.refresh(ds)
+        session.refresh(group)
+        session.add(ResourceACL(
+            mfid=ds.unique_id,
+            accessgroup_id=group.id,
+            read=True,
+            write=True,
+            permission=Role.CONTRIBUTOR.db_value,
+        ))
+        af = AssociatedFile(
+            filename="remote.dat",
+            storage_backend="globus",
+            storage_path="globus://endpoint/remote.dat",
+            size=1,
+            sha256_hash="contributor-ingest",
+            dataset_id=ds.id,
+        )
+        session.add(af)
+        session.commit()
+        session.refresh(af)
+        file_mfid = af.mfid
+        group_id = group.id
+
+    auth_as("0000-0000-0000-0001", groups=[("ingest-contributors", group_id, Role.CONTRIBUTOR)])
 
     resp = client.post(f"/files/{file_mfid}/ingest")
 

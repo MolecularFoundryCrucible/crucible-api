@@ -40,11 +40,11 @@ def _setup(db_engine):
         session.refresh(ds)
         session.add(DatasetSampleLink(sample_id=samp.id, dataset_id=ds.id))
         session.commit()
-        return inst.instrument_id
+        return inst.unique_id, inst.instrument_id
 
 
 def test_get_resource_resolves_instrument_id_slug(client, db_engine, auth_as):
-    slug = _setup(db_engine)
+    instrument_mfid, slug = _setup(db_engine)
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
 
     resp = client.get("/resources/samp_1")
@@ -60,10 +60,16 @@ def test_get_resource_resolves_instrument_id_slug(client, db_engine, auth_as):
     datasets = body["datasets"]
     assert len(datasets) == 1
     assert datasets[0]["instrument_id"] == slug
+    assert datasets[0]["instrument"] == {
+        "unique_id": instrument_mfid,
+        "instrument_id": "xrd-1",
+        "instrument_name": "xrd-1",
+    }
+    assert datasets[0]["project"] is None
 
 
 def test_get_sample_resolves_instrument_id_slug(client, db_engine, auth_as):
-    slug = _setup(db_engine)
+    instrument_mfid, slug = _setup(db_engine)
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
 
     resp = client.get("/samples/samp_1")
@@ -84,12 +90,17 @@ def test_get_sample_resolves_instrument_id_slug(client, db_engine, auth_as):
     generic_dataset = client.get("/resources/ds_1")
     assert dataset.status_code == 200, dataset.text
     assert generic_dataset.status_code == 200, generic_dataset.text
+    assert dataset.json()["instrument"] == generic_dataset.json()["instrument"]
+    assert dataset.json()["instrument"]["unique_id"] == instrument_mfid
+    assert dataset.json()["instrument"]["instrument_id"] == "xrd-1"
+    assert dataset.json()["instrument"]["instrument_name"] == "xrd-1"
+    assert dataset.json()["project"] is None
     assert dataset.json()["capabilities"] == body["capabilities"]
     assert generic_dataset.json()["capabilities"] == body["capabilities"]
 
 
 def test_list_samples_resolves_instrument_id_slug(client, db_engine, auth_as):
-    slug = _setup(db_engine)
+    _, slug = _setup(db_engine)
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
 
     resp = client.get("/samples", params={"include_links": True, "include_datasets": True})

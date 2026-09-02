@@ -2,7 +2,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
 from app.models.core_models import Project
-from app.utils.project_utils import resolve_project_id_to_mfid, resolve_project_mfids_to_ids
+from app.utils.project_utils import resolve_project_id_to_mfid, resolve_project_mfids_to_ids, resolve_project_mfids_to_references
 
 
 def _engine():
@@ -42,3 +42,17 @@ def test_resolve_project_mfids_to_ids_empty_input():
     with Session(_engine()) as session:
         assert resolve_project_mfids_to_ids([], session) == {}
         assert resolve_project_mfids_to_ids([None, None], session) == {}
+
+
+def test_resolve_project_mfids_to_references():
+    with Session(_engine()) as session:
+        project = _project(session, "proj_a", "0000-0001")
+        project.title = "Project A"
+        session.add(project)
+        session.commit()
+        references = resolve_project_mfids_to_references([project.unique_id, "missing"], session)
+        assert references[project.unique_id].model_dump() == {
+            "unique_id": project.unique_id,
+            "project_id": "proj_a",
+            "title": "Project A",
+        }

@@ -173,13 +173,14 @@ def can_grant(
     target_role: Role,
     current_role: Optional[Role] = None,
     floor: Role = Role.ADMIN,
+    allow_peer: bool = True,
 ) -> bool:
     """Whether `actor_role` may set an entry to `target_role`, replacing
     `current_role`.
 
     The cap binds on both ends: an admin can neither mint an owner nor
-    overwrite one. Omitting `current_role` checks only the creation direction,
-    which would let an admin demote a lead to viewer.
+    overwrite one. Set `allow_peer` to false for strict hierarchies where a
+    role may manage only roles below itself.
 
     `floor` is the minimum role that may manage at all, and differs by what is
     being managed: `admin` for ACL entries, which share data outward without
@@ -189,8 +190,10 @@ def can_grant(
         return False
     if actor_role < floor:
         return False
-    if target_role > actor_role:
+    if target_role > actor_role or (not allow_peer and target_role == actor_role):
         return False
-    if current_role is not None and current_role > actor_role:
+    if current_role is not None and (
+        current_role > actor_role or (not allow_peer and current_role == actor_role)
+    ):
         return False
     return True

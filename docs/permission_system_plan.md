@@ -371,20 +371,21 @@ Routes:
 
 > **Existing behaviour this changes.** `POST /projects/{proj_id}/users/{orcid}` is currently gated `require_groups(ag_list, {'admin', proj_id})`, which means **any member of a project can add anyone else to that project** — a viewer can add a collaborator.
 
-#### Adding members requires `editor`, capped at your own role
+#### Adding members requires `editor`, capped below your own role
 
 Restricting membership management to `admin` is the obvious tightening, but it is stricter than the risk warrants, and it puts a senior postdoc onboarding a student through a project lead every time.
 
 Adding a member and managing ACL entries are not the same power, which is what makes a middle ground safe: **adding a member grants access bounded by the project's own grant, while an ACL entry can share data outward to any group, unbounded.** The second is genuinely `admin`-shaped. The first is not.
 
-So `editor` may add and remove members, subject to the cap rule the thresholds table already states for ACL management: **only at or below your own role.** An `editor` can seat someone as `viewer`, `contributor`, or `editor`, and can never mint an `admin` or an `owner`. Removal is likewise capped, so an `editor` cannot evict a project admin.
+Project membership follows a strict hierarchy. An `editor` may add or modify `viewer` and `contributor` members, an `admin` may manage `editor` and below, and the `owner` may manage `admin` and below. A role cannot create, promote, demote, or otherwise modify a peer. Removal remains restricted to the project owner, platform administrators, or the member leaving voluntarily.
 
 No sixth role. Every role added multiplies the `effective_role` test matrix, the migration mapping, and the number of things a reader has to hold in their head — and "can add members but not manage ACLs" is expressible with the roles that exist plus a cap that is already written down.
 
 | Operation | Requires |
 |---|---|
-| add or remove a project member | `>= editor` in the project group, at or below your own role |
-| change a member's role | `>= editor`, and both the old and new role at or below your own |
+| add a project member | `>= editor` in the project group, strictly below your own role |
+| change a member's role | `>= editor`, with both the old and new role strictly below your own |
+| remove a project member | project owner, platform administrator, or the member themselves |
 | manage resource ACL entries | `>= admin` on the resource, at or below your own role |
 
 ### Membership lived in two tables; one was never authoritative
@@ -416,8 +417,8 @@ Several routes currently key off `Project.project_lead_orcid` directly: join-req
 | Standing in project group | Effective role on the project resource | Can |
 |---|---|---|
 | `owner` (lead) | `owner` | Everything, including transferring the project |
-| `admin` | `admin` | Manage members and ACLs, delete resources; cannot transfer |
-| `editor` | `editor` | Edit project metadata and all project resources; add members up to `editor` |
+| `admin` | `admin` | Manage editors and lower roles and ACLs, delete resources; cannot transfer |
+| `editor` | `editor` | Edit project metadata and all project resources; manage contributors and viewers |
 | `contributor` | `contributor` | Create resources; cannot rename the project |
 | `viewer` | `viewer` | Read |
 

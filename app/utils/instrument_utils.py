@@ -5,6 +5,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from app.models.core_models import Instrument, Project
+from app.models.instrument import InstrumentReferenceRead
 
 _INSTRUMENT_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{2,24}$')
 
@@ -50,3 +51,21 @@ def resolve_instrument_mfids_to_ids(mfids, session) -> dict:
         select(Instrument.unique_id, Instrument.instrument_id).where(Instrument.unique_id.in_(mfid_set))
     ).all()
     return dict(rows)
+
+
+def resolve_instrument_mfids_to_references(mfids, session) -> dict[str, InstrumentReferenceRead]:
+    mfid_set = {m for m in mfids if m}
+    if not mfid_set:
+        return {}
+    rows = session.exec(
+        select(Instrument.unique_id, Instrument.instrument_id, Instrument.instrument_name)
+        .where(Instrument.unique_id.in_(mfid_set))
+    ).all()
+    return {
+        unique_id: InstrumentReferenceRead(
+            unique_id=unique_id,
+            instrument_id=instrument_id,
+            instrument_name=instrument_name,
+        )
+        for unique_id, instrument_id, instrument_name in rows
+    }

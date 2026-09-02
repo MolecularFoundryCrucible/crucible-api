@@ -128,6 +128,8 @@ Both accept named role query values: `viewer`, `contributor`, `editor`, `admin`,
 
 Repeating `POST` for an existing member with the same requested role returns 200 without changing the membership. If the requested role differs from the member's current role, `POST` returns 409 and directs the caller to `PATCH`. Omitting `role` means `contributor` for this comparison.
 
+Membership management follows a strict hierarchy. Editors may add or change contributors and viewers, admins may manage editors and below, and owners may manage admins and below. A caller cannot modify a member at the caller's own role. Project `capabilities.max_grant_role` reports `contributor` for editors, `editor` for admins, and `admin` for owners.
+
 ### `PATCH /datasets/{dsid}`
 
 Body now rejects `owner_orcid` and `project_id` with **422**. Use `transfer_ownership` / `POST /resources/{mfid}/project` instead. Instrument reassignment is frozen until a dedicated atomic operation is available. The deprecated `instrument_name` and `instrument_id` fields accept only the current value for compatibility; changing or clearing either returns **409**. Other accepted fields are `dataset_name`, `data_format`, `measurement`, `data_type`, `session_name`, `timestamp`, and `public`.
@@ -284,7 +286,11 @@ These read routes no longer authorize from the legacy `Dataset.public` Boolean. 
 
 Sample parent, child, and dataset relationship routes now require read access to the starting resource and filter every returned resource through the canonical read-permission and deletion filters. Dataset-to-sample lists apply the same filtering. Expanded `include_links` responses, `GET /resources/{mfid}/links`, and the legacy `SampleResponse.datasets` field independently filter every linked target. Sample, dataset, project, and combined entity graphs omit inaccessible nodes and any edges connected to them.
 
-Response schemas are unchanged. Callers may receive 403 for an inaccessible starting resource or fewer related items and graph nodes where the previous implementation exposed relationships to inaccessible resources.
+Use `GET /datasets?sample_mfid={sample_mfid}` and `GET /samples?dataset_mfid={dataset_mfid}` for typed, paginated sample-dataset relationship collections. The referenced resource and every returned resource are independently read-authorized. The legacy nested routes remain behaviorally unchanged, are marked deprecated in OpenAPI, and return `Deprecation: @1788307200`.
+
+Dataset response models also include nullable `instrument` and `project` identity references. These contain only stable navigation and display fields, are populated without per-dataset queries, and do not grant access to the full related resource. Existing flat instrument and project fields remain unchanged for API v3 compatibility.
+
+Existing response fields remain unchanged. Callers may receive 403 for an inaccessible starting resource or fewer related items and graph nodes where the previous implementation exposed relationships to inaccessible resources.
 
 ### Legacy authorization and shadow-mode removal
 

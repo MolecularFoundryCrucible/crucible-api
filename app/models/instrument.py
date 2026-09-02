@@ -86,6 +86,12 @@ class InstrumentRead(SQLModel):
     instrument_type: Optional[str] = None
 
 
+class InstrumentReferenceRead(SQLModel):
+    unique_id: str
+    instrument_id: Optional[str] = None
+    instrument_name: str
+
+
 class InstrumentResponse(InstrumentRead):
     '''InstrumentRead extended with Resource timestamps.'''
     resource_type: Optional[str] = "instrument"

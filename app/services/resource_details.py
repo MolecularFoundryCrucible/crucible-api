@@ -28,10 +28,10 @@ from app.utils.auth_utils import (
     require_permission,
     resource_capabilities,
 )
-from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
+from app.utils.instrument_utils import resolve_instrument_mfids_to_references
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import Permission, Principal, Role
-from app.utils.project_utils import resolve_project_mfids_to_ids
+from app.utils.project_utils import resolve_project_mfids_to_references
 from app.utils.sql_utils import get_active_deletion_request
 
 
@@ -126,13 +126,17 @@ def load_dataset_detail(
         acl_rows=acl_rows,
     )
     deletion_request = get_active_deletion_request(session, resource_id)
-    instrument_ids = resolve_instrument_mfids_to_ids([dataset.instrument_mfid], session)
-    project_ids = resolve_project_mfids_to_ids([dataset.project_mfid], session)
+    instrument_references = resolve_instrument_mfids_to_references([dataset.instrument_mfid], session)
+    project_references = resolve_project_mfids_to_references([dataset.project_mfid], session)
+    instrument_reference = instrument_references.get(dataset.instrument_mfid)
+    project_reference = project_references.get(dataset.project_mfid)
 
     return DatasetResponse.model_validate({
         **dataset.model_dump(),
-        "instrument_id": instrument_ids.get(dataset.instrument_mfid),
-        "project_id": project_ids.get(dataset.project_mfid, dataset.project_id),
+        "instrument_id": instrument_reference.instrument_id if instrument_reference else None,
+        "project_id": project_reference.project_id if project_reference else dataset.project_id,
+        "instrument": instrument_reference,
+        "project": project_reference,
         "public": resource.public if resource else dataset.public,
         "creation_time": resource.creation_time if resource else None,
         "modification_time": resource.modification_time if resource else None,
@@ -188,24 +192,25 @@ def load_sample_detail(
     )
     deletion_request = get_active_deletion_request(session, resource_id)
     readable_datasets = fetch_readable_sample_datasets(session, principal, sample.id)
-    instrument_ids = resolve_instrument_mfids_to_ids(
+    instrument_references = resolve_instrument_mfids_to_references(
         [dataset.instrument_mfid for dataset in readable_datasets],
         session,
     )
-    project_ids = resolve_project_mfids_to_ids(
+    project_references = resolve_project_mfids_to_references(
         [dataset.project_mfid for dataset in readable_datasets] + [sample.project_mfid],
         session,
     )
-
     return SampleResponse.model_validate({
         **sample.model_dump(),
-        "project_id": project_ids.get(sample.project_mfid, sample.project_id),
+        "project_id": project_references[sample.project_mfid].project_id if sample.project_mfid in project_references else sample.project_id,
         "public": resource.public if resource else False,
         "datasets": [
             DatasetRead.model_validate({
                 **dataset.model_dump(),
-                "instrument_id": instrument_ids.get(dataset.instrument_mfid),
-                "project_id": project_ids.get(dataset.project_mfid, dataset.project_id),
+                "instrument_id": instrument_references[dataset.instrument_mfid].instrument_id if dataset.instrument_mfid in instrument_references else None,
+                "project_id": project_references[dataset.project_mfid].project_id if dataset.project_mfid in project_references else dataset.project_id,
+                "instrument": instrument_references.get(dataset.instrument_mfid),
+                "project": project_references.get(dataset.project_mfid),
             })
             for dataset in readable_datasets
         ],
@@ -309,6 +314,7 @@ def load_project_detail(
             resource_id,
             legacy_edit_group=project.unique_id,
             manage_access_floor=Role.EDITOR,
+            allow_peer_grants=False,
             status_permission=Permission.EDIT,
             legacy_status_group=project.unique_id,
         ),

@@ -223,6 +223,23 @@ def test_access_selectors_are_repeated_openapi_arrays():
     assert dataset_parameters["instrument_mfid"]["description"] == (
         "Filter datasets assigned to this canonical instrument MFID."
     )
+    assert dataset_parameters["sample_mfid"]["required"] is False
+    assert dataset_parameters["sample_mfid"]["description"] == (
+        "Filter datasets linked to this canonical sample MFID."
+    )
+    sample_parameters = {
+        parameter["name"]: parameter
+        for parameter in schema["paths"]["/samples"]["get"]["parameters"]
+    }
+    assert sample_parameters["dataset_mfid"]["required"] is False
+    assert sample_parameters["dataset_mfid"]["description"] == (
+        "Filter samples linked to this canonical dataset MFID."
+    )
+    assert schema["paths"]["/samples/{sample_id}/datasets"]["get"]["deprecated"] is True
+    assert schema["paths"]["/datasets/{dsid}/samples"]["get"]["deprecated"] is True
     for schema_name in ("DatasetResponse", "SampleResponse"):
         capabilities = schema["components"]["schemas"][schema_name]["properties"]["capabilities"]
         assert capabilities["anyOf"][0]["$ref"] == "#/components/schemas/ResourceCapabilities"
+    dataset_properties = schema["components"]["schemas"]["DatasetResponse"]["properties"]
+    assert dataset_properties["instrument"]["anyOf"][0]["$ref"] == "#/components/schemas/InstrumentReferenceRead"
+    assert dataset_properties["project"]["anyOf"][0]["$ref"] == "#/components/schemas/ProjectReferenceRead"

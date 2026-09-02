@@ -287,7 +287,7 @@ class TestInstrumentIdOnDataset:
         return resp.json()
 
     def test_create_dataset_with_instrument_id_resolves_and_echoes_it(self, client, db_engine, auth_as):
-        self._register(client, db_engine, auth_as)
+        instrument = self._register(client, db_engine, auth_as)
         with Session(db_engine) as session:
             _user(session, "0000-0010")
 
@@ -297,6 +297,12 @@ class TestInstrumentIdOnDataset:
         body = resp.json()
         assert body["instrument_id"] == "xrd-id-1"
         assert body["instrument_name"] == "XRD ID 1"
+        assert body["instrument"] == {
+            "unique_id": instrument["unique_id"],
+            "instrument_id": "xrd-id-1",
+            "instrument_name": "XRD ID 1",
+        }
+        assert body["project"] is None
 
         with Session(db_engine) as session:
             ds = session.exec(select(Dataset).where(Dataset.dataset_name == "d5")).one()

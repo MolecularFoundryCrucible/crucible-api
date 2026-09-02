@@ -48,22 +48,29 @@ def _setup(db_engine):
 
 
 def test_get_dataset_shows_renamed_project_id(client, db_engine, auth_as):
-    _setup(db_engine)
+    project_mfid = _setup(db_engine)
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
 
     resp = client.get("/datasets/ds_1")
     assert resp.status_code == 200, resp.text
     assert resp.json()["project_id"] == "proj_new"
+    assert resp.json()["project"] == {
+        "unique_id": project_mfid,
+        "project_id": "proj_new",
+        "title": None,
+    }
 
 
 def test_list_datasets_shows_renamed_project_id(client, db_engine, auth_as):
-    _setup(db_engine)
+    project_mfid = _setup(db_engine)
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
 
     resp = client.get("/datasets")
     assert resp.status_code == 200, resp.text
     ds = next(d for d in resp.json()["items"] if d["unique_id"] == "ds_1")
     assert ds["project_id"] == "proj_new"
+    assert ds["project"]["project_id"] == "proj_new"
+    assert ds["project"]["unique_id"] == project_mfid
 
 
 def test_get_sample_shows_renamed_project_id(client, db_engine, auth_as):

@@ -98,6 +98,8 @@ Canonical resource detail responses, exact project and instrument slug-filter re
 
 `max_grant_role` is the highest non-owner role the caller may assign, or null when the caller cannot grant access. Clients should use capabilities to enable or hide actions but must still handle 403 and 409 responses because authorization is enforced server-side.
 
+Project membership uses a strict hierarchy. Project editors receive `max_grant_role="contributor"`, project admins receive `max_grant_role="editor"`, and project owners receive `max_grant_role="admin"`. A caller cannot add, promote, demote, or otherwise modify a member at the caller's own project role.
+
 For datasets and samples, `can_change_status` is always false because they do not expose the project or instrument lifecycle-status operation. General collection and search results leave `capabilities` null to avoid per-item ACL evaluation. Null means the server did not calculate capabilities for that representation, not that every action is denied.
 
 ## Ownership and project assignment
@@ -197,6 +199,40 @@ References are resolved by the API, so users may be identified by MFID, ORCID, u
 Inspecting another user requires platform-admin authority. Inspecting a project requires membership in that project or platform-admin authority. An unknown principal returns 404, an unauthorized inspection returns 403, and more than 10 selectors returns 422.
 
 The unpaginated MFID-only routes `GET /users/{user_id}/datasets` and `GET /users/{user_id}/samples` remain as deprecated compatibility wrappers.
+
+Relationship collections now use the canonical paginated collection routes:
+
+```http
+GET /datasets?sample_mfid={sample_mfid}
+GET /samples?dataset_mfid={dataset_mfid}
+```
+
+The caller must be able to read both the referenced resource and each returned resource. These filters compose with the existing collection filters and pagination. `GET /samples/{sample_mfid}/datasets` and `GET /datasets/{dataset_mfid}/samples` retain their existing response contracts but are deprecated and return the standard `Deprecation` response header.
+
+## Dataset instrument and project references
+
+Dataset response models now include nullable lightweight references alongside the existing flat compatibility fields:
+
+```json
+{
+  "unique_id": "dataset-mfid",
+  "instrument_id": "xrd-1",
+  "instrument_name": "High Resolution XRD",
+  "project_id": "project-slug",
+  "instrument": {
+    "unique_id": "instrument-mfid",
+    "instrument_id": "xrd-1",
+    "instrument_name": "High Resolution XRD"
+  },
+  "project": {
+    "unique_id": "project-mfid",
+    "project_id": "project-slug",
+    "title": "Project title"
+  }
+}
+```
+
+`instrument` uses `InstrumentReferenceRead`, and `project` uses `ProjectReferenceRead`. The API returns current registered identity values when the canonical MFID resolves. An unresolved legacy relationship returns null while preserving the existing flat stored values. The fields are additive across dataset detail, collection, search, lineage, generic resource detail, and datasets embedded in sample responses. Existing clients do not need to change, and `instrument_id`, `instrument_name`, and `project_id` remain part of the API v3 response contract.
 
 ## User email privacy
 

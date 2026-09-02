@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 import networkx as nx
 from networkx.readwrite import json_graph
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import exists, func, join, literal, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
@@ -39,16 +39,18 @@ from app.models.datasets import (
     DatasetCreate, DatasetRead, DatasetResponse, DatasetUpdate,
     ThumbnailCreate, ThumbnailRead,
 )
+from app.models.instrument import InstrumentReferenceRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
+from app.models.projects import ProjectReferenceRead
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
 from app.services.resource_details import ResourceDetailOptions, load_dataset_detail
 from app.utils.auth_utils import (
     access_selector_filter, authorize_user, permission_filter, require_permission)
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
-from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
-from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
+from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids, resolve_project_mfids_to_references
+from app.utils.instrument_utils import resolve_instrument_mfids_to_references
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.user_utils import resolve_create_owner
 from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
@@ -57,6 +59,7 @@ from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_ur
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
+RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
 
 # eventually could switch to pushing + using github tags
 with open('pyproject.toml', 'r') as f:
@@ -274,9 +277,12 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                 instrument.unique_id,
             )
         background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri), user_unique_id, "create")
+        project_references = resolve_project_mfids_to_references([ds.project_mfid], session)
         return DatasetResponse.model_validate({
             **ds.model_dump(),
             "instrument_id": instrument.instrument_id if instrument else None,
+            "instrument": InstrumentReferenceRead.model_validate(instrument) if instrument else None,
+            "project": project_references.get(ds.project_mfid),
             "public": ri.public,
             "creation_time": ri.creation_time,
             "modification_time": ri.modification_time,
@@ -355,12 +361,16 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
         session.commit()
         session.refresh(upds)
         background_tasks.add_task(write_record, upds.unique_id, dataset_record(upds, ri), user_unique_id, "update")
-        instrument_ids = resolve_instrument_mfids_to_ids([upds.instrument_mfid], session)
-        project_ids = resolve_project_mfids_to_ids([upds.project_mfid], session)
+        instrument_references = resolve_instrument_mfids_to_references([upds.instrument_mfid], session)
+        project_references = resolve_project_mfids_to_references([upds.project_mfid], session)
+        instrument_reference = instrument_references.get(upds.instrument_mfid)
+        project_reference = project_references.get(upds.project_mfid)
         return DatasetResponse.model_validate({
             **upds.model_dump(),
-            "instrument_id": instrument_ids.get(upds.instrument_mfid),
-            "project_id": project_ids.get(upds.project_mfid, upds.project_id),
+            "instrument_id": instrument_reference.instrument_id if instrument_reference else None,
+            "project_id": project_reference.project_id if project_reference else upds.project_id,
+            "instrument": instrument_reference,
+            "project": project_reference,
             "public": ri.public if ri else upds.public,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
@@ -382,6 +392,9 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                   visibility: Literal["all", "public", "private"] = "all",
                   instrument_mfid: Annotated[Optional[str], Query(
                       description="Filter datasets assigned to this canonical instrument MFID.",
+                  )] = None,
+                  sample_mfid: Annotated[Optional[str], Query(
+                      description="Filter datasets linked to this canonical sample MFID.",
                   )] = None):
     '''
     Returns a paginated list of datasets the requesting user is authorized to view.
@@ -399,6 +412,7 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
     Pass include_links=true to include parent, child, and associated resources for each dataset.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
     Pass instrument_mfid to filter by the instrument's canonical stable identity.
+    Pass sample_mfid to filter by a readable sample's canonical stable identity.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
     params_dict = dict(request.query_params)
@@ -408,10 +422,20 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
               'modification_time_lte', 'include_metadata', 'include_links', 'include_owner',
               'limit', 'cursor', 'offset', 'visibility', 'accessible_to_user',
-              'accessible_to_project', 'instrument_mfid'):
+              'accessible_to_project', 'instrument_mfid', 'sample_mfid'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
+        linked_sample_id = None
+        if sample_mfid is not None:
+            linked_sample_id = session.exec(
+                select(Sample.id)
+                .where(Sample.unique_id == sample_mfid)
+                .where(permission_filter(auth_res, Sample, Permission.READ))
+            ).one_or_none()
+            if linked_sample_id is None:
+                raise HTTPException(status_code=404, detail="Sample not found or access denied")
+
         auth_filter = access_selector_filter(
             session,
             auth_res,
@@ -436,6 +460,15 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 q = q.where(Resource.modification_time <= modification_time_lte)
             if instrument_mfid is not None:
                 q = q.where(Dataset.instrument_mfid == instrument_mfid)
+            if linked_sample_id is not None:
+                q = q.where(
+                    exists()
+                    .where(
+                        DatasetSampleLink.sample_id == linked_sample_id,
+                        DatasetSampleLink.dataset_id == Dataset.id,
+                    )
+                    .correlate(Dataset)
+                )
             for key, value in params_dict.items():
                 if hasattr(Dataset, key):
                     q = q.where(getattr(Dataset, key) == value)
@@ -457,7 +490,8 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
             query = (
                 select(Dataset, Resource.creation_time, Resource.modification_time,
                        Resource.public, ScientificMetadataBinary.scientific_metadata,
-                       Project.project_id, Instrument.instrument_id)
+                       Project.unique_id, Project.project_id, Project.title,
+                       Instrument.unique_id, Instrument.instrument_id, Instrument.instrument_name)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
                 .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Dataset.unique_id, isouter=True)
                 .outerjoin(Project, Project.unique_id == Dataset.project_mfid)
@@ -466,7 +500,8 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
         else:
             query = (
                 select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public,
-                       Project.project_id, Instrument.instrument_id)
+                       Project.unique_id, Project.project_id, Project.title,
+                       Instrument.unique_id, Instrument.instrument_id, Instrument.instrument_name)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
                 .outerjoin(Project, Project.unique_id == Dataset.project_mfid)
                 .outerjoin(Instrument, Instrument.unique_id == Dataset.instrument_mfid)
@@ -535,10 +570,20 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
         items = []
         for row in results:
             if include_metadata:
-                dataset, creation_time, modification_time, public, sci_md, resolved_project_id, resolved_instrument_id = row
+                dataset, creation_time, modification_time, public, sci_md, project_mfid, project_id, project_title, instrument_mfid, instrument_id, instrument_name = row
             else:
-                dataset, creation_time, modification_time, public, resolved_project_id, resolved_instrument_id = row
+                dataset, creation_time, modification_time, public, project_mfid, project_id, project_title, instrument_mfid, instrument_id, instrument_name = row
                 sci_md = None
+            instrument_reference = InstrumentReferenceRead(
+                unique_id=instrument_mfid,
+                instrument_id=instrument_id,
+                instrument_name=instrument_name,
+            ) if instrument_mfid else None
+            project_reference = ProjectReferenceRead(
+                unique_id=project_mfid,
+                project_id=project_id,
+                title=project_title,
+            ) if project_mfid else None
             links = None
             if include_links:
                 links = (
@@ -548,8 +593,10 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 )
             items.append(DatasetResponse.model_validate({
                 **dataset.model_dump(),
-                "instrument_id": resolved_instrument_id,
-                "project_id": resolved_project_id if resolved_project_id is not None else dataset.project_id,
+                "instrument_id": instrument_id,
+                "project_id": project_id if project_id is not None else dataset.project_id,
+                "instrument": instrument_reference,
+                "project": project_reference,
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
@@ -565,13 +612,13 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
 def _dataset_base_query(principal):
     """Auth-scoped, deletion-filtered base query for datasets. Caller adds
     ordering and pagination. Joins Project/Instrument directly so callers get
-    the live-resolved project_id/instrument_id alongside each row, rather
-    than a second resolve query after the fact."""
+    live project and instrument references alongside each row."""
     auth_filter = permission_filter(principal, Dataset)
     deletion_filter = deletion_filter_for(Dataset)
     return (
         select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public,
-               Project.project_id, Instrument.instrument_id)
+               Project.unique_id, Project.project_id, Project.title,
+               Instrument.unique_id, Instrument.instrument_id, Instrument.instrument_name)
         .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
         .outerjoin(Project, Project.unique_id == Dataset.project_mfid)
         .outerjoin(Instrument, Instrument.unique_id == Dataset.instrument_mfid)
@@ -606,12 +653,22 @@ def search_datasets(
         results = session.exec(query).all()
         items = [DatasetResponse.model_validate({
             **dataset.model_dump(),
-            "instrument_id": resolved_instrument_id,
-            "project_id": resolved_project_id if resolved_project_id is not None else dataset.project_id,
+            "instrument_id": instrument_id,
+            "project_id": project_id if project_id is not None else dataset.project_id,
+            "instrument": InstrumentReferenceRead(
+                unique_id=instrument_mfid,
+                instrument_id=instrument_id,
+                instrument_name=instrument_name,
+            ) if instrument_mfid else None,
+            "project": ProjectReferenceRead(
+                unique_id=project_mfid,
+                project_id=project_id,
+                title=project_title,
+            ) if project_mfid else None,
             "public": public if public is not None else False,
             "creation_time": creation_time,
             "modification_time": modification_time,
-        }) for dataset, creation_time, modification_time, public, resolved_project_id, resolved_instrument_id in results]
+        }) for dataset, creation_time, modification_time, public, project_mfid, project_id, project_title, instrument_mfid, instrument_id, instrument_name in results]
         return PaginatedResponse(limit=limit, items=items)
 
 
@@ -736,12 +793,14 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[Principal, D
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         parents = session.exec(query.offset(offset).limit(limit)).all()
-        instrument_ids = resolve_instrument_mfids_to_ids((d.instrument_mfid for d in parents), session)
-        project_ids = resolve_project_mfids_to_ids((d.project_mfid for d in parents), session)
+        instrument_references = resolve_instrument_mfids_to_references((d.instrument_mfid for d in parents), session)
+        project_references = resolve_project_mfids_to_references((d.project_mfid for d in parents), session)
         items = [DatasetRead.model_validate({
             **d.model_dump(),
-            "instrument_id": instrument_ids.get(d.instrument_mfid),
-            "project_id": project_ids.get(d.project_mfid, d.project_id),
+            "instrument_id": instrument_references[d.instrument_mfid].instrument_id if d.instrument_mfid in instrument_references else None,
+            "project_id": project_references[d.project_mfid].project_id if d.project_mfid in project_references else d.project_id,
+            "instrument": instrument_references.get(d.instrument_mfid),
+            "project": project_references.get(d.project_mfid),
         }) for d in parents]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
@@ -771,12 +830,14 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[Principal, D
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         children = session.exec(query.offset(offset).limit(limit)).all()
-        instrument_ids = resolve_instrument_mfids_to_ids((d.instrument_mfid for d in children), session)
-        project_ids = resolve_project_mfids_to_ids((d.project_mfid for d in children), session)
+        instrument_references = resolve_instrument_mfids_to_references((d.instrument_mfid for d in children), session)
+        project_references = resolve_project_mfids_to_references((d.project_mfid for d in children), session)
         items = [DatasetRead.model_validate({
             **d.model_dump(),
-            "instrument_id": instrument_ids.get(d.instrument_mfid),
-            "project_id": project_ids.get(d.project_mfid, d.project_id),
+            "instrument_id": instrument_references[d.instrument_mfid].instrument_id if d.instrument_mfid in instrument_references else None,
+            "project_id": project_references[d.project_mfid].project_id if d.project_mfid in project_references else d.project_id,
+            "instrument": instrument_references.get(d.instrument_mfid),
+            "project": project_references.get(d.project_mfid),
         }) for d in children]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
@@ -1179,13 +1240,20 @@ def link_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)],
         return DatasetSampleLinkResponse(dataset_id=ds.unique_id, dataset_name=ds.dataset_name, sample_id=samp.unique_id, sample_type=samp.sample_type, sample_name=samp.sample_name)
 
 
-@router.get("/datasets/{dsid}/samples", response_model=PaginatedResponse[SampleRead])
+@router.get(
+    "/datasets/{dsid}/samples",
+    response_model=PaginatedResponse[SampleRead],
+    deprecated=True,
+)
 def read_samples_in_dataset(dsid: str, auth_res: Annotated[Principal, Depends(authorize_user)],
+                            response: Response,
                             limit: int = Query(default=100, ge=1, le=1000),
                             offset: int = Query(default=0, ge=0)):
     '''
     Returns a paginated list of samples associated with the dataset ID provided.
+    Deprecated: use GET /samples?dataset_mfid={dsid}.
     '''
+    response.headers["Deprecation"] = RELATIONSHIP_ROUTE_DEPRECATION
     with Session(engine) as session:
         ds = session.exec(
             select(Dataset)

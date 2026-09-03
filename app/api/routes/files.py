@@ -155,8 +155,8 @@ def create_file_ingestion_request(
     Requires write access to the dataset.
 
     Only 'requested' (dispatch to the ingestion queue) and 'not_requested' (record
-    the file without dispatching) may be set here. Terminal states are written by
-    the worker via PATCH /ingestion_requests/{reqid}, which is admin-only.
+    the file without dispatching) may be set here. Terminal states are written
+    afterwards via PATCH /ingestion_requests/{reqid}.
     '''
 
     with Session(engine) as session:

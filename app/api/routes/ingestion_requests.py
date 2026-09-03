@@ -106,13 +106,20 @@ def patch_ingestion_request(
         raise HTTPException(status_code=400, detail="Request body ID does not match URL")
 
     with Session(engine) as session:
-        _get_ir_with_access(session, reqid, auth_res, Permission.EDIT)
+        ir = _get_ir_with_access(session, reqid, auth_res, Permission.EDIT)
+
+        fields = ing_req.model_dump(exclude_unset=True)
+        # Reparenting would move the request under a dataset the caller was never
+        # authorized against, so the link is fixed at creation.
+        for field in ("dataset_mfid", "file_mfid"):
+            if field in fields and fields[field] != getattr(ir, field):
+                raise HTTPException(status_code=400, detail=f"{field} cannot be changed")
 
         updated = only_update(
             session,
             IngestionRequest,
             IngestionRequest.id == reqid,
-            **ing_req.model_dump(exclude_unset=True),
+            **fields,
         )
         if updated is None:
             raise HTTPException(status_code=404, detail="Ingestion request not found")

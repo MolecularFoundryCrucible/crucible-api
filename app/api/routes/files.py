@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from datetime import timedelta
-from typing import Annotated, List, Optional
+from typing import Annotated, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -147,12 +147,16 @@ def create_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
     ingestion_class: Optional[str] = None,
-    status: Optional[str] = 'requested'
+    status: Literal['requested', 'not_requested'] = 'requested'
 ):
     '''
     Creates an ingestion request for a file, scoped to the specified dataset.
     Returns error if the dataset associated with the file is not found, or the user does not have access.
     Requires write access to the dataset.
+
+    Only 'requested' (dispatch to the ingestion queue) and 'not_requested' (record
+    the file without dispatching) may be set here. Terminal states are written by
+    the worker via PATCH /ingestion_requests/{reqid}, which is admin-only.
     '''
 
     with Session(engine) as session:

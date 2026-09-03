@@ -11,7 +11,7 @@ from app.models.core_models import (
     IngestionRequest,
 )
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, has_platform_admin_access, require_permission, require_platform_admin
+from app.utils.auth_utils import authorize_user, has_platform_admin_access, require_permission
 from app.utils.permissions import Permission, Principal
 from app.utils.sql_utils import only_update
 
@@ -19,8 +19,9 @@ router = APIRouter(tags=["ingestion_requests"])
 engine = get_engine()
 
 
-def _get_ir_with_read_access(session: Session, reqid: int, principal: Principal) -> IngestionRequest:
-    """Fetch an IngestionRequest and verify the caller has read access to its parent dataset."""
+def _get_ir_with_access(session: Session, reqid: int, principal: Principal,
+                        permission: Permission) -> IngestionRequest:
+    """Fetch an IngestionRequest and verify the caller has `permission` on its parent dataset."""
     ir = session.exec(
         select(IngestionRequest).where(IngestionRequest.id == reqid)
     ).one_or_none()
@@ -30,7 +31,7 @@ def _get_ir_with_read_access(session: Session, reqid: int, principal: Principal)
     ds = session.exec(select(Dataset).where(Dataset.unique_id == ir.dataset_mfid)).one_or_none()
     if ds is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    require_permission(session, principal, ds.unique_id, Permission.READ)
+    require_permission(session, principal, ds.unique_id, permission)
     return ir
 
 
@@ -91,7 +92,7 @@ def get_ingestion_request(
 ):
     '''Returns a specific ingestion request. Requires read access to the parent dataset.'''
     with Session(engine) as session:
-        return _get_ir_with_read_access(session, reqid, auth_res)
+        return _get_ir_with_access(session, reqid, auth_res, Permission.READ)
 
 
 @router.patch("/ingestion_requests/{reqid}", response_model=IngestionRequest)
@@ -100,13 +101,13 @@ def patch_ingestion_request(
     reqid: int,
     ing_req: IngestionRequest,
 ):
-    '''Updates an ingestion request. Admin/group access only.'''
-    require_platform_admin(auth_res)
-
+    '''Updates an ingestion request. Requires edit access to the parent dataset.'''
     if ing_req.id and ing_req.id != reqid:
         raise HTTPException(status_code=400, detail="Request body ID does not match URL")
 
     with Session(engine) as session:
+        _get_ir_with_access(session, reqid, auth_res, Permission.EDIT)
+
         updated = only_update(
             session,
             IngestionRequest,

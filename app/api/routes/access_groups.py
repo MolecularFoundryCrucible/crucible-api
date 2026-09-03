@@ -2,6 +2,7 @@ from typing import Annotated, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select, col
 
 from app.api.dependencies import get_engine
@@ -174,7 +175,20 @@ def request_to_join_access_group(
             reason=body.reason,
         )
         session.add(req)
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            duplicate = session.exec(
+                select(AccessGroupJoinRequest.id).where(
+                    AccessGroupJoinRequest.accessgroup_id == ag.id,
+                    AccessGroupJoinRequest.requester_id == user_unique_id,
+                    AccessGroupJoinRequest.status == "pending",
+                )
+            ).first()
+            if duplicate is not None:
+                raise HTTPException(status_code=409, detail="A pending join request already exists for this group.")
+            raise
         session.refresh(req)
         return _to_join_request_read(req, session)
 
@@ -275,7 +289,9 @@ def review_join_request(
 
     with Session(engine) as session:
         req = session.exec(
-            select(AccessGroupJoinRequest).where(AccessGroupJoinRequest.id == request_id)
+            select(AccessGroupJoinRequest)
+            .where(AccessGroupJoinRequest.id == request_id)
+            .with_for_update()
         ).one_or_none()
         if req is None:
             raise HTTPException(status_code=404, detail="Join request not found.")

@@ -243,3 +243,20 @@ def test_access_selectors_are_repeated_openapi_arrays():
     dataset_properties = schema["components"]["schemas"]["DatasetResponse"]["properties"]
     assert dataset_properties["instrument"]["anyOf"][0]["$ref"] == "#/components/schemas/InstrumentReferenceRead"
     assert dataset_properties["project"]["anyOf"][0]["$ref"] == "#/components/schemas/ProjectReferenceRead"
+    assert dataset_properties["owner"]["anyOf"][0]["$ref"] == "#/components/schemas/UserPublicRead"
+    for schema_name in ("SampleRead", "SampleResponse"):
+        sample_properties = schema["components"]["schemas"][schema_name]["properties"]
+        assert sample_properties["project"]["anyOf"][0]["$ref"] == "#/components/schemas/ProjectReferenceRead"
+    sample_response_properties = schema["components"]["schemas"]["SampleResponse"]["properties"]
+    assert sample_response_properties["owner"]["anyOf"][0]["$ref"] == "#/components/schemas/UserPublicRead"
+    for path in (
+        "/datasets/{dataset_mfid}",
+        "/samples/{sample_mfid}",
+        "/instruments/{instrument_mfid}",
+        "/resources/{resource_id}",
+    ):
+        parameters = {
+            parameter["name"]: parameter
+            for parameter in schema["paths"][path]["get"]["parameters"]
+        }
+        assert parameters["include_owner"]["schema"]["default"] is True

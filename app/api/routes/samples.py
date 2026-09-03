@@ -20,12 +20,13 @@ from app.models.core_models import (
 from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
+from app.models.projects import ProjectReferenceRead
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import (
     access_selector_filter, authorize_user, permission_filter, require_permission)
 from app.utils.instrument_utils import resolve_instrument_mfids_to_references
 from app.utils.permissions import Principal, Permission, Role
-from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids, resolve_project_mfids_to_references
+from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_references
 from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
@@ -134,10 +135,12 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
         session.commit()
         session.refresh(sample)
         background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri), user_unique_id, "update")
-        project_ids = resolve_project_mfids_to_ids([sample.project_mfid], session)
+        project_references = resolve_project_mfids_to_references([sample.project_mfid], session)
+        project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
-            "project_id": project_ids.get(sample.project_mfid, sample.project_id),
+            "project_id": project_reference.project_id if project_reference else sample.project_id,
+            "project": project_reference,
             "public": ri.public if ri else False,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
@@ -227,8 +230,12 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         session.commit()
         session.refresh(sample)
         background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri), user_unique_id, "create")
+        project_references = resolve_project_mfids_to_references([sample.project_mfid], session)
+        project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
+            "project_id": project_reference.project_id if project_reference else sample.project_id,
+            "project": project_reference,
             "public": ri.public if ri else False,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
@@ -342,7 +349,8 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
         if include_metadata:
             samp_cmd = (
                 select(Sample, Resource.creation_time, Resource.modification_time, Resource.public,
-                       ScientificMetadataBinary.scientific_metadata, Project.project_id)
+                       ScientificMetadataBinary.scientific_metadata, Project.unique_id,
+                       Project.project_id, Project.title)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
                 .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Sample.unique_id, isouter=True)
                 .outerjoin(Project, Project.unique_id == Sample.project_mfid)
@@ -350,7 +358,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
         else:
             samp_cmd = (
                 select(Sample, Resource.creation_time, Resource.modification_time, Resource.public,
-                       Project.project_id)
+                       Project.unique_id, Project.project_id, Project.title)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
                 .outerjoin(Project, Project.unique_id == Sample.project_mfid)
             )
@@ -428,10 +436,15 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
         items = []
         for row in rows:
             if include_metadata:
-                samp, creation_time, modification_time, public, sci_md, resolved_project_id = row
+                samp, creation_time, modification_time, public, sci_md, project_mfid, resolved_project_id, project_title = row
             else:
-                samp, creation_time, modification_time, public, resolved_project_id = row
+                samp, creation_time, modification_time, public, project_mfid, resolved_project_id, project_title = row
                 sci_md = None
+            project_reference = ProjectReferenceRead(
+                unique_id=project_mfid,
+                project_id=resolved_project_id,
+                title=project_title,
+            ) if project_mfid is not None else None
             links = None
             compat_datasets = None
             if include_links:
@@ -445,6 +458,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
             items.append(SampleResponse.model_validate({
                 **samp.model_dump(),
                 "project_id": resolved_project_id if resolved_project_id is not None else samp.project_id,
+                "project": project_reference,
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
@@ -467,7 +481,7 @@ def _sample_base_query(principal):
     deletion_filter = deletion_filter_for(Sample)
     return (
         select(Sample, Resource.creation_time, Resource.modification_time, Resource.public,
-               Project.project_id)
+               Project.unique_id, Project.project_id, Project.title)
         .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
         .outerjoin(Project, Project.unique_id == Sample.project_mfid)
         .where(auth_filter)
@@ -502,18 +516,24 @@ def search_samples(
         items = [SampleResponse.model_validate({
             **samp.model_dump(),
             "project_id": resolved_project_id if resolved_project_id is not None else samp.project_id,
+            "project": ProjectReferenceRead(
+                unique_id=project_mfid,
+                project_id=resolved_project_id,
+                title=project_title,
+            ) if project_mfid is not None else None,
             "public": public if public is not None else False,
             "creation_time": creation_time,
             "modification_time": modification_time,
-        }) for samp, creation_time, modification_time, public, resolved_project_id in results]
+        }) for samp, creation_time, modification_time, public, project_mfid, resolved_project_id, project_title in results]
         return PaginatedResponse(limit=limit, items=items)
 
 
 @router.get("/samples/{sample_mfid}", response_model=SampleResponse)
-def read_sample(sample_mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)], include_links: bool = False, include_metadata: bool = False, include_owner: bool = False):
+def read_sample(sample_mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)], include_links: bool = False, include_metadata: bool = False, include_owner: bool = True):
     '''
     Returns the sample for the provided MFID.
     Pass include_links=true to include parent, child, and associated resources.
+    The owner identity is resolved by default. Pass include_owner=false to omit it.
     '''
     with Session(engine) as session:
         return load_sample_detail(
@@ -615,10 +635,11 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[Principal, Dep
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
-        project_ids = resolve_project_mfids_to_ids((s.project_mfid for s in rows), session)
+        project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
         items = [SampleRead.model_validate({
             **s.model_dump(),
-            "project_id": project_ids.get(s.project_mfid, s.project_id),
+            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else s.project_id,
+            "project": project_references.get(s.project_mfid),
         }) for s in rows]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
@@ -645,10 +666,11 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[Principal, Dep
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
-        project_ids = resolve_project_mfids_to_ids((s.project_mfid for s in rows), session)
+        project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
         items = [SampleRead.model_validate({
             **s.model_dump(),
-            "project_id": project_ids.get(s.project_mfid, s.project_id),
+            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else s.project_id,
+            "project": project_references.get(s.project_mfid),
         }) for s in rows]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 

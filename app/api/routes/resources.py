@@ -130,12 +130,13 @@ def search_resource_metadata_v2(
 @router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse, InstrumentResponse, ProjectWithLead])
 def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resource_id: str,
                  include_metadata: bool = False, include_links: bool = False,
-                 include_owner: bool = False):
+                 include_owner: bool = True):
     """
     Fetch a dataset, sample, instrument, or project by ID without knowing its type in advance.
     Resolves the type from idtype, then returns the full resource record.
     Pass include_metadata=true to include scientific metadata.
     Pass include_links=true to include parent/child/associated resources (datasets and samples only).
+    The owner identity is resolved by default for datasets, samples, and instruments. Pass include_owner=false to omit it.
     """
 
     with Session(engine) as session:

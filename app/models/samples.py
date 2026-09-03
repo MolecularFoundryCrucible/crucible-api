@@ -1,11 +1,13 @@
-from typing import Any, List, Optional
+from typing import List, Optional
 from pydantic import ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
 
 from app.general_utils import blank_to_none, is_valid_mfid
 from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
+from app.models.projects import ProjectReferenceRead
 from app.models.resource import ResourceCapabilities
+from app.models.users import UserPublicRead
 
 
 class SampleCreate(SQLModel):
@@ -76,6 +78,7 @@ class SampleRead(SQLModel):
     sample_type: Optional[str] = None
     owner_orcid: Optional[str] = None
     project_id: Optional[str] = None
+    project: Optional[ProjectReferenceRead] = None
     description: Optional[str] = None
     timestamp: Optional[str] = None
     public: bool = False
@@ -90,5 +93,5 @@ class SampleResponse(SampleRead):
     datasets: Optional[List[DatasetRead]] = None
     deletion_request: Optional[dict] = None
     links: Optional[List[LinkedResource]] = None
-    owner: Optional[Any] = None  # UserPublicRead when include_owner=true
+    owner: Optional[UserPublicRead] = None
     capabilities: Optional[ResourceCapabilities] = None

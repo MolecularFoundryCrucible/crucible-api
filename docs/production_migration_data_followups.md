@@ -22,7 +22,7 @@ The instrument reference backfill populated `instrument_mfid` for 125,672 datase
 | `python/pandas` | 1 |
 | Total | 1,144 |
 
-These datasets remain readable and retain their original `instrument_name` and resource ACLs. They return a null canonical `instrument_id`, do not appear in queries scoped by a canonical instrument MFID, and cannot participate reliably in behavior tied to a registered instrument. The final schema permits a null `instrument_mfid`, and current create paths require a registered instrument, so this legacy set should not grow.
+These datasets remain readable and retain their original `instrument_name` and resource ACLs. They return a null canonical `instrument_id` and a null embedded `instrument` reference, do not appear in queries scoped by a canonical instrument MFID, and cannot participate reliably in behavior tied to a registered instrument. The final schema permits a null `instrument_mfid`, and current create paths require a registered instrument, so this legacy set should not grow.
 
 Follow-up recipe:
 

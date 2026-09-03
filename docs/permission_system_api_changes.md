@@ -1,6 +1,6 @@
 # API Contract Changes - Permission System Redesign
 
-Reference for updating API clients against the `feat/permission-roles` contract. The base release is live on staging, while the typed access selectors and stricter email redaction are in the next local deployment candidate. Start with `docs/client_migration_summary.md` for the changes grouped by client type. Use `docs/permission_migration_runbook.md` for the deployed revision and staging verification status. See `docs/resource_identifier_routes.md` for canonical identifiers, exact lookup filters, compatibility aliases, and current path parameter names.
+Reference for updating API clients against the API v3 permission contract on the repository `staging` branch. Verify `GET /health/ready` and the deployed OpenAPI before assuming a rebuild is live. Start with `docs/client_migration_summary.md` for changes grouped by client type. See `docs/resource_identifier_routes.md` for canonical identifiers, exact lookup filters, compatibility aliases, and current path parameter names. The completed production rollout is retained only as a historical record in `docs/archive/permission_migration_runbook_2026-08.md`.
 
 ## New routes
 
@@ -59,7 +59,7 @@ Instrument display names preserve the casing supplied by the caller. Exact filte
 
 `GET /instruments/search` accepts an optional `status` query with `active`, `maintenance`, or `decommissioned`. Omitting the query preserves the existing behavior and searches across every status.
 
-The response exposes the canonical identity as `owner_orcid`, matching dataset and sample responses despite the legacy field name. Pass `include_owner=true` on instrument collection, search, singleton, or generic resource reads to populate `owner` with a public-safe user object. Collection expansion uses one batched user query. The API creates an owner ACL for that identity as well as the separate editor ACL for the instrument operator group. Arbitrary labels such as `"facility"` are no longer valid owner values unless they resolve to a registered username. Instrument PATCH no longer accepts `owner`; use `POST /resources/{instrument_mfid}/transfer_ownership`.
+The response exposes the canonical identity as `owner_orcid`, matching dataset and sample responses despite the legacy field name. Instrument singleton and generic resource reads populate `owner` with a public-safe user object by default; pass `include_owner=false` to omit it. Collection and search expansion remains opt-in with `include_owner=true` and uses one batched user query. The API creates an owner ACL for that identity as well as the separate editor ACL for the instrument operator group. Arbitrary labels such as `"facility"` are no longer valid owner values unless they resolve to a registered username. Instrument PATCH no longer accepts `owner`; use `POST /resources/{instrument_mfid}/transfer_ownership`.
 
 Dataset, sample, project, and instrument detail responses now share an optional caller-specific `capabilities` object:
 
@@ -315,4 +315,4 @@ Generate and inspect the deterministic local schema before deployment:
 git diff --exit-code -- openapi/crucible-api.json
 ```
 
-After deployment, compare it with `https://crucible.lbl.gov/testapi-staging/openapi.json` and run the smoke checks in `docs/resource_identifier_routes.md` and `docs/permission_migration_runbook.md`.
+After deployment, compare it with `https://crucible.lbl.gov/testapi-staging/openapi.json`, confirm the commit and schema revisions through `GET /health/ready`, and run the applicable contract checks in `docs/resource_identifier_routes.md`.

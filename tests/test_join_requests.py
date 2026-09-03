@@ -8,6 +8,8 @@ routes actually write. Every insert here should have violated the FK on a
 real (constraint-enforcing) database. Fixed by switching the FK to
 accessgroup_id (an internal id, no label/MFID ambiguity to get wrong).
 """
+import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.models.core_models import AccessGroup, AccessGroupJoinRequest, Project, User, UserAccessGroupLink
@@ -60,6 +62,42 @@ def test_duplicate_pending_request_is_rejected(client, db_engine, auth_as):
     assert resp2.status_code == 409
 
 
+def test_duplicate_pending_request_is_rejected_by_database(db_engine):
+    ag_id, _ = _setup(db_engine)
+
+    with Session(db_engine) as session:
+        session.add(AccessGroupJoinRequest(
+            accessgroup_id=ag_id,
+            requester_id="0000-0002",
+            status="pending",
+        ))
+        session.commit()
+        session.add(AccessGroupJoinRequest(
+            accessgroup_id=ag_id,
+            requester_id="0000-0002",
+            status="pending",
+        ))
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_new_pending_request_is_allowed_after_rejection(db_engine):
+    ag_id, _ = _setup(db_engine)
+
+    with Session(db_engine) as session:
+        session.add(AccessGroupJoinRequest(
+            accessgroup_id=ag_id,
+            requester_id="0000-0002",
+            status="rejected",
+        ))
+        session.add(AccessGroupJoinRequest(
+            accessgroup_id=ag_id,
+            requester_id="0000-0002",
+            status="pending",
+        ))
+        session.commit()
+
+
 def test_unknown_project_404s(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as("0000-0002", platform_role=PlatformRole.NONE)
@@ -91,6 +129,9 @@ def test_lead_can_list_and_approve_join_request(client, db_engine, auth_as):
                                               UserAccessGroupLink.user_id == requester_id)
         ).one_or_none()
         assert link is not None
+
+    repeated = client.patch(f"/join_requests/{request_id}", json={"status": "approved"})
+    assert repeated.status_code == 409
 
 
 def test_non_lead_cannot_review(client, db_engine, auth_as):

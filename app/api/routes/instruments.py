@@ -200,9 +200,10 @@ def search_instruments(
 
 @router.get("/instruments/{instrument_mfid}", response_model=InstrumentResponse)
 def read_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], instrument_mfid: str,
-                    include_metadata: bool = False, include_owner: bool = False):
+                    include_metadata: bool = False, include_owner: bool = True):
     '''
     Returns the instrument with the provided unique ID, or 404 if not found.
+    The owner identity is resolved by default. Pass include_owner=false to omit it.
     '''
     with Session(engine) as session:
         return load_instrument_detail(

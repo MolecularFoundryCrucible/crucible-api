@@ -49,7 +49,7 @@ from app.services.resource_details import ResourceDetailOptions, load_dataset_de
 from app.utils.auth_utils import (
     access_selector_filter, authorize_user, permission_filter, require_permission)
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
-from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids, resolve_project_mfids_to_references
+from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_references
 from app.utils.instrument_utils import resolve_instrument_mfids_to_references
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.user_utils import resolve_create_owner
@@ -675,11 +675,11 @@ def search_datasets(
 @router.get("/datasets/{dataset_mfid}", response_model=DatasetResponse)
 def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dataset_mfid: str,
                  include_metadata: bool = False, include_links: bool = False,
-                 include_owner: bool = False):
+                 include_owner: bool = True):
     '''
     Returns the dataset with the provided MFID.
     Pass include_links=true to include parent, child, and associated resources.
-    Pass include_owner=true to resolve owner_orcid to a user object.
+    The owner identity is resolved by default. Pass include_owner=false to omit it.
     '''
 
     with Session(engine) as session:
@@ -1272,10 +1272,11 @@ def read_samples_in_dataset(dsid: str, auth_res: Annotated[Principal, Depends(au
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         samples = session.exec(query.offset(offset).limit(limit)).all()
-        project_ids = resolve_project_mfids_to_ids((s.project_mfid for s in samples), session)
+        project_references = resolve_project_mfids_to_references((s.project_mfid for s in samples), session)
         items = [SampleRead.model_validate({
             **s.model_dump(),
-            "project_id": project_ids.get(s.project_mfid, s.project_id),
+            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else s.project_id,
+            "project": project_references.get(s.project_mfid),
         }) for s in samples]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 

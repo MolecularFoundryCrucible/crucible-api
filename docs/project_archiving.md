@@ -1,6 +1,6 @@
 # Project archiving
 
-Status: Deferred. Project archiving is useful for staging cleanup and normal project lifecycle management, but it is not required for the permission migration and would add an avoidable schema revision to the production rollout.
+Status: Deferred. The current API has no dedicated project archive state or archive routes. Implementing this proposal requires an additive schema revision and coordinated client work.
 
 ## Purpose
 

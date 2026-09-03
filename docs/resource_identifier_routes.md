@@ -1,6 +1,6 @@
 # Resource identifier routes
 
-Status: API implementation complete. Staging identifier audit complete. Production audit and client rollout pending.
+Status: API implementation complete. The dated staging identifier audit below is retained as a baseline. Production traffic-based compatibility retirement and downstream client migration are not confirmed by this repository.
 
 This document is the API and Python client contract for stable identifiers and human-readable lookups.
 
@@ -103,16 +103,14 @@ SELECT project_id FROM project WHERE length(project_id) NOT BETWEEN 3 AND 25 ORD
 SELECT instrument_id FROM instrument WHERE length(instrument_id) NOT BETWEEN 3 AND 25 ORDER BY length(instrument_id) DESC;
 ```
 
-## Rollout recipe
+## Compatibility retirement checklist
 
-1. Deploy the API changes to staging.
-2. Smoke-test canonical MFID GETs, exact slug and user filters, redaction, and `Content-Location` headers.
-3. Release the Python client with the dispatch table above and no resolve-then-GET behavior.
-4. Audit production identifiers before enabling client dispatch against production.
-5. Deploy the API to production before the updated client.
-6. Measure use of project-slug and singleton user alias paths.
-7. Arrange owner-selected replacements for out-of-range slugs.
-8. Remove compatibility only in a separately announced breaking release after legacy traffic reaches the agreed threshold.
+1. Verify canonical MFID GETs, exact slug and user filters, redaction, and `Content-Location` headers against the deployed OpenAPI and build commit.
+2. Confirm each supported client uses the dispatch table above without resolve-then-GET behavior.
+3. Audit production identifiers before enabling automatic dispatch in a client that has not already migrated.
+4. Measure use of project-slug and singleton user alias paths.
+5. Arrange owner-selected replacements for out-of-range slugs.
+6. Remove compatibility only in a separately announced breaking release after legacy traffic reaches the agreed threshold.
 
 ## Deferred work
 
@@ -125,4 +123,4 @@ SELECT instrument_id FROM instrument WHERE length(instrument_id) NOT BETWEEN 3 A
 
 - Route index: [`app/api/routes/readme.md`](../app/api/routes/readme.md)
 - Permission migration API changes: [`docs/permission_system_api_changes.md`](permission_system_api_changes.md)
-- Permission migration runbook: [`docs/permission_migration_runbook.md`](permission_migration_runbook.md)
+- Historical permission migration runbook: [`docs/archive/permission_migration_runbook_2026-08.md`](archive/permission_migration_runbook_2026-08.md)

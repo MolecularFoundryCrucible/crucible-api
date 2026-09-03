@@ -1,4 +1,4 @@
-from typing import Any, List, Optional
+from typing import List, Optional
 from pydantic import ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
 from app.general_utils import blank_to_none, is_valid_mfid
@@ -6,6 +6,7 @@ from app.models.links import LinkedResource
 from app.models.instrument import InstrumentReferenceRead
 from app.models.projects import ProjectReferenceRead
 from app.models.resource import ResourceCapabilities
+from app.models.users import UserPublicRead
 
 
 class DatasetCreate(SQLModel):
@@ -172,5 +173,5 @@ class DatasetResponse(DatasetRead):
     scientific_metadata: Optional[dict] = None
     deletion_request: Optional[dict] = None
     links: Optional[List[LinkedResource]] = None
-    owner: Optional[Any] = None  # UserPublicRead when include_owner=true
+    owner: Optional[UserPublicRead] = None
     capabilities: Optional[ResourceCapabilities] = None

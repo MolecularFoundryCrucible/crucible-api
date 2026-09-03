@@ -203,6 +203,7 @@ def load_sample_detail(
     return SampleResponse.model_validate({
         **sample.model_dump(),
         "project_id": project_references[sample.project_mfid].project_id if sample.project_mfid in project_references else sample.project_id,
+        "project": project_references.get(sample.project_mfid),
         "public": resource.public if resource else False,
         "datasets": [
             DatasetRead.model_validate({

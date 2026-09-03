@@ -249,6 +249,7 @@ def test_access_selectors_are_repeated_openapi_arrays():
         assert sample_properties["project"]["anyOf"][0]["$ref"] == "#/components/schemas/ProjectReferenceRead"
     sample_response_properties = schema["components"]["schemas"]["SampleResponse"]["properties"]
     assert sample_response_properties["owner"]["anyOf"][0]["$ref"] == "#/components/schemas/UserPublicRead"
+    assert sample_response_properties["datasets"]["deprecated"] is True
     for path in (
         "/datasets/{dataset_mfid}",
         "/samples/{sample_mfid}",
@@ -260,3 +261,9 @@ def test_access_selectors_are_repeated_openapi_arrays():
             for parameter in schema["paths"][path]["get"]["parameters"]
         }
         assert parameters["include_owner"]["schema"]["default"] is True
+    for path in ("/samples/{sample_mfid}", "/resources/{resource_id}"):
+        parameters = {
+            parameter["name"]: parameter
+            for parameter in schema["paths"][path]["get"]["parameters"]
+        }
+        assert parameters["include_datasets"]["schema"]["default"] is True

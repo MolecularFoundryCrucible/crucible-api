@@ -529,10 +529,21 @@ def search_samples(
 
 
 @router.get("/samples/{sample_mfid}", response_model=SampleResponse)
-def read_sample(sample_mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)], include_links: bool = False, include_metadata: bool = False, include_owner: bool = True):
+def read_sample(
+    sample_mfid: str,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    include_links: bool = False,
+    include_metadata: bool = False,
+    include_owner: bool = True,
+    include_datasets: bool = Query(
+        default=True,
+        description="Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+    ),
+):
     '''
     Returns the sample for the provided MFID.
     Pass include_links=true to include parent, child, and associated resources.
+    Embedded dataset objects are retained by default for compatibility. New clients should pass include_datasets=false and use include_links or GET /datasets?sample_mfid=... instead.
     The owner identity is resolved by default. Pass include_owner=false to omit it.
     '''
     with Session(engine) as session:
@@ -544,6 +555,7 @@ def read_sample(sample_mfid: str, auth_res: Annotated[Principal, Depends(authori
                 include_metadata=include_metadata,
                 include_links=include_links,
                 include_owner=include_owner,
+                include_datasets=include_datasets,
             ),
         )
 

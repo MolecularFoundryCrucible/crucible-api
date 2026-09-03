@@ -130,12 +130,17 @@ def search_resource_metadata_v2(
 @router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse, InstrumentResponse, ProjectWithLead])
 def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resource_id: str,
                  include_metadata: bool = False, include_links: bool = False,
-                 include_owner: bool = True):
+                 include_owner: bool = True,
+                 include_datasets: bool = Query(
+                     default=True,
+                     description="For samples, include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+                 )):
     """
     Fetch a dataset, sample, instrument, or project by ID without knowing its type in advance.
     Resolves the type from idtype, then returns the full resource record.
     Pass include_metadata=true to include scientific metadata.
     Pass include_links=true to include parent/child/associated resources (datasets and samples only).
+    Sample dataset objects remain embedded by default for compatibility. Pass include_datasets=false to omit them.
     The owner identity is resolved by default for datasets, samples, and instruments. Pass include_owner=false to omit it.
     """
 
@@ -153,6 +158,7 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
                 include_metadata=include_metadata,
                 include_links=include_links,
                 include_owner=include_owner,
+                include_datasets=include_datasets,
             ),
         )
 

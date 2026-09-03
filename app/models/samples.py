@@ -90,7 +90,11 @@ class SampleResponse(SampleRead):
     creation_time: Optional[str] = None
     modification_time: Optional[str] = None
     scientific_metadata: Optional[dict] = None
-    datasets: Optional[List[DatasetRead]] = None
+    datasets: Optional[List[DatasetRead]] = Field(
+        default=None,
+        deprecated=True,
+        description="Deprecated embedded dataset expansion. Use include_links or GET /datasets?sample_mfid={sample_mfid}.",
+    )
     deletion_request: Optional[dict] = None
     links: Optional[List[LinkedResource]] = None
     owner: Optional[UserPublicRead] = None

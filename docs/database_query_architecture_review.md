@@ -212,32 +212,21 @@ Database uniqueness is the final authority under concurrency. Creation routes sh
 
 ### Deletion-request collection N+1 behavior
 
-`list_deletion_requests()` eager-loads each request's `Resource`, but `_to_read()` then calls `_resolve_project_id()` for every item. Each dataset or sample request therefore causes another entity query.
-
-Preferred designs:
-
-- Join the appropriate project information into the page query when practical.
-- Or collect dataset and sample MFIDs from the page and batch-resolve them in at most two additional queries.
-
-The response assembly step should perform no implicit database access.
+`list_deletion_requests()` now joins resource type and dataset or sample project information into the page query. Response assembly performs no database access, and the collection uses one count query plus one page query.
 
 ### Join-request collection N+1 behavior
 
-`list_join_requests()` calls `_to_join_request_read()` for every item. That function queries the access group and then the project. A page of 100 requests can therefore produce roughly 200 additional queries.
-
-The main query can join `AccessGroup` and `Project`, or the route can batch-resolve distinct `accessgroup_id` values. Since each project access group has one project, joining is likely simplest.
+`list_join_requests()` now joins `AccessGroup` and `Project` into the page query. Response assembly performs no per-item queries.
 
 ### File detail lazy-load risk
 
-`_get_af_with_read_access()` returns both the file and its authorized dataset, but file response serialization accesses `af.dataset.unique_id`. Because that relationship was not loaded in the helper query, this can trigger another lazy query.
-
-Use the already returned `Dataset.unique_id` when assembling the response. The same principle applies to file update responses.
+File detail and update responses now use the `Dataset.unique_id` already returned by `_get_af_with_read_access()`. They no longer access the unloaded `AssociatedFile.dataset` relationship.
 
 ### Sample detail compatibility payload
 
 Sample detail historically embeds associated datasets. This can become an unbounded response and requires additional permission-filtered dataset queries plus reference resolution.
 
-The existing route should remain compatible, but this is compatibility debt. Clients should prefer the paginated collection filter for large associations. Any future behavior change should be introduced through deprecation rather than silently removing the field.
+The existing singleton response remains compatible and embeds datasets by default. The field is deprecated in OpenAPI, and clients can pass `include_datasets=false` to avoid the query. New clients should use `include_links=true` for lightweight relationship discovery and `GET /datasets?sample_mfid={sample_mfid}` for complete paginated dataset responses.
 
 ## Priority 4: index candidates
 

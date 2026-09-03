@@ -41,6 +41,7 @@ class ResourceDetailOptions:
     include_links: bool = False
     include_owner: bool = False
     include_members: bool = False
+    include_datasets: bool = True
 
 
 DEFAULT_RESOURCE_DETAIL_OPTIONS = ResourceDetailOptions()
@@ -191,13 +192,22 @@ def load_sample_detail(
         acl_rows=acl_rows,
     )
     deletion_request = get_active_deletion_request(session, resource_id)
-    readable_datasets = fetch_readable_sample_datasets(session, principal, sample.id)
-    instrument_references = resolve_instrument_mfids_to_references(
-        [dataset.instrument_mfid for dataset in readable_datasets],
-        session,
+    readable_datasets = (
+        fetch_readable_sample_datasets(session, principal, sample.id)
+        if options.include_datasets or options.include_links
+        else []
+    )
+    instrument_references = (
+        resolve_instrument_mfids_to_references(
+            [dataset.instrument_mfid for dataset in readable_datasets],
+            session,
+        )
+        if options.include_datasets
+        else {}
     )
     project_references = resolve_project_mfids_to_references(
-        [dataset.project_mfid for dataset in readable_datasets] + [sample.project_mfid],
+        ([dataset.project_mfid for dataset in readable_datasets] if options.include_datasets else [])
+        + [sample.project_mfid],
         session,
     )
     return SampleResponse.model_validate({
@@ -214,7 +224,7 @@ def load_sample_detail(
                 "project": project_references.get(dataset.project_mfid),
             })
             for dataset in readable_datasets
-        ],
+        ] if options.include_datasets else None,
         "creation_time": resource.creation_time if resource else None,
         "modification_time": resource.modification_time if resource else None,
         "scientific_metadata": _metadata(session, resource_id, options.include_metadata),

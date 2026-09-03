@@ -1,6 +1,6 @@
 # Client migration summary
 
-Status: the repository `staging` branch includes the contract documented here through commit `43712c9`. Verify `GET /health/ready` and the deployed OpenAPI before treating a staging rebuild as live. This repository does not establish downstream client rollout status.
+Status: the repository `staging` branch includes the contract documented here. Verify `GET /health/ready` and the deployed OpenAPI before treating a staging rebuild as live. This repository does not establish downstream client rollout status.
 
 Use this document to update Crucible clients for the identifier, permission, ownership, and response-contract changes. The staging OpenAPI is available through [Swagger UI](https://crucible.lbl.gov/testapi-staging/docs) and [OpenAPI JSON](https://crucible.lbl.gov/testapi-staging/openapi.json).
 
@@ -208,6 +208,8 @@ GET /samples?dataset_mfid={dataset_mfid}
 ```
 
 The caller must be able to read both the referenced resource and each returned resource. These filters compose with the existing collection filters and pagination. `GET /samples/{sample_mfid}/datasets` and `GET /datasets/{dataset_mfid}/samples` retain their existing response contracts but are deprecated and return the standard `Deprecation` response header.
+
+Singleton sample responses retain the legacy embedded `datasets` collection by default so existing clients do not break. The field is deprecated in OpenAPI. New clients should pass `include_datasets=false`, use `include_links=true` when lightweight relationship references are sufficient, and use `GET /datasets?sample_mfid={sample_mfid}` when complete paginated dataset responses are required. The generic `GET /resources/{resource_id}` route accepts the same `include_datasets` option when the resolved resource is a sample.
 
 ## Dataset and sample relationship references
 

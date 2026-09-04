@@ -20,10 +20,11 @@ from app.models.core_models import (
 from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
-from app.models.projects import ProjectReferenceRead
+from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 from app.utils.auth_utils import (
-    access_selector_filter, authorize_user, permission_filter, require_permission)
+    access_selector_filter, authorize_user, permission_filter, project_scope_filter,
+    require_permission)
 from app.utils.instrument_utils import resolve_instrument_mfids_to_references
 from app.utils.permissions import Principal, Permission, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_references
@@ -256,6 +257,12 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                  modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None,
                  visibility: Literal["all", "public", "private"] = "all",
+                 project_mfid: Annotated[Optional[str], Query(
+                     description="Filter samples related to this canonical project MFID.",
+                 )] = None,
+                 project_scope: Annotated[Optional[ProjectScope], Query(
+                     description="Project relationship to include. Requires project_mfid; defaults to assigned.",
+                 )] = None,
                  dataset_mfid: Annotated[Optional[str], Query(
                      description="Filter samples linked to this canonical dataset MFID.",
                  )] = None):
@@ -275,6 +282,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
     Pass include_links=true to include parent, child, and associated resources for each sample.
     include_datasets is deprecated; use include_links instead.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
+    Pass project_mfid with project_scope=assigned, shared, or all to filter by project relationship.
     Pass dataset_mfid to filter by a readable dataset's canonical stable identity.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
@@ -283,12 +291,17 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
         warnings.warn("include_datasets is deprecated, use include_links=true instead", DeprecationWarning)
         include_links = True
 
+    if project_scope is not None and project_mfid is None:
+        raise HTTPException(status_code=422, detail="project_scope requires project_mfid")
+    effective_project_scope: ProjectScope = project_scope or "assigned"
+
 
     params_dict = dict(request.query_params)
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
               'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets',
               'include_owner', 'limit', 'cursor', 'offset', 'visibility',
-              'accessible_to_user', 'accessible_to_project', 'dataset_mfid'):
+              'accessible_to_user', 'accessible_to_project', 'project_mfid',
+              'project_scope', 'dataset_mfid'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -309,6 +322,11 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
             user_refs=accessible_to_user,
             project_refs=accessible_to_project,
         )
+        project_filter = (
+            project_scope_filter(
+                session, auth_res, Sample, project_mfid, effective_project_scope)
+            if project_mfid is not None else None
+        )
         deletion_filter = deletion_filter_for(Sample)
 
         def apply_filters(q):
@@ -323,6 +341,8 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                 q = q.where(Resource.modification_time >= modification_time_gte)
             if modification_time_lte:
                 q = q.where(Resource.modification_time <= modification_time_lte)
+            if project_filter is not None:
+                q = q.where(project_filter)
             if linked_dataset_id is not None:
                 q = q.where(
                     exists()
@@ -436,15 +456,15 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
         items = []
         for row in rows:
             if include_metadata:
-                samp, creation_time, modification_time, public, sci_md, project_mfid, resolved_project_id, project_title = row
+                samp, creation_time, modification_time, public, sci_md, resolved_project_mfid, resolved_project_id, project_title = row
             else:
-                samp, creation_time, modification_time, public, project_mfid, resolved_project_id, project_title = row
+                samp, creation_time, modification_time, public, resolved_project_mfid, resolved_project_id, project_title = row
                 sci_md = None
             project_reference = ProjectReferenceRead(
-                unique_id=project_mfid,
+                unique_id=resolved_project_mfid,
                 project_id=resolved_project_id,
                 title=project_title,
-            ) if project_mfid is not None else None
+            ) if resolved_project_mfid is not None else None
             links = None
             compat_datasets = None
             if include_links:
@@ -466,6 +486,9 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                 "datasets": compat_datasets,
                 "links": links,
                 "owner": owners_by_orcid.get(samp.owner_orcid),
+                "project_relation": (
+                    "assigned" if samp.project_mfid == project_mfid else "shared"
+                ) if project_mfid is not None else None,
             }))
         next_cursor = rows[-1][0].unique_id if len(rows) == limit else None
         resp_offset = offset if (cursor is None and offset) else None

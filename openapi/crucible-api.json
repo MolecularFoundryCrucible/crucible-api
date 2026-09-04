@@ -783,6 +783,17 @@
               }
             ],
             "title": "Parent Dataset Id"
+          },
+          "relationship_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relationship Type"
           }
         },
         "title": "DatasetLink",
@@ -1087,12 +1098,13 @@
           },
           "owner": {
             "anyOf": [
-              {},
+              {
+                "$ref": "#/components/schemas/UserPublicRead"
+              },
               {
                 "type": "null"
               }
-            ],
-            "title": "Owner"
+            ]
           },
           "owner_orcid": {
             "anyOf": [
@@ -2393,6 +2405,15 @@
       },
       "LinkedResource": {
         "properties": {
+          "direction": {
+            "enum": [
+              "source",
+              "target",
+              "undirected"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
           "name": {
             "anyOf": [
               {
@@ -2404,14 +2425,16 @@
             ],
             "title": "Name"
           },
-          "relationship": {
-            "enum": [
-              "parent",
-              "child",
-              "associated"
+          "relationship_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Relationship",
-            "type": "string"
+            "title": "Relationship Type"
           },
           "resource_type": {
             "title": "Resource Type",
@@ -2425,7 +2448,7 @@
         "required": [
           "unique_id",
           "resource_type",
-          "relationship"
+          "direction"
         ],
         "title": "LinkedResource",
         "type": "object"
@@ -4110,6 +4133,17 @@
             ],
             "title": "Parent Sample Id"
           },
+          "relationship_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relationship Type"
+          },
           "sample_id": {
             "anyOf": [
               {
@@ -4149,6 +4183,16 @@
               }
             ],
             "title": "Owner Orcid"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectReferenceRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "project_id": {
             "anyOf": [
@@ -4240,6 +4284,8 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
+            "description": "Deprecated embedded dataset expansion. Use include_links or GET /datasets?sample_mfid={sample_mfid}.",
             "title": "Datasets"
           },
           "deletion_request": {
@@ -4292,12 +4338,13 @@
           },
           "owner": {
             "anyOf": [
-              {},
+              {
+                "$ref": "#/components/schemas/UserPublicRead"
+              },
               {
                 "type": "null"
               }
-            ],
-            "title": "Owner"
+            ]
           },
           "owner_orcid": {
             "anyOf": [
@@ -4309,6 +4356,16 @@
               }
             ],
             "title": "Owner Orcid"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectReferenceRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "project_id": {
             "anyOf": [
@@ -6103,7 +6160,7 @@
     },
     "/datasets/{child_dataset_id}/parents": {
       "get": {
-        "description": "Returns a paginated list of parent datasets for a given dataset.",
+        "description": "Returns a paginated list of parent datasets for a given dataset.\n\nrelationship_type restricts the result to links of that kind. Links with no\nrecorded type are excluded when the filter is set.",
         "operationId": "list_parent_datasets_datasets__child_dataset_id__parents_get",
         "parameters": [
           {
@@ -6136,6 +6193,26 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relationship_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relationship Type"
             }
           }
         ],
@@ -6266,7 +6343,7 @@
     },
     "/datasets/{dataset_mfid}": {
       "get": {
-        "description": "Returns the dataset with the provided MFID.\nPass include_links=true to include parent, child, and associated resources.\nPass include_owner=true to resolve owner_orcid to a user object.",
+        "description": "Returns the dataset with the provided MFID.\nPass include_links=true to include parent, child, and associated resources.\nThe owner identity is resolved by default. Pass include_owner=false to omit it.",
         "operationId": "read_dataset_datasets__dataset_mfid__get",
         "parameters": [
           {
@@ -6303,7 +6380,7 @@
             "name": "include_owner",
             "required": false,
             "schema": {
-              "default": false,
+              "default": true,
               "title": "Include Owner",
               "type": "boolean"
             }
@@ -6636,6 +6713,20 @@
                 }
               ],
               "title": "Ingestion Class"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "requested",
+              "enum": [
+                "requested",
+                "not_requested"
+              ],
+              "title": "Status",
+              "type": "string"
             }
           }
         ],
@@ -7429,7 +7520,7 @@
     },
     "/datasets/{parent_dataset_id}/children": {
       "get": {
-        "description": "Returns a paginated list of child datasets for a given parent dataset.",
+        "description": "Returns a paginated list of child datasets for a given parent dataset.\n\nrelationship_type restricts the result to links of that kind. Links with no\nrecorded type are excluded when the filter is set.",
         "operationId": "list_child_datasets_datasets__parent_dataset_id__children_get",
         "parameters": [
           {
@@ -7462,6 +7553,26 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relationship_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relationship Type"
             }
           }
         ],
@@ -7552,6 +7663,7 @@
         ]
       },
       "post": {
+        "description": "Link two datasets as parent and child.\n\nrelationship_type describes the child relative to the parent, so\nis_part_of means \"child is_part_of parent\". Omit it to leave the kind\nunspecified; on a link that already exists, omitting it preserves the\ntype already stored rather than clearing it.",
         "operationId": "link_dataset_parent_child_datasets__parent_dataset_id__children__child_dataset_id__post",
         "parameters": [
           {
@@ -7568,6 +7680,26 @@
             "required": true,
             "schema": {
               "title": "Child Dataset Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relationship_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relationship Type"
             }
           }
         ],
@@ -8421,7 +8553,7 @@
     },
     "/files/{file_id}/ingest": {
       "post": {
-        "description": "Creates an ingestion request for a file, scoped to the specified dataset.\nReturns error if the dataset associated with the file is not found, or the user does not have access.\nRequires write access to the dataset.",
+        "description": "Creates an ingestion request for a file, scoped to the specified dataset.\nReturns error if the dataset associated with the file is not found, or the user does not have access.\nRequires write access to the dataset.\n\nOnly 'requested' (dispatch to the ingestion queue) and 'not_requested' (record\nthe file without dispatching) may be set here. Terminal states are written\nafterwards via PATCH /ingestion_requests/{reqid}.",
         "operationId": "create_file_ingestion_request_files__file_id__ingest_post",
         "parameters": [
           {
@@ -8447,6 +8579,20 @@
                 }
               ],
               "title": "Ingestion Class"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "requested",
+              "enum": [
+                "requested",
+                "not_requested"
+              ],
+              "title": "Status",
+              "type": "string"
             }
           }
         ],
@@ -8711,7 +8857,7 @@
         ]
       },
       "patch": {
-        "description": "Updates an ingestion request. Admin/group access only.",
+        "description": "Updates an ingestion request. Requires edit access to the parent dataset.",
         "operationId": "patch_ingestion_request_ingestion_requests__reqid__patch",
         "parameters": [
           {
@@ -9031,7 +9177,7 @@
     },
     "/instruments/{instrument_mfid}": {
       "get": {
-        "description": "Returns the instrument with the provided unique ID, or 404 if not found.",
+        "description": "Returns the instrument with the provided unique ID, or 404 if not found.\nThe owner identity is resolved by default. Pass include_owner=false to omit it.",
         "operationId": "read_instrument_instruments__instrument_mfid__get",
         "parameters": [
           {
@@ -9058,7 +9204,7 @@
             "name": "include_owner",
             "required": false,
             "schema": {
-              "default": false,
+              "default": true,
               "title": "Include Owner",
               "type": "boolean"
             }
@@ -11288,7 +11434,7 @@
         ]
       },
       "get": {
-        "description": "Fetch a dataset, sample, instrument, or project by ID without knowing its type in advance.\nResolves the type from idtype, then returns the full resource record.\nPass include_metadata=true to include scientific metadata.\nPass include_links=true to include parent/child/associated resources (datasets and samples only).",
+        "description": "Fetch a dataset, sample, instrument, or project by ID without knowing its type in advance.\nResolves the type from idtype, then returns the full resource record.\nPass include_metadata=true to include scientific metadata.\nPass include_links=true to include parent/child/associated resources (datasets and samples only).\nSample dataset objects remain embedded by default for compatibility. Pass include_datasets=false to omit them.\nThe owner identity is resolved by default for datasets, samples, and instruments. Pass include_owner=false to omit it.",
         "operationId": "get_resource_resources__resource_id__get",
         "parameters": [
           {
@@ -11325,8 +11471,20 @@
             "name": "include_owner",
             "required": false,
             "schema": {
-              "default": false,
+              "default": true,
               "title": "Include Owner",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "For samples, include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+            "in": "query",
+            "name": "include_datasets",
+            "required": false,
+            "schema": {
+              "default": true,
+              "description": "For samples, include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+              "title": "Include Datasets",
               "type": "boolean"
             }
           }
@@ -12048,7 +12206,7 @@
     },
     "/samples/{child_sample_id}/parents": {
       "get": {
-        "description": "Returns a paginated list of parent samples for a given child sample.",
+        "description": "Returns a paginated list of parent samples for a given child sample.\n\nrelationship_type restricts the result to links of that kind. Links with no\nrecorded type are excluded when the filter is set.",
         "operationId": "list_parent_samples_samples__child_sample_id__parents_get",
         "parameters": [
           {
@@ -12081,6 +12239,26 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relationship_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relationship Type"
             }
           }
         ],
@@ -12119,7 +12297,7 @@
     },
     "/samples/{parent_sample_id}/children": {
       "get": {
-        "description": "Returns a paginated list of child samples for a given parent sample.",
+        "description": "Returns a paginated list of child samples for a given parent sample.\n\nrelationship_type restricts the result to links of that kind. Links with no\nrecorded type are excluded when the filter is set.",
         "operationId": "list_child_samples_samples__parent_sample_id__children_get",
         "parameters": [
           {
@@ -12152,6 +12330,26 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relationship_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relationship Type"
             }
           }
         ],
@@ -12242,6 +12440,7 @@
         ]
       },
       "post": {
+        "description": "Link two samples as parent and child.\n\nrelationship_type describes the child relative to the parent, so\nis_part_of means \"child is_part_of parent\". Omit it to leave the kind\nunspecified; on a link that already exists, omitting it preserves the\ntype already stored rather than clearing it.",
         "operationId": "link_sample_parent_child_samples__parent_sample_id__children__child_sample_id__post",
         "parameters": [
           {
@@ -12258,6 +12457,26 @@
             "required": true,
             "schema": {
               "title": "Child Sample Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relationship_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relationship Type"
             }
           }
         ],
@@ -12519,7 +12738,7 @@
     },
     "/samples/{sample_mfid}": {
       "get": {
-        "description": "Returns the sample for the provided MFID.\nPass include_links=true to include parent, child, and associated resources.",
+        "description": "Returns the sample for the provided MFID.\nPass include_links=true to include parent, child, and associated resources.\nEmbedded dataset objects are retained by default for compatibility. New clients should pass include_datasets=false and use include_links or GET /datasets?sample_mfid=... instead.\nThe owner identity is resolved by default. Pass include_owner=false to omit it.",
         "operationId": "read_sample_samples__sample_mfid__get",
         "parameters": [
           {
@@ -12556,8 +12775,20 @@
             "name": "include_owner",
             "required": false,
             "schema": {
-              "default": false,
+              "default": true,
               "title": "Include Owner",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+            "in": "query",
+            "name": "include_datasets",
+            "required": false,
+            "schema": {
+              "default": true,
+              "description": "Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+              "title": "Include Datasets",
               "type": "boolean"
             }
           }
@@ -13750,7 +13981,7 @@
   },
   "servers": [
     {
-      "url": "/api/v3"
+      "url": "/testapi"
     }
   ]
 }

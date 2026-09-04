@@ -17,6 +17,7 @@ from app.api.routes.datasets import list_datasets
 from app.api.routes.samples import list_samples
 from app.utils.auth_utils import access_selector_filter, project_scope_filter
 from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role
+from app.utils.project_utils import resolve_project_filter_mfid
 
 
 def _seed(db_engine):
@@ -110,6 +111,7 @@ def _seed(db_engine):
         ])
         session.commit()
         return {
+            "project_x_id": project_x.project_id,
             "project_x_mfid": project_x.unique_id,
             "project_x_group_id": project_x_group.id,
             "project_y_mfid": project_y.unique_id,
@@ -211,7 +213,7 @@ def test_project_scope_filter_distinguishes_assignment_and_sharing(
 
 
 @pytest.mark.parametrize("route", [list_datasets, list_samples])
-def test_project_scope_requires_project_mfid(route):
+def test_project_scope_requires_project_identifier(route):
     request = Request({"type": "http", "query_string": b"project_scope=all", "headers": []})
 
     with pytest.raises(HTTPException) as error:
@@ -222,7 +224,45 @@ def test_project_scope_requires_project_mfid(route):
         )
 
     assert error.value.status_code == 422
-    assert error.value.detail == "project_scope requires project_mfid"
+    assert error.value.detail == "project_scope requires project_id or project_mfid"
+
+
+def test_project_filter_accepts_matching_slug_and_mfid(db_engine):
+    seeded = _seed(db_engine)
+
+    with Session(db_engine) as session:
+        resolved = resolve_project_filter_mfid(
+            session,
+            seeded["project_x_id"],
+            seeded["project_x_mfid"],
+        )
+
+    assert resolved == seeded["project_x_mfid"]
+
+
+def test_project_filter_rejects_conflicting_slug_and_mfid(db_engine):
+    seeded = _seed(db_engine)
+
+    with Session(db_engine) as session:
+        with pytest.raises(HTTPException) as error:
+            resolve_project_filter_mfid(
+                session,
+                seeded["project_x_id"],
+                seeded["project_y_mfid"],
+            )
+
+    assert error.value.status_code == 422
+    assert error.value.detail == "project_id and project_mfid identify different projects"
+
+
+def test_project_filter_rejects_unknown_slug(db_engine):
+    _seed(db_engine)
+
+    with Session(db_engine) as session:
+        with pytest.raises(HTTPException) as error:
+            resolve_project_filter_mfid(session, "missing-project", None)
+
+    assert error.value.status_code == 404
 
 
 def test_project_scope_collection_responses_report_relation(db_engine):
@@ -237,9 +277,7 @@ def test_project_scope_collection_responses_report_relation(db_engine):
             ),
         ),
     )
-    query_string = (
-        f"project_mfid={seeded['project_x_mfid']}&project_scope=all".encode()
-    )
+    query_string = f"project_id={seeded['project_x_id']}&project_scope=all".encode()
 
     datasets = list_datasets(
         auth_res=caller,
@@ -258,7 +296,8 @@ def test_project_scope_collection_responses_report_relation(db_engine):
         modification_time_lte=None,
         visibility="all",
         instrument_mfid=None,
-        project_mfid=seeded["project_x_mfid"],
+        project_id=seeded["project_x_id"],
+        project_mfid=None,
         project_scope="all",
         sample_mfid=None,
     )
@@ -279,7 +318,8 @@ def test_project_scope_collection_responses_report_relation(db_engine):
         modification_time_gte=None,
         modification_time_lte=None,
         visibility="all",
-        project_mfid=seeded["project_x_mfid"],
+        project_id=seeded["project_x_id"],
+        project_mfid=None,
         project_scope="all",
         dataset_mfid=None,
     )
@@ -400,6 +440,7 @@ def test_access_selectors_are_repeated_openapi_arrays():
         "Filter samples linked to this canonical dataset MFID."
     )
     for parameters in (dataset_parameters, sample_parameters):
+        assert parameters["project_id"]["required"] is False
         assert parameters["project_mfid"]["required"] is False
         assert parameters["project_scope"]["required"] is False
         assert parameters["project_scope"]["schema"]["anyOf"][0]["enum"] == [

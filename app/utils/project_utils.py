@@ -1,4 +1,5 @@
 import re
+from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy import and_, func
@@ -78,6 +79,27 @@ def resolve_project_id_to_mfid(proj_id: str, session) -> "str | None":
     """
     project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
     return project.unique_id if project else None
+
+
+def resolve_project_filter_mfid(
+    session,
+    project_id: Optional[str],
+    project_mfid: Optional[str],
+) -> Optional[str]:
+    if project_id is None:
+        return project_mfid
+
+    project = session.exec(
+        select(Project).where(Project.project_id == project_id)
+    ).one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    if project_mfid is not None and project.unique_id != project_mfid:
+        raise HTTPException(
+            status_code=422,
+            detail="project_id and project_mfid identify different projects",
+        )
+    return project.unique_id
 
 
 def resolve_project_reference(project_ref: str, session, *, options=()) -> "Project | None":

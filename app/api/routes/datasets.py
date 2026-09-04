@@ -51,7 +51,7 @@ from app.utils.auth_utils import (
     access_selector_filter, authorize_user, permission_filter, project_scope_filter,
     require_permission)
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
-from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_references
+from app.utils.project_utils import project_standing, resolve_project_filter_mfid, resolve_project_id_to_mfid, resolve_project_mfids_to_references
 from app.utils.instrument_utils import resolve_instrument_mfids_to_references
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.user_utils import resolve_create_owner
@@ -411,11 +411,14 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                   instrument_mfid: Annotated[Optional[str], Query(
                       description="Filter datasets assigned to this canonical instrument MFID.",
                   )] = None,
+                  project_id: Annotated[Optional[str], Query(
+                      description="Filter datasets related to this project slug. May be combined with a matching project_mfid.",
+                  )] = None,
                   project_mfid: Annotated[Optional[str], Query(
                       description="Filter datasets related to this canonical project MFID.",
                   )] = None,
                   project_scope: Annotated[Optional[ProjectScope], Query(
-                      description="Project relationship to include. Requires project_mfid; defaults to assigned.",
+                      description="Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
                   )] = None,
                   sample_mfid: Annotated[Optional[str], Query(
                       description="Filter datasets linked to this canonical sample MFID.",
@@ -436,12 +439,15 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
     Pass include_links=true to include parent, child, and associated resources for each dataset.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
     Pass instrument_mfid to filter by the instrument's canonical stable identity.
-    Pass project_mfid with project_scope=assigned, shared, or all to filter by project relationship.
+    Pass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.
     Pass sample_mfid to filter by a readable sample's canonical stable identity.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
-    if project_scope is not None and project_mfid is None:
-        raise HTTPException(status_code=422, detail="project_scope requires project_mfid")
+    if project_scope is not None and project_id is None and project_mfid is None:
+        raise HTTPException(
+            status_code=422,
+            detail="project_scope requires project_id or project_mfid",
+        )
     effective_project_scope: ProjectScope = project_scope or "assigned"
 
     params_dict = dict(request.query_params)
@@ -451,11 +457,13 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
               'modification_time_lte', 'include_metadata', 'include_links', 'include_owner',
               'limit', 'cursor', 'offset', 'visibility', 'accessible_to_user',
-              'accessible_to_project', 'instrument_mfid', 'project_mfid',
+              'accessible_to_project', 'instrument_mfid', 'project_id', 'project_mfid',
               'project_scope', 'sample_mfid'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
+        filter_project_mfid = resolve_project_filter_mfid(
+            session, project_id, project_mfid)
         linked_sample_id = None
         if sample_mfid is not None:
             linked_sample_id = session.exec(
@@ -475,8 +483,8 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
         )
         project_filter = (
             project_scope_filter(
-                session, auth_res, Dataset, project_mfid, effective_project_scope)
-            if project_mfid is not None else None
+                session, auth_res, Dataset, filter_project_mfid, effective_project_scope)
+            if filter_project_mfid is not None else None
         )
         deletion_filter = deletion_filter_for(Dataset)
 
@@ -641,8 +649,8 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 "links": links,
                 "owner": owners_by_orcid.get(dataset.owner_orcid),
                 "project_relation": (
-                    "assigned" if dataset.project_mfid == project_mfid else "shared"
-                ) if project_mfid is not None else None,
+                    "assigned" if dataset.project_mfid == filter_project_mfid else "shared"
+                ) if filter_project_mfid is not None else None,
             }))
         next_cursor = results[-1][0].unique_id if len(results) == limit else None
         resp_offset = offset if (cursor is None and offset) else None

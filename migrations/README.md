@@ -1,32 +1,41 @@
 # Database migrations
 
-Use Alembic for schema changes and `migrations/data/` for reviewed data changes.
+Use Alembic revisions in `migrations/versions/` for schema changes and reviewed scripts in `migrations/data/` for audits, backfills, and one-time data cleanup.
 
 ## Schema changes
 
-Alembic revisions live in `migrations/versions/`. Generate and review a revision before applying it:
+Generate and review a revision before applying it:
 
 ```bash
-DB_CONF_FILE=.env .venv/bin/alembic revision --autogenerate -m "describe the change"
-DB_CONF_FILE=.env .venv/bin/alembic upgrade head
+DB_CONF_FILE=.env.local .venv/bin/alembic revision --autogenerate -m "describe the change"
+DB_CONF_FILE=.env.local .venv/bin/alembic upgrade head
 ```
 
-Production commands require the explicit safety flag:
+Production commands require the explicit safety flag, including read-only Alembic commands:
 
 ```bash
-DB_CONF_FILE=.env .venv/bin/alembic -x yes-this-is-production=true upgrade head
+DB_CONF_FILE=.env.prod \
+.venv/bin/alembic -x yes-this-is-production=true current
+
+DB_CONF_FILE=.env.prod \
+.venv/bin/alembic -x yes-this-is-production=true upgrade head
 ```
+
+Before a production migration, confirm the target database, take the required backup, pause incompatible writers, inspect the revision chain, and run any revision-specific preconditions. Do not assume `upgrade head` is safe when a migration has ordered data steps or application deployment checkpoints.
 
 ## Data changes
 
-Backfills, audits, and one-time cleanup scripts live in `migrations/data/`. Scripts that write data default to a dry run and require `--commit`. Production writes also require `--yes-this-is-production`.
+Data scripts should default to read-only or rollback behavior. Review their output before using `--commit`. Production writes additionally require `--yes-this-is-production` when the script supports that guard.
 
-Run the permission migration only from `docs/permission_migration_runbook.md`. It contains required application deployment checkpoints between schema and data steps, so a plain `alembic upgrade head` is not a safe substitute.
+```bash
+DB_CONF_FILE=.env.prod \
+.venv/bin/python migrations/data/<script>.py \
+  --yes-this-is-production
 
-Revision `91f3c8a4d2e7` adds nullable `accessgroup.group_type` from the additive migration checkpoint. Apply it before running the project and instrument identity scripts. Audit and reconcile legacy groups with `20260827_audit_legacy_access_groups.py` and `20260827_merge_legacy_entity_groups.py`, then run `20260827_backfill_access_group_types.py`. Revision `c4a7e9d2b615` merges that branch with the main permission migration and makes the column non-null.
+DB_CONF_FILE=.env.prod \
+.venv/bin/python migrations/data/<script>.py \
+  --commit \
+  --yes-this-is-production
+```
 
-Revision `7b2d4e6f8a10` is the permission-invariant enforcement step. It refuses to run while either role column contains nulls or any resource has multiple owner ACLs. Revision `c4a7e9d2b615` is the final permission migration head. Both enforcement revisions are transactional and must run with writes paused unless compatible writers are already fully deployed.
-
-Run `20260828_audit_permission_cutover_preconditions.py` immediately before final enforcement. It is read-only and checks every data invariant required by revisions `7b2d4e6f8a10` and `c4a7e9d2b615`.
-
-Revision `454c96264cfb` preserves existing access-group join requests while replacing `group_name` with `accessgroup_id`. Staging applied the same final schema when the table was empty; production may contain rows and uses the data-preserving path.
+The August 2026 permission rollout is complete. Its ordered procedure is retained only as a [historical runbook](../docs/archive/permission_migration_runbook_2026-08.md). Do not replay it against a current environment. Accepted production cleanup items remain in [production migration data follow-ups](../docs/production_migration_data_followups.md).

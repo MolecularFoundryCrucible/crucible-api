@@ -5,7 +5,7 @@ See docs/permission_system_plan.md -> Migration path.
 Run AFTER migrations/data/20260806_add_permission_roles.sql, and after
 migrations/data/20260806_audit_permission_preconditions.py reports no blockers.
 
-Dry run by default — prints what every step would do and rolls back. Pass
+Dry run by default - prints what every step would do and rolls back. Pass
 --commit to apply. Staging first, then production.
 
 Every statement computes its final value directly rather than layering updates,
@@ -66,10 +66,56 @@ def report_group_kinds(session):
         SELECT group_name FROM group_kind WHERE kind = 'orphan' ORDER BY group_name LIMIT 20
     """)).all()
     if orphans:
-        print("  orphan groups (match no user, project or instrument) — likely")
+        print("  orphan groups (match no user, project or instrument) - likely")
         print("  the typo-created groups from unvalidated instrument_name:")
         for (name,) in orphans:
             print(f"      {name}")
+
+
+def validate_group_classification(session):
+    collisions = session.execute(text(f"""
+        WITH {GROUP_KINDS}
+        SELECT
+            gk.group_name,
+            gk.kind,
+            EXISTS (SELECT 1 FROM "user" u WHERE u.orcid = gk.group_name) AS matches_user,
+            EXISTS (SELECT 1 FROM project p WHERE p.project_id = gk.group_name) AS matches_project,
+            EXISTS (
+                SELECT 1 FROM instrument i
+                WHERE lower(i.instrument_name) = gk.group_name
+            ) AS matches_instrument,
+            gk.group_name IN ('admin', 'read_only', 'public') AS reserved
+        FROM group_kind gk
+        WHERE
+            (CASE WHEN EXISTS (SELECT 1 FROM "user" u WHERE u.orcid = gk.group_name) THEN 1 ELSE 0 END)
+          + (CASE WHEN EXISTS (SELECT 1 FROM project p WHERE p.project_id = gk.group_name) THEN 1 ELSE 0 END)
+          + (CASE WHEN EXISTS (
+                SELECT 1 FROM instrument i WHERE lower(i.instrument_name) = gk.group_name
+            ) THEN 1 ELSE 0 END)
+          + (CASE WHEN gk.group_name IN ('admin', 'read_only', 'public') THEN 1 ELSE 0 END) > 1
+        ORDER BY gk.group_name
+    """)).all()
+    missing_project_groups = session.execute(text("""
+        SELECT p.project_id
+        FROM project p
+        WHERE NOT EXISTS (
+            SELECT 1 FROM accessgroup ag WHERE ag.group_name = p.project_id
+        )
+        ORDER BY p.project_id
+    """)).scalars().all()
+    if collisions:
+        print("identifier collisions:")
+        for row in collisions:
+            print(
+                f"  {row.group_name!r}: classified={row.kind}, user={row.matches_user}, "
+                f"project={row.matches_project}, instrument={row.matches_instrument}, reserved={row.reserved}"
+            )
+    if missing_project_groups:
+        print(f"projects without a matching access group: {len(missing_project_groups)}")
+        for project_id in missing_project_groups[:20]:
+            print(f"  {project_id!r}")
+    if collisions or missing_project_groups:
+        raise SystemExit("REFUSING TO RUN: access-group classification is ambiguous or incomplete")
 
 
 def backfill_standings(session):
@@ -125,15 +171,15 @@ def hijacked_project_mfids(session):
 
 
 def create_project_resources(session):
-    """Give each project an idtype row and one ACL entry — its own group at
-    `owner` — so effective role on a project equals standing in it."""
+    """Give each project an idtype row and one ACL entry - its own group at
+    `owner` - so effective role on a project equals standing in it."""
     print("\n[2] projects as resources")
 
     hijacked = hijacked_project_mfids(session)
     if hijacked:
         print(f"  {len(hijacked)} project_id(s) collide with an existing resource:")
         for mfid, rtype in hijacked:
-            print(f"      project_id={mfid!r} is already a {rtype!r} resource — SKIPPED")
+            print(f"      project_id={mfid!r} is already a {rtype!r} resource - SKIPPED")
         print("      granting the project's group owner on that mfid would hand it")
         print("      someone else's resource. Clean these up before committing.")
 
@@ -180,35 +226,61 @@ def drop_bypass_acl_rows(session):
 def backfill_acl_grants(session):
     """Assign a grant to every resourceacl row.
 
-    The grant is a ceiling, not an assignment: project `admin`, instrument
-    `contributor`, ORCID `owner`. Computed once in a CTE so the row count
-    reports only real changes on a re-run.
+    Canonical identity owners receive `owner`; other identity grants preserve
+    legacy write access as `editor` or read-only access as `viewer`. Project
+    grants receive `admin`, instrument grants `contributor`, and the project's
+    own group receives `owner` on the project resource.
     """
     print("\n[4] grants on resourceacl")
     return step(session, "rows assigned a grant", f"""
         WITH {GROUP_KINDS},
+        resource_owner AS (
+            SELECT
+                dataset.unique_id AS mfid,
+                COALESCE(owner_user.orcid, NULLIF(dataset.owner_orcid, '')) AS owner_group_name
+            FROM dataset
+            LEFT JOIN "user" owner_user ON owner_user.id = dataset.owner_user_id
+
+            UNION ALL
+
+            SELECT
+                sample.unique_id AS mfid,
+                COALESCE(owner_user.orcid, NULLIF(sample.owner_orcid, '')) AS owner_group_name
+            FROM sample
+            LEFT JOIN "user" owner_user ON owner_user.id = sample.owner_user_id
+
+            UNION ALL
+
+            SELECT instrument.unique_id AS mfid, NULLIF(instrument.owner, '') AS owner_group_name
+            FROM instrument
+        ),
         target AS (
-            SELECT gk.id AS accessgroup_id,
+            SELECT
+                   a.mfid,
+                   gk.id AS accessgroup_id,
                    (CASE
-                        WHEN gk.kind = 'orcid' THEN 'owner'
+                        WHEN gk.kind = 'orcid' AND gk.group_name = resource_owner.owner_group_name
+                            THEN 'owner'
+                        WHEN gk.kind = 'orcid' AND a.write
+                            THEN 'editor'
+                        WHEN gk.kind = 'orcid'
+                            THEN 'viewer'
+                        WHEN gk.kind = 'project' AND a.mfid = gk.group_name
+                            THEN 'owner'
                         WHEN gk.kind = 'project' THEN 'admin'
                         WHEN gk.kind = 'instrument' THEN 'contributor'
                         ELSE 'viewer'
                     END)::resource_role AS role
-            FROM group_kind gk
+            FROM resourceacl a
+            JOIN group_kind gk ON gk.id = a.accessgroup_id
+            LEFT JOIN resource_owner ON resource_owner.mfid = a.mfid
         )
         UPDATE resourceacl a
         SET permission = t.role
         FROM target t
-        JOIN group_kind gk2 ON gk2.id = t.accessgroup_id
-        WHERE t.accessgroup_id = a.accessgroup_id
+        WHERE t.mfid = a.mfid
+          AND t.accessgroup_id = a.accessgroup_id
           AND a.permission IS DISTINCT FROM t.role
-          -- Never touch a project's entry on itself. Step 2 sets that to
-          -- `owner` so effective role on a project equals standing in it; the
-          -- generic project grant of `admin` applies to a project's grant on
-          -- OTHER resources, and would otherwise demote every lead to admin
-          -- on their own project and remove their ability to transfer it.
-          AND NOT (gk2.kind = 'project' AND a.mfid = gk2.group_name)
     """)
 
 
@@ -252,7 +324,7 @@ def set_platform_admins(session):
 
     Service accounts included, deliberately and temporarily: withholding it
     means they hold nothing at cutover and every instrument stops writing.
-    Narrowing them is tracked separately — see "Regressing service account
+    Narrowing them is tracked separately - see "Regressing service account
     rights" in the plan.
     """
     print("\n[6] platform_role")
@@ -292,7 +364,7 @@ def set_platform_admins(session):
         print("      instrument credential reaches every resource.")
 
     if not humans:
-        print("  NOTE: no human holds platform_role=admin — there is no")
+        print("  NOTE: no human holds platform_role=admin - there is no")
         print("        human break-glass path. Worth naming someone.")
 
     return promoted
@@ -389,7 +461,7 @@ PRODUCTION_DB = "crucible"
 def confirm_target(session, allow_production: bool) -> str:
     """Ask the server which database this is, and refuse production unless told.
 
-    Prod and staging share a Cloud SQL instance, host and user — only the
+    Prod and staging share a Cloud SQL instance, host and user - only the
     database name differs, so DB_CONF_FILE alone is not enough of a guard.
     """
     actual = session.execute(text("SELECT current_database()")).scalar()
@@ -401,6 +473,36 @@ def confirm_target(session, allow_production: bool) -> str:
         print("Re-run with --yes-this-is-production if that is genuinely intended.")
         raise SystemExit(2)
     return actual
+
+
+def validate_schema(session) -> None:
+    rows = session.execute(text("""
+        SELECT table_name, column_name, udt_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND (table_name, column_name) IN (
+              ('useraccessgrouplink', 'role'),
+              ('resourceacl', 'permission'),
+              ('resourceacl', 'role'),
+              ('user', 'platform_role')
+          )
+        ORDER BY table_name, column_name
+    """)).all()
+    actual = {(row.table_name, row.column_name): row.udt_name for row in rows}
+    expected = {
+        ("useraccessgrouplink", "role"): "resource_role",
+        ("resourceacl", "permission"): "resource_role",
+        ("user", "platform_role"): "platform_role",
+    }
+    print("schema columns:")
+    for key, expected_type in expected.items():
+        print(f"  {key[0]}.{key[1]}: {actual.get(key)!r} (expected {expected_type!r})")
+    if actual.get(("resourceacl", "role")) is not None:
+        print("  resourceacl.role: present (expected absent)")
+        raise SystemExit("REFUSING TO RUN: obsolete resourceacl.role exists")
+    wrong = {key: actual.get(key) for key, expected_type in expected.items() if actual.get(key) != expected_type}
+    if wrong:
+        raise SystemExit(f"REFUSING TO RUN: permission schema mismatch: {wrong!r}")
 
 
 def main():
@@ -415,12 +517,14 @@ def main():
 
     engine = get_engine()
     mode = "COMMIT" if args.commit else "DRY RUN (rolled back)"
-    print(f"permission role backfill — {engine.url.database} on {engine.url.host}")
+    print(f"permission role backfill - {engine.url.database} on {engine.url.host}")
     print(f"mode: {mode}")
 
     with Session(engine) as session:
         confirm_target(session, args.yes_this_is_production)
+        validate_schema(session)
         report_group_kinds(session)
+        validate_group_classification(session)
         backfill_standings(session)
         create_project_resources(session)
         drop_bypass_acl_rows(session)
@@ -432,7 +536,7 @@ def main():
 
         blocked = bool(null_standings or null_grants or dupes)
         if blocked:
-            print("\nNOT creating one_owner_per_group — resolve the above first")
+            print("\nNOT creating one_owner_per_group - resolve the above first")
         elif args.skip_index:
             print("\n[9] one_owner_per_group skipped (--skip-index)")
         else:
@@ -443,11 +547,11 @@ def main():
             print("\nCOMMITTED")
         elif args.commit and blocked:
             session.rollback()
-            print("\nROLLED BACK — verification failed, nothing was written")
+            print("\nROLLED BACK - verification failed, nothing was written")
             return 1
         else:
             session.rollback()
-            print("\nrolled back (dry run) — re-run with --commit to apply")
+            print("\nrolled back (dry run) - re-run with --commit to apply")
 
     return 0
 

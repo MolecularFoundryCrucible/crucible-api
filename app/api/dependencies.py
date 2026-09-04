@@ -22,11 +22,16 @@ def get_api_config():
 
 def get_api_url():
     conf = get_api_config()
-    return f"https://{conf['hostname']}/{conf['api_path']}"
+    return f"https://{conf['hostname']}{get_api_root_path()}"
 
 
 def get_api_path():
     return get_api_config()["api_path"]
+
+
+def get_api_root_path():
+    api_path = get_api_path().strip("/")
+    return f"/{api_path}" if api_path else ""
 
 
 def get_orcid_client_id():

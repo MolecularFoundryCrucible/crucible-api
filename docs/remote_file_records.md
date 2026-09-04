@@ -1,12 +1,14 @@
 # Remote (non-GCS) File Records
 
+Status: Implemented for dataset-associated files. Resource-generic file attachment remains deferred.
+
 ## Goal
 
 Let a dataset's `AssociatedFile` entries catalog files that live outside GCS — an HPC partition, a Globus-addressable path, or anywhere else — without Crucible verifying existence or brokering access to them. This is a catalog-only feature: recording where something is and how to get it, not moving bytes.
 
 ## Data Model
 
-`AssociatedFile` gains two fields:
+`AssociatedFile` has two storage-location fields in addition to its existing path:
 
 | Field | Type | Notes |
 |---|---|---|
@@ -16,7 +18,7 @@ Let a dataset's `AssociatedFile` entries catalog files that live outside GCS —
 
 `sha256_hash`/`size` stay required for every backend — file registration was already client-supplied and unverified server-side even for GCS files (the API never computes a hash from actual bytes), so this introduces no new trust model.
 
-Existing rows migrate to `storage_backend='gcs'` via a column default — zero behavior change for anything already in the system.
+Existing rows were migrated to `storage_backend='gcs'` through the column default, preserving their behavior.
 
 ## API Behavior
 

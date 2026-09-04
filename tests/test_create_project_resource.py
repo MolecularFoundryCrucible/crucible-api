@@ -22,6 +22,13 @@ def test_create_project_creates_resource_and_owner_acl(client, db_engine, auth_a
         "project_id": "proj_new", "organization": "LBNL", "project_lead_orcid": "0000-0001",
     })
     assert resp.status_code == 200, resp.text
+    assert resp.json()["capabilities"] == {
+        "can_edit": True,
+        "can_manage_access": True,
+        "can_change_status": True,
+        "can_transfer": True,
+        "max_grant_role": "admin",
+    }
 
     with Session(db_engine) as session:
         proj = session.exec(select(Project).where(Project.project_id == "proj_new")).one()

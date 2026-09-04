@@ -1,5 +1,7 @@
 # Production API readiness assessment
 
+Archived status: This pre-migration assessment was superseded by the completed August 2026 production rollout. Its blocking instructions and deployment statuses are historical.
+
 Date: 2026-08-28
 
 Reviewed commit: `e2f92d0`
@@ -12,7 +14,7 @@ Status: Do not start production database writes yet. The migration design is mos
 
 Status: Fixed locally. The module compiles and static analysis no longer reports `permission_filter` as undefined. Focused route tests timed out without output after 60 seconds due to the existing test-runner issue.
 
-The imports in [`app/api/routes/datasets.py`](../app/api/routes/datasets.py) previously omitted `permission_filter`, although the module uses it in numerous routes. This affected dataset search, lineage, thumbnails, keywords, dataset-sample relations, and graph endpoints.
+The imports in [`app/api/routes/datasets.py`](../../app/api/routes/datasets.py) previously omitted `permission_filter`, although the module uses it in numerous routes. This affected dataset search, lineage, thumbnails, keywords, dataset-sample relations, and graph endpoints.
 
 This direct deployment blocker is fixed in the working tree.
 
@@ -20,7 +22,7 @@ This direct deployment blocker is fixed in the working tree.
 
 Status: Fixed and deployed to staging. Deletion requests now require contributor access. A partial unique index prevents more than one pending or approved request per resource, and concurrent index conflicts return `409`. Revision `d6e1f8a2c4b7` and its read-only preflight have been applied on staging.
 
-Deletion request creation in [`app/api/routes/resources.py`](../app/api/routes/resources.py) previously verified that the resource existed but did not require access to it. An authenticated caller who knew an MFID could request deletion of another user's resource. Pending requests were then omitted from normal listings.
+Deletion request creation in [`app/api/routes/resources.py`](../../app/api/routes/resources.py) previously verified that the resource existed but did not require access to it. An authenticated caller who knew an MFID could request deletion of another user's resource. Pending requests were then omitted from normal listings.
 
 This authorization and duplicate-request blocker is fixed in the working tree.
 
@@ -32,9 +34,9 @@ Status: Fixed locally by revision `a9f3c2e7b614`; not yet applied to staging.
 
 ### 3. Graph routes can disclose inaccessible resources
 
-Status: The two routes used by current clients are secured locally with six focused tests passing. `GET /entity_graph_cte/{resource_mfid}` now restricts traversal itself to readable, active resources, and `GET /project_graph/{project_ref}` filters both samples and datasets. Recursive traversal terminates safely if legacy lineage contains a cycle. The compatibility and cleanup plan is recorded in [`docs/graph_routes_migration.md`](graph_routes_migration.md). Unused duplicate routes remain cleanup candidates after production access-log verification.
+Status: The two routes used by current clients are secured locally with six focused tests passing. `GET /entity_graph_cte/{resource_mfid}` now restricts traversal itself to readable, active resources, and `GET /project_graph/{project_ref}` filters both samples and datasets. Recursive traversal terminates safely if legacy lineage contains a cycle. The compatibility and cleanup plan is recorded in [`docs/graph_routes_migration.md`](../graph_routes_migration.md). Unused duplicate routes remain cleanup candidates after production access-log verification.
 
-The client-used graph routes in [`app/api/routes/entities.py`](../app/api/routes/entities.py) previously had inconsistent authorization:
+The client-used graph routes in [`app/api/routes/entities.py`](../../app/api/routes/entities.py) previously had inconsistent authorization:
 
 - The recursive CTE authorized the root but could return inaccessible neighboring node identifiers and names.
 - The project graph filtered datasets but not samples.
@@ -46,7 +48,7 @@ Those client-used routes now enforce the documented filtering. The remaining dup
 
 Status: Fixed locally with four focused tests passing. Singleton and generic resource routes use a shared permission-aware link helper. Collection expansion remains batched and filters every target by READ access and active deletion state. The legacy `SampleResponse.datasets` field is preserved but now contains only readable, active datasets.
 
-Linked-resource expansion in [`app/api/routes/resources.py`](../app/api/routes/resources.py) previously filtered deleted targets but not inaccessible targets. Dataset and sample responses using `include_links` could expose names and MFIDs of resources the caller could not read.
+Linked-resource expansion in [`app/api/routes/resources.py`](../../app/api/routes/resources.py) previously filtered deleted targets but not inaccessible targets. Dataset and sample responses using `include_links` could expose names and MFIDs of resources the caller could not read.
 
 Sample singleton responses also included complete linked dataset representations without independently checking dataset access. Every expanded target now receives its own READ filter.
 
@@ -54,21 +56,21 @@ Sample singleton responses also included complete linked dataset representations
 
 Status: Fixed locally by freezing instrument reassignment through generic PATCH. Existing clients may resubmit the current `instrument_id` or `instrument_name`, but changing or clearing either value returns 409. Both PATCH fields are deprecated in OpenAPI.
 
-The future dedicated atomic operation and its ACL requirements are recorded in [`docs/dataset_instrument_assignment.md`](dataset_instrument_assignment.md).
+The future dedicated atomic operation and its ACL requirements are recorded in [`docs/dataset_instrument_assignment.md`](../dataset_instrument_assignment.md).
 
 ### 6. Multipart upload exposes a bucket-wide credential
 
-Status: Deferred because parallel upload is required for very large datasets. The agreed secure replacement retains the existing initiation and completion route paths while moving to XML multipart uploads and exact-object downscoped credentials. See [`docs/secure_parallel_upload_migration.md`](secure_parallel_upload_migration.md).
+Status: Deferred because parallel upload is required for very large datasets. The agreed secure replacement retains the existing initiation and completion route paths while moving to XML multipart uploads and exact-object downscoped credentials. See [`docs/secure_parallel_upload_migration.md`](../secure_parallel_upload_migration.md).
 
-GCS multipart initiation in [`app/api/routes/gcs_storage.py`](../app/api/routes/gcs_storage.py) returns a short-lived OAuth token with bucket-wide read/write scope. The supplied object prefix does not constrain that token.
+GCS multipart initiation in [`app/api/routes/gcs_storage.py`](../../app/api/routes/gcs_storage.py) returns a short-lived OAuth token with bucket-wide read/write scope. The supplied object prefix does not constrain that token.
 
 Do not remove parallel uploads without a client replacement. During the future coordinated migration, preserve the existing route paths, replace parallel composite upload with XML multipart upload, and downscope the client token to the exact destination object. The existing exact-object resumable flow remains safer for clients that do not require parallel transfer.
 
 ### 7. Analysis jobs lack resource authorization
 
-Status: Deferred. The future compatible hardening keeps all existing route paths, requires contributor permission, and returns a typed `202 Accepted` response. Durable idempotency and task tracking remain a later coordinated change. See [`docs/analysis_job_routes_migration.md`](analysis_job_routes_migration.md).
+Status: Deferred. The future compatible hardening keeps all existing route paths, requires contributor permission, and returns a typed `202 Accepted` response. Durable idempotency and task tracking remain a later coordinated change. See [`docs/analysis_job_routes_migration.md`](../analysis_job_routes_migration.md).
 
-Dataset analysis actions in [`app/api/routes/datasets.py`](../app/api/routes/datasets.py) can enqueue work without consistently verifying dataset existence or contributor access.
+Dataset analysis actions in [`app/api/routes/datasets.py`](../../app/api/routes/datasets.py) can enqueue work without consistently verifying dataset existence or contributor access.
 
 These should require contributor permission, return `202 Accepted`, and produce a typed task or request representation. Idempotency protection is also advisable.
 
@@ -76,13 +78,13 @@ These should require contributor permission, return `202 Accepted`, and produce 
 
 Status: Fixed locally. Proposal lookup occurs before the database transaction with bounded failure handling. Project IDs are flattened and deduplicated, project and group loading is batched, and user, identity-group, and membership creation is atomic. ORCID-less human creation generates an MFID and skips the proposal service. See [`docs/user_creation_reliability_migration.md`](user_creation_reliability_migration.md).
 
-User creation in [`app/api/routes/users.py`](../app/api/routes/users.py) appends the entire proposal list into `project_ids`, creating a nested list that is subsequently compared against `Project.project_id`.
+User creation in [`app/api/routes/users.py`](../../app/api/routes/users.py) appends the entire proposal list into `project_ids`, creating a nested list that is subsequently compared against `Project.project_id`.
 
 The external proposal lookup also happens inside the database transaction and has weak timeout and status handling. Resolve proposals before opening the write transaction.
 
 ### 9. Hard deletion is not atomic and can report false success
 
-Status: Fixed locally for database deletion. Approval now commits its audit and database deletion atomically. Direct deletion requires `force=true` and owner or platform-admin authority. Both paths reject unsupported resource types before mutation. Related rows use bounded set-based deletion. GCS cleanup is explicitly deferred. See [`docs/database_deletion_contract.md`](database_deletion_contract.md).
+Status: Fixed locally for database deletion. Approval now commits its audit and database deletion atomically. Direct deletion requires `force=true` and owner or platform-admin authority. Both paths reject unsupported resource types before mutation. Related rows use bounded set-based deletion. GCS cleanup is explicitly deferred. See [`docs/database_deletion_contract.md`](../database_deletion_contract.md).
 
 Stored GCS objects remain after database deletion by current policy. Future storage cleanup will need its own reliable lifecycle because it cannot share the PostgreSQL transaction.
 
@@ -170,7 +172,7 @@ The generated OpenAPI contains 147 operations, no duplicate operation IDs, and 1
 - Instruments are readable without ACL checks through instrument routes but require READ through generic resource routes. Decide whether instruments are an authenticated public directory and document that explicitly.
 - Instrument filter code claims case-insensitive matching but lowercases only the input, not the SQL column.
 - New instrument creation now resolves a registered owner, defaults to the caller, and creates the corresponding owner ACL. Existing instruments with descriptive legacy `owner` values are unchanged and may still require case-by-case ownership transfer or cleanup.
-- Projects have no cleanup lifecycle suitable for staging tests or inactive work. A dedicated archive subresource is preferred over deletion or reuse of the domain `status` field, but it is deferred to avoid adding complexity to the permission migration. See [`docs/project_archiving.md`](project_archiving.md).
+- Projects have no cleanup lifecycle suitable for staging tests or inactive work. A dedicated archive subresource is preferred over deletion or reuse of the domain `status` field, but it is deferred to avoid adding complexity to the permission migration. See [`docs/project_archiving.md`](../project_archiving.md).
 - OAuth login does not properly generate and verify random `state` and `nonce` values.
 - API-key retrieval uses GET and returns a secret, which risks browser and intermediary caching.
 - Resource timestamps are strings rather than database timestamps. This is a later schema improvement, not something to add to the permission cutover.
@@ -181,7 +183,7 @@ The staging database is in good structural standing based on the completed audit
 
 The deployment evidence is not yet sufficient for production:
 
-- [`docs/permission_migration_runbook.md`](permission_migration_runbook.md) still has no tested commit IDs for the unified expand-compatible build and unified identity build.
+- [`docs/permission_migration_runbook.md`](permission_migration_runbook_2026-08.md) still has no tested commit IDs for the unified expand-compatible build and unified identity build.
 - The runbook and client documentation describe an older staging deployment than the current local candidate.
 - Current local HEAD is `e2f92d0`, while the documented staging base is `297144c`.
 - The pending staging smoke-test checklist is not complete.

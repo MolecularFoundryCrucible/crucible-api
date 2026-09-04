@@ -10,14 +10,14 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select, col
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.general_utils import get_secret, is_orcid
+from app.general_utils import is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, Project, Sample, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
 )
 from app.utils.auth_utils import authorize_user, fetch_acl_rows, find_or_add_api_access, has_platform_admin_access, is_instrument_group_member, permission_filter, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
 from app.utils.permissions import AccessGroupType, effective_role, Principal, Role
 from app.utils.sql_utils import deletion_filter_for, table_obj_to_dict
-from app.utils.user_utils import assert_username_available, resolve_user_by_identifier, sql_add_user_to_access_group
+from app.utils.user_utils import assert_username_available, find_mf_user_proposals, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.models.users import AccountProfileUpdate, UserCreate, UserPublicRead, UserRead, UserUpdate
@@ -269,33 +269,6 @@ def verify_user_apikey(user_id: str, auth_res: Annotated[Principal, Depends(auth
             created_at=created_dt.date().isoformat(),
             expires_at=expires_dt.date().isoformat(),
         )
-
-def find_mf_user_proposals(orcid):
-    import requests
-
-    mf_user_db_url = "https://foundry-admin.lbl.gov/api/JSON/sciCat-GetUser.aspx?"
-    apikey = get_secret("PROPDB_APIKEY", "propdb-apikey/versions/1")
-    request_url = f"{mf_user_db_url}key={apikey}&orcid={orcid}"
-    if apikey is None:
-        raise HTTPException(status_code=502, detail="Proposal service credentials are unavailable")
-    try:
-        response = requests.get(request_url, timeout=10)
-        response.raise_for_status()
-        payload = response.json()
-    except (requests.RequestException, ValueError):
-        raise HTTPException(status_code=502, detail="Proposal service lookup failed") from None
-    if not isinstance(payload, list) or any(not isinstance(item, dict) for item in payload):
-        raise HTTPException(status_code=502, detail="Proposal service returned an invalid response")
-    if any(not isinstance(item.get("proposals", []), list) for item in payload):
-        raise HTTPException(status_code=502, detail="Proposal service returned invalid proposals")
-    proposals = {
-        proposal
-        for item in payload
-        for proposal in item.get("proposals", [])
-        if isinstance(proposal, str)
-    }
-    return sorted(proposals)
-
 
 @router.post("/users", response_model=UserRead)
 def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_info: UserCreate,

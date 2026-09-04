@@ -127,6 +127,7 @@ def list_ingestors():
                 'SpinbotCameraCaptureIngestor,' 
                 'SpinbotPhotoRunIngestor,' 
                 'InSituPlIngestor',
+                'InorganicXRDIngestor',
                 'CziIngestor',
                 'DigitalMicrographIngestor',
                 'EmiIngestor',
@@ -137,6 +138,7 @@ def list_ingestors():
                 'SpinbotSpecRunIngestor',
                 'ImageIngestor',
                 'NirvanaMultiPosLineScanIngestor',
+                'NirvanaMultiPosSpecRunIngestor',
                 'ScopeFoundryH5Ingestor',
                 'H5Ingestor']
     

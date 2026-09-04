@@ -1,10 +1,18 @@
 # Resource request/response schemas
 # Table model lives in core_models.py
-from typing import Optional
+from typing import Literal, Optional
 
 from sqlmodel import SQLModel
 
 from app.models.users import UserPublicRead
+
+
+class ResourceCapabilities(SQLModel):
+    can_edit: bool
+    can_manage_access: bool
+    can_change_status: bool
+    can_transfer: bool
+    max_grant_role: Optional[Literal["viewer", "contributor", "editor", "admin"]] = None
 
 
 class TransferOwnershipRequest(SQLModel):

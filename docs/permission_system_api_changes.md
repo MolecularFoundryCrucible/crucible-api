@@ -1,6 +1,6 @@
 # API Contract Changes - Permission System Redesign
 
-Reference for updating API clients against the `feat/permission-roles` contract. The base release is live on staging, while the typed access selectors and stricter email redaction are in the next local deployment candidate. Start with `docs/client_migration_summary.md` for the changes grouped by client type. Use `docs/permission_migration_runbook.md` for the deployed revision and staging verification status. See `docs/resource_identifier_routes.md` for canonical identifiers, exact lookup filters, compatibility aliases, and current path parameter names.
+Reference for updating API clients against the API v3 permission contract on the repository `staging` branch. Verify `GET /health/ready` and the deployed OpenAPI before assuming a rebuild is live. Start with `docs/client_migration_summary.md` for changes grouped by client type. See `docs/resource_identifier_routes.md` for canonical identifiers, exact lookup filters, compatibility aliases, and current path parameter names. The completed production rollout is retained only as a historical record in `docs/archive/permission_migration_runbook_2026-08.md`.
 
 ## New routes
 
@@ -43,15 +43,37 @@ AccessGroupMemberRead = {
 
 Requires admin on the instrument. In practice this is platform-admin only for now because no group otherwise holds admin on an instrument. `DELETE` on a binding that doesn't exist returns 404.
 
+### `GET /instruments/{instrument_mfid}/service_accounts`
+
+Returns the current service accounts bound to the instrument's operator group using the same `AccessGroupMemberRead` response as the binding routes. Requires admin on the instrument.
+
 ## Changed routes
 
 ### `POST /instruments`
 
 `instrument_id` is now a **required** request field (did not exist before). It must contain 3 to 25 characters, start with a letter or digit, and contain only letters, digits, underscores, or hyphens. It is checked for uniqueness and returns 409 on collision. The response (`InstrumentResponse`) includes `instrument_id` alongside the existing `unique_id` (MFID) and `instrument_name` (free-text display).
 
-Any authenticated user may create an instrument. `owner` is optional and uses the same flexible identity resolution as dataset and sample creation. Omit it to make the authenticated caller the owner. The deprecated `owner_orcid` field remains an exact canonical identity lookup, and providing both fields returns 422. Human callers may create only for themselves; service accounts and platform administrators may create for another registered identity.
+Authenticated human users may create an instrument for themselves. Human platform administrators may create one for another registered identity. Service accounts cannot register instruments, including when they hold platform-admin status. `owner` is optional and uses the same flexible identity resolution as dataset and sample creation. Omit it to make the authenticated caller the owner. The deprecated `owner_orcid` field remains an exact canonical identity lookup, and providing both fields returns 422.
 
-The response exposes the canonical identity as `owner_orcid`, matching dataset and sample responses despite the legacy field name. Pass `include_owner=true` on instrument collection, search, singleton, or generic resource reads to populate `owner` with a public-safe user object. Collection expansion uses one batched user query. The API creates an owner ACL for that identity as well as the separate editor ACL for the instrument operator group. Arbitrary labels such as `"facility"` are no longer valid owner values unless they resolve to a registered username. Instrument PATCH no longer accepts `owner`; use `POST /resources/{instrument_mfid}/transfer_ownership`.
+Instrument display names preserve the casing supplied by the caller. Exact filters and dataset assignment by `instrument_id` remain case-insensitive. `PATCH /instruments/{instrument_mfid}` rejects explicit null values for `instrument_id`, `instrument_name`, and `location` with 422; omit a field to leave it unchanged.
+
+`GET /instruments/search` accepts an optional `status` query with `active`, `maintenance`, or `decommissioned`. Omitting the query preserves the existing behavior and searches across every status.
+
+The response exposes the canonical identity as `owner_orcid`, matching dataset and sample responses despite the legacy field name. Instrument singleton and generic resource reads populate `owner` with a public-safe user object by default; pass `include_owner=false` to omit it. Collection and search expansion remains opt-in with `include_owner=true` and uses one batched user query. The API creates an owner ACL for that identity as well as the separate editor ACL for the instrument operator group. Arbitrary labels such as `"facility"` are no longer valid owner values unless they resolve to a registered username. Instrument PATCH no longer accepts `owner`; use `POST /resources/{instrument_mfid}/transfer_ownership`.
+
+Dataset, sample, project, and instrument detail responses now share an optional caller-specific `capabilities` object:
+
+```json
+{
+  "can_edit": true,
+  "can_manage_access": true,
+  "can_change_status": true,
+  "can_transfer": false,
+  "max_grant_role": "editor"
+}
+```
+
+`max_grant_role` is `viewer`, `contributor`, `editor`, `admin`, or null. Ownership is never grantable and continues to require the ownership-transfer route. Capabilities are populated by canonical singleton reads, generic `GET /resources/{resource_mfid}` detail reads, exact `instrument_id` and `project_id` collection lookups, supported create and update responses, and instrument-status responses. Dataset and sample detail responses set `can_change_status=false` because those resource types have no lifecycle-status operation. General collection, search, lineage, and embedded-resource responses leave the field null. Clients should use these values for presentation and preflight guidance while continuing to handle authorization failures from mutation routes.
 
 ### `PATCH /projects/{project_ref}`
 
@@ -102,7 +124,11 @@ The exact collection lookup `GET /projects?project_id={slug}&include_members=tru
 
 ### `POST/PATCH /projects/{project_ref}/users/{orcid}`
 
-Both now return **409** if `?role=owner` (`role=5`) is requested. A project has exactly one owner, and appointing or changing one now only happens through `POST /resources/{mfid}/transfer_ownership`. Previously an existing owner could grant a second member `owner` via either route (or change their own standing away from it), silently desyncing `Project.project_lead_orcid` from who actually held owner standing.
+Both accept named role query values: `viewer`, `contributor`, `editor`, `admin`, and `owner`. Integer role values are no longer accepted. Both return **409** if `?role=owner` is requested. A project has exactly one owner, and appointing or changing one now only happens through `POST /resources/{mfid}/transfer_ownership`. Previously an existing owner could grant a second member `owner` via either route (or change their own standing away from it), silently desyncing `Project.project_lead_orcid` from who actually held owner standing.
+
+Repeating `POST` for an existing member with the same requested role returns 200 without changing the membership. If the requested role differs from the member's current role, `POST` returns 409 and directs the caller to `PATCH`. Omitting `role` means `contributor` for this comparison.
+
+Membership management follows a strict hierarchy. Editors may add or change contributors and viewers, admins may manage editors and below, and owners may manage admins and below. A caller cannot modify a member at the caller's own role. Project `capabilities.max_grant_role` reports `contributor` for editors, `editor` for admins, and `admin` for owners.
 
 ### `PATCH /datasets/{dsid}`
 
@@ -260,7 +286,11 @@ These read routes no longer authorize from the legacy `Dataset.public` Boolean. 
 
 Sample parent, child, and dataset relationship routes now require read access to the starting resource and filter every returned resource through the canonical read-permission and deletion filters. Dataset-to-sample lists apply the same filtering. Expanded `include_links` responses, `GET /resources/{mfid}/links`, and the legacy `SampleResponse.datasets` field independently filter every linked target. Sample, dataset, project, and combined entity graphs omit inaccessible nodes and any edges connected to them.
 
-Response schemas are unchanged. Callers may receive 403 for an inaccessible starting resource or fewer related items and graph nodes where the previous implementation exposed relationships to inaccessible resources.
+Use `GET /datasets?sample_mfid={sample_mfid}` and `GET /samples?dataset_mfid={dataset_mfid}` for typed, paginated sample-dataset relationship collections. The referenced resource and every returned resource are independently read-authorized. The legacy nested routes remain behaviorally unchanged, are marked deprecated in OpenAPI, and return `Deprecation: @1788307200`.
+
+Dataset response models also include nullable `instrument` and `project` identity references. These contain only stable navigation and display fields, are populated without per-dataset queries, and do not grant access to the full related resource. Existing flat instrument and project fields remain unchanged for API v3 compatibility.
+
+Existing response fields remain unchanged. Callers may receive 403 for an inaccessible starting resource or fewer related items and graph nodes where the previous implementation exposed relationships to inaccessible resources.
 
 ### Legacy authorization and shadow-mode removal
 
@@ -285,4 +315,4 @@ Generate and inspect the deterministic local schema before deployment:
 git diff --exit-code -- openapi/crucible-api.json
 ```
 
-After deployment, compare it with `https://crucible.lbl.gov/testapi-staging/openapi.json` and run the smoke checks in `docs/resource_identifier_routes.md` and `docs/permission_migration_runbook.md`.
+After deployment, compare it with `https://crucible.lbl.gov/testapi-staging/openapi.json`, confirm the commit and schema revisions through `GET /health/ready`, and run the applicable contract checks in `docs/resource_identifier_routes.md`.

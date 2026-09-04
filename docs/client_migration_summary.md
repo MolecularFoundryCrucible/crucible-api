@@ -1,6 +1,6 @@
 # Client migration summary
 
-Status: the base permission and identifier release from API commit `297144c` is deployed to staging, and its live OpenAPI was verified against that commit. The typed access selectors, exact project member expansion, and stricter email-redaction contract described below are part of the next local deployment candidate and are not live yet. Its deterministic repository artifact is `openapi/crucible-api.json`. Client updates and production rollout are pending.
+Status: the repository `staging` branch includes the contract documented here. Verify `GET /health/ready` and the deployed OpenAPI before treating a staging rebuild as live. This repository does not establish downstream client rollout status.
 
 Use this document to update Crucible clients for the identifier, permission, ownership, and response-contract changes. The staging OpenAPI is available through [Swagger UI](https://crucible.lbl.gov/testapi-staging/docs) and [OpenAPI JSON](https://crucible.lbl.gov/testapi-staging/openapi.json).
 
@@ -45,6 +45,7 @@ Clients may remain handwritten, but their CI should compare declared routes and 
 - Project and instrument slugs are human-readable lookup values, not stable identifiers. New or renamed slugs must contain 3 to 25 characters.
 - Use a canonical singleton route when the input is an MFID. Use an exact collection filter when the input is a slug, username, or email. The collection result already contains the complete authorized representation, so do not resolve and then make a second GET.
 - Normal ACL grants stop at `admin`. The `owner` permission is exclusive and can only be changed through the ownership-transfer route.
+- Canonical dataset, sample, project, and instrument detail responses include optional caller-specific `capabilities` for UI guidance. Exact project and instrument slug lookups also populate it. General collection, search, lineage, and embedded-resource results leave it null. Dataset, sample, instrument, and generic resource singleton GETs resolve the public-safe `owner` object by default; pass `include_owner=false` to omit it.
 - Relationship lists and graphs are permission-filtered. A client may receive 403 for an inaccessible starting resource or fewer related resources than before.
 - The deprecated dataset `source_folder` field no longer exists in create or read schemas. Use associated-file records for file locations.
 
@@ -80,6 +81,26 @@ The client should classify a supplied reference locally and issue one request.
 | Email | `GET /users?email={email}` | Apply exact-result handling. Another user's public-safe response does not echo the email. |
 
 The compatibility routes `GET /projects/{project_slug}`, `GET /users/{username}`, `GET /users/{email}`, and `GET /users/by-username/{username}` remain available temporarily. Compatible singleton responses include `Content-Location` pointing to the canonical route. New clients should not depend on these aliases.
+
+Canonical resource detail responses, exact project and instrument slug-filter results, and supported create or update responses may include:
+
+```json
+{
+  "capabilities": {
+    "can_edit": true,
+    "can_manage_access": true,
+    "can_change_status": true,
+    "can_transfer": false,
+    "max_grant_role": "editor"
+  }
+}
+```
+
+`max_grant_role` is the highest non-owner role the caller may assign, or null when the caller cannot grant access. Clients should use capabilities to enable or hide actions but must still handle 403 and 409 responses because authorization is enforced server-side.
+
+Project membership uses a strict hierarchy. Project editors receive `max_grant_role="contributor"`, project admins receive `max_grant_role="editor"`, and project owners receive `max_grant_role="admin"`. A caller cannot add, promote, demote, or otherwise modify a member at the caller's own project role.
+
+For datasets and samples, `can_change_status` is always false because they do not expose the project or instrument lifecycle-status operation. General collection and search results leave `capabilities` null to avoid per-item ACL evaluation. Null means the server did not calculate capabilities for that representation, not that every action is denied.
 
 ## Ownership and project assignment
 
@@ -179,6 +200,44 @@ Inspecting another user requires platform-admin authority. Inspecting a project 
 
 The unpaginated MFID-only routes `GET /users/{user_id}/datasets` and `GET /users/{user_id}/samples` remain as deprecated compatibility wrappers.
 
+Relationship collections now use the canonical paginated collection routes:
+
+```http
+GET /datasets?sample_mfid={sample_mfid}
+GET /samples?dataset_mfid={dataset_mfid}
+```
+
+The caller must be able to read both the referenced resource and each returned resource. These filters compose with the existing collection filters and pagination. `GET /samples/{sample_mfid}/datasets` and `GET /datasets/{dataset_mfid}/samples` retain their existing response contracts but are deprecated and return the standard `Deprecation` response header.
+
+Singleton sample responses retain the legacy embedded `datasets` collection by default so existing clients do not break. The field is deprecated in OpenAPI. New clients should pass `include_datasets=false`, use `include_links=true` when lightweight relationship references are sufficient, and use `GET /datasets?sample_mfid={sample_mfid}` when complete paginated dataset responses are required. The generic `GET /resources/{resource_id}` route accepts the same `include_datasets` option when the resolved resource is a sample.
+
+## Dataset and sample relationship references
+
+Dataset response models now include nullable lightweight references alongside the existing flat compatibility fields:
+
+```json
+{
+  "unique_id": "dataset-mfid",
+  "instrument_id": "xrd-1",
+  "instrument_name": "High Resolution XRD",
+  "project_id": "project-slug",
+  "instrument": {
+    "unique_id": "instrument-mfid",
+    "instrument_id": "xrd-1",
+    "instrument_name": "High Resolution XRD"
+  },
+  "project": {
+    "unique_id": "project-mfid",
+    "project_id": "project-slug",
+    "title": "Project title"
+  }
+}
+```
+
+`instrument` uses `InstrumentReferenceRead`, and `project` uses `ProjectReferenceRead`. The API returns current registered identity values when the canonical MFID resolves. An unresolved legacy relationship returns null while preserving the existing flat stored values. The fields are additive across dataset detail, collection, search, lineage, generic resource detail, and datasets embedded in sample responses. Existing clients do not need to change, and `instrument_id`, `instrument_name`, and `project_id` remain part of the API v3 response contract.
+
+Sample response models now expose the same nullable `ProjectReferenceRead` as `project` while retaining the flat `project_id` field. It is populated across sample create, update, detail, collection, search, lineage, generic resource detail, and the deprecated dataset-to-samples relationship response. Clients may adopt the stable `project.unique_id` without changing their handling of existing fields.
+
 ## User email privacy
 
 - Broad user collection, batch resolution, project lead, project membership, instrument operator, and access-group member responses never contain email.
@@ -201,11 +260,11 @@ Replace uses of the removed `read` and `write` Booleans. `effective_access` is o
 
 ## Create and update payloads
 
-- `POST /instruments` requires `instrument_id`, the 3-to-25-character instrument slug. It is available to every authenticated caller. Omit `owner` to assign the caller, or supply a registered ORCID, service-account MFID, username, or email. `owner_orcid` is the deprecated exact canonical alias. Human callers cannot create for another identity. Arbitrary descriptive owner labels are no longer accepted.
-- Instrument responses expose the canonical identity as `owner_orcid`. Pass `include_owner=true` to collection, search, singleton, or generic resource reads to populate the public-safe `owner` object. Creation responses include the resolved owner object directly.
+- `POST /instruments` requires `instrument_id`, the 3-to-25-character instrument slug. Authenticated human callers may create an instrument for themselves, and human platform administrators may create one for another registered identity. Service accounts cannot register instruments. Omit `owner` to assign the caller, or supply a registered ORCID, service-account MFID, username, or email when acting as a human platform administrator. `owner_orcid` is the deprecated exact canonical alias. Arbitrary descriptive owner labels are no longer accepted.
+- Instrument responses expose the canonical identity as `owner_orcid`. Singleton and generic resource reads populate the public-safe `owner` object by default; pass `include_owner=false` to omit it. Collection and search expansion remains opt-in with `include_owner=true`. Creation responses include the resolved owner object directly.
 - `POST /datasets` and `POST /samples` use `owner` as the preferred owner reference. It accepts ORCID, service-account MFID, username, or email. The deprecated `owner_orcid` field remains an exact canonical identity lookup. Omitting both makes the authenticated identity the owner, including for service accounts. Sending both or sending unknown fields such as `owner_user_id` returns 422.
 - Create responses include canonical `owner_orcid`. The optional `owner` response field is an expanded public-safe user object, not an echo of the request string.
-- Service accounts and platform administrators may create for another registered identity. Human callers may create only for themselves. With `project_id`, the effective owner must be contributor-or-above in that project.
+- For datasets and samples, service accounts and platform administrators may create for another registered identity. Human callers may create only for themselves. With `project_id`, the effective owner must be contributor-or-above in that project.
 - `crucible-upload-uis/prefect_backend.py` currently maps its `owner_orcid` argument to the removed `owner_user_id` request key. That client must send `owner` or `owner_orcid`; otherwise its intended researcher owner is discarded before the request and the authenticated service account becomes owner.
 - `POST /projects` accepts either one existing explicit lead field or the flexible `project_lead` field. Sending both forms, or neither form, returns 400.
 - `PATCH /projects/{project_ref}` accepts `project_id`, `organization`, `status`, and `title`. Updating `project_id` renames the project slug without changing its MFID.
@@ -268,6 +327,6 @@ Use the returned `unique_id` MFID for canonical user routes. To authenticate as 
 - [Permission API changes](permission_system_api_changes.md)
 - [Identifier route contract](resource_identifier_routes.md)
 - [Remote file records](remote_file_records.md)
-- [Migration runbook](permission_migration_runbook.md)
+- [Historical permission migration runbook](archive/permission_migration_runbook_2026-08.md)
 - [Candidate OpenAPI artifact](../openapi/crucible-api.json)
 - [Staging OpenAPI](https://crucible.lbl.gov/testapi-staging/openapi.json)

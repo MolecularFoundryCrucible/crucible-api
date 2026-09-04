@@ -111,6 +111,30 @@ def main() -> int:
             return 2
 
         acl_column = _acl_column(session)
+        join_request_count = session.execute(text("""
+            SELECT count(*)
+            FROM accessgroupjoinrequest request
+            JOIN project p ON request.group_name = p.project_id
+            JOIN accessgroup legacy ON legacy.group_name = p.project_id
+            WHERE NOT EXISTS (
+                SELECT 1 FROM accessgroup canonical
+                WHERE canonical.group_name = p.unique_id
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM "user" u
+                WHERE lower(u.orcid) = lower(p.project_id)
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM instrument i
+                WHERE lower(i.instrument_name) = lower(p.project_id)
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM project other
+                WHERE other.id <> p.id
+                  AND lower(other.project_id) = lower(p.project_id)
+            )
+        """)).scalar_one()
+        print(f"join requests : {join_request_count}")
         group_columns = set(session.execute(text("""
             SELECT column_name FROM information_schema.columns WHERE table_name = 'accessgroup'
         """)).scalars().all())
@@ -119,6 +143,16 @@ def main() -> int:
         if not args.commit:
             print("dry run only: nothing written")
             return 0
+
+        if join_request_count:
+            session.execute(text("""
+                ALTER TABLE accessgroupjoinrequest
+                ALTER CONSTRAINT accessgroupjoinrequest_group_name_fkey
+                DEFERRABLE INITIALLY IMMEDIATE
+            """))
+            session.execute(text("""
+                SET CONSTRAINTS accessgroupjoinrequest_group_name_fkey DEFERRED
+            """))
 
         renamed = session.execute(text("""
             UPDATE accessgroup ag
@@ -142,6 +176,20 @@ def main() -> int:
                   SELECT 1 FROM project other
                   WHERE other.id <> p.id
                     AND lower(other.project_id) = lower(p.project_id)
+                )
+        """)).rowcount
+        join_requests_updated = session.execute(text("""
+            UPDATE accessgroupjoinrequest request
+            SET group_name = p.unique_id
+            FROM project p
+            WHERE request.group_name = p.project_id
+              AND EXISTS (
+                  SELECT 1 FROM accessgroup canonical
+                  WHERE canonical.group_name = p.unique_id
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM accessgroup legacy
+                  WHERE legacy.group_name = p.project_id
               )
         """)).rowcount
         created = session.execute(text("""
@@ -194,8 +242,22 @@ def main() -> int:
                 f"(expected rename/create {rename_count}/{create_count}, got {renamed}/{created})."
             )
             return 2
+        if join_requests_updated != join_request_count:
+            session.rollback()
+            print(
+                "REFUSING TO COMMIT: database changed during the run "
+                f"(expected {join_request_count} join requests, got {join_requests_updated})."
+            )
+            return 2
+        if join_request_count:
+            session.execute(text("""
+                SET CONSTRAINTS accessgroupjoinrequest_group_name_fkey IMMEDIATE
+            """))
         session.commit()
-        print(f"committed: {renamed} renamed, {created} created")
+        print(
+            f"committed: {renamed} renamed, {created} created, "
+            f"{join_requests_updated} join requests updated"
+        )
     return 0
 
 

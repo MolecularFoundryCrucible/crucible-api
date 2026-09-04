@@ -1,11 +1,10 @@
 import logging
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 logger = logging.getLogger(__name__)
 from sqlalchemy import func
-from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -32,13 +31,15 @@ def _resolve_project_id(resource_id: str, resource_type: Optional[str], session:
     return None
 
 
-def _to_read(req: DeletionRequest, session: Session) -> DeletionRequestRead:
-    """Convert a DeletionRequest (with resource loaded) to its response model."""
-    resource_type = req.resource.resource_type if req.resource else None
+def _to_read(
+    req: DeletionRequest,
+    resource_type: Optional[str],
+    project_id: Optional[str],
+) -> DeletionRequestRead:
     return DeletionRequestRead(
         **req.model_dump(),
         resource_type=resource_type,
-        project_id=_resolve_project_id(req.resource_id, resource_type, session),
+        project_id=project_id,
     )
 
 
@@ -55,7 +56,16 @@ def list_deletion_requests(
 ):
     with Session(engine) as session:
         count_query = select(func.count(DeletionRequest.id))
-        data_query = select(DeletionRequest).options(selectinload(DeletionRequest.resource))
+        data_query = (
+            select(
+                DeletionRequest,
+                Resource.resource_type,
+                func.coalesce(Dataset.project_id, Sample.project_id).label("project_id"),
+            )
+            .outerjoin(Resource, Resource.mfid == DeletionRequest.resource_id)
+            .outerjoin(Dataset, Dataset.unique_id == DeletionRequest.resource_id)
+            .outerjoin(Sample, Sample.unique_id == DeletionRequest.resource_id)
+        )
         if status is not None:
             count_query = count_query.where(DeletionRequest.status == status)
             data_query = data_query.where(DeletionRequest.status == status)
@@ -78,7 +88,7 @@ def list_deletion_requests(
             count_query = count_query.where(visible)
             data_query = data_query.where(visible)
         total = session.exec(count_query).one()
-        items = [_to_read(req, session) for req in session.exec(
+        items = [_to_read(req, resource_type, project_id) for req, resource_type, project_id in session.exec(
             data_query.order_by(DeletionRequest.request_time.desc()).offset(offset).limit(limit)
         ).all()]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
@@ -96,14 +106,21 @@ def get_deletion_request(
     with Session(engine) as session:
         req = session.exec(
             select(DeletionRequest)
-            .options(selectinload(DeletionRequest.resource))
             .where(DeletionRequest.id == request_id)
         ).one_or_none()
         if req is None:
             raise HTTPException(status_code=404, detail="Deletion request not found.")
         # Reviewing a deletion sits at the same bar as performing one.
         require_permission(session, auth_res, req.resource_id, Permission.DELETE)
-        return _to_read(req, session)
+        resource = session.exec(
+            select(Resource).where(Resource.mfid == req.resource_id)
+        ).one_or_none()
+        resource_type = resource.resource_type if resource else None
+        return _to_read(
+            req,
+            resource_type,
+            _resolve_project_id(req.resource_id, resource_type, session),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +231,7 @@ def review_deletion_request(
 def hard_delete_resource_route(
     resource_id: str,
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    force: Literal[True] = Query(
+    force: bool = Query(
         ...,
         description="Required acknowledgement for direct permanent deletion.",
     ),

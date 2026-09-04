@@ -48,45 +48,62 @@ def _setup(db_engine):
 
 
 def test_get_dataset_shows_renamed_project_id(client, db_engine, auth_as):
-    _setup(db_engine)
+    project_mfid = _setup(db_engine)
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
 
     resp = client.get("/datasets/ds_1")
     assert resp.status_code == 200, resp.text
     assert resp.json()["project_id"] == "proj_new"
+    assert resp.json()["project"] == {
+        "unique_id": project_mfid,
+        "project_id": "proj_new",
+        "title": None,
+    }
 
 
 def test_list_datasets_shows_renamed_project_id(client, db_engine, auth_as):
-    _setup(db_engine)
+    project_mfid = _setup(db_engine)
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
 
     resp = client.get("/datasets")
     assert resp.status_code == 200, resp.text
     ds = next(d for d in resp.json()["items"] if d["unique_id"] == "ds_1")
     assert ds["project_id"] == "proj_new"
+    assert ds["project"]["project_id"] == "proj_new"
+    assert ds["project"]["unique_id"] == project_mfid
 
 
 def test_get_sample_shows_renamed_project_id(client, db_engine, auth_as):
-    _setup(db_engine)
+    project_mfid = _setup(db_engine)
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
 
     resp = client.get("/samples/samp_1")
     assert resp.status_code == 200, resp.text
     assert resp.json()["project_id"] == "proj_new"
+    assert resp.json()["project"] == {
+        "unique_id": project_mfid,
+        "project_id": "proj_new",
+        "title": None,
+    }
 
 
 def test_list_samples_shows_renamed_project_id(client, db_engine, auth_as):
-    _setup(db_engine)
+    project_mfid = _setup(db_engine)
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
 
     resp = client.get("/samples")
     assert resp.status_code == 200, resp.text
     samp = next(s for s in resp.json()["items"] if s["unique_id"] == "samp_1")
     assert samp["project_id"] == "proj_new"
+    assert samp["project"] == {
+        "unique_id": project_mfid,
+        "project_id": "proj_new",
+        "title": None,
+    }
 
 
 def test_get_resource_shows_renamed_project_id_for_dataset_and_sample(client, db_engine, auth_as):
-    _setup(db_engine)
+    project_mfid = _setup(db_engine)
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
 
     ds_resp = client.get("/resources/ds_1")
@@ -96,6 +113,11 @@ def test_get_resource_shows_renamed_project_id_for_dataset_and_sample(client, db
     samp_resp = client.get("/resources/samp_1")
     assert samp_resp.status_code == 200, samp_resp.text
     assert samp_resp.json()["project_id"] == "proj_new"
+    assert samp_resp.json()["project"] == {
+        "unique_id": project_mfid,
+        "project_id": "proj_new",
+        "title": None,
+    }
 
 
 # /datasets/search and /samples/search also resolve project_id the same way

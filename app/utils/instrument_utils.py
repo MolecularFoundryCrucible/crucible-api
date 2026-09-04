@@ -5,6 +5,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from app.models.core_models import Instrument, Project
+from app.models.instrument import InstrumentReferenceRead
 
 _INSTRUMENT_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{2,24}$')
 
@@ -34,7 +35,9 @@ def assert_instrument_id_available(session, instrument_id: str, exclude_unique_i
 def resolve_instrument_id_to_mfid(instrument_id: str, session) -> "str | None":
     """Resolve an instrument_id slug to its Instrument.unique_id (MFID).
     None if instrument_id does not name a real instrument."""
-    instrument = session.exec(select(Instrument).where(Instrument.instrument_id == instrument_id)).one_or_none()
+    instrument = session.exec(
+        select(Instrument).where(func.lower(Instrument.instrument_id) == instrument_id.lower())
+    ).one_or_none()
     return instrument.unique_id if instrument else None
 
 
@@ -48,3 +51,21 @@ def resolve_instrument_mfids_to_ids(mfids, session) -> dict:
         select(Instrument.unique_id, Instrument.instrument_id).where(Instrument.unique_id.in_(mfid_set))
     ).all()
     return dict(rows)
+
+
+def resolve_instrument_mfids_to_references(mfids, session) -> dict[str, InstrumentReferenceRead]:
+    mfid_set = {m for m in mfids if m}
+    if not mfid_set:
+        return {}
+    rows = session.exec(
+        select(Instrument.unique_id, Instrument.instrument_id, Instrument.instrument_name)
+        .where(Instrument.unique_id.in_(mfid_set))
+    ).all()
+    return {
+        unique_id: InstrumentReferenceRead(
+            unique_id=unique_id,
+            instrument_id=instrument_id,
+            instrument_name=instrument_name,
+        )
+        for unique_id, instrument_id, instrument_name in rows
+    }

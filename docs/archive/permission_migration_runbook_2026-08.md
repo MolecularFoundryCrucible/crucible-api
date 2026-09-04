@@ -1,5 +1,7 @@
 # Permission Migration Runbook
 
+Archived status: The production permission migration completed on 2026-08-31. Retain this document as an execution record only. Do not replay it against a current environment.
+
 This is the operational recipe for the permission migration. Follow it in order. Use `docs/permission_system_plan.md` for design details and `docs/permission_system_api_changes.md` for client-facing contract changes.
 
 ## Current status
@@ -10,7 +12,8 @@ Verified on 2026-08-31.
 |---|---|
 | Staging database | Revision `d6e1f8a2c4b7` is applied. All 9,880 access groups are classified, permission roles are non-null, duplicate owner ACLs are rejected, and the duplicate-owner `unknown` group has been removed. Revision `a9f3c2e7b614` must be applied before testing project creation for an MFID-backed human without an email. |
 | Staging API | API commit `66f90a35ef2e516c527ed1cb87c69e74bbe157df` is deployed. Project creation for an MFID-backed human exposed the legacy `NOT NULL` constraint on `project.project_lead_email`; revision `a9f3c2e7b614` corrects it. |
-| Production | Not queried during this review. The existing rollout record says the migration has not started. Re-run every preflight check against production before rollout. |
+| Production database | Revision `a9f3c2e7b614` is applied. Final permission and deletion-request audits pass. All project identity references are migrated, and the remaining instrument and owner exceptions are recorded in `docs/production_migration_data_followups.md`. |
+| Production API | Offline for the migration and awaiting deployment of the final API build. Do not resume traffic until the final build is deployed and smoke-tested. |
 
 All counts in the staging sections describe staging only. Production is substantially larger, so do not use staging row counts as production expectations or anomaly thresholds. For production, compare each dry run with its immediately following committed run and enforce only the documented structural invariants and zero-result blockers.
 
@@ -42,6 +45,12 @@ Staging is structurally migrated. These accepted operational follow-ups remain:
 4. Revision `d6e1f8a2c4b7` and its active-deletion-request preflight are complete. Apply revision `a9f3c2e7b614` before rerunning project creation with an email-less MFID-backed human.
 
 None of these accepted follow-ups blocks the current API deployment.
+
+### Production completion record
+
+The production database migration completed on 2026-08-31 with the API and ingestion writers stopped. Alembic reports `a9f3c2e7b614 (head)`. The permission cutover audit reports zero null ACL roles, zero null membership roles, zero duplicate owner ACLs, and zero unclassified groups. The active deletion-request audit reports zero duplicates.
+
+The final identity dry runs report zero remaining project MFID work, zero project resource repoints, and zero ownership repair writes. The accepted remaining state is 1,144 datasets with unresolved legacy instrument labels, 19 registered owner references whose resources lack `idtype`, and 946 owner references with no matching identity group. See `docs/production_migration_data_followups.md` before changing any of these rows.
 
 The malformed ACL state was repaired with:
 
@@ -154,28 +163,23 @@ Run the read-only audit:
 .venv/bin/python migrations/data/20260806_audit_permission_preconditions.py
 ```
 
-The last production audit found one orphaned `idtype` row with an empty MFID. Confirm that it is still an orphan before deleting it:
-
-```sql
-SELECT i.*
-FROM idtype i
-LEFT JOIN sample s ON s.unique_id = i.mfid
-WHERE i.mfid = '' AND i.resource_type = 'sample' AND s.id IS NULL;
-```
-
-If and only if that query returns the known orphan, delete it:
-
-```sql
-DELETE FROM idtype WHERE mfid = '' AND resource_type = 'sample';
-```
-
-Run the audit again. Continue only when it reports no blockers.
+The audit also checks for the previously observed empty-MFID `idtype` row. If it reports that row, do not delete it yet. Continue to the first snapshot, then use the guarded cleanup in step 4. If it reports any dependent row or any shape other than the reviewed orphaned sample resource, stop and investigate.
 
 ### 3. Take the first snapshot
 
 Take a Cloud SQL snapshot immediately before the first production write. Record its name and timestamp in the rollout ticket.
 
 ### 4. Add the permission columns
+
+If the preflight reported the reviewed empty-MFID orphan, run the cleanup first as a dry run and then commit it. Skip these two commands when the audit reported no empty-MFID resource.
+
+```bash
+.venv/bin/python migrations/data/20260831_cleanup_empty_mfid_resource.py --yes-this-is-production
+.venv/bin/python migrations/data/20260831_cleanup_empty_mfid_resource.py --commit --yes-this-is-production
+.venv/bin/python migrations/data/20260806_audit_permission_preconditions.py
+```
+
+Continue only when the audit reports no blockers.
 
 ```bash
 .venv/bin/python migrations/data/20260806_apply_sql.py migrations/data/20260806_add_permission_roles.sql --yes-this-is-production
@@ -335,6 +339,8 @@ Keep these commands and the deploy in the same maintenance window:
 ```bash
 .venv/bin/python migrations/data/20260827_merge_legacy_entity_groups.py --commit --yes-this-is-production
 .venv/bin/python migrations/data/20260827_backfill_access_group_types.py --commit --accept-custom-groups --accept-suspicious-custom-groups --yes-this-is-production
+.venv/bin/python migrations/data/20260831_repair_exclusive_resource_owners.py --yes-this-is-production
+.venv/bin/python migrations/data/20260831_repair_exclusive_resource_owners.py --commit --yes-this-is-production
 .venv/bin/python migrations/data/20260828_audit_permission_cutover_preconditions.py
 .venv/bin/python migrations/data/20260813_repoint_project_resource_identity.py --commit --yes-this-is-production
 .venv/bin/alembic -x yes-this-is-production=true upgrade a9f3c2e7b614
@@ -359,7 +365,7 @@ After the final application is live, rerun the identity scripts as dry runs. Com
 ### 14. Verify the final state
 
 ```bash
-.venv/bin/alembic current
+.venv/bin/alembic -x yes-this-is-production=true current
 ```
 
 Expected revision: `a9f3c2e7b614 (head)`.
@@ -412,6 +418,7 @@ These are separate follow-up changes, not reasons to extend the production maint
 2. Bind each service account to its instrument, verify ingestion and project discovery, set its `platform_role` to `none`, and remove it from the legacy admin group.
 3. Decide how to handle historical projects whose recorded lead is not an active owner member.
 4. Leave `resourceacl.read`, `resourceacl.write`, `dataset.public`, and `idtype.public` in place until the new authorization path has been stable long enough to make rollback unlikely. Drop them only in a separate contract migration with a fresh backup.
+5. Reconcile the accepted production instrument and ownership anomalies using the reviewed processes in `docs/production_migration_data_followups.md`.
 
 ## Rollback
 
@@ -432,4 +439,5 @@ These are separate follow-up changes, not reasons to extend the production maint
 |---|---|
 | `docs/permission_system_plan.md` | Permission model, invariants, and design decisions. |
 | `docs/permission_system_api_changes.md` | Client-facing route and schema changes. |
+| `docs/production_migration_data_followups.md` | Accepted production instrument and ownership anomalies with reconciliation recipes. |
 | `migrations/README.md` | Where schema revisions and data scripts belong. |

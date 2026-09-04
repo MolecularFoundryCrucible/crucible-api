@@ -6,9 +6,9 @@ logger = logging.getLogger(__name__)
 import os
 import networkx as nx
 from networkx.readwrite import json_graph
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import exists, func, join, literal, text
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import joinedload
 from sqlmodel import and_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
@@ -20,22 +20,24 @@ from app.models.core_models import (
 from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
+from app.models.projects import ProjectReferenceRead
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 
-
-from app.utils.auth_utils import access_selector_filter, authorize_user, permission_filter, require_permission
-from app.utils.instrument_utils import resolve_instrument_mfids_to_ids
-from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
+from app.utils.auth_utils import (
+    access_selector_filter, authorize_user, permission_filter, require_permission)
+from app.utils.instrument_utils import resolve_instrument_mfids_to_references
 from app.utils.permissions import Principal, Permission, Role
-from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_ids
-from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, get_active_deletion_request, touch_resource_modification_time, set_public, visibility_filter_for
+from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_references
+from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public, visibility_filter_for
 
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
 from app.models.users import UserPublicRead
+from app.services.resource_details import ResourceDetailOptions, load_sample_detail
 
 router = APIRouter(tags=["samples"])
 engine = get_engine()
+RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
 
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
@@ -135,10 +137,12 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
         session.commit()
         session.refresh(sample)
         background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri), user_unique_id, "update")
-        project_ids = resolve_project_mfids_to_ids([sample.project_mfid], session)
+        project_references = resolve_project_mfids_to_references([sample.project_mfid], session)
+        project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
-            "project_id": project_ids.get(sample.project_mfid, sample.project_id),
+            "project_id": project_reference.project_id if project_reference else sample.project_id,
+            "project": project_reference,
             "public": ri.public if ri else False,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
@@ -149,9 +153,8 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
 def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: SampleCreate,
                   background_tasks: BackgroundTasks):
     '''
-    Create a new sample. Sample names are not unique within a project — repeating one
-    creates a second sample. Clients that want to warn the user about an accidental
-    duplicate should pre-check with GET /samples?sample_name=&project_id=.
+    Create a new sample. Sample names are not unique within a project, so repeating one
+    creates a second sample.
     '''
     user_unique_id = auth_res.user_id
 
@@ -176,20 +179,6 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
             project_mfid = resolve_project_id_to_mfid(S.project_id, session)
             if project_mfid is None:
                 raise HTTPException(status_code=404, detail=f"Project '{S.project_id}' not found")
-
-        # if session.exec(
-        #     select(Sample).where(
-        #         and_(
-        #             Sample.project_mfid == project_mfid,
-        #             Sample.sample_name == S.sample_name,
-        #             deletion_filter_for(Sample),
-        #         )
-        #     )
-        # ).one_or_none():
-        #     raise HTTPException(
-        #         status_code=409,
-        #         detail=f"A sample named '{S.sample_name}' already exists in project '{S.project_id}'.",
-        #     )
 
         if not auth_res.is_platform_admin:
             owner_orcid = resolved_owner_orcid or user_unique_id
@@ -243,8 +232,12 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         session.commit()
         session.refresh(sample)
         background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri), user_unique_id, "create")
+        project_references = resolve_project_mfids_to_references([sample.project_mfid], session)
+        project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
+            "project_id": project_reference.project_id if project_reference else sample.project_id,
+            "project": project_reference,
             "public": ri.public if ri else False,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
@@ -264,7 +257,10 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                  offset: int = Query(default=0, ge=0),
                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                  modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None,
-                 visibility: Literal["all", "public", "private"] = "all"):
+                 visibility: Literal["all", "public", "private"] = "all",
+                 dataset_mfid: Annotated[Optional[str], Query(
+                     description="Filter samples linked to this canonical dataset MFID.",
+                 )] = None):
     '''
     Returns a paginated list of samples the requesting user is authorized to view.
     Default limit is 100, max is 1000.
@@ -279,8 +275,9 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
     of cursor. cursor takes precedence when both are given. Prefer cursor for large
     result sets, since deep offsets are slower.
     Pass include_links=true to include parent, child, and associated resources for each sample.
-    include_datasets is deprecated — use include_links instead.
+    include_datasets is deprecated; use include_links instead.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
+    Pass dataset_mfid to filter by a readable dataset's canonical stable identity.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
     import warnings
@@ -293,10 +290,20 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
               'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets',
               'include_owner', 'limit', 'cursor', 'offset', 'visibility',
-              'accessible_to_user', 'accessible_to_project'):
+              'accessible_to_user', 'accessible_to_project', 'dataset_mfid'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
+        linked_dataset_id = None
+        if dataset_mfid is not None:
+            linked_dataset_id = session.exec(
+                select(Dataset.id)
+                .where(Dataset.unique_id == dataset_mfid)
+                .where(permission_filter(auth_res, Dataset, Permission.READ))
+            ).one_or_none()
+            if linked_dataset_id is None:
+                raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+
         auth_filter = access_selector_filter(
             session,
             auth_res,
@@ -318,6 +325,15 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                 q = q.where(Resource.modification_time >= modification_time_gte)
             if modification_time_lte:
                 q = q.where(Resource.modification_time <= modification_time_lte)
+            if linked_dataset_id is not None:
+                q = q.where(
+                    exists()
+                    .where(
+                        DatasetSampleLink.dataset_id == linked_dataset_id,
+                        DatasetSampleLink.sample_id == Sample.id,
+                    )
+                    .correlate(Sample)
+                )
             for k, v in params_dict.items():
                 if hasattr(Sample, k) and v is not None:
                     q = q.where(getattr(Sample, k) == v)
@@ -335,7 +351,8 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
         if include_metadata:
             samp_cmd = (
                 select(Sample, Resource.creation_time, Resource.modification_time, Resource.public,
-                       ScientificMetadataBinary.scientific_metadata, Project.project_id)
+                       ScientificMetadataBinary.scientific_metadata, Project.unique_id,
+                       Project.project_id, Project.title)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
                 .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Sample.unique_id, isouter=True)
                 .outerjoin(Project, Project.unique_id == Sample.project_mfid)
@@ -343,7 +360,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
         else:
             samp_cmd = (
                 select(Sample, Resource.creation_time, Resource.modification_time, Resource.public,
-                       Project.project_id)
+                       Project.unique_id, Project.project_id, Project.title)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
                 .outerjoin(Project, Project.unique_id == Sample.project_mfid)
             )
@@ -394,9 +411,9 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     .where(deletion_filter_for(Dataset))
                     .order_by(DatasetSampleLink.sample_id, Dataset.unique_id)
                 ).all()
-                instrument_ids = resolve_instrument_mfids_to_ids(
+                instrument_references = resolve_instrument_mfids_to_references(
                     [ds.instrument_mfid for _, ds in sample_dataset_rows], session)
-                ds_project_ids = resolve_project_mfids_to_ids(
+                ds_project_references = resolve_project_mfids_to_references(
                     [ds.project_mfid for _, ds in sample_dataset_rows], session)
                 for sid, ds in sample_dataset_rows:
                     datasets_by_sample.setdefault(sid, []).append(
@@ -404,8 +421,10 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     )
                     dataset_reads_by_sample.setdefault(sid, []).append(DatasetRead.model_validate({
                         **ds.model_dump(),
-                        "instrument_id": instrument_ids.get(ds.instrument_mfid),
-                        "project_id": ds_project_ids.get(ds.project_mfid, ds.project_id),
+                        "instrument_id": instrument_references[ds.instrument_mfid].instrument_id if ds.instrument_mfid in instrument_references else None,
+                        "project_id": ds_project_references[ds.project_mfid].project_id if ds.project_mfid in ds_project_references else ds.project_id,
+                        "instrument": instrument_references.get(ds.instrument_mfid),
+                        "project": ds_project_references.get(ds.project_mfid),
                     }))
 
         # Batch-resolve owners if requested
@@ -419,10 +438,15 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
         items = []
         for row in rows:
             if include_metadata:
-                samp, creation_time, modification_time, public, sci_md, resolved_project_id = row
+                samp, creation_time, modification_time, public, sci_md, project_mfid, resolved_project_id, project_title = row
             else:
-                samp, creation_time, modification_time, public, resolved_project_id = row
+                samp, creation_time, modification_time, public, project_mfid, resolved_project_id, project_title = row
                 sci_md = None
+            project_reference = ProjectReferenceRead(
+                unique_id=project_mfid,
+                project_id=resolved_project_id,
+                title=project_title,
+            ) if project_mfid is not None else None
             links = None
             compat_datasets = None
             if include_links:
@@ -436,6 +460,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
             items.append(SampleResponse.model_validate({
                 **samp.model_dump(),
                 "project_id": resolved_project_id if resolved_project_id is not None else samp.project_id,
+                "project": project_reference,
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
@@ -458,7 +483,7 @@ def _sample_base_query(principal):
     deletion_filter = deletion_filter_for(Sample)
     return (
         select(Sample, Resource.creation_time, Resource.modification_time, Resource.public,
-               Project.project_id)
+               Project.unique_id, Project.project_id, Project.title)
         .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
         .outerjoin(Project, Project.unique_id == Sample.project_mfid)
         .where(auth_filter)
@@ -493,89 +518,64 @@ def search_samples(
         items = [SampleResponse.model_validate({
             **samp.model_dump(),
             "project_id": resolved_project_id if resolved_project_id is not None else samp.project_id,
+            "project": ProjectReferenceRead(
+                unique_id=project_mfid,
+                project_id=resolved_project_id,
+                title=project_title,
+            ) if project_mfid is not None else None,
             "public": public if public is not None else False,
             "creation_time": creation_time,
             "modification_time": modification_time,
-        }) for samp, creation_time, modification_time, public, resolved_project_id in results]
+        }) for samp, creation_time, modification_time, public, project_mfid, resolved_project_id, project_title in results]
         return PaginatedResponse(limit=limit, items=items)
 
 
 @router.get("/samples/{sample_mfid}", response_model=SampleResponse)
-def read_sample(sample_mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)], include_links: bool = False, include_metadata: bool = False, include_owner: bool = False):
+def read_sample(
+    sample_mfid: str,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    include_links: bool = False,
+    include_metadata: bool = False,
+    include_owner: bool = True,
+    include_datasets: bool = Query(
+        default=True,
+        description="Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+    ),
+):
     '''
     Returns the sample for the provided MFID.
     Pass include_links=true to include parent, child, and associated resources.
+    Embedded dataset objects are retained by default for compatibility. New clients should pass include_datasets=false and use include_links or GET /datasets?sample_mfid=... instead.
+    The owner identity is resolved by default. Pass include_owner=false to omit it.
     '''
     with Session(engine) as session:
-        # get with metadata or not
-        resource_opts = (
-            selectinload(Sample.resource).selectinload(Resource.scientific_metadata)
-            if include_metadata else selectinload(Sample.resource)
-        )
-        # fetch resource
-        samp = session.exec(
-            select(Sample)
-            .options(resource_opts)
-            .where(Sample.unique_id == sample_mfid)
-        ).first()
-
-        # if not existing, return error
-        if samp is None:
-            raise HTTPException(status_code=404, detail="Sample not found")
-
-        # check that requester has read access
-        require_permission(session, auth_res, sample_mfid, Permission.READ)
-
-        # check deletion request
-        deletion_req = get_active_deletion_request(session, sample_mfid)
-
-        readable_datasets = fetch_readable_sample_datasets(
-            session, auth_res, samp.id
+        return load_sample_detail(
+            session,
+            auth_res,
+            sample_mfid,
+            options=ResourceDetailOptions(
+                include_metadata=include_metadata,
+                include_links=include_links,
+                include_owner=include_owner,
+                include_datasets=include_datasets,
+            ),
         )
 
-        links = None
-        if include_links:
-            links = fetch_readable_links(
-                session,
-                auth_res,
-                "sample",
-                samp,
-                associated_entities=readable_datasets,
-            )
 
-        resource_md = samp.resource.scientific_metadata if samp.resource else None
-        owner = None
-        if include_owner and samp.owner_orcid:
-            owner_user = session.exec(select(User).where(User.unique_id == samp.owner_orcid)).one_or_none()
-            if owner_user:
-                owner = UserPublicRead.model_validate(owner_user)
-        instrument_ids = resolve_instrument_mfids_to_ids(
-            [ds.instrument_mfid for ds in readable_datasets], session)
-        ds_project_ids = resolve_project_mfids_to_ids(
-            [ds.project_mfid for ds in readable_datasets] + [samp.project_mfid], session)
-        return SampleResponse.model_validate({
-            **samp.model_dump(),
-            "project_id": ds_project_ids.get(samp.project_mfid, samp.project_id),
-            "public": samp.resource.public if samp.resource else False,
-            "datasets": [DatasetRead.model_validate({
-                **ds.model_dump(),
-                "instrument_id": instrument_ids.get(ds.instrument_mfid),
-                "project_id": ds_project_ids.get(ds.project_mfid, ds.project_id),
-            }) for ds in readable_datasets],
-            "creation_time": samp.resource.creation_time if samp.resource else None,
-            "modification_time": samp.resource.modification_time if samp.resource else None,
-            "scientific_metadata": resource_md.scientific_metadata if include_metadata and resource_md else None,
-            "deletion_request": deletion_req.model_dump() if deletion_req else None,
-            "links": links,
-            "owner": owner,
-        })
-
-
-@router.get("/samples/{sample_id}/datasets")
-def list_sample_datasets(sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)], request: Request, include_metadata: bool = False, limit: Optional[int] = None):
+@router.get("/samples/{sample_id}/datasets", deprecated=True)
+def list_sample_datasets(
+    sample_id: str,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    request: Request,
+    response: Response,
+    include_metadata: bool = False,
+    limit: Optional[int] = None,
+):
     '''
-    Returns a list of all datasets linked to a given sample
+    Returns a list of all datasets linked to a given sample.
+    Deprecated: use GET /datasets?sample_mfid={sample_id}.
     '''
+    response.headers["Deprecation"] = RELATIONSHIP_ROUTE_DEPRECATION
 
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop("keyword", None)
@@ -649,10 +649,11 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[Principal, Dep
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
-        project_ids = resolve_project_mfids_to_ids((s.project_mfid for s in rows), session)
+        project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
         items = [SampleRead.model_validate({
             **s.model_dump(),
-            "project_id": project_ids.get(s.project_mfid, s.project_id),
+            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else s.project_id,
+            "project": project_references.get(s.project_mfid),
         }) for s in rows]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
@@ -679,10 +680,11 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[Principal, Dep
         )
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
-        project_ids = resolve_project_mfids_to_ids((s.project_mfid for s in rows), session)
+        project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
         items = [SampleRead.model_validate({
             **s.model_dump(),
-            "project_id": project_ids.get(s.project_mfid, s.project_id),
+            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else s.project_id,
+            "project": project_references.get(s.project_mfid),
         }) for s in rows]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 

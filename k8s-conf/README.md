@@ -1,24 +1,20 @@
-### Deployment notes
+# Kubernetes deployment notes
 
-##### Grafana and Prometheus set up
-1. Enable google cloud prometheus monitoring for the cluster
-```
+The API already exposes Prometheus metrics at `/metrics` through `prometheus-fastapi-instrumentator`. The main and staging PodMonitoring manifests in this directory configure collection for their respective deployments.
+
+Enable Google Cloud Managed Service for Prometheus once per cluster if it is not already enabled:
+
+```bash
 gcloud container clusters update crucible-cluster \
   --enable-managed-prometheus \
   --region us-central1
 ```
-2. Add a podmonitoring service for the deployment
-```
+
+Apply the manifest for the intended environment:
+
+```bash
 kubectl apply -f k8s-conf/pod-monitoring-main.yaml
+kubectl apply -f k8s-conf/pod-monitoring-staging.yaml
 ```
-3. Add prometheus monitoring at the fastapi level by adding a /metrics endpoint
-```
-# main.py
-from prometheus_fastapi_instrumentator import Instrumentator
-Instrumentator().instrument(app).expose(app)
-```
-4. Update uv env with prometheus
-```
-uv add prometheus-fastapi-instrumentator
-```
-5. Rebuild and deploy
+
+After deployment, verify the pod labels match the selected manifest, the API `/metrics` endpoint responds inside the cluster, and the PodMonitoring resource reports healthy collection. Do not add another instrumentation instance or duplicate dependency setup.

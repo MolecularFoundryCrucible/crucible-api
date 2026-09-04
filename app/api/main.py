@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.build_info import api_version
-from app.api.dependencies import get_api_config
+from app.api.dependencies import get_api_root_path
 from app.api.routes import (account, auth, files, datasets, gcs_storage, resources,
                             samples, instruments, users, projects,
                             access_groups, entities, misc, deletion,
@@ -15,7 +15,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(root_path=f"/{get_api_config()['api_path']}", version=api_version())
+api_root_path = get_api_root_path()
+app = FastAPI(
+    root_path=api_root_path,
+    root_path_in_servers=False,
+    servers=[{"url": api_root_path}],
+    version=api_version(),
+)
 
 
 @app.middleware("http")

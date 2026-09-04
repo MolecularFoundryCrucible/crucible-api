@@ -1,5 +1,7 @@
 # Database deletion contract
 
+Status: Current API v3 contract. Storage-object deletion remains deferred.
+
 ## Scope
 
 Crucible currently deletes database records only. Dataset objects in GCS are intentionally left in place. Storage cleanup remains deferred and must not be represented as completed by the API.

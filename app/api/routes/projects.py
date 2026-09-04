@@ -2,7 +2,7 @@ import os
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import and_, func, join, literal, text
+from sqlalchemy import and_, func, literal, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import Session, select, col
 import networkx as nx
@@ -15,7 +15,8 @@ from app.models.core_models import (
 )
 from app.utils.auth_utils import (
     access_selector_filter, authorize_user, has_platform_admin_access,
-    permission_filter, require_grant, require_permission)
+    load_principal, permission_filter, require_grant, require_permission,
+    resource_capabilities)
 from app.utils.permissions import (
     AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
 from app.utils.sql_utils import add_or_update, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
@@ -25,14 +26,33 @@ from app.utils.project_utils import (
     sql_get_projects_for_user, resolve_project_reference)
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
-from app.models.projects import ProjectCreate, ProjectRead, ProjectUpdate, ProjectWithLead
+from app.models.projects import (
+    ProjectCreate, ProjectMembershipRole, ProjectRead, ProjectUpdate, ProjectWithLead)
 from app.models.users import UserPublicRead
+from app.services.resource_details import (
+    ResourceDetailOptions,
+    load_project_detail,
+    load_project_members,
+)
 
 router = APIRouter(tags=["projects"])
 engine = get_engine()
 
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
+
+
+def _project_capabilities(session, principal, project):
+    return resource_capabilities(
+        session,
+        principal,
+        project.unique_id,
+        legacy_edit_group=project.unique_id,
+        manage_access_floor=Role.EDITOR,
+        allow_peer_grants=False,
+        status_permission=Permission.EDIT,
+        legacy_status_group=project.unique_id,
+    )
 
 
 @router.post("/projects", response_model=ProjectRead)
@@ -94,7 +114,14 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
 
         session.commit()
         session.refresh(prop)
-        return prop
+        capability_principal = (
+            auth_res if auth_res.is_platform_admin
+            else load_principal(session, auth_res.user_id)
+        )
+        return ProjectRead(
+            **prop.model_dump(),
+            capabilities=_project_capabilities(session, capability_principal, prop),
+        )
 
 
 @router.get("/projects", response_model=PaginatedResponse[ProjectWithLead])
@@ -173,6 +200,7 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
                 modification_time=proj.resource.modification_time if proj.resource else None,
                 scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
                 members=members,
+                capabilities=_project_capabilities(session, auth_res, proj) if project_id is not None else None,
             ))
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
@@ -228,32 +256,22 @@ def read_project(project_ref: str, response: Response,
     Non-members never get the member list, regardless of ?include_members=.
     '''
     with Session(engine) as session:
-        prop = resolve_project_reference(
-            project_ref,
-            session,
-            options=(selectinload(Project.resource).selectinload(Resource.scientific_metadata),),
-        )
+        prop = resolve_project_reference(project_ref, session)
         if prop is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
         if prop.project_id == project_ref:
             response.headers["Content-Location"] = f"/projects/{prop.unique_id}"
 
-        # Membership is standing in the project's own group, keyed by its
-        # MFID (Project.unique_id), not project_ref when it is a slug.
-        is_member = has_platform_admin_access(auth_res) or auth_res.role_in(prop.unique_id) is not None
-
-        lead_user = session.exec(select(User).where(User.unique_id == prop.project_lead_orcid)).one_or_none() if prop.project_lead_orcid else None
-        lead = UserPublicRead.model_validate(lead_user) if lead_user else None
-        resource_md = prop.resource.scientific_metadata if (prop.resource and is_member) else None
-        members = _get_project_users(prop.project_id, session) if (include_members and is_member) else None
-        return ProjectWithLead(
-            **prop.model_dump(),
-            lead=lead,
-            members=members,
-            creation_time=prop.resource.creation_time if prop.resource else None,
-            modification_time=prop.resource.modification_time if prop.resource else None,
-            scientific_metadata=resource_md.scientific_metadata if include_metadata and resource_md else None,
+        return load_project_detail(
+            session,
+            auth_res,
+            prop.unique_id,
+            project=prop,
+            options=ResourceDetailOptions(
+                include_metadata=include_metadata,
+                include_members=include_members,
+            ),
         )
 
 
@@ -302,28 +320,13 @@ def update_project(project_ref: str, auth_res: Annotated[Principal, Depends(auth
             lead=lead,
             creation_time=resource.creation_time if resource else None,
             modification_time=resource.modification_time if resource else None,
+            capabilities=_project_capabilities(session, auth_res, project),
         )
-
-
-def _project_member_rows(proj_id: str, session):
-    '''(User, role) for every member of proj_id's own access group — the
-    authoritative membership record, not UserProjectLink (see
-    is_project_member). No auth check, for internal use only.'''
-    return session.exec(
-        select(User, UserAccessGroupLink.role)
-        .select_from(join(AccessGroup, UserAccessGroupLink, UserAccessGroupLink.accessgroup_id == AccessGroup.id))
-        .join(User, User.id == UserAccessGroupLink.user_id)
-        .join(Project, Project.unique_id == AccessGroup.group_name)
-        .where(Project.project_id == proj_id)
-    ).all()
 
 
 def _get_project_users(proj_id: str, session) -> List[AccessGroupMemberRead]:
     '''Public-safe project members and their role.'''
-    return [
-        AccessGroupMemberRead.model_validate(user, update={"role": role or "unknown"})
-        for user, role in _project_member_rows(proj_id, session)
-    ]
+    return load_project_members(session, proj_id)
 @router.get("/projects/{project_ref}/users", response_model=PaginatedResponse[AccessGroupMemberRead])
 def read_users_on_project(project_ref: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                           limit: int = Query(default=100, ge=1, le=1000),
@@ -350,17 +353,18 @@ def add_users_to_project(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     email: Optional[str] = None,
     username: Optional[str] = None,
-    role: Role = Role.CONTRIBUTOR,
+    role: ProjectMembershipRole = ProjectMembershipRole.CONTRIBUTOR,
 ):
     '''
     Add a user to a project at `role`, defaulting to contributor.
 
-    Requires editor or above in the project, and you may only grant a role at
-    or below your own — so an editor can seat a contributor but never an admin.
+    Requires editor or above in the project. Editors may grant contributor or
+    viewer, admins may grant editor or below, and owners may grant admin or below.
     Cannot seat someone as owner this way; a project has exactly one owner,
     changed only via POST /resources/{mfid}/transfer_ownership.
     '''
-    if role == Role.OWNER:
+    internal_role = Role.from_db(role.value)
+    if internal_role == Role.OWNER:
         raise HTTPException(
             status_code=409,
             detail="Cannot appoint an owner this way; use POST /resources/{mfid}/transfer_ownership")
@@ -371,11 +375,40 @@ def add_users_to_project(
             raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')
 
         require_permission(session, auth_res, proj.unique_id, Permission.EDIT, legacy_group=proj.unique_id)
-        require_grant(session, auth_res, proj.unique_id, role, floor=Role.EDITOR)
-
         user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
+        ag = session.exec(
+            select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)
+        ).one_or_none()
+        if ag is not None:
+            existing_link = session.exec(
+                select(UserAccessGroupLink)
+                .where(UserAccessGroupLink.user_id == user.id)
+                .where(UserAccessGroupLink.accessgroup_id == ag.id)
+            ).one_or_none()
+            if existing_link is not None and existing_link.role is not None:
+                current_role = Role.from_db(existing_link.role)
+                if current_role == internal_role:
+                    return _get_project_users(proj.project_id, session)
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"User '{user.unique_id}' is already a member of project "
+                        f"'{proj.project_id}' with role '{current_role.db_value}'. "
+                        f"Use PATCH /projects/{proj.unique_id}/users/{user.unique_id}"
+                        f"?role={internal_role.db_value} to change it."
+                    ),
+                )
 
-        sql_add_user_to_project(user, proj.project_id, session, role=role)
+        require_grant(
+            session,
+            auth_res,
+            proj.unique_id,
+            internal_role,
+            floor=Role.EDITOR,
+            allow_peer=False,
+        )
+
+        sql_add_user_to_project(user, proj.project_id, session, role=internal_role)
         session.commit()
 
         return _get_project_users(proj.project_id, session)
@@ -386,20 +419,20 @@ def set_project_user_role(
     project_ref: str,
     orcid: str,
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    role: Role,
+    role: ProjectMembershipRole,
 ):
     '''
     Change a member's role in a project.
 
-    The cap binds on both ends: you may not grant a role above your own, nor
-    change a member who already holds one above your own. That is what stops a
-    project admin demoting the owner.
+    Role management follows a strict hierarchy. Editors manage contributor and
+    viewer roles, admins manage editor and below, and owners manage admin and below.
 
-    Cannot grant or touch owner standing at all, even as the owner yourself —
+    Cannot grant or touch owner standing at all, even as the owner yourself.
     a project has exactly one owner, changed only via
     POST /resources/{mfid}/transfer_ownership.
     '''
-    if role == Role.OWNER:
+    internal_role = Role.from_db(role.value)
+    if internal_role == Role.OWNER:
         raise HTTPException(
             status_code=409,
             detail="Cannot appoint an owner this way; use POST /resources/{mfid}/transfer_ownership")
@@ -430,9 +463,17 @@ def set_project_user_role(
             raise HTTPException(
                 status_code=409,
                 detail="Cannot change the owner's standing this way; use POST /resources/{mfid}/transfer_ownership")
-        require_grant(session, auth_res, proj.unique_id, role, current=current, floor=Role.EDITOR)
+        require_grant(
+            session,
+            auth_res,
+            proj.unique_id,
+            internal_role,
+            current=current,
+            floor=Role.EDITOR,
+            allow_peer=False,
+        )
 
-        link.role = role.db_value
+        link.role = internal_role.db_value
         session.add(link)
         touch_resource_modification_time(session, proj.unique_id)
         session.commit()

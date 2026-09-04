@@ -1,17 +1,9 @@
-"""add FK project.project_lead_orcid to user.orcid
+"""Add FK from project.project_lead_orcid to user.orcid.
 
-project_lead_orcid was an unconstrained string despite always naming a real
-user — the same class of gap docs/schema_hygiene.md flags for owner_orcid,
-just never closed here. It's staying permanently as a denormalized display
-pointer (see docs/permission_system_plan.md, "Project lead becomes a role" —
-superseded from an earlier plan to drop the column in phase 5), so it's worth
-the same integrity guarantee AccessGroupJoinRequest.requester_id already has.
-
-Run this precondition check first — it must return zero rows, or the ADD
-CONSTRAINT below fails:
-
-    SELECT project_id, project_lead_orcid FROM project p
-    WHERE NOT EXISTS (SELECT 1 FROM "user" u WHERE u.orcid = p.project_lead_orcid);
+Legacy projects may name leads who do not have a current user row. PostgreSQL's
+NOT VALID constraint preserves those rows while enforcing the relationship for
+all new and updated values. The constraint can be validated after legacy leads
+are reconciled.
 
 Revision ID: 1bb842c39928
 Revises: fc9be1ddfb92
@@ -38,6 +30,7 @@ def upgrade() -> None:
         referent_table="user",
         local_cols=["project_lead_orcid"],
         remote_cols=["orcid"],
+        postgresql_not_valid=True,
     )
 
 

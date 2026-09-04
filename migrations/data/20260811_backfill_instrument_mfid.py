@@ -56,19 +56,52 @@ def main() -> int:
             return 2
 
         counts = session.execute(text("""
+            WITH candidates AS (
+                SELECT
+                    target.instrument_id,
+                    target.instrument_name,
+                    by_id.id AS matched_by_id,
+                    by_name.id AS matched_by_name
+                FROM dataset target
+                LEFT JOIN instrument by_id ON by_id.id = target.instrument_id
+                LEFT JOIN instrument by_name ON lower(by_name.instrument_name) = lower(target.instrument_name)
+                WHERE target.instrument_mfid IS NULL
+                  AND (target.instrument_id IS NOT NULL OR target.instrument_name IS NOT NULL)
+            ), dangling_groups AS (
+                SELECT instrument_id, instrument_name, count(*) AS datasets
+                FROM candidates
+                WHERE matched_by_id IS NULL AND matched_by_name IS NULL
+                GROUP BY instrument_id, instrument_name
+                ORDER BY count(*) DESC, instrument_name NULLS LAST, instrument_id NULLS LAST
+                LIMIT 20
+            )
             SELECT
-                count(*) FILTER (WHERE by_id.id IS NOT NULL) AS by_id,
-                count(*) FILTER (WHERE by_id.id IS NULL AND by_name.id IS NOT NULL) AS by_name,
-                count(*) FILTER (WHERE by_id.id IS NULL AND by_name.id IS NULL) AS dangling
-            FROM dataset target
-            LEFT JOIN instrument by_id ON by_id.id = target.instrument_id
-            LEFT JOIN instrument by_name ON lower(by_name.instrument_name) = lower(target.instrument_name)
-            WHERE target.instrument_mfid IS NULL
-              AND (target.instrument_id IS NOT NULL OR target.instrument_name IS NOT NULL)
+                count(*) FILTER (WHERE matched_by_id IS NOT NULL) AS by_id,
+                count(*) FILTER (WHERE matched_by_id IS NULL AND matched_by_name IS NOT NULL) AS by_name,
+                count(*) FILTER (WHERE matched_by_id IS NULL AND matched_by_name IS NULL) AS dangling,
+                (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'instrument_id', instrument_id,
+                            'instrument_name', instrument_name,
+                            'datasets', datasets
+                        )
+                        ORDER BY datasets DESC, instrument_name NULLS LAST, instrument_id NULLS LAST
+                    )
+                    FROM dangling_groups
+                ) AS dangling_sample
+            FROM candidates
         """)).one()
         print(f"by ID         : {counts.by_id}")
         print(f"by name       : {counts.by_name}")
         print(f"dangling      : {counts.dangling}")
+        if counts.dangling_sample:
+            print("dangling sample:")
+            for item in counts.dangling_sample:
+                print(
+                    f"  id={item['instrument_id']!r}, name={item['instrument_name']!r}: "
+                    f"{item['datasets']} datasets"
+                )
         if not args.commit:
             print("dry run only: nothing written")
             return 0

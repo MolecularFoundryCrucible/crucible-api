@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
 from app.general_utils import blank_to_none, is_valid_mfid
@@ -113,12 +113,39 @@ class ThumbnailCreate(SQLModel):
     thumbnail_b64str: str
 
 
+class ThumbnailUpdate(SQLModel):
+    '''Fields accepted when updating a thumbnail.'''
+    model_config = ConfigDict(extra="forbid")
+
+    thumbnail_name: Optional[str] = None
+    thumbnail_b64str: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_update(self):
+        if self.thumbnail_name is None and self.thumbnail_b64str is None:
+            raise ValueError("Provide thumbnail_name, thumbnail_b64str, or both")
+        if self.thumbnail_name is not None and not self.thumbnail_name.strip():
+            raise ValueError("thumbnail_name must not be blank")
+        if self.thumbnail_b64str is not None and not self.thumbnail_b64str.strip():
+            raise ValueError("thumbnail_b64str must not be blank")
+        return self
+
+
 class ThumbnailRead(SQLModel):
     '''Response model for Thumbnail.'''
     id: int
     dataset_id: int
     thumbnail_name: str
     thumbnail_b64str: str
+    mime_type: Literal["image/jpeg"] = "image/jpeg"
+
+
+class ThumbnailPreviewRead(SQLModel):
+    '''Thumbnail fields returned by the bulk preview endpoint.'''
+    id: int
+    thumbnail_name: str
+    thumbnail_b64str: str
+    mime_type: Literal["image/jpeg"] = "image/jpeg"
 
 
 class AssociatedFileCreate(SQLModel):

@@ -42,13 +42,14 @@ from app.models.datasets import (
 from app.models.instrument import InstrumentReferenceRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
-from app.models.projects import ProjectReferenceRead
+from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
 from app.services.resource_details import ResourceDetailOptions, load_dataset_detail
 from app.services.thumbnails import InvalidThumbnailImage, ThumbnailTooLarge, normalize_thumbnail
 from app.utils.auth_utils import (
-    access_selector_filter, authorize_user, permission_filter, require_permission)
+    access_selector_filter, authorize_user, permission_filter, project_scope_filter,
+    require_permission)
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_references
 from app.utils.instrument_utils import resolve_instrument_mfids_to_references
@@ -410,6 +411,12 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                   instrument_mfid: Annotated[Optional[str], Query(
                       description="Filter datasets assigned to this canonical instrument MFID.",
                   )] = None,
+                  project_mfid: Annotated[Optional[str], Query(
+                      description="Filter datasets related to this canonical project MFID.",
+                  )] = None,
+                  project_scope: Annotated[Optional[ProjectScope], Query(
+                      description="Project relationship to include. Requires project_mfid; defaults to assigned.",
+                  )] = None,
                   sample_mfid: Annotated[Optional[str], Query(
                       description="Filter datasets linked to this canonical sample MFID.",
                   )] = None):
@@ -429,9 +436,14 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
     Pass include_links=true to include parent, child, and associated resources for each dataset.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
     Pass instrument_mfid to filter by the instrument's canonical stable identity.
+    Pass project_mfid with project_scope=assigned, shared, or all to filter by project relationship.
     Pass sample_mfid to filter by a readable sample's canonical stable identity.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
+    if project_scope is not None and project_mfid is None:
+        raise HTTPException(status_code=422, detail="project_scope requires project_mfid")
+    effective_project_scope: ProjectScope = project_scope or "assigned"
+
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
 
@@ -439,7 +451,8 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
               'modification_time_lte', 'include_metadata', 'include_links', 'include_owner',
               'limit', 'cursor', 'offset', 'visibility', 'accessible_to_user',
-              'accessible_to_project', 'instrument_mfid', 'sample_mfid'):
+              'accessible_to_project', 'instrument_mfid', 'project_mfid',
+              'project_scope', 'sample_mfid'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
@@ -460,6 +473,11 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
             user_refs=accessible_to_user,
             project_refs=accessible_to_project,
         )
+        project_filter = (
+            project_scope_filter(
+                session, auth_res, Dataset, project_mfid, effective_project_scope)
+            if project_mfid is not None else None
+        )
         deletion_filter = deletion_filter_for(Dataset)
 
         # Base filters shared between count and data queries
@@ -477,6 +495,8 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 q = q.where(Resource.modification_time <= modification_time_lte)
             if instrument_mfid is not None:
                 q = q.where(Dataset.instrument_mfid == instrument_mfid)
+            if project_filter is not None:
+                q = q.where(project_filter)
             if linked_sample_id is not None:
                 q = q.where(
                     exists()
@@ -587,9 +607,9 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
         items = []
         for row in results:
             if include_metadata:
-                dataset, creation_time, modification_time, public, sci_md, project_mfid, project_id, project_title, instrument_mfid, instrument_id, instrument_name = row
+                dataset, creation_time, modification_time, public, sci_md, resolved_project_mfid, project_id, project_title, instrument_mfid, instrument_id, instrument_name = row
             else:
-                dataset, creation_time, modification_time, public, project_mfid, project_id, project_title, instrument_mfid, instrument_id, instrument_name = row
+                dataset, creation_time, modification_time, public, resolved_project_mfid, project_id, project_title, instrument_mfid, instrument_id, instrument_name = row
                 sci_md = None
             instrument_reference = InstrumentReferenceRead(
                 unique_id=instrument_mfid,
@@ -597,10 +617,10 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 instrument_name=instrument_name,
             ) if instrument_mfid else None
             project_reference = ProjectReferenceRead(
-                unique_id=project_mfid,
+                unique_id=resolved_project_mfid,
                 project_id=project_id,
                 title=project_title,
-            ) if project_mfid else None
+            ) if resolved_project_mfid else None
             links = None
             if include_links:
                 links = (
@@ -620,6 +640,9 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 "scientific_metadata": sci_md,
                 "links": links,
                 "owner": owners_by_orcid.get(dataset.owner_orcid),
+                "project_relation": (
+                    "assigned" if dataset.project_mfid == project_mfid else "shared"
+                ) if project_mfid is not None else None,
             }))
         next_cursor = results[-1][0].unique_id if len(results) == limit else None
         resp_offset = offset if (cursor is None and offset) else None

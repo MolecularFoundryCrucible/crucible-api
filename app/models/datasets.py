@@ -4,7 +4,7 @@ from sqlmodel import SQLModel
 from app.general_utils import blank_to_none, is_valid_mfid
 from app.models.links import LinkedResource
 from app.models.instrument import InstrumentReferenceRead
-from app.models.projects import ProjectReferenceRead
+from app.models.projects import ProjectReferenceRead, ProjectRelation
 from app.models.resource import ResourceCapabilities
 from app.models.users import UserPublicRead
 
@@ -202,3 +202,4 @@ class DatasetResponse(DatasetRead):
     links: Optional[List[LinkedResource]] = None
     owner: Optional[UserPublicRead] = None
     capabilities: Optional[ResourceCapabilities] = None
+    project_relation: Optional[ProjectRelation] = None

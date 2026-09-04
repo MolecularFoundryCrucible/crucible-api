@@ -1,6 +1,8 @@
 # Schema Hygiene and FK Conventions
 
-Table-level schema issues found while auditing the permission path for `docs/permission_system_plan.md`. Deliberately **not** part of that redesign — this is cleanup with its own migration risk, and bundling it would make an already-large change harder to review. Item 1 is the exception worth watching: it directly affects the "resources I own" query that the permission model relies on in place of personal projects.
+Archived status: This audit records pre-permission-migration findings. Several schema and query assumptions were superseded by the August 2026 migration. Use it only as historical context and verify unresolved concerns against the current models.
+
+Table-level schema issues found while auditing the permission path for `docs/permission_system_plan.md`. Deliberately **not** part of that redesign - this is cleanup with its own migration risk, and bundling it would make an already-large change harder to review. Item 1 is the exception worth watching: it directly affects the "resources I own" query that the permission model relies on in place of personal projects.
 
 ## 1. `owner_orcid` / `owner_user_id` duplication
 
@@ -20,9 +22,9 @@ The query path should use the indexed `owner_user_id`: resolve the public identi
 ## 2. `Sample.project_id` has neither index nor FK
 
 ```python
-# Dataset — indexed and constrained
+# Dataset - indexed and constrained
 project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")
-# Sample — neither
+# Sample - neither
 project_id: Optional[str] = None
 ```
 
@@ -30,9 +32,9 @@ project_id: Optional[str] = None
 
 ## 3. No composite index for the dominant listing query
 
-`WHERE project_id = X ORDER BY unique_id DESC LIMIT n` forces the planner to choose between scanning the `project_id` index and sorting everything, or walking `unique_id` and filtering. A composite `(project_id, unique_id)` on `Dataset` serves both — filtered, already ordered, early-terminating under `LIMIT`.
+`WHERE project_id = X ORDER BY unique_id DESC LIMIT n` forces the planner to choose between scanning the `project_id` index and sorting everything, or walking `unique_id` and filtering. A composite `(project_id, unique_id)` on `Dataset` serves both - filtered, already ordered, early-terminating under `LIMIT`.
 
-## 4. FK conventions — three variants in use
+## 4. FK conventions - three variants in use
 
 | Convention | Used by |
 |---|---|
@@ -40,7 +42,7 @@ project_id: Optional[str] = None
 | String business key (`idtype.mfid`, `user.orcid`, `project.project_id`, `accessgroup.group_name`) | `ResourceACL`, `ScientificMetadataBinary`, `DeletionRequest.resource_id`, `AccessGroupJoinRequest`, `IngestionRequest`, `Dataset.project_id` |
 | Unconstrained string, no FK | `owner_orcid` (both tables), `Sample.project_id`, `DeletionRequest.requester_id` |
 
-`UserProjectLink` mixes the first two within a single table — `user_id` → `user.id` (int), `project_id` → `project.project_id` (string).
+`UserProjectLink` mixes the first two within a single table - `user_id` → `user.id` (int), `project_id` → `project.project_id` (string).
 
 The mixture is not wrong in itself; there is a defensible rule that explains most of it, and it is worth stating so new tables do not invent a fourth variant:
 
@@ -59,10 +61,10 @@ The permission plan replaces personal projects with a "My data" view (resources 
 | `project_id IS NULL` | "My data" | The intended case. Works once `owner_user_id` is reliable (item 1). |
 | Shared directly with you, you are not in the owning project | neither | Reached through an ORCID-group ACL entry; belongs to no project *you* can see and is not owned by you. Needs a "Shared with me" view. |
 | Public resources from projects you are not in | neither | Same shape. Needs the `visibility=public` filter the permission plan adds. |
-| Owned by a departed user, still in the project | project view | Fine, listed for completeness — the resource stays put when its owner leaves. |
+| Owned by a departed user, still in the project | project view | Fine, listed for completeness - the resource stays put when its owner leaves. |
 | `project_id` names a project that does not exist | **neither** | A defect, not a view gap. See below. |
 
-The last row follows from item 2: `Sample.project_id` has no foreign key, so nothing prevents a dangling value. Such a sample looks filed — the field is populated — but appears in no project listing, and if its owner is also unset it appears nowhere at all. `Dataset.project_id` is FK-constrained and cannot reach this state.
+The last row follows from item 2: `Sample.project_id` has no foreign key, so nothing prevents a dangling value. Such a sample looks filed - the field is populated - but appears in no project listing, and if its owner is also unset it appears nowhere at all. `Dataset.project_id` is FK-constrained and cannot reach this state.
 
 Count them before the permission migration, since the ACL backfill keys off project membership:
 

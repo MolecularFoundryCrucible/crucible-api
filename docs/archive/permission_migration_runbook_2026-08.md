@@ -1,5 +1,7 @@
 # Permission Migration Runbook
 
+Archived status: The production permission migration completed on 2026-08-31. Retain this document as an execution record only. Do not replay it against a current environment.
+
 This is the operational recipe for the permission migration. Follow it in order. Use `docs/permission_system_plan.md` for design details and `docs/permission_system_api_changes.md` for client-facing contract changes.
 
 ## Current status

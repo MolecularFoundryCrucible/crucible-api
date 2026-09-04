@@ -427,6 +427,32 @@ class TestGrantFloor:
     def test_editor_can_seat_members_at_or_below(self, target):
         assert can_grant(Role.EDITOR, target, floor=Role.EDITOR)
 
+    @pytest.mark.parametrize("actor,target", [
+        (Role.EDITOR, Role.EDITOR),
+        (Role.ADMIN, Role.ADMIN),
+        (Role.OWNER, Role.OWNER),
+    ])
+    def test_strict_hierarchy_rejects_peer_roles(self, actor, target):
+        assert not can_grant(
+            actor,
+            target,
+            floor=Role.EDITOR,
+            allow_peer=False,
+        )
+
+    @pytest.mark.parametrize("actor,target", [
+        (Role.EDITOR, Role.CONTRIBUTOR),
+        (Role.ADMIN, Role.EDITOR),
+        (Role.OWNER, Role.ADMIN),
+    ])
+    def test_strict_hierarchy_accepts_lower_roles(self, actor, target):
+        assert can_grant(
+            actor,
+            target,
+            floor=Role.EDITOR,
+            allow_peer=False,
+        )
+
     @pytest.mark.parametrize("target", [Role.ADMIN, Role.OWNER])
     def test_editor_still_cannot_seat_above_itself(self, target):
         assert not can_grant(Role.EDITOR, target, floor=Role.EDITOR)

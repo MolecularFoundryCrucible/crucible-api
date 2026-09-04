@@ -2,6 +2,7 @@ from typing import Annotated, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select, col
 
 from app.api.dependencies import get_engine
@@ -28,10 +29,10 @@ def _resolve_group_project_id(accessgroup_id: int, session: Session) -> Optional
     return proj.project_id if proj else None
 
 
-def _to_join_request_read(req: AccessGroupJoinRequest, session: Session) -> JoinRequestRead:
+def _to_join_request_read(req: AccessGroupJoinRequest, group_name: Optional[str]) -> JoinRequestRead:
     return JoinRequestRead(
         id=req.id,
-        group_name=_resolve_group_project_id(req.accessgroup_id, session),
+        group_name=group_name,
         requester_id=req.requester_id,
         reason=req.reason,
         status=req.status,
@@ -174,9 +175,22 @@ def request_to_join_access_group(
             reason=body.reason,
         )
         session.add(req)
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            duplicate = session.exec(
+                select(AccessGroupJoinRequest.id).where(
+                    AccessGroupJoinRequest.accessgroup_id == ag.id,
+                    AccessGroupJoinRequest.requester_id == user_unique_id,
+                    AccessGroupJoinRequest.status == "pending",
+                )
+            ).first()
+            if duplicate is not None:
+                raise HTTPException(status_code=409, detail="A pending join request already exists for this group.")
+            raise
         session.refresh(req)
-        return _to_join_request_read(req, session)
+        return _to_join_request_read(req, group_name)
 
 
 @router.get("/join_requests", response_model=PaginatedResponse[JoinRequestRead])
@@ -202,7 +216,7 @@ def list_join_requests(
     is_admin = has_platform_admin_access(auth_res)
 
     with Session(engine) as session:
-        query = select(AccessGroupJoinRequest)
+        filters = []
 
         if group_name:
             proj = session.exec(select(Project).where(Project.project_id == group_name)).one_or_none()
@@ -214,23 +228,31 @@ def list_join_requests(
                 raise HTTPException(status_code=403, detail="Only admins, or the lead of the requested group, can list join requests.")
             if ag is None:
                 return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
-            query = query.where(AccessGroupJoinRequest.accessgroup_id == ag.id)
+            filters.append(AccessGroupJoinRequest.accessgroup_id == ag.id)
         elif not is_admin:
             led_ids = _led_accessgroup_ids(user_unique_id, session)
             if not led_ids:
                 return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
-            query = query.where(col(AccessGroupJoinRequest.accessgroup_id).in_(led_ids))
+            filters.append(col(AccessGroupJoinRequest.accessgroup_id).in_(led_ids))
 
         if status:
-            query = query.where(AccessGroupJoinRequest.status == status)
+            filters.append(AccessGroupJoinRequest.status == status)
         if requester_id:
-            query = query.where(AccessGroupJoinRequest.requester_id == requester_id)
+            filters.append(AccessGroupJoinRequest.requester_id == requester_id)
 
-        total = session.exec(select(func.count()).select_from(query.subquery())).one()
+        total = session.exec(
+            select(func.count(AccessGroupJoinRequest.id)).where(*filters)
+        ).one()
         rows = session.exec(
-            query.order_by(col(AccessGroupJoinRequest.id).desc()).offset(offset).limit(limit)
+            select(AccessGroupJoinRequest, Project.project_id)
+            .join(AccessGroup, AccessGroup.id == AccessGroupJoinRequest.accessgroup_id)
+            .outerjoin(Project, Project.unique_id == AccessGroup.group_name)
+            .where(*filters)
+            .order_by(col(AccessGroupJoinRequest.id).desc())
+            .offset(offset)
+            .limit(limit)
         ).all()
-        items = [_to_join_request_read(req, session) for req in rows]
+        items = [_to_join_request_read(req, project_id) for req, project_id in rows]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
@@ -256,7 +278,7 @@ def get_join_request(
         if not is_admin and user_unique_id != req.requester_id and not _is_group_lead(user_unique_id, req.accessgroup_id, session):
             raise HTTPException(status_code=403, detail="Only admins, the lead of this group, or the requester can view this join request.")
 
-        return _to_join_request_read(req, session)
+        return _to_join_request_read(req, _resolve_group_project_id(req.accessgroup_id, session))
 
 
 @router.patch("/join_requests/{request_id}", response_model=JoinRequestRead)
@@ -275,7 +297,9 @@ def review_join_request(
 
     with Session(engine) as session:
         req = session.exec(
-            select(AccessGroupJoinRequest).where(AccessGroupJoinRequest.id == request_id)
+            select(AccessGroupJoinRequest)
+            .where(AccessGroupJoinRequest.id == request_id)
+            .with_for_update()
         ).one_or_none()
         if req is None:
             raise HTTPException(status_code=404, detail="Join request not found.")
@@ -300,4 +324,4 @@ def review_join_request(
         session.add(req)
         session.commit()
         session.refresh(req)
-        return _to_join_request_read(req, session)
+        return _to_join_request_read(req, _resolve_group_project_id(req.accessgroup_id, session))

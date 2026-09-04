@@ -1,5 +1,7 @@
 # User creation reliability migration
 
+Archived status: This implementation note describes a completed API v3 change. Current clients should use the generated OpenAPI contract and `docs/client_migration_summary.md`.
+
 ## Status
 
 Implemented in the API v3 candidate.

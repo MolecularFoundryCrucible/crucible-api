@@ -80,15 +80,18 @@ class TestAfterMigration:
             PROJ,
             legacy_edit_group=PROJ,
             manage_access_floor=Role.EDITOR,
+            allow_peer_grants=False,
             status_permission=Permission.EDIT,
             legacy_status_group=PROJ,
             acl_rows=acl_rows,
         )
         expected_max = None
-        if standing >= Role.ADMIN:
+        if standing >= Role.OWNER:
             expected_max = "admin"
-        elif standing >= Role.EDITOR:
+        elif standing >= Role.ADMIN:
             expected_max = "editor"
+        elif standing >= Role.EDITOR:
+            expected_max = "contributor"
         assert capabilities.can_edit is (standing >= Role.EDITOR)
         assert capabilities.can_manage_access is (standing >= Role.EDITOR)
         assert capabilities.can_change_status is (standing >= Role.EDITOR)
@@ -149,8 +152,7 @@ def test_new_members_get_contributor_not_null(session):
 
 
 class TestGrantCap:
-    """You may only seat someone at or below your own role, and may not touch
-    a member who already holds one above yours."""
+    """Project membership uses a strict role hierarchy."""
 
     def _actor(self, session, role):
         migrated(session)
@@ -159,21 +161,37 @@ class TestGrantCap:
     @pytest.mark.parametrize("actor,target,allowed", [
         (Role.EDITOR, Role.VIEWER, True),
         (Role.EDITOR, Role.CONTRIBUTOR, True),
-        (Role.EDITOR, Role.EDITOR, True),
+        (Role.EDITOR, Role.EDITOR, False),
         (Role.EDITOR, Role.ADMIN, False),
         (Role.EDITOR, Role.OWNER, False),
-        (Role.ADMIN, Role.ADMIN, True),
+        (Role.ADMIN, Role.EDITOR, True),
+        (Role.ADMIN, Role.ADMIN, False),
         (Role.ADMIN, Role.OWNER, False),
-        (Role.OWNER, Role.OWNER, True),
+        (Role.OWNER, Role.ADMIN, True),
+        (Role.OWNER, Role.OWNER, False),
     ])
-    def test_cannot_grant_above_own_role(self, session, actor, target, allowed):
+    def test_may_only_grant_below_own_role(self, session, actor, target, allowed):
         from app.utils.auth_utils import require_grant
         p = self._actor(session, actor)
         if allowed:
-            require_grant(session, p, PROJ, target, floor=Role.EDITOR)
+            require_grant(
+                session,
+                p,
+                PROJ,
+                target,
+                floor=Role.EDITOR,
+                allow_peer=False,
+            )
         else:
             with pytest.raises(HTTPException) as exc:
-                require_grant(session, p, PROJ, target, floor=Role.EDITOR)
+                require_grant(
+                    session,
+                    p,
+                    PROJ,
+                    target,
+                    floor=Role.EDITOR,
+                    allow_peer=False,
+                )
             assert exc.value.status_code == 403
 
     def test_admin_cannot_demote_the_owner(self, session):
@@ -181,18 +199,56 @@ class TestGrantCap:
         from app.utils.auth_utils import require_grant
         p = self._actor(session, Role.ADMIN)
         with pytest.raises(HTTPException):
-            require_grant(session, p, PROJ, Role.VIEWER, current=Role.OWNER, floor=Role.EDITOR)
+            require_grant(
+                session,
+                p,
+                PROJ,
+                Role.VIEWER,
+                current=Role.OWNER,
+                floor=Role.EDITOR,
+                allow_peer=False,
+            )
+
+    def test_editor_cannot_demote_an_editor(self, session):
+        from app.utils.auth_utils import require_grant
+        p = self._actor(session, Role.EDITOR)
+        with pytest.raises(HTTPException):
+            require_grant(
+                session,
+                p,
+                PROJ,
+                Role.CONTRIBUTOR,
+                current=Role.EDITOR,
+                floor=Role.EDITOR,
+                allow_peer=False,
+            )
 
     def test_owner_may_demote_an_admin(self, session):
         from app.utils.auth_utils import require_grant
         p = self._actor(session, Role.OWNER)
-        require_grant(session, p, PROJ, Role.VIEWER, current=Role.ADMIN, floor=Role.EDITOR)
+        require_grant(
+            session,
+            p,
+            PROJ,
+            Role.VIEWER,
+            current=Role.ADMIN,
+            floor=Role.EDITOR,
+            allow_peer=False,
+        )
 
     def test_platform_admin_bypasses_the_cap(self, session):
         from app.utils.auth_utils import require_grant
         migrated(session)
         admin = Principal(user_id="a", platform_role=PlatformRole.ADMIN)
-        require_grant(session, admin, PROJ, Role.OWNER, current=Role.OWNER, floor=Role.EDITOR)
+        require_grant(
+            session,
+            admin,
+            PROJ,
+            Role.OWNER,
+            current=Role.OWNER,
+            floor=Role.EDITOR,
+            allow_peer=False,
+        )
 
 
 def test_project_lead_owns_their_own_project(session):

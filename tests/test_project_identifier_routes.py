@@ -134,7 +134,7 @@ def test_project_update_accepts_canonical_mfid(client, db_engine, auth_as):
         "can_manage_access": True,
         "can_change_status": True,
         "can_transfer": False,
-        "max_grant_role": "editor",
+        "max_grant_role": "contributor",
     }
     generic_response = client.get(f"/resources/{project_mfid}")
     assert generic_response.status_code == 200, generic_response.text

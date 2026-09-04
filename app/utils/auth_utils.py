@@ -302,6 +302,7 @@ def _has_resource_permission(principal: Principal, acl_rows, permission: Permiss
 def resource_capabilities(session, principal: Principal, mfid: str, *,
                           legacy_edit_group: Optional[str] = None,
                           manage_access_floor: Role = THRESHOLDS[Permission.MANAGE_ACL],
+                          allow_peer_grants: bool = True,
                           status_permission: Optional[Permission] = Permission.DELETE,
                           legacy_status_group: Optional[str] = None,
                           acl_rows: Optional[Sequence[tuple[int, Role]]] = None) -> ResourceCapabilities:
@@ -314,7 +315,12 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
         max_grant_role = Role.ADMIN.db_value
     else:
         for target in (Role.ADMIN, Role.EDITOR, Role.CONTRIBUTOR, Role.VIEWER):
-            if can_grant(actor_role, target, floor=manage_access_floor):
+            if can_grant(
+                actor_role,
+                target,
+                floor=manage_access_floor,
+                allow_peer=allow_peer_grants,
+            ):
                 max_grant_role = target.db_value
                 break
 
@@ -363,12 +369,13 @@ def require_permission(session, principal: Principal, mfid: str,
 
 
 def require_grant(session, principal: Principal, mfid: str, target: Role,
-                  current: Optional[Role] = None, floor: Role = Role.ADMIN) -> None:
+                  current: Optional[Role] = None, floor: Role = Role.ADMIN,
+                  allow_peer: bool = True) -> None:
     """Raise 403 unless `principal` may set a grant on `mfid` to `target`.
 
-    The cap binds on both ends — you may not grant above your own role, nor
-    overwrite one above it. `floor` is the minimum role that may manage at all:
-    admin for ACL entries, editor for project membership.
+    The cap binds on both ends. `floor` controls the minimum role that may
+    manage grants, while `allow_peer` controls whether equal roles are within
+    that authority.
     """
     from app.utils.permissions import can_grant
 
@@ -376,7 +383,13 @@ def require_grant(session, principal: Principal, mfid: str, target: Role,
         return
 
     actor = effective_role(principal, fetch_acl_rows(session, mfid))
-    if not can_grant(actor, target, current, floor=floor):
+    if not can_grant(
+        actor,
+        target,
+        current,
+        floor=floor,
+        allow_peer=allow_peer,
+    ):
         raise HTTPException(
             status_code=403,
             detail=(f"You hold {actor.name.lower() if actor else 'no role'} here "

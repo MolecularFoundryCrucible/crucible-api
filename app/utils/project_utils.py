@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, func
 from sqlmodel import select
 from app.models.core_models import AccessGroup, Instrument, Project, User, UserAccessGroupLink, UserProjectLink
+from app.models.projects import ProjectReferenceRead
 from app.general_utils import is_valid_mfid
 from app.utils.permissions import AccessGroupType, Role
 from app.utils.sql_utils import add_or_update, touch_resource_modification_time
@@ -100,6 +101,24 @@ def resolve_project_mfids_to_ids(mfids, session) -> dict:
         select(Project.unique_id, Project.project_id).where(Project.unique_id.in_(mfid_set))
     ).all()
     return dict(rows)
+
+
+def resolve_project_mfids_to_references(mfids, session) -> dict[str, ProjectReferenceRead]:
+    mfid_set = {m for m in mfids if m}
+    if not mfid_set:
+        return {}
+    rows = session.exec(
+        select(Project.unique_id, Project.project_id, Project.title)
+        .where(Project.unique_id.in_(mfid_set))
+    ).all()
+    return {
+        unique_id: ProjectReferenceRead(
+            unique_id=unique_id,
+            project_id=project_id,
+            title=title,
+        )
+        for unique_id, project_id, title in rows
+    }
 
 
 def sql_add_user_to_project(user: User, proj_id: str, session, role=None):

@@ -73,6 +73,12 @@ class ProjectMinimalRead(SQLModel):
     title: Optional[str] = None
 
 
+class ProjectReferenceRead(SQLModel):
+    unique_id: str
+    project_id: str
+    title: Optional[str] = None
+
+
 class ProjectUpdate(SQLModel):
     '''Partial update schema for Project. Only provided fields are modified.
 

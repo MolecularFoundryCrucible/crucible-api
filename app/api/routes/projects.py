@@ -49,6 +49,7 @@ def _project_capabilities(session, principal, project):
         project.unique_id,
         legacy_edit_group=project.unique_id,
         manage_access_floor=Role.EDITOR,
+        allow_peer_grants=False,
         status_permission=Permission.EDIT,
         legacy_status_group=project.unique_id,
     )
@@ -357,8 +358,8 @@ def add_users_to_project(
     '''
     Add a user to a project at `role`, defaulting to contributor.
 
-    Requires editor or above in the project, and you may only grant a role at
-    or below your own — so an editor can seat a contributor but never an admin.
+    Requires editor or above in the project. Editors may grant contributor or
+    viewer, admins may grant editor or below, and owners may grant admin or below.
     Cannot seat someone as owner this way; a project has exactly one owner,
     changed only via POST /resources/{mfid}/transfer_ownership.
     '''
@@ -398,7 +399,14 @@ def add_users_to_project(
                     ),
                 )
 
-        require_grant(session, auth_res, proj.unique_id, internal_role, floor=Role.EDITOR)
+        require_grant(
+            session,
+            auth_res,
+            proj.unique_id,
+            internal_role,
+            floor=Role.EDITOR,
+            allow_peer=False,
+        )
 
         sql_add_user_to_project(user, proj.project_id, session, role=internal_role)
         session.commit()
@@ -416,11 +424,10 @@ def set_project_user_role(
     '''
     Change a member's role in a project.
 
-    The cap binds on both ends: you may not grant a role above your own, nor
-    change a member who already holds one above your own. That is what stops a
-    project admin demoting the owner.
+    Role management follows a strict hierarchy. Editors manage contributor and
+    viewer roles, admins manage editor and below, and owners manage admin and below.
 
-    Cannot grant or touch owner standing at all, even as the owner yourself —
+    Cannot grant or touch owner standing at all, even as the owner yourself.
     a project has exactly one owner, changed only via
     POST /resources/{mfid}/transfer_ownership.
     '''
@@ -456,7 +463,15 @@ def set_project_user_role(
             raise HTTPException(
                 status_code=409,
                 detail="Cannot change the owner's standing this way; use POST /resources/{mfid}/transfer_ownership")
-        require_grant(session, auth_res, proj.unique_id, internal_role, current=current, floor=Role.EDITOR)
+        require_grant(
+            session,
+            auth_res,
+            proj.unique_id,
+            internal_role,
+            current=current,
+            floor=Role.EDITOR,
+            allow_peer=False,
+        )
 
         link.role = internal_role.db_value
         session.add(link)

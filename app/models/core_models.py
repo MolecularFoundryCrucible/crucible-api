@@ -344,6 +344,17 @@ class DeletionRequest(SQLModel, table=True):
 class AccessGroupJoinRequest(SQLModel, table=True):
     """Tracks a request to join an access group. Currently only used for projects,
     but modeled generically since any access group could support this in the future."""
+    __table_args__ = (
+        Index(
+            "one_pending_join_request_per_group_requester",
+            "accessgroup_id",
+            "requester_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+            sqlite_where=text("status = 'pending'"),
+        ),
+    )
+
     id: Optional[int] = Field(default=None, primary_key=True)
     accessgroup_id: int = Field(foreign_key="accessgroup.id", index=True)
     requester_id: str = Field(foreign_key="user.orcid", index=True)

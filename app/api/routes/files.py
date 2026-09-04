@@ -79,8 +79,8 @@ def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: s
     '''Returns a single file by its MFID.'''
 
     with Session(engine) as session:
-        af, _ = _get_af_with_read_access(session, file_id, auth_res)
-        return AssociatedFileRead.model_validate(af, update={"dataset_mfid": af.dataset.unique_id})
+        af, ds = _get_af_with_read_access(session, file_id, auth_res)
+        return AssociatedFileRead.model_validate(af, update={"dataset_mfid": ds.unique_id})
 
 
 @router.get("/files/{file_id}/download_link")
@@ -119,7 +119,7 @@ def update_file(
         touch_resource_modification_time(session, ds.unique_id)
         session.commit()
         session.refresh(af)
-        return AssociatedFileRead.model_validate(af, update={"dataset_mfid": af.dataset.unique_id})
+        return AssociatedFileRead.model_validate(af, update={"dataset_mfid": ds.unique_id})
 
 
 @router.delete("/files/{file_id}")

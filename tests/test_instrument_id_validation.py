@@ -6,7 +6,8 @@ from sqlalchemy.pool import StaticPool
 from app.models.core_models import Instrument, Project
 from app.utils.instrument_utils import (
     assert_instrument_id_available, resolve_instrument_id_to_mfid,
-    resolve_instrument_mfids_to_ids, validate_instrument_id_format,
+    resolve_instrument_mfids_to_ids, resolve_instrument_mfids_to_references,
+    validate_instrument_id_format,
 )
 
 
@@ -89,3 +90,13 @@ class TestResolution:
     def test_resolve_instrument_mfids_to_ids_empty_input(self, session):
         assert resolve_instrument_mfids_to_ids([], session) == {}
         assert resolve_instrument_mfids_to_ids([None, None], session) == {}
+
+    def test_resolve_instrument_mfids_to_references(self, session):
+        session.add(Instrument(unique_id="m1", instrument_id="xrd-1", instrument_name="XRD 1", owner="o", location="b30"))
+        session.commit()
+        references = resolve_instrument_mfids_to_references(["m1", "missing"], session)
+        assert references["m1"].model_dump() == {
+            "unique_id": "m1",
+            "instrument_id": "xrd-1",
+            "instrument_name": "XRD 1",
+        }

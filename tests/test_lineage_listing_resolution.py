@@ -98,6 +98,7 @@ def test_read_samples_in_dataset_resolves_project(client, db_engine, auth_as):
     resp = client.get("/datasets/ds_parent/samples")
     assert resp.status_code == 200, resp.text
     assert resp.json()["items"][0]["project_id"] == "proj_new"
+    assert resp.json()["items"][0]["project"]["project_id"] == "proj_new"
 
 
 def test_list_parent_samples_resolves_project(client, db_engine, auth_as):
@@ -107,6 +108,7 @@ def test_list_parent_samples_resolves_project(client, db_engine, auth_as):
     resp = client.get("/samples/samp_child/parents")
     assert resp.status_code == 200, resp.text
     assert resp.json()["items"][0]["project_id"] == "proj_new"
+    assert resp.json()["items"][0]["project"]["project_id"] == "proj_new"
 
 
 def test_list_child_samples_resolves_project(client, db_engine, auth_as):
@@ -116,3 +118,4 @@ def test_list_child_samples_resolves_project(client, db_engine, auth_as):
     resp = client.get("/samples/samp_parent/children")
     assert resp.status_code == 200, resp.text
     assert resp.json()["items"][0]["project_id"] == "proj_new"
+    assert resp.json()["items"][0]["project"]["project_id"] == "proj_new"

@@ -1,4 +1,4 @@
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.models.core_models import (
     AccessGroup,
@@ -155,8 +155,39 @@ def test_sample_dataset_relationships_filter_both_directions(client, db_engine, 
 
     assert samples.status_code == 200, samples.text
     assert samples.json()["items"] == []
+    assert samples.headers["deprecation"] == "@1788307200"
     assert datasets.status_code == 200, datasets.text
     assert datasets.json() == []
+    assert datasets.headers["deprecation"] == "@1788307200"
+
+
+def test_collection_relationship_filters_are_symmetric(client, db_engine, auth_as):
+    _, group_id = _setup(db_engine)
+    with Session(db_engine) as session:
+        sample = session.exec(select(Sample).where(Sample.unique_id == "sample_accessible")).one()
+        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "dataset_accessible")).one()
+        session.add(DatasetSampleLink(sample_id=sample.id, dataset_id=dataset.id))
+        session.commit()
+    _authorize(auth_as, group_id)
+
+    datasets = client.get("/datasets", params={"sample_mfid": "sample_accessible"})
+    samples = client.get("/samples", params={"dataset_mfid": "dataset_accessible"})
+
+    assert datasets.status_code == 200, datasets.text
+    assert [item["unique_id"] for item in datasets.json()["items"]] == ["dataset_accessible"]
+    assert samples.status_code == 200, samples.text
+    assert [item["unique_id"] for item in samples.json()["items"]] == ["sample_accessible"]
+
+
+def test_collection_relationship_filters_require_readable_start(client, db_engine, auth_as):
+    _, group_id = _setup(db_engine)
+    _authorize(auth_as, group_id)
+
+    datasets = client.get("/datasets", params={"sample_mfid": "sample_private"})
+    samples = client.get("/samples", params={"dataset_mfid": "dataset_private"})
+
+    assert datasets.status_code == 404, datasets.text
+    assert samples.status_code == 404, samples.text
 
 
 def test_sample_graphs_omit_inaccessible_nodes(client, db_engine, auth_as):

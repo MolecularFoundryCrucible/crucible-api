@@ -223,6 +223,47 @@ def test_access_selectors_are_repeated_openapi_arrays():
     assert dataset_parameters["instrument_mfid"]["description"] == (
         "Filter datasets assigned to this canonical instrument MFID."
     )
+    assert dataset_parameters["sample_mfid"]["required"] is False
+    assert dataset_parameters["sample_mfid"]["description"] == (
+        "Filter datasets linked to this canonical sample MFID."
+    )
+    sample_parameters = {
+        parameter["name"]: parameter
+        for parameter in schema["paths"]["/samples"]["get"]["parameters"]
+    }
+    assert sample_parameters["dataset_mfid"]["required"] is False
+    assert sample_parameters["dataset_mfid"]["description"] == (
+        "Filter samples linked to this canonical dataset MFID."
+    )
+    assert schema["paths"]["/samples/{sample_id}/datasets"]["get"]["deprecated"] is True
+    assert schema["paths"]["/datasets/{dsid}/samples"]["get"]["deprecated"] is True
     for schema_name in ("DatasetResponse", "SampleResponse"):
         capabilities = schema["components"]["schemas"][schema_name]["properties"]["capabilities"]
         assert capabilities["anyOf"][0]["$ref"] == "#/components/schemas/ResourceCapabilities"
+    dataset_properties = schema["components"]["schemas"]["DatasetResponse"]["properties"]
+    assert dataset_properties["instrument"]["anyOf"][0]["$ref"] == "#/components/schemas/InstrumentReferenceRead"
+    assert dataset_properties["project"]["anyOf"][0]["$ref"] == "#/components/schemas/ProjectReferenceRead"
+    assert dataset_properties["owner"]["anyOf"][0]["$ref"] == "#/components/schemas/UserPublicRead"
+    for schema_name in ("SampleRead", "SampleResponse"):
+        sample_properties = schema["components"]["schemas"][schema_name]["properties"]
+        assert sample_properties["project"]["anyOf"][0]["$ref"] == "#/components/schemas/ProjectReferenceRead"
+    sample_response_properties = schema["components"]["schemas"]["SampleResponse"]["properties"]
+    assert sample_response_properties["owner"]["anyOf"][0]["$ref"] == "#/components/schemas/UserPublicRead"
+    assert sample_response_properties["datasets"]["deprecated"] is True
+    for path in (
+        "/datasets/{dataset_mfid}",
+        "/samples/{sample_mfid}",
+        "/instruments/{instrument_mfid}",
+        "/resources/{resource_id}",
+    ):
+        parameters = {
+            parameter["name"]: parameter
+            for parameter in schema["paths"][path]["get"]["parameters"]
+        }
+        assert parameters["include_owner"]["schema"]["default"] is True
+    for path in ("/samples/{sample_mfid}", "/resources/{resource_id}"):
+        parameters = {
+            parameter["name"]: parameter
+            for parameter in schema["paths"][path]["get"]["parameters"]
+        }
+        assert parameters["include_datasets"]["schema"]["default"] is True

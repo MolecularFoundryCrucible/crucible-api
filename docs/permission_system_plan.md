@@ -1,6 +1,6 @@
 # Permission System Redesign
 
-This document explains the permission model and records design decisions. It is not an operational checklist. The rollout phases later in this document are historical design context and no longer describe the current environment state. Shadow mode, agreement tests, and the legacy authorization helpers described in those phases were retired after cutover. Use `docs/permission_migration_runbook.md` for current staging findings and the ordered production recipe.
+Status: The permission model and production migration are implemented. This document preserves architecture decisions and deferred work; it is not an operational checklist. The rollout phases later in the document are historical design context and no longer describe the current environment. The completed procedure is retained in `docs/archive/permission_migration_runbook_2026-08.md`.
 
 ## Goals
 
@@ -212,7 +212,7 @@ EXISTS (SELECT 1 FROM resourceacl
         WHERE mfid = dataset.unique_id AND accessgroup_id = :public_group_id) AS public
 ```
 
-one probe per row against the covering index, well under a millisecond for a 100-row page. On write, `public: true` is translated by the route into the ACL row. It is deliberately *not* kept as a stored column alongside the ACL row — that would recreate the two-sources-of-truth drift documented in `docs/schema_hygiene.md`.
+one probe per row against the covering index, well under a millisecond for a 100-row page. On write, `public: true` is translated by the route into the ACL row. It is deliberately *not* kept as a stored column alongside the ACL row because that would recreate the two-sources-of-truth drift documented in the archived pre-migration schema audit.
 
 **It also collapses an existing inconsistency.** There are currently *two* public flags, and different code paths consult different ones:
 
@@ -371,20 +371,21 @@ Routes:
 
 > **Existing behaviour this changes.** `POST /projects/{proj_id}/users/{orcid}` is currently gated `require_groups(ag_list, {'admin', proj_id})`, which means **any member of a project can add anyone else to that project** — a viewer can add a collaborator.
 
-#### Adding members requires `editor`, capped at your own role
+#### Adding members requires `editor`, capped below your own role
 
 Restricting membership management to `admin` is the obvious tightening, but it is stricter than the risk warrants, and it puts a senior postdoc onboarding a student through a project lead every time.
 
 Adding a member and managing ACL entries are not the same power, which is what makes a middle ground safe: **adding a member grants access bounded by the project's own grant, while an ACL entry can share data outward to any group, unbounded.** The second is genuinely `admin`-shaped. The first is not.
 
-So `editor` may add and remove members, subject to the cap rule the thresholds table already states for ACL management: **only at or below your own role.** An `editor` can seat someone as `viewer`, `contributor`, or `editor`, and can never mint an `admin` or an `owner`. Removal is likewise capped, so an `editor` cannot evict a project admin.
+Project membership follows a strict hierarchy. An `editor` may add or modify `viewer` and `contributor` members, an `admin` may manage `editor` and below, and the `owner` may manage `admin` and below. A role cannot create, promote, demote, or otherwise modify a peer. Removal remains restricted to the project owner, platform administrators, or the member leaving voluntarily.
 
 No sixth role. Every role added multiplies the `effective_role` test matrix, the migration mapping, and the number of things a reader has to hold in their head — and "can add members but not manage ACLs" is expressible with the roles that exist plus a cap that is already written down.
 
 | Operation | Requires |
 |---|---|
-| add or remove a project member | `>= editor` in the project group, at or below your own role |
-| change a member's role | `>= editor`, and both the old and new role at or below your own |
+| add a project member | `>= editor` in the project group, strictly below your own role |
+| change a member's role | `>= editor`, with both the old and new role strictly below your own |
+| remove a project member | project owner, platform administrator, or the member themselves |
 | manage resource ACL entries | `>= admin` on the resource, at or below your own role |
 
 ### Membership lived in two tables; one was never authoritative
@@ -416,14 +417,14 @@ Several routes currently key off `Project.project_lead_orcid` directly: join-req
 | Standing in project group | Effective role on the project resource | Can |
 |---|---|---|
 | `owner` (lead) | `owner` | Everything, including transferring the project |
-| `admin` | `admin` | Manage members and ACLs, delete resources; cannot transfer |
-| `editor` | `editor` | Edit project metadata and all project resources; add members up to `editor` |
+| `admin` | `admin` | Manage editors and lower roles and ACLs, delete resources; cannot transfer |
+| `editor` | `editor` | Edit project metadata and all project resources; manage contributors and viewers |
 | `contributor` | `contributor` | Create resources; cannot rename the project |
 | `viewer` | `viewer` | Read |
 
 `admin` was the wrong level for a lead because the two roles differ in exactly the ways a lead needs: only `owner` can transfer the project to a successor, and only an `owner`'s ACL entry is safe from modification by an `admin` — without which any project admin could demote the lead.
 
-**`Project.project_lead_orcid` stops being read for authorization, but is not dropped.** An earlier draft of this section called for retiring the column entirely once its readers migrated to a standing check. Revised: `Dataset.owner_orcid`/`owner_user_id` and the sample equivalents are the same shape — a denormalized "who owns this" pointer living alongside ACL-based authorization — and those are *not* on the phase-5 drop list; they stay as a disciplined, maintained copy (`docs/schema_hygiene.md`'s rule: "one relationship, one column; if you denormalize, maintain the copy on every write path"). Singling out `project_lead_orcid` for deletion instead of the same treatment had no stated reason beyond "keeping both is how the two notions drift" — a real risk, but the same one already accepted for `owner_orcid`, and solved there by discipline rather than deletion.
+**`Project.project_lead_orcid` stops being read for authorization, but is not dropped.** An earlier draft of this section called for retiring the column entirely once its readers migrated to a standing check. Revised: `Dataset.owner_orcid`/`owner_user_id` and the sample equivalents are the same shape, a denormalized "who owns this" pointer living alongside ACL-based authorization. Those columns are *not* on the phase-5 drop list; they stay as disciplined, maintained copies under the archived schema audit's rule: "one relationship, one column; if you denormalize, maintain the copy on every write path." Singling out `project_lead_orcid` for deletion instead of the same treatment had no stated reason beyond "keeping both is how the two notions drift," a real risk but the same one already accepted for `owner_orcid` and solved there by discipline rather than deletion.
 
 So `project_lead_orcid` gets the `owner_orcid` treatment:
 
@@ -464,9 +465,9 @@ A single-member project needs no `is_personal` flag and no separate code path, a
 
 What a personal project would have cost, for that name: a `Project` row per user with a backfill for everyone existing, an `is_personal` column, a `project_id` that is also an ORCID (two namespaces colliding in one unique column), hiding rules so they do not appear in other people's `GET /projects`, a "cannot be deleted" lifecycle rule — and, once projects become resources, a `Resource` row and ACL entries per user as well.
 
-**The one real gap is presentational.** If the UI organises everything by project, unattached data has nowhere to appear. That is a "My data" view, not a table: query resources whose owner is the caller. Note this must filter on the indexed `owner_user_id`, not `owner_orcid` — see `docs/schema_hygiene.md`, item 1, since `owner_user_id` needs to be made reliable first.
+**The one real gap is presentational.** If the UI organises everything by project, unattached data has nowhere to appear. That is a "My data" view, not a table: query resources whose owner is the caller. The archived pre-migration schema audit records the original `owner_user_id` reliability concern.
 
-Unattached resources are not the only thing a project-organised UI cannot show, and the full list matters before anyone concludes the "My data" view closes the gap. It is enumerated as item 5 of `docs/schema_hygiene.md`, along with the one case that is an outright defect rather than a presentation choice: `Sample.project_id` carries no foreign key, so it can hold a project ID that does not exist — a sample that looks filed but appears in no project view and in no "My data" view either.
+Unattached resources are not the only thing a project-organised UI cannot show, and the full historical list is retained in the archived pre-migration schema audit.
 
 ### Sharing
 
@@ -554,7 +555,7 @@ Datasets created by an instrument service account belong to the researcher, not 
 
 ---
 
-## Currently Unguarded Operations
+## Historical authorization gaps
 
 Discovered while mapping existing routes. These take `auth_res` — so authentication is required — but perform **no authorization check at all**. They must be closed as part of this work rather than found one at a time:
 
@@ -715,7 +716,7 @@ Split by migration phase (see Migration path → Environments and rollout). Noth
 
 ### Indexing
 
-> Table-level schema issues found during this audit — the `owner_orcid`/`owner_user_id` duplication, `Sample.project_id` lacking an index and FK, and the FK-convention inconsistencies — are recorded separately in `docs/schema_hygiene.md`. They are cleanup with their own migration risk and are not part of this redesign.
+> Table-level schema issues found during this audit are retained in `docs/archive/schema_hygiene_pre_permission_migration.md`. Verify each item against the current schema before treating it as open work.
 
 Row-count is not the scaling concern: ~4 ACL rows per resource over 10⁴–10⁵ resources is a few hundred thousand rows, a few million at 10× growth — a narrow table Postgres handles without effort. **Index design is the concern**, and there is a real gap today.
 
@@ -886,7 +887,7 @@ This is the second payoff from `Principal`: a principal is a plain frozen value,
 
 ### Historical migration design
 
-Do not execute the numbered phases in this section. They describe how the rollout was designed and preserve the reasoning behind expand, cutover, and contract stages. The current procedure, deployment checkpoints, verification queries, and environment status are maintained only in `docs/permission_migration_runbook.md`.
+Do not execute the numbered phases in this section. They describe how the rollout was designed and preserve the reasoning behind expand, cutover, and contract stages. The completed procedure and its dated environment observations are retained in `docs/archive/permission_migration_runbook_2026-08.md`.
 
 ~70 call sites use the four existing check helpers (`require_groups` 21, `require_write_access` 16, `require_admin` 12, `read_access_filter_list` 12, `require_read_access` 9). The risk in this project is the migration, not the model.
 
@@ -918,7 +919,7 @@ The production runbook supersedes all sequencing in this historical section.
 ### Phase 0 — baseline
 
 0. ~~**Get the test suite green**~~ — **done.** 34 passed, 0 failed, 0 errors. See Testing → Baseline for what was deleted and the phase-2 deliverable that replaces it.
-0.5. **Run the counting queries** — the public-column disagreement count (Public resources), the dangling `Sample.project_id` count (`docs/schema_hygiene.md`, item 5), and the `read`/`write` distribution below. All three feed decisions in phase 1, and a non-zero result on the first two needs resolving before anything is frozen into ACL rows.
+0.5. **Run the counting queries.** The public-column disagreement count, the dangling `Sample.project_id` count from the archived schema audit, and the `read`/`write` distribution below all fed decisions in phase 1.
 
 ### Phase 1 — expand (staging first, then production)
 
@@ -1093,7 +1094,7 @@ The fix is a `resource_project_link` table, with one design rule: **it records b
 
 Deferred because of client breakage, not model complexity: `project_id` appears in `DatasetCreate`/`Read`/`Update`, the sample equivalents, and client-side `?project_id=` filters. Either `Dataset.project_id` survives as a denormalised "primary" for compatibility, or every client changes.
 
-On performance, the join is roughly a wash rather than a regression, provided the index is right. Because `resource_project_link.resource_mfid` *is* the value listings order by, an index on `(project_id, resource_mfid)` yields project-filtered rows already in output order from a two-column table; take the page, then join to `dataset` by primary key. Which side wins depends on selectivity — today's column filter is fine when your project dominates recent data, the link index is better when it is a small slice. Note that the composite index today's query actually wants, `(project_id, unique_id)` on `Dataset`, does not exist either (see `docs/schema_hygiene.md`, item 3).
+On performance, the join is roughly a wash rather than a regression, provided the index is right. Because `resource_project_link.resource_mfid` *is* the value listings order by, an index on `(project_id, resource_mfid)` yields project-filtered rows already in output order from a two-column table; take the page, then join to `dataset` by primary key. Which side wins depends on selectivity. The archived schema audit records the indexes observed at the time.
 
 ### Instrument ↔ project association
 

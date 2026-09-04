@@ -1,5 +1,7 @@
 # Graph route migration
 
+Status: Deferred compatibility cleanup. The current security behavior below is implemented, but the proposed canonical graph routes and removal of duplicate routes are not.
+
 ## Current client contract
 
 Nano Crucible is the graph API entry point used by the CLI, Graph Explorer, and Crucible Labs. It currently calls:
@@ -21,9 +23,9 @@ The two compatibility routes must remain available during the client migration. 
 - Project graph references accept either the project MFID or slug.
 - Platform administrators bypass ACL checks but active deletion requests remain hidden.
 
-## Later client migration
+## Proposed client migration
 
-Introduce these canonical resource-scoped routes after the production permission migration is stable:
+Introduce these canonical resource-scoped routes in a separately reviewed compatibility release:
 
 ```text
 GET /resources/{resource_mfid}/graph?recursive={bool}

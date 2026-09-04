@@ -4,6 +4,7 @@ from sqlmodel import Session
 import app.api.routes.datasets as datasets_routes
 import app.api.routes.resources as resources_routes
 import app.api.routes.samples as samples_routes
+import app.services.resource_details as resource_details
 from app.models.core_models import (
     AccessGroup,
     Dataset,
@@ -246,8 +247,8 @@ def test_singleton_and_generic_routes_filter_expanded_links(
         ("sample-visible-child", "child"),
         ("dataset-root", "associated"),
     }
-    assert [dataset.unique_id for dataset in sample.datasets] == ["dataset-root"]
-    assert [dataset.unique_id for dataset in generic_sample.datasets] == ["dataset-root"]
+    assert [dataset["unique_id"] for dataset in sample.model_dump()["datasets"]] == ["dataset-root"]
+    assert [dataset["unique_id"] for dataset in generic_sample.model_dump()["datasets"]] == ["dataset-root"]
     assert dataset.capabilities.model_dump() == {
         "can_edit": False,
         "can_manage_access": False,
@@ -258,6 +259,66 @@ def test_singleton_and_generic_routes_filter_expanded_links(
     assert sample.capabilities == dataset.capabilities
     assert generic_sample.capabilities == dataset.capabilities
     assert _link_ids(generic_links) == _link_ids(dataset.links)
+
+
+def test_singleton_sample_can_omit_embedded_datasets_without_omitting_links(
+    db_engine,
+    monkeypatch,
+):
+    group_id, _, _ = _setup(db_engine)
+    principal = _reader(group_id)
+    monkeypatch.setattr(samples_routes, "engine", db_engine)
+    monkeypatch.setattr(resources_routes, "engine", db_engine)
+
+    sample = samples_routes.read_sample(
+        "sample-root",
+        principal,
+        include_links=True,
+        include_datasets=False,
+    )
+    generic_sample = resources_routes.get_resource(
+        principal,
+        "sample-root",
+        include_links=True,
+        include_datasets=False,
+    )
+
+    assert sample.model_dump()["datasets"] is None
+    assert generic_sample.model_dump()["datasets"] is None
+    assert _link_ids(sample.links) == {
+        ("sample-visible-parent", "parent"),
+        ("sample-visible-child", "child"),
+        ("dataset-root", "associated"),
+    }
+    assert _link_ids(generic_sample.links) == _link_ids(sample.links)
+
+
+def test_singleton_sample_omits_dataset_query_when_expansions_are_disabled(
+    db_engine,
+    monkeypatch,
+):
+    group_id, _, _ = _setup(db_engine)
+    principal = _reader(group_id)
+    monkeypatch.setattr(samples_routes, "engine", db_engine)
+
+    def unexpected_dataset_query(*args, **kwargs):
+        raise AssertionError("dataset relationship query should be skipped")
+
+    monkeypatch.setattr(
+        resource_details,
+        "fetch_readable_sample_datasets",
+        unexpected_dataset_query,
+    )
+
+    sample = samples_routes.read_sample(
+        "sample-root",
+        principal,
+        include_links=False,
+        include_datasets=False,
+    )
+
+    assert sample.model_dump()["datasets"] is None
+    assert sample.links is None
 
 
 def test_collection_link_expansion_stays_filtered_and_batched(

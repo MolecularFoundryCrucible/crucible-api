@@ -32,7 +32,7 @@ class Thumbnail(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     thumbnail_name: str
     thumbnail_b64str: str
-    dataset_id: int = Field(foreign_key = "dataset.id")
+    dataset_id: int = Field(foreign_key="dataset.id", index=True)
     dataset: "Dataset" = Relationship(back_populates="thumbnails")
 
 

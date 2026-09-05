@@ -2,7 +2,7 @@ import os
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import and_, func, literal, text
+from sqlalchemy import and_, func
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import Session, select, col
 import networkx as nx
@@ -19,6 +19,14 @@ from app.utils.auth_utils import (
     resource_capabilities)
 from app.utils.permissions import (
     AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
+from app.utils.search_utils import (
+    MAX_SEARCH_QUERY_LENGTH,
+    SEARCH_QUERY_LIMIT_DESCRIPTION,
+    apply_trigram_search,
+    configure_trigram_search,
+    normalize_search_query,
+    trigram_rank,
+)
 from app.utils.sql_utils import add_or_update, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import (
@@ -208,34 +216,36 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
 @router.get("/projects/search", response_model=PaginatedResponse[ProjectRead])
 def search_projects(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    q: str = Query(min_length=3, description="Search term matched against project title and project_id."),
+    q: str = Query(
+        min_length=3,
+        max_length=MAX_SEARCH_QUERY_LENGTH,
+        description=f"Search term matched against project title and project_id. {SEARCH_QUERY_LIMIT_DESCRIPTION}",
+    ),
     limit: int = Query(default=20, ge=1, le=50),
 ):
     '''
     Search projects by title or project_id across all projects, not just ones the
-    caller is a member of — this is how a user discovers a project to request to
+    caller is a member of. This is how a user discovers a project to request to
     join via POST /access_groups/{group_name}/join. Returns results ordered by
     match quality. Maximum 50 results.
 
     Note: ProjectRead has no lead/scientific_metadata fields, so this is safe to
-    open regardless of membership — see GET /projects/{proj_id} for the fields
+    open regardless of membership. See GET /projects/{proj_id} for the fields
     that stay member-only.
     '''
+    normalized_q, tokens = normalize_search_query(q)
     with Session(engine) as session:
-        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
-        tokens = q.lower().split()
-        query = select(Project)
-        for token in tokens:
-            query = query.where(
-                Project.project_id.ilike(f"{token}%") |
-                literal(token).op("<%")(Project.project_id) |
-                literal(token).op("<%")(Project.title)
-            )
+        configure_trigram_search(session, get_trgm_search_threshold())
+        fields = (Project.project_id, Project.title)
+        query = apply_trigram_search(
+            select(Project),
+            tokens,
+            fields=fields,
+            prefix_fields=(Project.project_id,),
+        )
         query = query.order_by(
-            func.greatest(
-                func.word_similarity(q, Project.project_id),
-                func.coalesce(func.word_similarity(q, Project.title), 0),
-            ).desc()
+            trigram_rank(normalized_q, fields).desc(),
+            Project.unique_id.desc(),
         ).limit(limit)
 
         results = session.exec(query).all()

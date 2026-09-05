@@ -5,7 +5,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import and_, func, join, literal, text
+from sqlalchemy import and_, func, join
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select, col
 
@@ -16,6 +16,14 @@ from app.models.core_models import (
 )
 from app.utils.auth_utils import authorize_user, fetch_acl_rows, find_or_add_api_access, has_platform_admin_access, is_instrument_group_member, permission_filter, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
 from app.utils.permissions import AccessGroupType, effective_role, Principal, Role
+from app.utils.search_utils import (
+    MAX_SEARCH_QUERY_LENGTH,
+    SEARCH_QUERY_LIMIT_DESCRIPTION,
+    apply_trigram_search,
+    configure_trigram_search,
+    normalize_search_query,
+    trigram_rank,
+)
 from app.utils.sql_utils import deletion_filter_for, table_obj_to_dict
 from app.utils.user_utils import assert_username_available, find_mf_user_proposals, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
@@ -163,33 +171,34 @@ def update_current_user(auth_res: Annotated[Principal, Depends(authorize_user)],
 @router.get("/users/search", response_model=List[UserPublicRead])
 def search_users(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    q: str = Query(min_length=3, description="Search term matched against username, first name, and last name."),
+    q: str = Query(
+        min_length=3,
+        max_length=MAX_SEARCH_QUERY_LENGTH,
+        description=(
+            "Search term matched against username, first name, and last name. "
+            f"{SEARCH_QUERY_LIMIT_DESCRIPTION}"
+        ),
+    ),
     limit: int = Query(default=20, ge=1, le=50),
 ):
     '''
     Search users by username, first name, or last name. Returns public profiles only (no email).
     Minimum query length: 3 characters. Maximum results: 50.
     '''
+    normalized_q, tokens = normalize_search_query(q)
     with Session(engine) as session:
-        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
-        tokens = q.lower().split()
-        query = select(User)
-        for token in tokens:
-            query = query.where(
-                User.first_name.ilike(f"{token}%") |
-                User.last_name.ilike(f"{token}%") |
-                User.username.ilike(f"{token}%") |
-                literal(token).op("<%")(User.first_name) |
-                literal(token).op("<%")(User.last_name) |
-                literal(token).op("<%")(User.username)
-            )
+        configure_trigram_search(session, get_trgm_search_threshold())
+        fields = (User.first_name, User.last_name, User.username)
+        query = apply_trigram_search(
+            select(User),
+            tokens,
+            fields=fields,
+            prefix_fields=fields,
+        )
         results = session.exec(
             query.order_by(
-                func.greatest(
-                    func.word_similarity(q, User.first_name),
-                    func.word_similarity(q, User.last_name),
-                    func.coalesce(func.word_similarity(q, User.username), 0),
-                ).desc()
+                trigram_rank(normalized_q, fields).desc(),
+                User.unique_id.desc(),
             )
             .limit(limit)
         ).all()

@@ -13,8 +13,8 @@ from app.models.core_models import (
     UserAccessGroupLink,
 )
 from app.api.routes.projects import list_projects
-from app.api.routes.datasets import list_datasets
-from app.api.routes.samples import list_samples
+from app.api.routes.datasets import list_datasets, search_datasets
+from app.api.routes.samples import list_samples, search_samples
 from app.utils.auth_utils import access_selector_filter, project_scope_filter
 from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role
 from app.utils.project_utils import resolve_project_filter_mfid
@@ -221,6 +221,22 @@ def test_project_scope_requires_project_identifier(route):
             auth_res=Principal(user_id="admin", platform_role=PlatformRole.ADMIN),
             request=request,
             project_scope="all",
+        )
+
+    assert error.value.status_code == 422
+    assert error.value.detail == "project_scope requires project_id or project_mfid"
+
+
+@pytest.mark.parametrize("route", [search_datasets, search_samples])
+def test_project_scoped_search_requires_project_identifier(route):
+    with pytest.raises(HTTPException) as error:
+        route(
+            auth_res=Principal(user_id="admin", platform_role=PlatformRole.ADMIN),
+            q="search term",
+            project_id=None,
+            project_mfid=None,
+            project_scope="all",
+            limit=20,
         )
 
     assert error.value.status_code == 422
@@ -443,6 +459,19 @@ def test_access_selectors_are_repeated_openapi_arrays():
         assert parameters["project_id"]["required"] is False
         assert parameters["project_mfid"]["required"] is False
         assert parameters["project_scope"]["required"] is False
+        assert parameters["project_scope"]["schema"]["anyOf"][0]["enum"] == [
+            "assigned",
+            "shared",
+            "all",
+        ]
+    for path in ("/datasets/search", "/samples/search"):
+        parameters = {
+            parameter["name"]: parameter
+            for parameter in schema["paths"][path]["get"]["parameters"]
+        }
+        assert parameters["q"]["schema"]["maxLength"] == 200
+        assert parameters["project_id"]["required"] is False
+        assert parameters["project_mfid"]["required"] is False
         assert parameters["project_scope"]["schema"]["anyOf"][0]["enum"] == [
             "assigned",
             "shared",

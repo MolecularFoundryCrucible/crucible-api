@@ -236,6 +236,8 @@ Dataset response models now include nullable lightweight references alongside th
 
 `instrument` uses `InstrumentReferenceRead`, and `project` uses `ProjectReferenceRead`. The API returns current registered identity values when the canonical MFID resolves. An unresolved legacy relationship returns null while preserving the existing flat stored values. The fields are additive across dataset detail, collection, search, lineage, generic resource detail, and datasets embedded in sample responses. Existing clients do not need to change, and `instrument_id`, `instrument_name`, and `project_id` remain part of the API v3 response contract.
 
+Dataset and sample name search accepts the same explicit project relationship filters as their collection routes: `project_id` or `project_mfid`, plus optional `project_scope=assigned|shared|all`. Omitting `project_scope` preserves the existing assigned-only behavior. A matching slug and MFID pair is accepted, a conflicting pair returns 422, and an unknown slug returns 404. When a project filter is active, each result reports `project_relation` as `assigned` or `shared`.
+
 Sample response models now expose the same nullable `ProjectReferenceRead` as `project` while retaining the flat `project_id` field. It is populated across sample create, update, detail, collection, search, lineage, generic resource detail, and the deprecated dataset-to-samples relationship response. Clients may adopt the stable `project.unique_id` without changing their handling of existing fields.
 
 ## User email privacy

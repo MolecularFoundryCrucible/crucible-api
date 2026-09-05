@@ -292,9 +292,9 @@ Add a stable unique ordering, such as `AssociatedFile.id DESC` or `mfid DESC`, a
 
 ### Stable search ordering
 
-Fuzzy-search routes order by rank but do not always add a unique tie-breaker. Equal scores can therefore be returned in an unstable order.
+Implemented on 2026-09-04. Dataset, sample, user, project, and instrument fuzzy-search routes order by relevance rank followed by canonical `unique_id DESC`, so equal scores have deterministic ordering.
 
-Add `unique_id` as the final ordering key after relevance rank.
+Search input is also normalized once, bounded to 200 characters and 10 terms, and passed through shared query construction. Prefix matching uses SQLAlchemy's escaped `istartswith` expression, so `%` and `_` in user input remain literal characters.
 
 ### Precise cursor detection
 
@@ -318,9 +318,7 @@ Until then, use explicit parameters or a shared allowlist and field parser for t
 
 ### Trigram threshold binding
 
-Search code interpolates the configured trigram threshold into `SET LOCAL`. The value comes from trusted application configuration, which limits exposure, but bound values are still preferable.
-
-Where PostgreSQL syntax prevents a normal bind in `SET`, use `set_config('pg_trgm.word_similarity_threshold', :value, true)` with a bound and range-validated value.
+Implemented on 2026-09-04. Trigram search configuration uses request-local `set_config('pg_trgm.word_similarity_threshold', :value, true)` with a bound and range-validated value.
 
 ## Priority 6: schema consistency
 
@@ -511,7 +509,7 @@ If correlated filters produce inaccurate estimates, evaluate PostgreSQL extended
 - Add a partial unique constraint for pending join requests.
 - Lock join-request rows during review.
 - Correct keyword-query duplicate and empty-result behavior.
-- Add deterministic ordering to file collections and search ties.
+- Add deterministic ordering to file collections. Search ties now use canonical unique IDs.
 - Standardize case-insensitive canonical identifier rules.
 
 ### Phase 3: query-count reductions

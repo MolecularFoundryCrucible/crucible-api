@@ -1331,6 +1331,7 @@ def create_ds_file_ingestion_request(
     dsid: str,
     file_id: str,
     ingestion_class: Optional[str] = None,
+    status: Literal['requested', 'not_requested'] = 'requested',
 ):
     '''
     Creates an ingestion request for a file.
@@ -1338,7 +1339,7 @@ def create_ds_file_ingestion_request(
     Requires write access to the dataset.
     '''
     from app.api.routes.files import create_file_ingestion_request
-    return create_file_ingestion_request(auth_res, file_id, ingestion_class)
+    return create_file_ingestion_request(auth_res, file_id, ingestion_class, status)
 
 
 @router.get("/datasets/{dsid}/keywords", response_model=List[Keyword])

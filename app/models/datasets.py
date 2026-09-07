@@ -29,7 +29,14 @@ class DatasetCreate(SQLModel):
     dataset_name: Optional[str] = None
     project_id: Optional[str] = None
     instrument_name: Optional[str] = None
-    instrument_id: Optional[str] = None  # instrument's validated slug; preferred over instrument_name when given
+    instrument_id: Optional[str] = Field(
+        default=None,
+        description="Registered instrument slug. May be combined with a matching instrument_mfid.",
+    )
+    instrument_mfid: Optional[str] = Field(
+        default=None,
+        description="Canonical registered instrument MFID. May be combined with a matching instrument_id.",
+    )
     data_format: Optional[str] = None
     measurement: Optional[str] = None
     data_type: Optional[str] = None
@@ -46,12 +53,28 @@ class DatasetCreate(SQLModel):
         description="Owner reference: ORCID, service-account MFID, username, or email. Defaults to the authenticated identity.",
     )
 
-    @field_validator("project_id", "owner_orcid", "owner", mode="before", check_fields=False)
+    @field_validator(
+        "project_id",
+        "instrument_id",
+        "instrument_mfid",
+        "instrument_name",
+        "owner_orcid",
+        "owner",
+        mode="before",
+        check_fields=False,
+    )
     @classmethod
     def blank_identifiers_to_none(cls, v):
         """Uploaders that send "" instead of omitting the field would otherwise
         attach the resource to a nameless project. See general_utils."""
         return blank_to_none(v)
+
+    @field_validator("instrument_mfid")
+    @classmethod
+    def check_instrument_mfid(cls, v):
+        if v is not None and not is_valid_mfid(v):
+            raise ValueError("instrument_mfid must be a valid mfid: 26-character lowercase Crockford's Base32")
+        return v
 
     @model_validator(mode="after")
     def validate_owner_reference(self):

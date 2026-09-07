@@ -62,6 +62,22 @@ class TestModelsCoerceBlankProjectId:
         assert model(**required, owner_orcid="").owner_orcid is None
 
 
+@pytest.mark.parametrize("field", ["instrument_id", "instrument_mfid", "instrument_name"])
+def test_dataset_create_coerces_blank_instrument_identifiers(field):
+    assert getattr(DatasetCreate(**{field: "  "}), field) is None
+
+
+def test_dataset_create_rejects_invalid_instrument_mfid():
+    with pytest.raises(ValidationError):
+        DatasetCreate(instrument_mfid="not-an-mfid")
+
+
+def test_dataset_create_schema_exposes_optional_instrument_mfid():
+    schema = DatasetCreate.model_json_schema()
+    assert "instrument_mfid" in schema["properties"]
+    assert "instrument_mfid" not in schema.get("required", [])
+
+
 class TestUpdateModelsRejectReassignmentFields:
     def test_dataset_update_rejects_project_id(self):
         with pytest.raises(ValidationError):

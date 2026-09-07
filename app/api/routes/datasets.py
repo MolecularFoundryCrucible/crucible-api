@@ -52,7 +52,10 @@ from app.utils.auth_utils import (
     require_permission)
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.project_utils import project_standing, resolve_project_filter_mfid, resolve_project_id_to_mfid, resolve_project_mfids_to_references
-from app.utils.instrument_utils import resolve_instrument_mfids_to_references
+from app.utils.instrument_utils import (
+    resolve_instrument_identifiers,
+    resolve_instrument_mfids_to_references,
+)
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.search_utils import (
     MAX_SEARCH_QUERY_LENGTH,
@@ -219,14 +222,14 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                 raise HTTPException(status_code=404, detail=f"Project '{dataset_details['project_id']}' not found")
             dataset_details['project_mfid'] = mfid
 
-        instrument = None
         instrument_id_slug = dataset_details.pop('instrument_id', None)
-        if instrument_id_slug:
-            instrument = session.exec(
-                select(Instrument).where(func.lower(Instrument.instrument_id) == instrument_id_slug.lower())
-            ).one_or_none()
-            if instrument is None:
-                raise HTTPException(status_code=400, detail=f"Instrument '{instrument_id_slug}' is not registered")
+        instrument_mfid = dataset_details.pop('instrument_mfid', None)
+        instrument = resolve_instrument_identifiers(
+            session,
+            instrument_id_slug,
+            instrument_mfid,
+        )
+        if instrument is not None:
             dataset_details['instrument_name'] = instrument.instrument_name
         elif dataset_details.get('instrument_name', None):
             instrument = session.exec(

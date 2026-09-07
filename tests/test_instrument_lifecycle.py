@@ -456,6 +456,48 @@ class TestProjectMfidOnDataset:
             proj = session.exec(select(Project).where(Project.project_id == "proj_mfid_1")).one()
             assert ds.project_mfid == proj.unique_id
 
+    def test_create_dataset_with_project_mfid_sets_canonical_project(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            project = Project(
+                project_id="proj_mfid_only_1",
+                organization="LBNL",
+                project_lead_orcid="0000-0015b",
+            )
+            session.add(project)
+            session.commit()
+            session.refresh(project)
+            project_mfid = project.unique_id
+            group = AccessGroup(
+                group_name=project_mfid,
+                group_type=AccessGroupType.PROJECT.value,
+            )
+            session.add(group)
+            user = _user(session, "0000-0015b")
+            session.commit()
+            session.refresh(group)
+            session.add(UserAccessGroupLink(
+                user_id=user.id,
+                accessgroup_id=group.id,
+                role="contributor",
+            ))
+            session.commit()
+
+        auth_as("0000-0015b", groups=[])
+        resp = client.post("/datasets", json={
+            "dataset_name": "d10-mf-only",
+            "project_mfid": project_mfid,
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["project_id"] == "proj_mfid_only_1"
+        assert resp.json()["project"]["unique_id"] == project_mfid
+
+        with Session(db_engine) as session:
+            dataset = session.exec(select(Dataset).where(
+                Dataset.dataset_name == "d10-mf-only"
+            )).one()
+            assert dataset.project_id == "proj_mfid_only_1"
+            assert dataset.project_mfid == project_mfid
+
     def test_create_dataset_with_nonexistent_project_id_is_403_for_a_regular_user(self, client, db_engine, auth_as):
         """A non-admin caller with no standing in a nonexistent project hits
         the standing check first — 403, not 404 (see test_create_on_behalf.py

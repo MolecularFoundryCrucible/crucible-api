@@ -27,7 +27,12 @@ from app.utils.auth_utils import (
     require_permission)
 from app.utils.instrument_utils import resolve_instrument_mfids_to_references
 from app.utils.permissions import Principal, Permission, Role
-from app.utils.project_utils import project_standing, resolve_project_filter_mfid, resolve_project_id_to_mfid, resolve_project_mfids_to_references
+from app.utils.project_utils import (
+    project_standing_by_mfid,
+    resolve_project_filter_mfid,
+    resolve_project_identifiers,
+    resolve_project_mfids_to_references,
+)
 from app.utils.search_utils import (
     MAX_SEARCH_QUERY_LENGTH,
     SEARCH_QUERY_LIMIT_DESCRIPTION,
@@ -181,24 +186,32 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         )
         resolved_owner_orcid = owner_user.unique_id
 
-        project_mfid = None
-        if S.project_id:
-            project_mfid = resolve_project_id_to_mfid(S.project_id, session)
-            if project_mfid is None:
-                raise HTTPException(status_code=404, detail=f"Project '{S.project_id}' not found")
+        requested_project_id = sample_details.get('project_id')
+        requested_project_mfid = sample_details.get('project_mfid')
+        project = resolve_project_identifiers(
+            session,
+            requested_project_id,
+            requested_project_mfid,
+        )
+        if project is None and (
+            requested_project_id is not None
+            or requested_project_mfid is not None
+        ):
+            project_reference = requested_project_mfid or requested_project_id
+            raise HTTPException(status_code=404, detail=f"Project '{project_reference}' not found")
 
         if not auth_res.is_platform_admin:
             owner_orcid = resolved_owner_orcid or user_unique_id
-            if S.project_id:
+            if project is not None:
                 if owner_orcid != user_unique_id and not auth_res.is_service_account:
                     raise HTTPException(
                         status_code=403,
                         detail="Only service accounts and platform administrators may create a sample on behalf of another user")
-                standing = project_standing(owner_orcid, S.project_id, session)
+                standing = project_standing_by_mfid(owner_orcid, project.unique_id, session)
                 if standing is None or standing < Role.CONTRIBUTOR:
                     raise HTTPException(
                         status_code=403,
-                        detail=f"'{owner_orcid}' must be contributor or above in project '{S.project_id}' to create there")
+                        detail=f"'{owner_orcid}' must be contributor or above in project '{project.project_id}' to create there")
             elif owner_orcid != user_unique_id:
                 if not auth_res.is_service_account:
                     raise HTTPException(
@@ -208,8 +221,9 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         sample_details.pop('owner', None)
         sample_details['owner_orcid'] = resolved_owner_orcid
         sample_details['owner_user_id'] = owner_user.id
-        if project_mfid is not None:
-            sample_details['project_mfid'] = project_mfid
+        if project is not None:
+            sample_details['project_id'] = project.project_id
+            sample_details['project_mfid'] = project.unique_id
 
         sample = Sample(**sample_details)
         session.add(sample)

@@ -67,6 +67,24 @@ def test_dataset_create_coerces_blank_instrument_identifiers(field):
     assert getattr(DatasetCreate(**{field: "  "}), field) is None
 
 
+@pytest.mark.parametrize("model,required", MODELS)
+def test_create_models_coerce_blank_project_mfid(model, required):
+    assert model(**required, project_mfid="  ").project_mfid is None
+
+
+@pytest.mark.parametrize("model,required", MODELS)
+def test_create_models_reject_invalid_project_mfid(model, required):
+    with pytest.raises(ValidationError):
+        model(**required, project_mfid="not-an-mfid")
+
+
+@pytest.mark.parametrize("model", [DatasetCreate, SampleCreate])
+def test_create_model_schemas_expose_optional_project_mfid(model):
+    schema = model.model_json_schema()
+    assert "project_mfid" in schema["properties"]
+    assert "project_mfid" not in schema.get("required", [])
+
+
 def test_dataset_create_rejects_invalid_instrument_mfid():
     with pytest.raises(ValidationError):
         DatasetCreate(instrument_mfid="not-an-mfid")

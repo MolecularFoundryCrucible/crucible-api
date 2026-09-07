@@ -1,4 +1,5 @@
 import re
+from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy import and_, func
@@ -78,6 +79,56 @@ def resolve_project_id_to_mfid(proj_id: str, session) -> "str | None":
     """
     project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
     return project.unique_id if project else None
+
+
+def resolve_project_identifiers(
+    session,
+    project_id: Optional[str],
+    project_mfid: Optional[str],
+) -> Optional[Project]:
+    if project_id is None and project_mfid is None:
+        return None
+
+    if project_mfid is not None:
+        project = session.exec(
+            select(Project).where(Project.unique_id == project_mfid)
+        ).one_or_none()
+    else:
+        project = session.exec(
+            select(Project).where(Project.project_id == project_id)
+        ).one_or_none()
+
+    if (
+        project is not None
+        and project_id is not None
+        and project.project_id != project_id
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="project_id and project_mfid identify different projects",
+        )
+    return project
+
+
+def resolve_project_filter_mfid(
+    session,
+    project_id: Optional[str],
+    project_mfid: Optional[str],
+) -> Optional[str]:
+    if project_id is None:
+        return project_mfid
+
+    project = session.exec(
+        select(Project).where(Project.project_id == project_id)
+    ).one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    if project_mfid is not None and project.unique_id != project_mfid:
+        raise HTTPException(
+            status_code=422,
+            detail="project_id and project_mfid identify different projects",
+        )
+    return project.unique_id
 
 
 def resolve_project_reference(project_ref: str, session, *, options=()) -> "Project | None":
@@ -215,21 +266,25 @@ def is_project_owner(user_unique_id: str, proj_id: str, session) -> bool:
     ).first() is not None
 
 
-def project_standing(orcid: str, proj_id: str, session) -> "Role | None":
-    group_name = resolve_project_id_to_mfid(proj_id, session)
-    if group_name is None:
-        return None
+def project_standing_by_mfid(orcid: str, project_mfid: str, session) -> "Role | None":
     row = session.exec(
         select(UserAccessGroupLink.role)
         .join(AccessGroup, AccessGroup.id == UserAccessGroupLink.accessgroup_id)
         .join(User, User.id == UserAccessGroupLink.user_id)
         .where(
-            AccessGroup.group_name == group_name,
+            AccessGroup.group_name == project_mfid,
             AccessGroup.group_type == AccessGroupType.PROJECT.value,
             User.unique_id == orcid,
         )
     ).one_or_none()
     return Role.from_db(row) if row else None
+
+
+def project_standing(orcid: str, proj_id: str, session) -> "Role | None":
+    project_mfid = resolve_project_id_to_mfid(proj_id, session)
+    if project_mfid is None:
+        return None
+    return project_standing_by_mfid(orcid, project_mfid, session)
 
 
 def sql_get_projects_for_user(orcid, session, options=None):

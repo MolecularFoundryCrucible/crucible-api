@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import exists, func, join, literal, text
+from sqlalchemy import exists, func, join, text
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import and_, or_, Session, select
 
@@ -37,21 +37,39 @@ from app.models.response_schemas import DatasetSampleLinkResponse
 from app.models.datasets import (
     AssociatedFileCreate, AssociatedFileRead,
     DatasetCreate, DatasetRead, DatasetResponse, DatasetUpdate,
-    ThumbnailCreate, ThumbnailRead,
+    ThumbnailCreate, ThumbnailPreviewRead, ThumbnailRead, ThumbnailUpdate,
 )
 from app.models.instrument import InstrumentReferenceRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
-from app.models.projects import ProjectReferenceRead
+from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
 from app.services.resource_details import ResourceDetailOptions, load_dataset_detail
+from app.services.thumbnails import InvalidThumbnailImage, ThumbnailTooLarge, normalize_thumbnail
 from app.utils.auth_utils import (
-    access_selector_filter, authorize_user, permission_filter, require_permission)
+    access_selector_filter, authorize_user, permission_filter, project_scope_filter,
+    require_permission)
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
-from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_references
-from app.utils.instrument_utils import resolve_instrument_mfids_to_references
+from app.utils.project_utils import (
+    project_standing_by_mfid,
+    resolve_project_filter_mfid,
+    resolve_project_identifiers,
+    resolve_project_mfids_to_references,
+)
+from app.utils.instrument_utils import (
+    resolve_instrument_identifiers,
+    resolve_instrument_mfids_to_references,
+)
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
+from app.utils.search_utils import (
+    MAX_SEARCH_QUERY_LENGTH,
+    SEARCH_QUERY_LIMIT_DESCRIPTION,
+    apply_trigram_search,
+    configure_trigram_search,
+    normalize_search_query,
+    trigram_rank,
+)
 from app.utils.user_utils import resolve_create_owner
 from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
@@ -60,6 +78,9 @@ from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_ur
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
 RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
+LARGE_THUMBNAIL_LOOKUP_WARNING_SIZE = int(
+    os.environ.get("THUMBNAIL_LARGE_LOOKUP_WARNING_SIZE", "1000")
+)
 
 # eventually could switch to pushing + using github tags
 with open('pyproject.toml', 'r') as f:
@@ -72,6 +93,19 @@ with open('pyproject.toml', 'r') as f:
 
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
+
+
+def _normalize_thumbnail_input(dsid: str, thumbnail_b64str: str) -> str:
+    try:
+        return normalize_thumbnail(thumbnail_b64str)
+    except ThumbnailTooLarge as exc:
+        raise HTTPException(status_code=413, detail="Thumbnail image is too large") from exc
+    except InvalidThumbnailImage as exc:
+        raise HTTPException(status_code=400, detail="Invalid thumbnail image") from exc
+    except Exception as exc:
+        logger.exception("Unexpected thumbnail processing failure for dataset %s", dsid)
+        raise HTTPException(status_code=500, detail="Unable to process thumbnail image") from exc
+
 
 @router.post("/datasets/{dsid}/carrier_segmentation")
 def request_carrier_segmentation(dsid, auth_res: Annotated[Principal, Depends(authorize_user)]):
@@ -168,15 +202,32 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         dataset_details['owner_orcid'] = owner_user.unique_id
         dataset_details['owner_user_id'] = owner_user.id
 
+        requested_project_id = dataset_details.get('project_id')
+        requested_project_mfid = dataset_details.get('project_mfid')
+        project = resolve_project_identifiers(
+            session,
+            requested_project_id,
+            requested_project_mfid,
+        )
+        if requested_project_mfid is not None and project is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Project '{requested_project_mfid}' not found",
+            )
+
         if not auth_res.is_platform_admin:
             owner_orcid = dataset_details['owner_orcid']
-            proj_id = dataset_details.get('project_id')
+            proj_id = project.project_id if project is not None else requested_project_id
             if proj_id:
                 if owner_orcid != user_unique_id and not auth_res.is_service_account:
                     raise HTTPException(
                         status_code=403,
                         detail="Only service accounts and platform administrators may create a dataset on behalf of another user")
-                standing = project_standing(owner_orcid, proj_id, session)
+                standing = (
+                    project_standing_by_mfid(owner_orcid, project.unique_id, session)
+                    if project is not None
+                    else None
+                )
                 if standing is None or standing < Role.CONTRIBUTOR:
                     raise HTTPException(
                         status_code=403,
@@ -187,20 +238,20 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                         status_code=400,
                         detail="Creating on behalf of another user requires project_id, to verify their standing there")
 
-        if dataset_details.get('project_id', None):
-            mfid = resolve_project_id_to_mfid(dataset_details['project_id'], session)
-            if mfid is None:
-                raise HTTPException(status_code=404, detail=f"Project '{dataset_details['project_id']}' not found")
-            dataset_details['project_mfid'] = mfid
+        if requested_project_id is not None or requested_project_mfid is not None:
+            if project is None:
+                raise HTTPException(status_code=404, detail=f"Project '{requested_project_id}' not found")
+            dataset_details['project_id'] = project.project_id
+            dataset_details['project_mfid'] = project.unique_id
 
-        instrument = None
         instrument_id_slug = dataset_details.pop('instrument_id', None)
-        if instrument_id_slug:
-            instrument = session.exec(
-                select(Instrument).where(func.lower(Instrument.instrument_id) == instrument_id_slug.lower())
-            ).one_or_none()
-            if instrument is None:
-                raise HTTPException(status_code=400, detail=f"Instrument '{instrument_id_slug}' is not registered")
+        instrument_mfid = dataset_details.pop('instrument_mfid', None)
+        instrument = resolve_instrument_identifiers(
+            session,
+            instrument_id_slug,
+            instrument_mfid,
+        )
+        if instrument is not None:
             dataset_details['instrument_name'] = instrument.instrument_name
         elif dataset_details.get('instrument_name', None):
             instrument = session.exec(
@@ -393,6 +444,15 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                   instrument_mfid: Annotated[Optional[str], Query(
                       description="Filter datasets assigned to this canonical instrument MFID.",
                   )] = None,
+                  project_id: Annotated[Optional[str], Query(
+                      description="Filter datasets related to this project slug. May be combined with a matching project_mfid.",
+                  )] = None,
+                  project_mfid: Annotated[Optional[str], Query(
+                      description="Filter datasets related to this canonical project MFID.",
+                  )] = None,
+                  project_scope: Annotated[Optional[ProjectScope], Query(
+                      description="Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
+                  )] = None,
                   sample_mfid: Annotated[Optional[str], Query(
                       description="Filter datasets linked to this canonical sample MFID.",
                   )] = None):
@@ -412,9 +472,17 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
     Pass include_links=true to include parent, child, and associated resources for each dataset.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
     Pass instrument_mfid to filter by the instrument's canonical stable identity.
+    Pass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.
     Pass sample_mfid to filter by a readable sample's canonical stable identity.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
+    if project_scope is not None and project_id is None and project_mfid is None:
+        raise HTTPException(
+            status_code=422,
+            detail="project_scope requires project_id or project_mfid",
+        )
+    effective_project_scope: ProjectScope = project_scope or "assigned"
+
     params_dict = dict(request.query_params)
     keyword_filter = params_dict.pop('keyword', None)
 
@@ -422,10 +490,13 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
               'modification_time_lte', 'include_metadata', 'include_links', 'include_owner',
               'limit', 'cursor', 'offset', 'visibility', 'accessible_to_user',
-              'accessible_to_project', 'instrument_mfid', 'sample_mfid'):
+              'accessible_to_project', 'instrument_mfid', 'project_id', 'project_mfid',
+              'project_scope', 'sample_mfid'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
+        filter_project_mfid = resolve_project_filter_mfid(
+            session, project_id, project_mfid)
         linked_sample_id = None
         if sample_mfid is not None:
             linked_sample_id = session.exec(
@@ -442,6 +513,11 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
             Dataset,
             user_refs=accessible_to_user,
             project_refs=accessible_to_project,
+        )
+        project_filter = (
+            project_scope_filter(
+                session, auth_res, Dataset, filter_project_mfid, effective_project_scope)
+            if filter_project_mfid is not None else None
         )
         deletion_filter = deletion_filter_for(Dataset)
 
@@ -460,6 +536,8 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 q = q.where(Resource.modification_time <= modification_time_lte)
             if instrument_mfid is not None:
                 q = q.where(Dataset.instrument_mfid == instrument_mfid)
+            if project_filter is not None:
+                q = q.where(project_filter)
             if linked_sample_id is not None:
                 q = q.where(
                     exists()
@@ -570,9 +648,9 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
         items = []
         for row in results:
             if include_metadata:
-                dataset, creation_time, modification_time, public, sci_md, project_mfid, project_id, project_title, instrument_mfid, instrument_id, instrument_name = row
+                dataset, creation_time, modification_time, public, sci_md, resolved_project_mfid, project_id, project_title, instrument_mfid, instrument_id, instrument_name = row
             else:
-                dataset, creation_time, modification_time, public, project_mfid, project_id, project_title, instrument_mfid, instrument_id, instrument_name = row
+                dataset, creation_time, modification_time, public, resolved_project_mfid, project_id, project_title, instrument_mfid, instrument_id, instrument_name = row
                 sci_md = None
             instrument_reference = InstrumentReferenceRead(
                 unique_id=instrument_mfid,
@@ -580,10 +658,10 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 instrument_name=instrument_name,
             ) if instrument_mfid else None
             project_reference = ProjectReferenceRead(
-                unique_id=project_mfid,
+                unique_id=resolved_project_mfid,
                 project_id=project_id,
                 title=project_title,
-            ) if project_mfid else None
+            ) if resolved_project_mfid else None
             links = None
             if include_links:
                 links = (
@@ -603,6 +681,9 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                 "scientific_metadata": sci_md,
                 "links": links,
                 "owner": owners_by_orcid.get(dataset.owner_orcid),
+                "project_relation": (
+                    "assigned" if dataset.project_mfid == filter_project_mfid else "shared"
+                ) if filter_project_mfid is not None else None,
             }))
         next_cursor = results[-1][0].unique_id if len(results) == limit else None
         resp_offset = offset if (cursor is None and offset) else None
@@ -630,45 +711,79 @@ def _dataset_base_query(principal):
 @router.get("/datasets/search", response_model=PaginatedResponse[DatasetResponse])
 def search_datasets(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    q: str = Query(min_length=3, description="Search term matched against dataset_name."),
-    project_id: Optional[str] = None,
+    q: str = Query(
+        min_length=3,
+        max_length=MAX_SEARCH_QUERY_LENGTH,
+        description=f"Search term matched against dataset_name. {SEARCH_QUERY_LIMIT_DESCRIPTION}",
+    ),
+    project_id: Annotated[Optional[str], Query(
+        description="Restrict results related to this project slug. May be combined with a matching project_mfid.",
+    )] = None,
+    project_mfid: Annotated[Optional[str], Query(
+        description="Restrict results related to this canonical project MFID.",
+    )] = None,
+    project_scope: Annotated[Optional[ProjectScope], Query(
+        description="Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
+    )] = None,
     limit: int = Query(default=20, ge=1, le=50),
 ):
     '''
-    Search datasets by name. Returns results ordered by match quality (exact → prefix → substring).
-    Optionally scope to a project with ?project_id=. Maximum 50 results.
+    Search readable datasets by name and return results ordered by match quality.
+    Pass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship. Maximum 50 results.
     '''
 
+    if project_scope is not None and project_id is None and project_mfid is None:
+        raise HTTPException(
+            status_code=422,
+            detail="project_scope requires project_id or project_mfid",
+        )
+    effective_project_scope: ProjectScope = project_scope or "assigned"
+    normalized_q, tokens = normalize_search_query(q)
+
     with Session(engine) as session:
-        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
-        query = _dataset_base_query(auth_res)
-        for token in q.lower().split():
-            query = query.where(
-                Dataset.dataset_name.ilike(f"{token}%") |
-                literal(token).op("<%")(Dataset.dataset_name)
-            )
-        if project_id:
-            query = query.where(Dataset.project_mfid == resolve_project_id_to_mfid(project_id, session))
-        query = query.order_by(func.word_similarity(q, Dataset.dataset_name).desc()).limit(limit)
+        configure_trigram_search(session, get_trgm_search_threshold())
+        filter_project_mfid = resolve_project_filter_mfid(
+            session, project_id, project_mfid)
+        query = apply_trigram_search(
+            _dataset_base_query(auth_res),
+            tokens,
+            fields=(Dataset.dataset_name,),
+            prefix_fields=(Dataset.dataset_name,),
+        )
+        if filter_project_mfid is not None:
+            query = query.where(project_scope_filter(
+                session,
+                auth_res,
+                Dataset,
+                filter_project_mfid,
+                effective_project_scope,
+            ))
+        query = query.order_by(
+            trigram_rank(normalized_q, (Dataset.dataset_name,)).desc(),
+            Dataset.unique_id.desc(),
+        ).limit(limit)
         results = session.exec(query).all()
         items = [DatasetResponse.model_validate({
             **dataset.model_dump(),
             "instrument_id": instrument_id,
-            "project_id": project_id if project_id is not None else dataset.project_id,
+            "project_id": resolved_project_id if resolved_project_id is not None else dataset.project_id,
             "instrument": InstrumentReferenceRead(
                 unique_id=instrument_mfid,
                 instrument_id=instrument_id,
                 instrument_name=instrument_name,
             ) if instrument_mfid else None,
             "project": ProjectReferenceRead(
-                unique_id=project_mfid,
-                project_id=project_id,
+                unique_id=resolved_project_mfid,
+                project_id=resolved_project_id,
                 title=project_title,
-            ) if project_mfid else None,
+            ) if resolved_project_mfid else None,
             "public": public if public is not None else False,
             "creation_time": creation_time,
             "modification_time": modification_time,
-        }) for dataset, creation_time, modification_time, public, project_mfid, project_id, project_title, instrument_mfid, instrument_id, instrument_name in results]
+            "project_relation": (
+                "assigned" if dataset.project_mfid == filter_project_mfid else "shared"
+            ) if filter_project_mfid is not None else None,
+        }) for dataset, creation_time, modification_time, public, resolved_project_mfid, resolved_project_id, project_title, instrument_mfid, instrument_id, instrument_name in results]
         return PaginatedResponse(limit=limit, items=items)
 
 
@@ -896,11 +1011,18 @@ def read_thumbnails(auth_res: Annotated[Principal, Depends(authorize_user)], dsi
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found or access denied")
 
-        ds_thumbnails = session.exec(select(Thumbnail).where(Thumbnail.dataset_id == ds.id)).all()
+        ds_thumbnails = session.exec(
+            select(Thumbnail)
+            .where(Thumbnail.dataset_id == ds.id)
+            .order_by(Thumbnail.id)
+        ).all()
         return ds_thumbnails
 
 
-@router.post("/datasets/first_thumbnails")
+@router.post(
+    "/datasets/first_thumbnails",
+    response_model=dict[str, ThumbnailPreviewRead],
+)
 def get_first_thumbnails(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dataset_ids: List[str] = Body(...),
@@ -913,16 +1035,30 @@ def get_first_thumbnails(
     Intended for bulk thumbnail fetching after an entity_graph call.
     '''
 
+    requested_count = len(dataset_ids)
+    unique_dataset_ids = list(dict.fromkeys(dataset_ids))
+    if requested_count > LARGE_THUMBNAIL_LOOKUP_WARNING_SIZE:
+        logger.warning(
+            "Large first-thumbnail lookup user_id=%s requested=%d unique=%d threshold=%d",
+            auth_res.user_id,
+            requested_count,
+            len(unique_dataset_ids),
+            LARGE_THUMBNAIL_LOOKUP_WARNING_SIZE,
+        )
+
     with Session(engine) as session:
         auth_filter = permission_filter(auth_res, Dataset, Permission.READ)
 
         authorized_ds = session.exec(
-            select(Dataset)
+            select(Dataset.id, Dataset.unique_id)
             .filter(auth_filter)
-            .where(Dataset.unique_id.in_(dataset_ids))
+            .where(Dataset.unique_id.in_(unique_dataset_ids))
         ).all()
 
-        ds_id_to_uid = {ds.id: ds.unique_id for ds in authorized_ds}
+        ds_id_to_uid = {
+            dataset_id: unique_id
+            for dataset_id, unique_id in authorized_ds
+        }
 
         if not ds_id_to_uid:
             return {}
@@ -947,6 +1083,7 @@ def get_first_thumbnails(
 
         return {
             ds_id_to_uid[t.dataset_id]: {
+                "id": t.id,
                 "thumbnail_name": t.thumbnail_name,
                 "thumbnail_b64str": t.thumbnail_b64str,
             }
@@ -958,8 +1095,8 @@ def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
                   dsid: str,
                   thumbnail: ThumbnailCreate):
     '''
-    Adds a thumbnail to a dataset. If the thumbnail exists, it will simply add the existing thumbnail to the dataset object.
-    Otherwise, the thumbnail will be created and then added to the dataset.
+    Adds a thumbnail to a dataset. Repeated uploads of the same normalized image
+    to one dataset update that thumbnail's name.
 
     Raises:
         HTTPException: If required thumbnail fields are missing or dataset not found
@@ -978,36 +1115,32 @@ def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
             detail=f"Missing required thumbnail information: {', '.join(missing_fields)}. Please provide all required fields: thumbnail_name and thumbnail_b64str."
         )
 
-    # Resize to max 512px on longest side, re-encode as JPEG preserving aspect ratio
-    try:
-        import base64, io
-        from PIL import Image
-        raw = base64.b64decode(thumbnail.thumbnail_b64str)
-        img = Image.open(io.BytesIO(raw)).convert("RGB")
-        img.thumbnail((512, 512), Image.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85)
-        thumbnail_b64str = base64.b64encode(buf.getvalue()).decode("utf-8")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid image data: {e}")
-
     ds_cmd = (select(Dataset)
               .where(Dataset.unique_id == dsid)
               .where(permission_filter(auth_res, Dataset, Permission.EDIT)))
 
     with Session(engine) as session:
-        ds = session.exec(ds_cmd).one_or_none()
+        if session.exec(ds_cmd).one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
 
+    thumbnail_b64str = _normalize_thumbnail_input(dsid, thumbnail.thumbnail_b64str)
+
+    with Session(engine) as session:
+        ds = session.exec(ds_cmd.with_for_update()).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        tn_obj = add_or_update(session, Thumbnail, where=(Thumbnail.thumbnail_b64str == thumbnail_b64str),
-                                thumbnail_name = thumbnail.thumbnail_name,
-                                thumbnail_b64str = thumbnail_b64str,
-                                dataset_id = ds.id)
-        if not (tn_obj in ds.thumbnails):
-            ds.thumbnails.append(tn_obj)
-            session.add(ds)
+        tn_obj = add_or_update(
+            session,
+            Thumbnail,
+            where=and_(
+                Thumbnail.dataset_id == ds.id,
+                Thumbnail.thumbnail_b64str == thumbnail_b64str,
+            ),
+            thumbnail_name=thumbnail.thumbnail_name,
+            thumbnail_b64str=thumbnail_b64str,
+            dataset_id=ds.id,
+        )
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
@@ -1019,16 +1152,65 @@ def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
     return(tn_obj)
 
 
-@router.delete("/datasets/{dsid}/thumbnails/{thumbnail_id}")
+@router.patch(
+    "/datasets/{dsid}/thumbnails/{thumbnail_id}",
+    response_model=ThumbnailRead,
+)
+def update_thumbnail(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    dsid: str,
+    thumbnail_id: int,
+    update: ThumbnailUpdate,
+):
+    thumbnail_cmd = (
+        select(Thumbnail)
+        .join(Dataset, Thumbnail.dataset_id == Dataset.id)
+        .where(
+            Dataset.unique_id == dsid,
+            Thumbnail.id == thumbnail_id,
+            permission_filter(auth_res, Dataset, Permission.EDIT),
+        )
+    )
+
+    with Session(engine) as session:
+        if session.exec(thumbnail_cmd).one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Thumbnail not found")
+
+    normalized_b64str = None
+    if update.thumbnail_b64str is not None:
+        normalized_b64str = _normalize_thumbnail_input(dsid, update.thumbnail_b64str)
+
+    with Session(engine) as session:
+        thumbnail = session.exec(thumbnail_cmd).one_or_none()
+        if thumbnail is None:
+            raise HTTPException(status_code=404, detail="Thumbnail not found")
+
+        if update.thumbnail_name is not None:
+            thumbnail.thumbnail_name = update.thumbnail_name
+        if normalized_b64str is not None:
+            thumbnail.thumbnail_b64str = normalized_b64str
+        session.add(thumbnail)
+        touch_resource_modification_time(session, dsid)
+        session.commit()
+        session.refresh(thumbnail)
+        return thumbnail
+
+
+@router.delete(
+    "/datasets/{dsid}/thumbnails/{thumbnail_id}",
+    response_model=dict[str, str],
+)
 def delete_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, thumbnail_id: int):
     '''Removes a thumbnail from a dataset and deletes it.'''
 
     with Session(engine) as session:
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        ds = session.exec(
+            select(Dataset)
+            .where(Dataset.unique_id == dsid)
+            .where(permission_filter(auth_res, Dataset, Permission.EDIT))
+        ).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-
-        require_permission(session, auth_res, dsid, Permission.EDIT)
 
         tn = session.exec(
             select(Thumbnail).where(Thumbnail.id == thumbnail_id, Thumbnail.dataset_id == ds.id)

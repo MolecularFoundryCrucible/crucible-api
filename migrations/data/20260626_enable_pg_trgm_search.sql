@@ -2,10 +2,10 @@
 -- Safe to run multiple times (IF NOT EXISTS).
 -- Requires PostgreSQL superuser or pg_extension_owner membership.
 --
--- Search endpoints use strict_word_similarity with the <<% operator, which is
--- governed by pg_trgm.word_similarity_threshold (default 0.6). To tune:
---   ALTER SYSTEM SET pg_trgm.word_similarity_threshold = 0.5;
---   SELECT pg_reload_conf();
+-- Search endpoints use word_similarity with the <% operator, governed by
+-- pg_trgm.word_similarity_threshold. The API applies trgm_search_threshold
+-- from its configuration as a request-local setting. The configured default
+-- is 0.3.
 -- Lower values return more results; higher values are stricter.
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;

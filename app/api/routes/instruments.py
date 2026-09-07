@@ -2,7 +2,7 @@ from enum import Enum
 import os
 from typing import Annotated, List, Optional, Union
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from sqlalchemy import func, join, literal, text
+from sqlalchemy import func, join
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
@@ -16,6 +16,14 @@ from app.services.resource_details import ResourceDetailOptions, load_instrument
 from app.utils.auth_utils import authorize_user, require_permission, resource_capabilities
 from app.utils.instrument_utils import assert_instrument_id_available
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
+from app.utils.search_utils import (
+    MAX_SEARCH_QUERY_LENGTH,
+    SEARCH_QUERY_LIMIT_DESCRIPTION,
+    apply_trigram_search,
+    configure_trigram_search,
+    normalize_search_query,
+    trigram_rank,
+)
 from app.utils.sql_utils import add_or_update, create_standard_acls, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.user_utils import resolve_create_owner
 from app.utils.gcs_record_utils import write_record, instrument_record
@@ -158,7 +166,14 @@ def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], re
 @router.get("/instruments/search", response_model=PaginatedResponse[InstrumentResponse])
 def search_instruments(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    q: str = Query(min_length=3, description="Search term matched against instrument_name, instrument_type, and manufacturer."),
+    q: str = Query(
+        min_length=3,
+        max_length=MAX_SEARCH_QUERY_LENGTH,
+        description=(
+            "Search term matched against instrument_name, instrument_type, and manufacturer. "
+            f"{SEARCH_QUERY_LIMIT_DESCRIPTION}"
+        ),
+    ),
     status: Optional[InstrumentStatus] = Query(default=None, description="Restrict results to one lifecycle status."),
     include_owner: bool = False,
     limit: int = Query(default=20, ge=1, le=50),
@@ -167,27 +182,29 @@ def search_instruments(
     Search instruments by name, type, or manufacturer using fuzzy matching.
     Returns results ordered by match quality. Maximum 50 results.
     '''
+    normalized_q, tokens = normalize_search_query(q)
     with Session(engine) as session:
-        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
+        configure_trigram_search(session, get_trgm_search_threshold())
         base = (
             select(Instrument, Resource)
             .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
         )
         if status is not None:
             base = base.where(Instrument.status == status.value)
-        for token in q.lower().split():
-            base = base.where(
-                Instrument.instrument_name.ilike(f"{token}%") |
-                literal(token).op("<%")(Instrument.instrument_name) |
-                literal(token).op("<%")(Instrument.instrument_type) |
-                literal(token).op("<%")(Instrument.manufacturer)
-            )
+        fields = (
+            Instrument.instrument_name,
+            Instrument.instrument_type,
+            Instrument.manufacturer,
+        )
+        base = apply_trigram_search(
+            base,
+            tokens,
+            fields=fields,
+            prefix_fields=(Instrument.instrument_name,),
+        )
         statement = base.order_by(
-            func.greatest(
-                func.word_similarity(q, Instrument.instrument_name),
-                func.coalesce(func.word_similarity(q, Instrument.instrument_type), 0),
-                func.coalesce(func.word_similarity(q, Instrument.manufacturer), 0),
-            ).desc()
+            trigram_rank(normalized_q, fields).desc(),
+            Instrument.unique_id.desc(),
         ).limit(limit)
         rows = session.exec(statement).all()
         owners = _instrument_owners(session, (inst for inst, _ in rows)) if include_owner else {}

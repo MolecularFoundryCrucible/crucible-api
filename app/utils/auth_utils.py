@@ -456,6 +456,43 @@ def access_group_permission_filter(accessgroup_id: int, resource_model,
     )
 
 
+def project_scope_filter(session, caller: Principal, resource_model,
+                         project_mfid: str, project_scope: str):
+    from app.models.core_models import AccessGroup, Project
+    from app.utils.permissions import AccessGroupType
+
+    if project_scope == "assigned":
+        return resource_model.project_mfid == project_mfid
+
+    project = session.exec(
+        select(Project).where(Project.unique_id == project_mfid)
+    ).one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project '{project_mfid}' not found")
+    if not has_platform_admin_access(caller) and caller.role_in(project.unique_id) is None:
+        raise HTTPException(status_code=403, detail="Not authorized to inspect project access")
+
+    group = session.exec(
+        select(AccessGroup).where(
+            AccessGroup.group_name == project.unique_id,
+            AccessGroup.group_type == AccessGroupType.PROJECT.value,
+        )
+    ).one_or_none()
+    if group is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Project '{project.project_id}' has no project access group",
+        )
+
+    project_access = access_group_permission_filter(group.id, resource_model)
+    if project_scope == "shared":
+        return and_(
+            project_access,
+            resource_model.project_mfid.is_distinct_from(project_mfid),
+        )
+    return project_access
+
+
 def has_platform_admin_access(principal: Principal) -> bool:
     return principal.is_platform_admin or any(
         group.group_name == "admin" for group in principal.groups

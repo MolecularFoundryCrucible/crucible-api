@@ -51,8 +51,16 @@ from app.utils.auth_utils import (
     access_selector_filter, authorize_user, permission_filter, project_scope_filter,
     require_permission)
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
-from app.utils.project_utils import project_standing, resolve_project_filter_mfid, resolve_project_id_to_mfid, resolve_project_mfids_to_references
-from app.utils.instrument_utils import resolve_instrument_mfids_to_references
+from app.utils.project_utils import (
+    project_standing_by_mfid,
+    resolve_project_filter_mfid,
+    resolve_project_identifiers,
+    resolve_project_mfids_to_references,
+)
+from app.utils.instrument_utils import (
+    resolve_instrument_identifiers,
+    resolve_instrument_mfids_to_references,
+)
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.search_utils import (
     MAX_SEARCH_QUERY_LENGTH,
@@ -194,15 +202,32 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         dataset_details['owner_orcid'] = owner_user.unique_id
         dataset_details['owner_user_id'] = owner_user.id
 
+        requested_project_id = dataset_details.get('project_id')
+        requested_project_mfid = dataset_details.get('project_mfid')
+        project = resolve_project_identifiers(
+            session,
+            requested_project_id,
+            requested_project_mfid,
+        )
+        if requested_project_mfid is not None and project is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Project '{requested_project_mfid}' not found",
+            )
+
         if not auth_res.is_platform_admin:
             owner_orcid = dataset_details['owner_orcid']
-            proj_id = dataset_details.get('project_id')
+            proj_id = project.project_id if project is not None else requested_project_id
             if proj_id:
                 if owner_orcid != user_unique_id and not auth_res.is_service_account:
                     raise HTTPException(
                         status_code=403,
                         detail="Only service accounts and platform administrators may create a dataset on behalf of another user")
-                standing = project_standing(owner_orcid, proj_id, session)
+                standing = (
+                    project_standing_by_mfid(owner_orcid, project.unique_id, session)
+                    if project is not None
+                    else None
+                )
                 if standing is None or standing < Role.CONTRIBUTOR:
                     raise HTTPException(
                         status_code=403,
@@ -213,20 +238,20 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                         status_code=400,
                         detail="Creating on behalf of another user requires project_id, to verify their standing there")
 
-        if dataset_details.get('project_id', None):
-            mfid = resolve_project_id_to_mfid(dataset_details['project_id'], session)
-            if mfid is None:
-                raise HTTPException(status_code=404, detail=f"Project '{dataset_details['project_id']}' not found")
-            dataset_details['project_mfid'] = mfid
+        if requested_project_id is not None or requested_project_mfid is not None:
+            if project is None:
+                raise HTTPException(status_code=404, detail=f"Project '{requested_project_id}' not found")
+            dataset_details['project_id'] = project.project_id
+            dataset_details['project_mfid'] = project.unique_id
 
-        instrument = None
         instrument_id_slug = dataset_details.pop('instrument_id', None)
-        if instrument_id_slug:
-            instrument = session.exec(
-                select(Instrument).where(func.lower(Instrument.instrument_id) == instrument_id_slug.lower())
-            ).one_or_none()
-            if instrument is None:
-                raise HTTPException(status_code=400, detail=f"Instrument '{instrument_id_slug}' is not registered")
+        instrument_mfid = dataset_details.pop('instrument_mfid', None)
+        instrument = resolve_instrument_identifiers(
+            session,
+            instrument_id_slug,
+            instrument_mfid,
+        )
+        if instrument is not None:
             dataset_details['instrument_name'] = instrument.instrument_name
         elif dataset_details.get('instrument_name', None):
             instrument = session.exec(

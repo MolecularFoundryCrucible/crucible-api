@@ -5,8 +5,11 @@ from sqlalchemy.pool import StaticPool
 
 from app.models.core_models import Instrument, Project
 from app.utils.instrument_utils import (
-    assert_instrument_id_available, resolve_instrument_id_to_mfid,
-    resolve_instrument_mfids_to_ids, resolve_instrument_mfids_to_references,
+    assert_instrument_id_available,
+    resolve_instrument_id_to_mfid,
+    resolve_instrument_identifiers,
+    resolve_instrument_mfids_to_ids,
+    resolve_instrument_mfids_to_references,
     validate_instrument_id_format,
 )
 
@@ -80,6 +83,51 @@ class TestResolution:
 
     def test_resolve_unknown_instrument_id_returns_none(self, session):
         assert resolve_instrument_id_to_mfid("no-such-instrument", session) is None
+
+    def test_resolve_instrument_by_mfid(self, session):
+        session.add(Instrument(
+            unique_id="m1",
+            instrument_id="xrd-1",
+            instrument_name="XRD-1",
+            owner="o",
+            location="b30",
+        ))
+        session.commit()
+        assert resolve_instrument_identifiers(session, None, "m1").instrument_id == "xrd-1"
+
+    def test_resolve_matching_id_and_mfid(self, session):
+        session.add(Instrument(
+            unique_id="m1",
+            instrument_id="xrd-1",
+            instrument_name="XRD-1",
+            owner="o",
+            location="b30",
+        ))
+        session.commit()
+        assert resolve_instrument_identifiers(session, "XRD-1", "m1").unique_id == "m1"
+
+    def test_resolve_conflicting_id_and_mfid_is_rejected(self, session):
+        session.add(Instrument(
+            unique_id="m1",
+            instrument_id="xrd-1",
+            instrument_name="XRD-1",
+            owner="o",
+            location="b30",
+        ))
+        session.commit()
+        with pytest.raises(HTTPException) as exc:
+            resolve_instrument_identifiers(session, "xrd-2", "m1")
+        assert exc.value.status_code == 422
+
+    def test_resolve_unknown_instrument_id_preserves_400(self, session):
+        with pytest.raises(HTTPException) as exc:
+            resolve_instrument_identifiers(session, "missing", None)
+        assert exc.value.status_code == 400
+
+    def test_resolve_unknown_instrument_mfid_is_404(self, session):
+        with pytest.raises(HTTPException) as exc:
+            resolve_instrument_identifiers(session, None, "missing")
+        assert exc.value.status_code == 404
 
     def test_resolve_instrument_mfids_to_ids_is_batched(self, session):
         session.add(Instrument(unique_id="m1", instrument_id="xrd-1", instrument_name="XRD-1", owner="o", location="b30"))

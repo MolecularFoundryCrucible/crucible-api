@@ -309,13 +309,82 @@ class TestInstrumentIdOnDataset:
             inst = session.exec(select(Instrument).where(Instrument.instrument_id == "xrd-id-1")).one()
             assert ds.instrument_mfid == inst.unique_id
 
-    def test_create_dataset_with_unregistered_instrument_id_is_400(self, client, db_engine, auth_as):
+    def test_create_dataset_with_instrument_mfid_resolves_and_echoes_it(self, client, db_engine, auth_as):
+        instrument = self._register(client, db_engine, auth_as)
+        with Session(db_engine) as session:
+            _user(session, "0000-0010-0000-0001")
+
+        auth_as("0000-0010-0000-0001", groups=[])
+        resp = client.post("/datasets", json={
+            "dataset_name": "d5-mf",
+            "instrument_mfid": instrument["unique_id"],
+        })
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["instrument"] == {
+            "unique_id": instrument["unique_id"],
+            "instrument_id": "xrd-id-1",
+            "instrument_name": "XRD ID 1",
+        }
+
+    def test_create_dataset_accepts_matching_instrument_id_and_mfid(self, client, db_engine, auth_as):
+        instrument = self._register(client, db_engine, auth_as)
+        with Session(db_engine) as session:
+            _user(session, "0000-0010-0000-0002")
+
+        auth_as("0000-0010-0000-0002", groups=[])
+        resp = client.post("/datasets", json={
+            "dataset_name": "d5-matching",
+            "instrument_id": "XRD-ID-1",
+            "instrument_mfid": instrument["unique_id"],
+        })
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["instrument"]["unique_id"] == instrument["unique_id"]
+
+    def test_create_dataset_rejects_conflicting_instrument_id_and_mfid(self, client, db_engine, auth_as):
+        first = self._register(client, db_engine, auth_as)
+        second_response = client.post("/instruments", json={
+            "instrument_id": "xrd-id-2",
+            "instrument_name": "XRD ID 2",
+            "location": "b30",
+        })
+        assert second_response.status_code == 200, second_response.text
+        second = second_response.json()
+        with Session(db_engine) as session:
+            _user(session, "0000-0010-0000-0003")
+
+        auth_as("0000-0010-0000-0003", groups=[])
+        resp = client.post("/datasets", json={
+            "dataset_name": "d5-conflict",
+            "instrument_id": first["instrument_id"],
+            "instrument_mfid": second["unique_id"],
+        })
+
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == (
+            "instrument_id and instrument_mfid identify different instruments"
+        )
+
+    def test_create_dataset_with_unregistered_instrument_id_preserves_400(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             _user(session, "0000-0011")
 
         auth_as("0000-0011", groups=[])
         resp = client.post("/datasets", json={"dataset_name": "d6", "instrument_id": "no-such-slug"})
         assert resp.status_code == 400
+
+    def test_create_dataset_with_unregistered_instrument_mfid_is_404(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "0000-0011-0000-0001")
+
+        auth_as("0000-0011-0000-0001", groups=[])
+        resp = client.post("/datasets", json={
+            "dataset_name": "d6-mf",
+            "instrument_mfid": "00000000000000000000000000",
+        })
+
+        assert resp.status_code == 404
 
     def test_create_dataset_via_instrument_name_still_echoes_instrument_id(self, client, db_engine, auth_as):
         """A dataset created the legacy way (free-text instrument_name) still
@@ -386,6 +455,48 @@ class TestProjectMfidOnDataset:
             ds = session.exec(select(Dataset).where(Dataset.dataset_name == "d10")).one()
             proj = session.exec(select(Project).where(Project.project_id == "proj_mfid_1")).one()
             assert ds.project_mfid == proj.unique_id
+
+    def test_create_dataset_with_project_mfid_sets_canonical_project(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            project = Project(
+                project_id="proj_mfid_only_1",
+                organization="LBNL",
+                project_lead_orcid="0000-0015b",
+            )
+            session.add(project)
+            session.commit()
+            session.refresh(project)
+            project_mfid = project.unique_id
+            group = AccessGroup(
+                group_name=project_mfid,
+                group_type=AccessGroupType.PROJECT.value,
+            )
+            session.add(group)
+            user = _user(session, "0000-0015b")
+            session.commit()
+            session.refresh(group)
+            session.add(UserAccessGroupLink(
+                user_id=user.id,
+                accessgroup_id=group.id,
+                role="contributor",
+            ))
+            session.commit()
+
+        auth_as("0000-0015b", groups=[])
+        resp = client.post("/datasets", json={
+            "dataset_name": "d10-mf-only",
+            "project_mfid": project_mfid,
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["project_id"] == "proj_mfid_only_1"
+        assert resp.json()["project"]["unique_id"] == project_mfid
+
+        with Session(db_engine) as session:
+            dataset = session.exec(select(Dataset).where(
+                Dataset.dataset_name == "d10-mf-only"
+            )).one()
+            assert dataset.project_id == "proj_mfid_only_1"
+            assert dataset.project_mfid == project_mfid
 
     def test_create_dataset_with_nonexistent_project_id_is_403_for_a_regular_user(self, client, db_engine, auth_as):
         """A non-admin caller with no standing in a nonexistent project hits

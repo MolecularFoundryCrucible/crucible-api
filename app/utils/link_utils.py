@@ -40,8 +40,10 @@ def fetch_readable_links(
     results: List[LinkedResource] = []
 
     if resource_type == "dataset":
+        # Each parent/child row carries the link's relationship_type alongside
+        # the linked dataset; it is None for links created before typing.
         parents = session.exec(
-            select(Dataset)
+            select(Dataset, DatasetLink.relationship_type)
             .join(DatasetLink, DatasetLink.parent_dataset_id == Dataset.id)
             .where(DatasetLink.child_dataset_id == entity.id)
             .where(permission_filter(principal, Dataset, Permission.READ))
@@ -49,7 +51,7 @@ def fetch_readable_links(
             .order_by(Dataset.unique_id)
         ).all()
         children = session.exec(
-            select(Dataset)
+            select(Dataset, DatasetLink.relationship_type)
             .join(DatasetLink, DatasetLink.child_dataset_id == Dataset.id)
             .where(DatasetLink.parent_dataset_id == entity.id)
             .where(permission_filter(principal, Dataset, Permission.READ))
@@ -69,32 +71,34 @@ def fetch_readable_links(
                 unique_id=dataset.unique_id,
                 resource_type="dataset",
                 name=dataset.dataset_name,
-                relationship="parent",
+                direction="source",
+                relationship_type=relationship_type,
             )
-            for dataset in parents
+            for dataset, relationship_type in parents
         )
         results.extend(
             LinkedResource(
                 unique_id=dataset.unique_id,
                 resource_type="dataset",
                 name=dataset.dataset_name,
-                relationship="child",
+                direction="target",
+                relationship_type=relationship_type,
             )
-            for dataset in children
+            for dataset, relationship_type in children
         )
         results.extend(
             LinkedResource(
                 unique_id=sample.unique_id,
                 resource_type="sample",
                 name=sample.sample_name,
-                relationship="associated",
+                direction="undirected",
             )
             for sample in samples
         )
 
     elif resource_type == "sample":
         parents = session.exec(
-            select(Sample)
+            select(Sample, SampleLink.relationship_type)
             .join(SampleLink, SampleLink.parent_sample_id == Sample.id)
             .where(SampleLink.sample_id == entity.id)
             .where(permission_filter(principal, Sample, Permission.READ))
@@ -102,7 +106,7 @@ def fetch_readable_links(
             .order_by(Sample.unique_id)
         ).all()
         children = session.exec(
-            select(Sample)
+            select(Sample, SampleLink.relationship_type)
             .join(SampleLink, SampleLink.sample_id == Sample.id)
             .where(SampleLink.parent_sample_id == entity.id)
             .where(permission_filter(principal, Sample, Permission.READ))
@@ -119,25 +123,27 @@ def fetch_readable_links(
                 unique_id=sample.unique_id,
                 resource_type="sample",
                 name=sample.sample_name,
-                relationship="parent",
+                direction="source",
+                relationship_type=relationship_type,
             )
-            for sample in parents
+            for sample, relationship_type in parents
         )
         results.extend(
             LinkedResource(
                 unique_id=sample.unique_id,
                 resource_type="sample",
                 name=sample.sample_name,
-                relationship="child",
+                direction="target",
+                relationship_type=relationship_type,
             )
-            for sample in children
+            for sample, relationship_type in children
         )
         results.extend(
             LinkedResource(
                 unique_id=dataset.unique_id,
                 resource_type="dataset",
                 name=dataset.dataset_name,
-                relationship="associated",
+                direction="undirected",
             )
             for dataset in datasets
         )

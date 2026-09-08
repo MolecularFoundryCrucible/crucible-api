@@ -8,7 +8,6 @@ import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import exists, func, join, text
-from sqlalchemy.orm import joinedload
 from sqlmodel import and_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
@@ -22,6 +21,7 @@ from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
+
 from app.utils.auth_utils import (
     access_selector_filter, authorize_user, permission_filter, project_scope_filter,
     require_permission)
@@ -42,6 +42,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public, visibility_filter_for
+
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
 from app.models.users import UserPublicRead
@@ -55,7 +56,16 @@ API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 @router.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model=SampleLink)
-def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annotated[Principal, Depends(authorize_user)]):
+def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annotated[Principal, Depends(authorize_user)],
+                             relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
+    '''
+    Link two samples as parent and child.
+
+    relationship_type describes the child relative to the parent, so
+    is_part_of means "child is_part_of parent". Omit it to leave the kind
+    unspecified; on a link that already exists, omitting it preserves the
+    type already stored rather than clearing it.
+    '''
 
     with Session(engine) as session:
         # Both, not either: the pre-role check passed on any one.
@@ -71,11 +81,19 @@ def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annota
         if not child_sample:
             raise HTTPException(status_code=404, detail="Child sample not found")
 
+        # Only pass relationship_type when the caller supplied one: add_or_update
+        # overwrites every kwarg it is given, so passing None would blank the
+        # stored type on a re-POST that just meant "make sure this link exists".
+        link_fields = {}
+        if relationship_type is not None:
+            link_fields["relationship_type"] = relationship_type
+
         link = add_or_update(session,
                      SampleLink,
                      where=and_(SampleLink.parent_sample_id == parent_sample.id, SampleLink.sample_id == child_sample.id),
                      parent_sample_id=parent_sample.id,
-                     sample_id=child_sample.id)
+                     sample_id=child_sample.id,
+                     **link_fields)
 
         touch_resource_modification_time(session, parent_sample_id)
         touch_resource_modification_time(session, child_sample_id)
@@ -429,8 +447,8 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
             datasets_by_sample: dict = {}
             dataset_reads_by_sample: dict = {}
             if sample_ids:
-                for child_id, parent in session.exec(
-                    select(SampleLink.sample_id, Sample)
+                for child_id, parent, relationship_type in session.exec(
+                    select(SampleLink.sample_id, Sample, SampleLink.relationship_type)
                     .join(Sample, Sample.id == SampleLink.parent_sample_id)
                     .where(SampleLink.sample_id.in_(sample_ids))
                     .where(permission_filter(auth_res, Sample, Permission.READ))
@@ -438,10 +456,10 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     .order_by(SampleLink.sample_id, Sample.unique_id)
                 ).all():
                     parents_by_sample.setdefault(child_id, []).append(
-                        LinkedResource(unique_id=parent.unique_id, resource_type="sample", name=parent.sample_name, relationship="parent")
+                        LinkedResource(unique_id=parent.unique_id, resource_type="sample", name=parent.sample_name, direction="source", relationship_type=relationship_type)
                     )
-                for parent_id, child in session.exec(
-                    select(SampleLink.parent_sample_id, Sample)
+                for parent_id, child, relationship_type in session.exec(
+                    select(SampleLink.parent_sample_id, Sample, SampleLink.relationship_type)
                     .join(Sample, Sample.id == SampleLink.sample_id)
                     .where(SampleLink.parent_sample_id.in_(sample_ids))
                     .where(permission_filter(auth_res, Sample, Permission.READ))
@@ -449,7 +467,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     .order_by(SampleLink.parent_sample_id, Sample.unique_id)
                 ).all():
                     children_by_sample.setdefault(parent_id, []).append(
-                        LinkedResource(unique_id=child.unique_id, resource_type="sample", name=child.sample_name, relationship="child")
+                        LinkedResource(unique_id=child.unique_id, resource_type="sample", name=child.sample_name, direction="target", relationship_type=relationship_type)
                     )
                 sample_dataset_rows = session.exec(
                     select(DatasetSampleLink.sample_id, Dataset)
@@ -465,7 +483,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     [ds.project_mfid for _, ds in sample_dataset_rows], session)
                 for sid, ds in sample_dataset_rows:
                     datasets_by_sample.setdefault(sid, []).append(
-                        LinkedResource(unique_id=ds.unique_id, resource_type="dataset", name=ds.dataset_name, relationship="associated")
+                        LinkedResource(unique_id=ds.unique_id, resource_type="dataset", name=ds.dataset_name, direction="undirected")
                     )
                     dataset_reads_by_sample.setdefault(sid, []).append(DatasetRead.model_validate({
                         **ds.model_dump(),
@@ -715,9 +733,13 @@ def list_sample_datasets(
 @router.get("/samples/{child_sample_id}/parents", response_model=PaginatedResponse[SampleRead])
 def list_parent_samples(child_sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                         limit: int = Query(default=100, ge=1, le=1000),
-                        offset: int = Query(default=0, ge=0)):
+                        offset: int = Query(default=0, ge=0),
+                        relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
     '''
     Returns a paginated list of parent samples for a given child sample.
+
+    relationship_type restricts the result to links of that kind. Links with no
+    recorded type are excluded when the filter is set.
     '''
     with Session(engine) as session:
         child_sample = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).one_or_none()
@@ -732,6 +754,8 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[Principal, Dep
             .where(permission_filter(auth_res, Sample, Permission.READ))
             .where(deletion_filter_for(Sample))
         )
+        if relationship_type is not None:
+            query = query.where(SampleLink.relationship_type == relationship_type)
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
         project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
@@ -746,9 +770,13 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[Principal, Dep
 @router.get("/samples/{parent_sample_id}/children", response_model=PaginatedResponse[SampleRead])
 def list_child_samples(parent_sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                        limit: int = Query(default=100, ge=1, le=1000),
-                       offset: int = Query(default=0, ge=0)):
+                       offset: int = Query(default=0, ge=0),
+                       relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
     '''
     Returns a paginated list of child samples for a given parent sample.
+
+    relationship_type restricts the result to links of that kind. Links with no
+    recorded type are excluded when the filter is set.
     '''
     with Session(engine) as session:
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
@@ -763,6 +791,8 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[Principal, Dep
             .where(permission_filter(auth_res, Sample, Permission.READ))
             .where(deletion_filter_for(Sample))
         )
+        if relationship_type is not None:
+            query = query.where(SampleLink.relationship_type == relationship_type)
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
         project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
@@ -793,18 +823,23 @@ def sample_graph(sample_id: str, auth_res: Annotated[Principal, Depends(authoriz
 
         samp_list = session.exec(
             select(Sample)
-            .options(joinedload(Sample.parents))
             .where(permission_filter(auth_res, Sample, Permission.READ))
             .where(deletion_filter_for(Sample))
             .where(Sample.project_mfid == target.project_mfid)
         ).unique().all()
 
-        allowed_ids = {sample.unique_id for sample in samp_list}
-        edges = []
-        for sample in samp_list:
-            for parent in sample.parents:
-                if parent.unique_id in allowed_ids:
-                    edges.append((parent.unique_id, sample.unique_id))
+        # Read edges from the link table rather than walking Sample.parents, so
+        # each edge can carry its relationship_type. Restricting both endpoints
+        # to samp_list yields the same edge set the relationship walk did.
+        id_to_uid = {sample.id: sample.unique_id for sample in samp_list}
+        node_ids = list(id_to_uid.keys())
+        edge_rows = session.exec(
+            select(SampleLink.parent_sample_id, SampleLink.sample_id, SampleLink.relationship_type)
+            .where(SampleLink.parent_sample_id.in_(node_ids))
+            .where(SampleLink.sample_id.in_(node_ids))
+        ).all() if node_ids else []
+
+        edges = [(id_to_uid[r[0]], id_to_uid[r[1]], {"relationship_type": r[2]}) for r in edge_rows]
 
         G = nx.DiGraph(edges)
         for sample in samp_list:
@@ -883,12 +918,12 @@ def sample_graph_cte(sample_id: str, auth_res: Annotated[Principal, Depends(auth
 
         # Fetch all edges whose both endpoints are within the component
         edge_rows = session.exec(
-            select(SampleLink.parent_sample_id, SampleLink.sample_id)
+            select(SampleLink.parent_sample_id, SampleLink.sample_id, SampleLink.relationship_type)
             .where(SampleLink.parent_sample_id.in_(node_ids))
             .where(SampleLink.sample_id.in_(node_ids))
         ).all()
 
-        G = nx.DiGraph((id_to_uid[r[0]], id_to_uid[r[1]]) for r in edge_rows)
+        G = nx.DiGraph((id_to_uid[r[0]], id_to_uid[r[1]], {"relationship_type": r[2]}) for r in edge_rows)
         for r in rows:
             G.add_node(r.unique_id, sample_name=r.sample_name)
 

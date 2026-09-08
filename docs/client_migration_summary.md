@@ -236,6 +236,12 @@ Dataset response models now include nullable lightweight references alongside th
 
 `instrument` uses `InstrumentReferenceRead`, and `project` uses `ProjectReferenceRead`. The API returns current registered identity values when the canonical MFID resolves. An unresolved legacy relationship returns null while preserving the existing flat stored values. The fields are additive across dataset detail, collection, search, lineage, generic resource detail, and datasets embedded in sample responses. Existing clients do not need to change, and `instrument_id`, `instrument_name`, and `project_id` remain part of the API v3 response contract.
 
+`POST /datasets` accepts either the registered `instrument_id` slug or canonical `instrument_mfid`. Clients may send both when they identify the same instrument; conflicting pairs return 422. An unknown `instrument_mfid` returns 404. Existing `instrument_id` requests and the legacy `instrument_name` fallback remain supported with their existing 400 response for an unregistered instrument.
+
+`POST /datasets` and `POST /samples` accept either the project slug as `project_id` or the canonical `project_mfid`. Clients may send both when they identify the same project; conflicting pairs return 422. An unknown `project_mfid` returns 404. Existing `project_id` requests retain their previous authorization and error behavior. Successful responses continue returning the flat `project_id` and the structured `project` reference.
+
+Dataset and sample name search accepts the same explicit project relationship filters as their collection routes: `project_id` or `project_mfid`, plus optional `project_scope=assigned|shared|all`. Omitting `project_scope` preserves the existing assigned-only behavior. A matching slug and MFID pair is accepted, a conflicting pair returns 422, and an unknown slug returns 404. When a project filter is active, each result reports `project_relation` as `assigned` or `shared`.
+
 Sample response models now expose the same nullable `ProjectReferenceRead` as `project` while retaining the flat `project_id` field. It is populated across sample create, update, detail, collection, search, lineage, generic resource detail, and the deprecated dataset-to-samples relationship response. Clients may adopt the stable `project.unique_id` without changing their handling of existing fields.
 
 ## User email privacy

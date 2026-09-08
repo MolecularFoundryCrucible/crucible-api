@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from datetime import timedelta
-from typing import Annotated, List, Optional
+from typing import Annotated, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -147,11 +147,16 @@ def create_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
     ingestion_class: Optional[str] = None,
+    status: Literal['requested', 'not_requested'] = 'requested'
 ):
     '''
     Creates an ingestion request for a file, scoped to the specified dataset.
     Returns error if the dataset associated with the file is not found, or the user does not have access.
     Requires write access to the dataset.
+
+    Only 'requested' (dispatch to the ingestion queue) and 'not_requested' (record
+    the file without dispatching) may be set here. Terminal states are written
+    afterwards via PATCH /ingestion_requests/{reqid}.
     '''
 
     with Session(engine) as session:
@@ -171,31 +176,33 @@ def create_file_ingestion_request(
             file_to_upload=af.storage_path,
             ingestion_class=ingestion_class,
             time_created=get_utc_isoformat(),
-            status="requested",
+            status=status,
         )
         session.add(ingestion_request)
         session.commit()
         session.refresh(ingestion_request)
+
         ir_id = ingestion_request.id
         af_size = af.size
         af_storage_path = af.storage_path
         ds_unique_id = ds.unique_id
 
-    tier = get_ingestion_tier(af_size)
-    routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    send_pika_message(
-        message=json.dumps({
-            "filename": af_storage_path,
-            "reqid": ir_id,
-            "dsid": ds_unique_id,
-            "ingestion_class": ingestion_class,
-        }),
-        exchange="",
-        routing_key=routing_key,
-        user="admin",
-        rmq_pw=rmq_pw,
-    )
+    if status == 'requested':
+        tier = get_ingestion_tier(af_size)
+        routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
+        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
+        send_pika_message(
+            message=json.dumps({
+                "filename": af_storage_path,
+                "reqid": ir_id,
+                "dsid": ds_unique_id,
+                "ingestion_class": ingestion_class,
+            }),
+            exchange="",
+            routing_key=routing_key,
+            user="admin",
+            rmq_pw=rmq_pw,
+        )
 
     with Session(engine) as session:
         return session.exec(select(IngestionRequest).where(IngestionRequest.id == ir_id)).one()

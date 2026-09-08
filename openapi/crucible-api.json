@@ -658,7 +658,20 @@
                 "type": "null"
               }
             ],
+            "description": "Registered instrument slug. May be combined with a matching instrument_mfid.",
             "title": "Instrument Id"
+          },
+          "instrument_mfid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Canonical registered instrument MFID. May be combined with a matching instrument_id.",
+            "title": "Instrument Mfid"
           },
           "instrument_name": {
             "anyOf": [
@@ -716,7 +729,20 @@
                 "type": "null"
               }
             ],
+            "description": "Project slug. May be combined with a matching project_mfid.",
             "title": "Project Id"
+          },
+          "project_mfid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Canonical project MFID. May be combined with a matching project_id.",
+            "title": "Project Mfid"
           },
           "public": {
             "default": false,
@@ -1087,12 +1113,13 @@
           },
           "owner": {
             "anyOf": [
-              {},
+              {
+                "$ref": "#/components/schemas/UserPublicRead"
+              },
               {
                 "type": "null"
               }
-            ],
-            "title": "Owner"
+            ]
           },
           "owner_orcid": {
             "anyOf": [
@@ -1125,6 +1152,21 @@
               }
             ],
             "title": "Project Id"
+          },
+          "project_relation": {
+            "anyOf": [
+              {
+                "enum": [
+                  "assigned",
+                  "shared"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Relation"
           },
           "public": {
             "title": "Public",
@@ -4046,7 +4088,20 @@
                 "type": "null"
               }
             ],
+            "description": "Project slug. May be combined with a matching project_mfid.",
             "title": "Project Id"
+          },
+          "project_mfid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Canonical project MFID. May be combined with a matching project_id.",
+            "title": "Project Mfid"
           },
           "public": {
             "default": false,
@@ -4150,6 +4205,16 @@
             ],
             "title": "Owner Orcid"
           },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectReferenceRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "project_id": {
             "anyOf": [
               {
@@ -4240,6 +4305,8 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
+            "description": "Deprecated embedded dataset expansion. Use include_links or GET /datasets?sample_mfid={sample_mfid}.",
             "title": "Datasets"
           },
           "deletion_request": {
@@ -4292,12 +4359,13 @@
           },
           "owner": {
             "anyOf": [
-              {},
+              {
+                "$ref": "#/components/schemas/UserPublicRead"
+              },
               {
                 "type": "null"
               }
-            ],
-            "title": "Owner"
+            ]
           },
           "owner_orcid": {
             "anyOf": [
@@ -4310,6 +4378,16 @@
             ],
             "title": "Owner Orcid"
           },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectReferenceRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "project_id": {
             "anyOf": [
               {
@@ -4320,6 +4398,21 @@
               }
             ],
             "title": "Project Id"
+          },
+          "project_relation": {
+            "anyOf": [
+              {
+                "enum": [
+                  "assigned",
+                  "shared"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Relation"
           },
           "public": {
             "default": false,
@@ -4543,6 +4636,36 @@
         "title": "ThumbnailCreate",
         "type": "object"
       },
+      "ThumbnailPreviewRead": {
+        "description": "Thumbnail fields returned by the bulk preview endpoint.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "mime_type": {
+            "const": "image/jpeg",
+            "default": "image/jpeg",
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "thumbnail_b64str": {
+            "title": "Thumbnail B64Str",
+            "type": "string"
+          },
+          "thumbnail_name": {
+            "title": "Thumbnail Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "thumbnail_name",
+          "thumbnail_b64str"
+        ],
+        "title": "ThumbnailPreviewRead",
+        "type": "object"
+      },
       "ThumbnailRead": {
         "description": "Response model for Thumbnail.",
         "properties": {
@@ -4553,6 +4676,12 @@
           "id": {
             "title": "Id",
             "type": "integer"
+          },
+          "mime_type": {
+            "const": "image/jpeg",
+            "default": "image/jpeg",
+            "title": "Mime Type",
+            "type": "string"
           },
           "thumbnail_b64str": {
             "title": "Thumbnail B64Str",
@@ -4570,6 +4699,36 @@
           "thumbnail_b64str"
         ],
         "title": "ThumbnailRead",
+        "type": "object"
+      },
+      "ThumbnailUpdate": {
+        "additionalProperties": false,
+        "description": "Fields accepted when updating a thumbnail.",
+        "properties": {
+          "thumbnail_b64str": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumbnail B64Str"
+          },
+          "thumbnail_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumbnail Name"
+          }
+        },
+        "title": "ThumbnailUpdate",
         "type": "object"
       },
       "TransferOwnershipRead": {
@@ -5666,7 +5825,7 @@
     },
     "/datasets": {
       "get": {
-        "description": "Returns a paginated list of datasets the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nKeyset (cursor) pagination: results are ordered by unique_id descending, which is\ncreation order since unique_id is a time-sortable UUIDv7. To fetch the next page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only on the\nfirst page (cursor omitted); subsequent pages omit it to avoid a redundant count.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. cursor takes precedence when both are given. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass include_links=true to include parent, child, and associated resources for each dataset.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass instrument_mfid to filter by the instrument's canonical stable identity.\nPass sample_mfid to filter by a readable sample's canonical stable identity.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
+        "description": "Returns a paginated list of datasets the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nKeyset (cursor) pagination: results are ordered by unique_id descending, which is\ncreation order since unique_id is a time-sortable UUIDv7. To fetch the next page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only on the\nfirst page (cursor omitted); subsequent pages omit it to avoid a redundant count.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. cursor takes precedence when both are given. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass include_links=true to include parent, child, and associated resources for each dataset.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass instrument_mfid to filter by the instrument's canonical stable identity.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.\nPass sample_mfid to filter by a readable sample's canonical stable identity.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
         "operationId": "list_datasets_datasets_get",
         "parameters": [
           {
@@ -5878,6 +6037,65 @@
             }
           },
           {
+            "description": "Filter datasets related to this project slug. May be combined with a matching project_mfid.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter datasets related to this project slug. May be combined with a matching project_mfid.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Filter datasets related to this canonical project MFID.",
+            "in": "query",
+            "name": "project_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter datasets related to this canonical project MFID.",
+              "title": "Project Mfid"
+            }
+          },
+          {
+            "description": "Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
+            "in": "query",
+            "name": "project_scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "assigned",
+                    "shared",
+                    "all"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
+              "title": "Project Scope"
+            }
+          },
+          {
             "description": "Filter datasets linked to this canonical sample MFID.",
             "in": "query",
             "name": "sample_mfid",
@@ -5995,7 +6213,13 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "additionalProperties": {
+                    "$ref": "#/components/schemas/ThumbnailPreviewRead"
+                  },
+                  "title": "Response Get First Thumbnails Datasets First Thumbnails Post",
+                  "type": "object"
+                }
               }
             },
             "description": "Successful Response"
@@ -6024,22 +6248,24 @@
     },
     "/datasets/search": {
       "get": {
-        "description": "Search datasets by name. Returns results ordered by match quality (exact → prefix → substring).\nOptionally scope to a project with ?project_id=. Maximum 50 results.",
+        "description": "Search readable datasets by name and return results ordered by match quality.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship. Maximum 50 results.",
         "operationId": "search_datasets_datasets_search_get",
         "parameters": [
           {
-            "description": "Search term matched against dataset_name.",
+            "description": "Search term matched against dataset_name. Queries may contain at most 200 characters and 10 terms.",
             "in": "query",
             "name": "q",
             "required": true,
             "schema": {
-              "description": "Search term matched against dataset_name.",
+              "description": "Search term matched against dataset_name. Queries may contain at most 200 characters and 10 terms.",
+              "maxLength": 200,
               "minLength": 3,
               "title": "Q",
               "type": "string"
             }
           },
           {
+            "description": "Restrict results related to this project slug. May be combined with a matching project_mfid.",
             "in": "query",
             "name": "project_id",
             "required": false,
@@ -6052,7 +6278,49 @@
                   "type": "null"
                 }
               ],
+              "description": "Restrict results related to this project slug. May be combined with a matching project_mfid.",
               "title": "Project Id"
+            }
+          },
+          {
+            "description": "Restrict results related to this canonical project MFID.",
+            "in": "query",
+            "name": "project_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict results related to this canonical project MFID.",
+              "title": "Project Mfid"
+            }
+          },
+          {
+            "description": "Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
+            "in": "query",
+            "name": "project_scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "assigned",
+                    "shared",
+                    "all"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
+              "title": "Project Scope"
             }
           },
           {
@@ -6266,7 +6534,7 @@
     },
     "/datasets/{dataset_mfid}": {
       "get": {
-        "description": "Returns the dataset with the provided MFID.\nPass include_links=true to include parent, child, and associated resources.\nPass include_owner=true to resolve owner_orcid to a user object.",
+        "description": "Returns the dataset with the provided MFID.\nPass include_links=true to include parent, child, and associated resources.\nThe owner identity is resolved by default. Pass include_owner=false to omit it.",
         "operationId": "read_dataset_datasets__dataset_mfid__get",
         "parameters": [
           {
@@ -6303,7 +6571,7 @@
             "name": "include_owner",
             "required": false,
             "schema": {
-              "default": false,
+              "default": true,
               "title": "Include Owner",
               "type": "boolean"
             }
@@ -6636,6 +6904,20 @@
                 }
               ],
               "title": "Ingestion Class"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "requested",
+              "enum": [
+                "requested",
+                "not_requested"
+              ],
+              "title": "Status",
+              "type": "string"
             }
           }
         ],
@@ -7142,7 +7424,7 @@
         ]
       },
       "post": {
-        "description": "Adds a thumbnail to a dataset. If the thumbnail exists, it will simply add the existing thumbnail to the dataset object.\nOtherwise, the thumbnail will be created and then added to the dataset.\n\nRaises:\n    HTTPException: If required thumbnail fields are missing or dataset not found",
+        "description": "Adds a thumbnail to a dataset. Repeated uploads of the same normalized image\nto one dataset update that thumbnail's name.\n\nRaises:\n    HTTPException: If required thumbnail fields are missing or dataset not found",
         "operationId": "add_thumbnail_datasets__dsid__thumbnails_post",
         "parameters": [
           {
@@ -7226,7 +7508,13 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Thumbnail Datasets  Dsid  Thumbnails  Thumbnail Id  Delete",
+                  "type": "object"
+                }
               }
             },
             "description": "Successful Response"
@@ -7248,6 +7536,70 @@
           }
         ],
         "summary": "Delete Thumbnail",
+        "tags": [
+          "datasets"
+        ]
+      },
+      "patch": {
+        "operationId": "update_thumbnail_datasets__dsid__thumbnails__thumbnail_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "dsid",
+            "required": true,
+            "schema": {
+              "title": "Dsid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "thumbnail_id",
+            "required": true,
+            "schema": {
+              "title": "Thumbnail Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThumbnailUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThumbnailRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Thumbnail",
         "tags": [
           "datasets"
         ]
@@ -8421,7 +8773,7 @@
     },
     "/files/{file_id}/ingest": {
       "post": {
-        "description": "Creates an ingestion request for a file, scoped to the specified dataset.\nReturns error if the dataset associated with the file is not found, or the user does not have access.\nRequires write access to the dataset.",
+        "description": "Creates an ingestion request for a file, scoped to the specified dataset.\nReturns error if the dataset associated with the file is not found, or the user does not have access.\nRequires write access to the dataset.\n\nOnly 'requested' (dispatch to the ingestion queue) and 'not_requested' (record\nthe file without dispatching) may be set here. Terminal states are written\nafterwards via PATCH /ingestion_requests/{reqid}.",
         "operationId": "create_file_ingestion_request_files__file_id__ingest_post",
         "parameters": [
           {
@@ -8447,6 +8799,20 @@
                 }
               ],
               "title": "Ingestion Class"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "requested",
+              "enum": [
+                "requested",
+                "not_requested"
+              ],
+              "title": "Status",
+              "type": "string"
             }
           }
         ],
@@ -8711,7 +9077,7 @@
         ]
       },
       "patch": {
-        "description": "Updates an ingestion request. Admin/group access only.",
+        "description": "Updates an ingestion request. Requires edit access to the parent dataset.",
         "operationId": "patch_ingestion_request_ingestion_requests__reqid__patch",
         "parameters": [
           {
@@ -8944,12 +9310,13 @@
         "operationId": "search_instruments_instruments_search_get",
         "parameters": [
           {
-            "description": "Search term matched against instrument_name, instrument_type, and manufacturer.",
+            "description": "Search term matched against instrument_name, instrument_type, and manufacturer. Queries may contain at most 200 characters and 10 terms.",
             "in": "query",
             "name": "q",
             "required": true,
             "schema": {
-              "description": "Search term matched against instrument_name, instrument_type, and manufacturer.",
+              "description": "Search term matched against instrument_name, instrument_type, and manufacturer. Queries may contain at most 200 characters and 10 terms.",
+              "maxLength": 200,
               "minLength": 3,
               "title": "Q",
               "type": "string"
@@ -9031,7 +9398,7 @@
     },
     "/instruments/{instrument_mfid}": {
       "get": {
-        "description": "Returns the instrument with the provided unique ID, or 404 if not found.",
+        "description": "Returns the instrument with the provided unique ID, or 404 if not found.\nThe owner identity is resolved by default. Pass include_owner=false to omit it.",
         "operationId": "read_instrument_instruments__instrument_mfid__get",
         "parameters": [
           {
@@ -9058,7 +9425,7 @@
             "name": "include_owner",
             "required": false,
             "schema": {
-              "default": false,
+              "default": true,
               "title": "Include Owner",
               "type": "boolean"
             }
@@ -9953,16 +10320,17 @@
     },
     "/projects/search": {
       "get": {
-        "description": "Search projects by title or project_id across all projects, not just ones the\ncaller is a member of — this is how a user discovers a project to request to\njoin via POST /access_groups/{group_name}/join. Returns results ordered by\nmatch quality. Maximum 50 results.\n\nNote: ProjectRead has no lead/scientific_metadata fields, so this is safe to\nopen regardless of membership — see GET /projects/{proj_id} for the fields\nthat stay member-only.",
+        "description": "Search projects by title or project_id across all projects, not just ones the\ncaller is a member of. This is how a user discovers a project to request to\njoin via POST /access_groups/{group_name}/join. Returns results ordered by\nmatch quality. Maximum 50 results.\n\nNote: ProjectRead has no lead/scientific_metadata fields, so this is safe to\nopen regardless of membership. See GET /projects/{proj_id} for the fields\nthat stay member-only.",
         "operationId": "search_projects_projects_search_get",
         "parameters": [
           {
-            "description": "Search term matched against project title and project_id.",
+            "description": "Search term matched against project title and project_id. Queries may contain at most 200 characters and 10 terms.",
             "in": "query",
             "name": "q",
             "required": true,
             "schema": {
-              "description": "Search term matched against project title and project_id.",
+              "description": "Search term matched against project title and project_id. Queries may contain at most 200 characters and 10 terms.",
+              "maxLength": 200,
               "minLength": 3,
               "title": "Q",
               "type": "string"
@@ -11288,7 +11656,7 @@
         ]
       },
       "get": {
-        "description": "Fetch a dataset, sample, instrument, or project by ID without knowing its type in advance.\nResolves the type from idtype, then returns the full resource record.\nPass include_metadata=true to include scientific metadata.\nPass include_links=true to include parent/child/associated resources (datasets and samples only).",
+        "description": "Fetch a dataset, sample, instrument, or project by ID without knowing its type in advance.\nResolves the type from idtype, then returns the full resource record.\nPass include_metadata=true to include scientific metadata.\nPass include_links=true to include parent/child/associated resources (datasets and samples only).\nSample dataset objects remain embedded by default for compatibility. Pass include_datasets=false to omit them.\nThe owner identity is resolved by default for datasets, samples, and instruments. Pass include_owner=false to omit it.",
         "operationId": "get_resource_resources__resource_id__get",
         "parameters": [
           {
@@ -11325,8 +11693,20 @@
             "name": "include_owner",
             "required": false,
             "schema": {
-              "default": false,
+              "default": true,
               "title": "Include Owner",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "For samples, include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+            "in": "query",
+            "name": "include_datasets",
+            "required": false,
+            "schema": {
+              "default": true,
+              "description": "For samples, include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+              "title": "Include Datasets",
               "type": "boolean"
             }
           }
@@ -11667,7 +12047,7 @@
     },
     "/samples": {
       "get": {
-        "description": "Returns a paginated list of samples the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nKeyset (cursor) pagination: results are ordered by unique_id descending, which is\ncreation order since unique_id is a time-sortable UUIDv7. To fetch the next page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only on the\nfirst page (cursor omitted); subsequent pages omit it to avoid a redundant count.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. cursor takes precedence when both are given. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass include_links=true to include parent, child, and associated resources for each sample.\ninclude_datasets is deprecated; use include_links instead.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass dataset_mfid to filter by a readable dataset's canonical stable identity.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
+        "description": "Returns a paginated list of samples the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nKeyset (cursor) pagination: results are ordered by unique_id descending, which is\ncreation order since unique_id is a time-sortable UUIDv7. To fetch the next page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only on the\nfirst page (cursor omitted); subsequent pages omit it to avoid a redundant count.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. cursor takes precedence when both are given. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass include_links=true to include parent, child, and associated resources for each sample.\ninclude_datasets is deprecated; use include_links instead.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.\nPass dataset_mfid to filter by a readable dataset's canonical stable identity.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
         "operationId": "list_samples_samples_get",
         "parameters": [
           {
@@ -11871,6 +12251,65 @@
             }
           },
           {
+            "description": "Filter samples related to this project slug. May be combined with a matching project_mfid.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter samples related to this project slug. May be combined with a matching project_mfid.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Filter samples related to this canonical project MFID.",
+            "in": "query",
+            "name": "project_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter samples related to this canonical project MFID.",
+              "title": "Project Mfid"
+            }
+          },
+          {
+            "description": "Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
+            "in": "query",
+            "name": "project_scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "assigned",
+                    "shared",
+                    "all"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
+              "title": "Project Scope"
+            }
+          },
+          {
             "description": "Filter samples linked to this canonical dataset MFID.",
             "in": "query",
             "name": "dataset_mfid",
@@ -11969,22 +12408,24 @@
     },
     "/samples/search": {
       "get": {
-        "description": "Search samples by name. Returns results ordered by match quality (exact → prefix → substring).\nOptionally scope to a project with ?project_id=. Maximum 50 results.",
+        "description": "Search readable samples by name and return results ordered by match quality.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship. Maximum 50 results.",
         "operationId": "search_samples_samples_search_get",
         "parameters": [
           {
-            "description": "Search term matched against sample_name.",
+            "description": "Search term matched against sample_name. Queries may contain at most 200 characters and 10 terms.",
             "in": "query",
             "name": "q",
             "required": true,
             "schema": {
-              "description": "Search term matched against sample_name.",
+              "description": "Search term matched against sample_name. Queries may contain at most 200 characters and 10 terms.",
+              "maxLength": 200,
               "minLength": 3,
               "title": "Q",
               "type": "string"
             }
           },
           {
+            "description": "Restrict results related to this project slug. May be combined with a matching project_mfid.",
             "in": "query",
             "name": "project_id",
             "required": false,
@@ -11997,7 +12438,49 @@
                   "type": "null"
                 }
               ],
+              "description": "Restrict results related to this project slug. May be combined with a matching project_mfid.",
               "title": "Project Id"
+            }
+          },
+          {
+            "description": "Restrict results related to this canonical project MFID.",
+            "in": "query",
+            "name": "project_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict results related to this canonical project MFID.",
+              "title": "Project Mfid"
+            }
+          },
+          {
+            "description": "Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
+            "in": "query",
+            "name": "project_scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "assigned",
+                    "shared",
+                    "all"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
+              "title": "Project Scope"
             }
           },
           {
@@ -12519,7 +13002,7 @@
     },
     "/samples/{sample_mfid}": {
       "get": {
-        "description": "Returns the sample for the provided MFID.\nPass include_links=true to include parent, child, and associated resources.",
+        "description": "Returns the sample for the provided MFID.\nPass include_links=true to include parent, child, and associated resources.\nEmbedded dataset objects are retained by default for compatibility. New clients should pass include_datasets=false and use include_links or GET /datasets?sample_mfid=... instead.\nThe owner identity is resolved by default. Pass include_owner=false to omit it.",
         "operationId": "read_sample_samples__sample_mfid__get",
         "parameters": [
           {
@@ -12556,8 +13039,20 @@
             "name": "include_owner",
             "required": false,
             "schema": {
-              "default": false,
+              "default": true,
               "title": "Include Owner",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+            "in": "query",
+            "name": "include_datasets",
+            "required": false,
+            "schema": {
+              "default": true,
+              "description": "Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+              "title": "Include Datasets",
               "type": "boolean"
             }
           }
@@ -13082,12 +13577,13 @@
         "operationId": "search_users_users_search_get",
         "parameters": [
           {
-            "description": "Search term matched against username, first name, and last name.",
+            "description": "Search term matched against username, first name, and last name. Queries may contain at most 200 characters and 10 terms.",
             "in": "query",
             "name": "q",
             "required": true,
             "schema": {
-              "description": "Search term matched against username, first name, and last name.",
+              "description": "Search term matched against username, first name, and last name. Queries may contain at most 200 characters and 10 terms.",
+              "maxLength": 200,
               "minLength": 3,
               "title": "Q",
               "type": "string"

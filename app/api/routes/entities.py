@@ -90,6 +90,28 @@ def entity_graph(entity_id: str, auth_res: Annotated[Principal, Depends(authoriz
             .where(DatasetSampleLink.dataset_id.in_(d_int_to_uid.keys()))
         ).all() if s_int_to_uid and d_int_to_uid else []
 
+        # Parent/child link types, keyed by (parent_uid, child_uid). The ORM
+        # relationships above walk to the linked entity but not to the link row,
+        # so the types are read separately and joined back on when the output
+        # graph is built. Absent or untyped links resolve to None.
+        samp_link_types = {
+            (s_int_to_uid[r[0]], s_int_to_uid[r[1]]): r[2]
+            for r in session.exec(
+                select(SampleLink.parent_sample_id, SampleLink.sample_id, SampleLink.relationship_type)
+                .where(SampleLink.parent_sample_id.in_(s_int_to_uid.keys()))
+                .where(SampleLink.sample_id.in_(s_int_to_uid.keys()))
+            ).all()
+        } if s_int_to_uid else {}
+
+        ds_link_types = {
+            (d_int_to_uid[r[0]], d_int_to_uid[r[1]]): r[2]
+            for r in session.exec(
+                select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id, DatasetLink.relationship_type)
+                .where(DatasetLink.parent_dataset_id.in_(d_int_to_uid.keys()))
+                .where(DatasetLink.child_dataset_id.in_(d_int_to_uid.keys()))
+            ).all()
+        } if d_int_to_uid else {}
+
         # Build unique_id digraphs for each type separately so directed lineage
         # traversal stays within one entity type at a time.
         G_samp = nx.DiGraph()
@@ -141,18 +163,22 @@ def entity_graph(entity_id: str, auth_res: Annotated[Principal, Depends(authoriz
                 G.add_node(s.unique_id, entity_type='sample', name=s.sample_name)
                 for parent in s.parents:
                     if parent.unique_id in sample_uids:
-                        G.add_edge(parent.unique_id, s.unique_id)
+                        G.add_edge(parent.unique_id, s.unique_id,
+                                   relationship_type=samp_link_types.get((parent.unique_id, s.unique_id)))
         for d in ds_list:
             if d.unique_id in ds_uids:
                 G.add_node(d.unique_id, entity_type='dataset', name=d.dataset_name)
                 for parent in d.parents:
                     if parent.unique_id in ds_uids:
-                        G.add_edge(parent.unique_id, d.unique_id)
+                        G.add_edge(parent.unique_id, d.unique_id,
+                                   relationship_type=ds_link_types.get((parent.unique_id, d.unique_id)))
         for link in sd_links:
             s_uid = s_int_to_uid[link.sample_id]
             d_uid = d_int_to_uid[link.dataset_id]
             if s_uid in sample_uids and d_uid in ds_uids:
-                G.add_edge(s_uid, d_uid)
+                # Association edges have no relationship_type; report None so
+                # every edge in the graph has the same shape.
+                G.add_edge(s_uid, d_uid, relationship_type=None)
 
         return json_graph.node_link_data(G)
 
@@ -301,21 +327,25 @@ def entity_graph_bfs(entity_id: str, auth_res: Annotated[Principal, Depends(auth
 
         edges = []
 
+        # Parent/child edges carry the link's relationship_type; dataset<->sample
+        # association edges have no type, so they report None for a uniform shape.
         if sample_ids:
             sample_edges = session.exec(
-                select(SampleLink.parent_sample_id, SampleLink.sample_id)
+                select(SampleLink.parent_sample_id, SampleLink.sample_id, SampleLink.relationship_type)
                 .where(SampleLink.parent_sample_id.in_(sample_ids))
                 .where(SampleLink.sample_id.in_(sample_ids))
             ).all()
-            edges += [(id_to_uid[('sample', r[0])][0], id_to_uid[('sample', r[1])][0]) for r in sample_edges]
+            edges += [(id_to_uid[('sample', r[0])][0], id_to_uid[('sample', r[1])][0],
+                       {"relationship_type": r[2]}) for r in sample_edges]
 
         if dataset_ids:
             dataset_edges = session.exec(
-                select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id)
+                select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id, DatasetLink.relationship_type)
                 .where(DatasetLink.parent_dataset_id.in_(dataset_ids))
                 .where(DatasetLink.child_dataset_id.in_(dataset_ids))
             ).all()
-            edges += [(id_to_uid[('dataset', r[0])][0], id_to_uid[('dataset', r[1])][0]) for r in dataset_edges]
+            edges += [(id_to_uid[('dataset', r[0])][0], id_to_uid[('dataset', r[1])][0],
+                       {"relationship_type": r[2]}) for r in dataset_edges]
 
         if sample_ids and dataset_ids:
             sd_edges = session.exec(
@@ -323,7 +353,8 @@ def entity_graph_bfs(entity_id: str, auth_res: Annotated[Principal, Depends(auth
                 .where(DatasetSampleLink.sample_id.in_(sample_ids))
                 .where(DatasetSampleLink.dataset_id.in_(dataset_ids))
             ).all()
-            edges += [(id_to_uid[('sample', r[0])][0], id_to_uid[('dataset', r[1])][0]) for r in sd_edges]
+            edges += [(id_to_uid[('sample', r[0])][0], id_to_uid[('dataset', r[1])][0],
+                       {"relationship_type": None}) for r in sd_edges]
 
         G = nx.DiGraph(edges)
         for (entity_type, _), (unique_id, name) in id_to_uid.items():
@@ -366,25 +397,27 @@ def _build_graph(session: Session, sample_ids: set, dataset_ids: set) -> dict:
 
     links = []
 
+    # Parent/child edges carry the link's relationship_type; dataset<->sample
+    # association edges have no type, so they report None for a uniform shape.
     if sample_ids:
         sample_edges = session.exec(
-            select(SampleLink.parent_sample_id, SampleLink.sample_id)
+            select(SampleLink.parent_sample_id, SampleLink.sample_id, SampleLink.relationship_type)
             .where(SampleLink.parent_sample_id.in_(sample_ids))
             .where(SampleLink.sample_id.in_(sample_ids))
         ).all()
         links += [
-            {"source": s_id_to_uid[r[0]], "target": s_id_to_uid[r[1]]}
+            {"source": s_id_to_uid[r[0]], "target": s_id_to_uid[r[1]], "relationship_type": r[2]}
             for r in sample_edges
         ]
 
     if dataset_ids:
         dataset_edges = session.exec(
-            select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id)
+            select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id, DatasetLink.relationship_type)
             .where(DatasetLink.parent_dataset_id.in_(dataset_ids))
             .where(DatasetLink.child_dataset_id.in_(dataset_ids))
         ).all()
         links += [
-            {"source": d_id_to_uid[r[0]], "target": d_id_to_uid[r[1]]}
+            {"source": d_id_to_uid[r[0]], "target": d_id_to_uid[r[1]], "relationship_type": r[2]}
             for r in dataset_edges
         ]
 
@@ -395,7 +428,7 @@ def _build_graph(session: Session, sample_ids: set, dataset_ids: set) -> dict:
             .where(DatasetSampleLink.dataset_id.in_(dataset_ids))
         ).all()
         links += [
-            {"source": s_id_to_uid[r[0]], "target": d_id_to_uid[r[1]]}
+            {"source": s_id_to_uid[r[0]], "target": d_id_to_uid[r[1]], "relationship_type": None}
             for r in sd_edges
         ]
 

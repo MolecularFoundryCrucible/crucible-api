@@ -16,6 +16,7 @@ import app.api.routes.access_groups as access_groups_routes
 import app.api.routes.files as files_routes
 import app.api.routes.datasets as datasets_routes
 import app.api.routes.deletion as deletion_routes
+import app.api.routes.entities as entities_routes
 import app.api.routes.instruments as instruments_routes
 import app.api.routes.ingestion_requests as ingestion_requests_routes
 import app.api.routes.projects as projects_routes
@@ -58,6 +59,7 @@ def db_engine():
     files_routes.engine = engine
     datasets_routes.engine = engine
     deletion_routes.engine = engine
+    entities_routes.engine = engine
     instruments_routes.engine = engine
     ingestion_requests_routes.engine = engine
     projects_routes.engine = engine

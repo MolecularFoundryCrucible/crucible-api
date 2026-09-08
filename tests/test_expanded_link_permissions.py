@@ -168,7 +168,7 @@ def _reader(group_id: int) -> Principal:
 
 def _link_ids(links):
     return {
-        (link.unique_id, link.relationship)
+        (link.unique_id, link.direction)
         for link in links
     }
 
@@ -195,14 +195,14 @@ def test_singleton_link_helper_filters_each_target(db_engine):
         )
 
     assert _link_ids(dataset_links) == {
-        ("dataset-visible-parent", "parent"),
-        ("dataset-visible-child", "child"),
-        ("sample-root", "associated"),
+        ("dataset-visible-parent", "source"),
+        ("dataset-visible-child", "target"),
+        ("sample-root", "undirected"),
     }
     assert _link_ids(sample_links) == {
-        ("sample-visible-parent", "parent"),
-        ("sample-visible-child", "child"),
-        ("dataset-root", "associated"),
+        ("sample-visible-parent", "source"),
+        ("sample-visible-child", "target"),
+        ("dataset-root", "undirected"),
     }
     assert [dataset.unique_id for dataset in sample_datasets] == ["dataset-root"]
 
@@ -238,14 +238,14 @@ def test_singleton_and_generic_routes_filter_expanded_links(
     )
 
     assert _link_ids(dataset.links) == {
-        ("dataset-visible-parent", "parent"),
-        ("dataset-visible-child", "child"),
-        ("sample-root", "associated"),
+        ("dataset-visible-parent", "source"),
+        ("dataset-visible-child", "target"),
+        ("sample-root", "undirected"),
     }
     assert _link_ids(sample.links) == {
-        ("sample-visible-parent", "parent"),
-        ("sample-visible-child", "child"),
-        ("dataset-root", "associated"),
+        ("sample-visible-parent", "source"),
+        ("sample-visible-child", "target"),
+        ("dataset-root", "undirected"),
     }
     assert [dataset["unique_id"] for dataset in sample.model_dump()["datasets"]] == ["dataset-root"]
     assert [dataset["unique_id"] for dataset in generic_sample.model_dump()["datasets"]] == ["dataset-root"]
@@ -286,9 +286,9 @@ def test_singleton_sample_can_omit_embedded_datasets_without_omitting_links(
     assert sample.model_dump()["datasets"] is None
     assert generic_sample.model_dump()["datasets"] is None
     assert _link_ids(sample.links) == {
-        ("sample-visible-parent", "parent"),
-        ("sample-visible-child", "child"),
-        ("dataset-root", "associated"),
+        ("sample-visible-parent", "source"),
+        ("sample-visible-child", "target"),
+        ("dataset-root", "undirected"),
     }
     assert _link_ids(generic_sample.links) == _link_ids(sample.links)
 
@@ -371,14 +371,14 @@ def test_collection_link_expansion_stays_filtered_and_batched(
     assert dataset_root.capabilities is None
     assert sample_root.capabilities is None
     assert _link_ids(dataset_root.links) == {
-        ("dataset-visible-parent", "parent"),
-        ("dataset-visible-child", "child"),
-        ("sample-root", "associated"),
+        ("dataset-visible-parent", "source"),
+        ("dataset-visible-child", "target"),
+        ("sample-root", "undirected"),
     }
     assert _link_ids(sample_root.links) == {
-        ("sample-visible-parent", "parent"),
-        ("sample-visible-child", "child"),
-        ("dataset-root", "associated"),
+        ("sample-visible-parent", "source"),
+        ("sample-visible-child", "target"),
+        ("dataset-root", "undirected"),
     }
 
 
@@ -392,7 +392,7 @@ def test_platform_admin_sees_private_but_not_deleted_links(db_engine):
         dataset = session.get(Dataset, dataset_id)
         links = fetch_readable_links(session, principal, "dataset", dataset)
 
-    assert ("dataset-private", "parent") in _link_ids(links)
-    assert ("dataset-private", "child") in _link_ids(links)
-    assert ("sample-private", "associated") in _link_ids(links)
+    assert ("dataset-private", "source") in _link_ids(links)
+    assert ("dataset-private", "target") in _link_ids(links)
+    assert ("sample-private", "undirected") in _link_ids(links)
     assert not any("deleted" in unique_id for unique_id, _ in _link_ids(links))

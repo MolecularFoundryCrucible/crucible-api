@@ -1,6 +1,6 @@
 import warnings
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import ConfigDict, field_validator, model_validator
 from sqlmodel import SQLModel
 from app.models.access_groups import AccessGroupMemberRead
@@ -14,6 +14,10 @@ class ProjectMembershipRole(str, Enum):
     EDITOR = "editor"
     ADMIN = "admin"
     OWNER = "owner"
+
+
+ProjectScope = Literal["assigned", "shared", "all"]
+ProjectRelation = Literal["assigned", "shared"]
 
 
 class ProjectCreate(SQLModel):

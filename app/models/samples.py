@@ -5,7 +5,7 @@ from sqlmodel import SQLModel
 from app.general_utils import blank_to_none, is_valid_mfid
 from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
-from app.models.projects import ProjectReferenceRead
+from app.models.projects import ProjectReferenceRead, ProjectRelation
 from app.models.resource import ResourceCapabilities
 from app.models.users import UserPublicRead
 
@@ -29,7 +29,14 @@ class SampleCreate(SQLModel):
         return v
     sample_name: str
     sample_type: Optional[str] = None
-    project_id: Optional[str] = None
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Project slug. May be combined with a matching project_mfid.",
+    )
+    project_mfid: Optional[str] = Field(
+        default=None,
+        description="Canonical project MFID. May be combined with a matching project_id.",
+    )
     description: Optional[str] = None
     timestamp: Optional[str] = None
     public: bool = False
@@ -43,12 +50,26 @@ class SampleCreate(SQLModel):
         description="Owner reference: ORCID, service-account MFID, username, or email. Defaults to the authenticated identity.",
     )
 
-    @field_validator("project_id", "owner_orcid", "owner", mode="before", check_fields=False)
+    @field_validator(
+        "project_id",
+        "project_mfid",
+        "owner_orcid",
+        "owner",
+        mode="before",
+        check_fields=False,
+    )
     @classmethod
     def blank_identifiers_to_none(cls, v):
         """Uploaders that send "" instead of omitting the field would otherwise
         attach the resource to a nameless project. See general_utils."""
         return blank_to_none(v)
+
+    @field_validator("project_mfid")
+    @classmethod
+    def check_project_mfid(cls, v):
+        if v is not None and not is_valid_mfid(v):
+            raise ValueError("project_mfid must be a valid mfid: 26-character lowercase Crockford's Base32")
+        return v
 
     @model_validator(mode="after")
     def validate_owner_reference(self):
@@ -99,3 +120,4 @@ class SampleResponse(SampleRead):
     links: Optional[List[LinkedResource]] = None
     owner: Optional[UserPublicRead] = None
     capabilities: Optional[ResourceCapabilities] = None
+    project_relation: Optional[ProjectRelation] = None

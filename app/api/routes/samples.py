@@ -7,7 +7,7 @@ import os
 import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import exists, func, join, literal, text
+from sqlalchemy import exists, func, join, text
 from sqlmodel import and_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
@@ -19,14 +19,30 @@ from app.models.core_models import (
 from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
-from app.models.projects import ProjectReferenceRead
+from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
+
 from app.utils.auth_utils import (
-    access_selector_filter, authorize_user, permission_filter, require_permission)
+    access_selector_filter, authorize_user, permission_filter, project_scope_filter,
+    require_permission)
 from app.utils.instrument_utils import resolve_instrument_mfids_to_references
 from app.utils.permissions import Principal, Permission, Role
-from app.utils.project_utils import project_standing, resolve_project_id_to_mfid, resolve_project_mfids_to_references
+from app.utils.project_utils import (
+    project_standing_by_mfid,
+    resolve_project_filter_mfid,
+    resolve_project_identifiers,
+    resolve_project_mfids_to_references,
+)
+from app.utils.search_utils import (
+    MAX_SEARCH_QUERY_LENGTH,
+    SEARCH_QUERY_LIMIT_DESCRIPTION,
+    apply_trigram_search,
+    configure_trigram_search,
+    normalize_search_query,
+    trigram_rank,
+)
 from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public, visibility_filter_for
+
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
 from app.models.users import UserPublicRead
@@ -188,24 +204,32 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         )
         resolved_owner_orcid = owner_user.unique_id
 
-        project_mfid = None
-        if S.project_id:
-            project_mfid = resolve_project_id_to_mfid(S.project_id, session)
-            if project_mfid is None:
-                raise HTTPException(status_code=404, detail=f"Project '{S.project_id}' not found")
+        requested_project_id = sample_details.get('project_id')
+        requested_project_mfid = sample_details.get('project_mfid')
+        project = resolve_project_identifiers(
+            session,
+            requested_project_id,
+            requested_project_mfid,
+        )
+        if project is None and (
+            requested_project_id is not None
+            or requested_project_mfid is not None
+        ):
+            project_reference = requested_project_mfid or requested_project_id
+            raise HTTPException(status_code=404, detail=f"Project '{project_reference}' not found")
 
         if not auth_res.is_platform_admin:
             owner_orcid = resolved_owner_orcid or user_unique_id
-            if S.project_id:
+            if project is not None:
                 if owner_orcid != user_unique_id and not auth_res.is_service_account:
                     raise HTTPException(
                         status_code=403,
                         detail="Only service accounts and platform administrators may create a sample on behalf of another user")
-                standing = project_standing(owner_orcid, S.project_id, session)
+                standing = project_standing_by_mfid(owner_orcid, project.unique_id, session)
                 if standing is None or standing < Role.CONTRIBUTOR:
                     raise HTTPException(
                         status_code=403,
-                        detail=f"'{owner_orcid}' must be contributor or above in project '{S.project_id}' to create there")
+                        detail=f"'{owner_orcid}' must be contributor or above in project '{project.project_id}' to create there")
             elif owner_orcid != user_unique_id:
                 if not auth_res.is_service_account:
                     raise HTTPException(
@@ -215,8 +239,9 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         sample_details.pop('owner', None)
         sample_details['owner_orcid'] = resolved_owner_orcid
         sample_details['owner_user_id'] = owner_user.id
-        if project_mfid is not None:
-            sample_details['project_mfid'] = project_mfid
+        if project is not None:
+            sample_details['project_id'] = project.project_id
+            sample_details['project_mfid'] = project.unique_id
 
         sample = Sample(**sample_details)
         session.add(sample)
@@ -272,6 +297,15 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
                  modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None,
                  visibility: Literal["all", "public", "private"] = "all",
+                 project_id: Annotated[Optional[str], Query(
+                     description="Filter samples related to this project slug. May be combined with a matching project_mfid.",
+                 )] = None,
+                 project_mfid: Annotated[Optional[str], Query(
+                     description="Filter samples related to this canonical project MFID.",
+                 )] = None,
+                 project_scope: Annotated[Optional[ProjectScope], Query(
+                     description="Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
+                 )] = None,
                  dataset_mfid: Annotated[Optional[str], Query(
                      description="Filter samples linked to this canonical dataset MFID.",
                  )] = None):
@@ -291,6 +325,7 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
     Pass include_links=true to include parent, child, and associated resources for each sample.
     include_datasets is deprecated; use include_links instead.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
+    Pass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.
     Pass dataset_mfid to filter by a readable dataset's canonical stable identity.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
@@ -299,15 +334,25 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
         warnings.warn("include_datasets is deprecated, use include_links=true instead", DeprecationWarning)
         include_links = True
 
+    if project_scope is not None and project_id is None and project_mfid is None:
+        raise HTTPException(
+            status_code=422,
+            detail="project_scope requires project_id or project_mfid",
+        )
+    effective_project_scope: ProjectScope = project_scope or "assigned"
+
 
     params_dict = dict(request.query_params)
     for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
               'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets',
               'include_owner', 'limit', 'cursor', 'offset', 'visibility',
-              'accessible_to_user', 'accessible_to_project', 'dataset_mfid'):
+              'accessible_to_user', 'accessible_to_project', 'project_id', 'project_mfid',
+              'project_scope', 'dataset_mfid'):
         params_dict.pop(k, None)
 
     with Session(engine) as session:
+        filter_project_mfid = resolve_project_filter_mfid(
+            session, project_id, project_mfid)
         linked_dataset_id = None
         if dataset_mfid is not None:
             linked_dataset_id = session.exec(
@@ -325,6 +370,11 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
             user_refs=accessible_to_user,
             project_refs=accessible_to_project,
         )
+        project_filter = (
+            project_scope_filter(
+                session, auth_res, Sample, filter_project_mfid, effective_project_scope)
+            if filter_project_mfid is not None else None
+        )
         deletion_filter = deletion_filter_for(Sample)
 
         def apply_filters(q):
@@ -339,6 +389,8 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                 q = q.where(Resource.modification_time >= modification_time_gte)
             if modification_time_lte:
                 q = q.where(Resource.modification_time <= modification_time_lte)
+            if project_filter is not None:
+                q = q.where(project_filter)
             if linked_dataset_id is not None:
                 q = q.where(
                     exists()
@@ -452,15 +504,15 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
         items = []
         for row in rows:
             if include_metadata:
-                samp, creation_time, modification_time, public, sci_md, project_mfid, resolved_project_id, project_title = row
+                samp, creation_time, modification_time, public, sci_md, resolved_project_mfid, resolved_project_id, project_title = row
             else:
-                samp, creation_time, modification_time, public, project_mfid, resolved_project_id, project_title = row
+                samp, creation_time, modification_time, public, resolved_project_mfid, resolved_project_id, project_title = row
                 sci_md = None
             project_reference = ProjectReferenceRead(
-                unique_id=project_mfid,
+                unique_id=resolved_project_mfid,
                 project_id=resolved_project_id,
                 title=project_title,
-            ) if project_mfid is not None else None
+            ) if resolved_project_mfid is not None else None
             links = None
             compat_datasets = None
             if include_links:
@@ -482,6 +534,9 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                 "datasets": compat_datasets,
                 "links": links,
                 "owner": owners_by_orcid.get(samp.owner_orcid),
+                "project_relation": (
+                    "assigned" if samp.project_mfid == filter_project_mfid else "shared"
+                ) if filter_project_mfid is not None else None,
             }))
         next_cursor = rows[-1][0].unique_id if len(rows) == limit else None
         resp_offset = offset if (cursor is None and offset) else None
@@ -508,26 +563,57 @@ def _sample_base_query(principal):
 @router.get("/samples/search", response_model=PaginatedResponse[SampleResponse])
 def search_samples(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    q: str = Query(min_length=3, description="Search term matched against sample_name."),
-    project_id: Optional[str] = None,
+    q: str = Query(
+        min_length=3,
+        max_length=MAX_SEARCH_QUERY_LENGTH,
+        description=f"Search term matched against sample_name. {SEARCH_QUERY_LIMIT_DESCRIPTION}",
+    ),
+    project_id: Annotated[Optional[str], Query(
+        description="Restrict results related to this project slug. May be combined with a matching project_mfid.",
+    )] = None,
+    project_mfid: Annotated[Optional[str], Query(
+        description="Restrict results related to this canonical project MFID.",
+    )] = None,
+    project_scope: Annotated[Optional[ProjectScope], Query(
+        description="Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
+    )] = None,
     limit: int = Query(default=20, ge=1, le=50),
 ):
     '''
-    Search samples by name. Returns results ordered by match quality (exact → prefix → substring).
-    Optionally scope to a project with ?project_id=. Maximum 50 results.
+    Search readable samples by name and return results ordered by match quality.
+    Pass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship. Maximum 50 results.
     '''
 
+    if project_scope is not None and project_id is None and project_mfid is None:
+        raise HTTPException(
+            status_code=422,
+            detail="project_scope requires project_id or project_mfid",
+        )
+    effective_project_scope: ProjectScope = project_scope or "assigned"
+    normalized_q, tokens = normalize_search_query(q)
+
     with Session(engine) as session:
-        session.execute(text(f"SET LOCAL pg_trgm.word_similarity_threshold = {get_trgm_search_threshold()}"))
-        query = _sample_base_query(auth_res)
-        for token in q.lower().split():
-            query = query.where(
-                Sample.sample_name.ilike(f"{token}%") |
-                literal(token).op("<%")(Sample.sample_name)
-            )
-        if project_id:
-            query = query.where(Sample.project_mfid == resolve_project_id_to_mfid(project_id, session))
-        query = query.order_by(func.word_similarity(q, Sample.sample_name).desc()).limit(limit)
+        configure_trigram_search(session, get_trgm_search_threshold())
+        filter_project_mfid = resolve_project_filter_mfid(
+            session, project_id, project_mfid)
+        query = apply_trigram_search(
+            _sample_base_query(auth_res),
+            tokens,
+            fields=(Sample.sample_name,),
+            prefix_fields=(Sample.sample_name,),
+        )
+        if filter_project_mfid is not None:
+            query = query.where(project_scope_filter(
+                session,
+                auth_res,
+                Sample,
+                filter_project_mfid,
+                effective_project_scope,
+            ))
+        query = query.order_by(
+            trigram_rank(normalized_q, (Sample.sample_name,)).desc(),
+            Sample.unique_id.desc(),
+        ).limit(limit)
         results = session.exec(query).all()
         items = [SampleResponse.model_validate({
             **samp.model_dump(),
@@ -540,6 +626,9 @@ def search_samples(
             "public": public if public is not None else False,
             "creation_time": creation_time,
             "modification_time": modification_time,
+            "project_relation": (
+                "assigned" if samp.project_mfid == filter_project_mfid else "shared"
+            ) if filter_project_mfid is not None else None,
         }) for samp, creation_time, modification_time, public, project_mfid, resolved_project_id, project_title in results]
         return PaginatedResponse(limit=limit, items=items)
 

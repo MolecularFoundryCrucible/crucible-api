@@ -1,5 +1,5 @@
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from sqlmodel import Session, select
 
 from app.models.core_models import (
@@ -8,12 +8,16 @@ from app.models.core_models import (
     Project,
     Resource,
     ResourceACL,
+    Sample,
     User,
     UserAccessGroupLink,
 )
 from app.api.routes.projects import list_projects
-from app.utils.auth_utils import access_selector_filter
+from app.api.routes.datasets import list_datasets, search_datasets
+from app.api.routes.samples import list_samples, search_samples
+from app.utils.auth_utils import access_selector_filter, project_scope_filter
 from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role
+from app.utils.project_utils import resolve_project_filter_mfid
 
 
 def _seed(db_engine):
@@ -58,13 +62,42 @@ def _seed(db_engine):
         ])
 
         both_users = Dataset(unique_id="ds-both-users", dataset_name="both users")
-        both_projects = Dataset(unique_id="ds-both-projects", dataset_name="both projects")
+        both_projects = Dataset(
+            unique_id="ds-both-projects",
+            dataset_name="both projects",
+            project_mfid=project_y.unique_id,
+        )
+        assigned_project = Dataset(
+            unique_id="ds-assigned-project",
+            dataset_name="assigned project",
+            project_mfid=project_x.unique_id,
+        )
         alice_only = Dataset(unique_id="ds-alice-only", dataset_name="alice only")
-        session.add_all([both_users, both_projects, alice_only])
+        assigned_sample = Sample(
+            unique_id="sample-assigned-project",
+            sample_name="assigned project",
+            project_mfid=project_x.unique_id,
+        )
+        shared_sample = Sample(
+            unique_id="sample-shared-project",
+            sample_name="shared project",
+            project_mfid=project_y.unique_id,
+        )
+        session.add_all([
+            both_users,
+            both_projects,
+            assigned_project,
+            alice_only,
+            assigned_sample,
+            shared_sample,
+        ])
         session.add_all([
             Resource(mfid=both_users.unique_id, resource_type="dataset"),
             Resource(mfid=both_projects.unique_id, resource_type="dataset"),
+            Resource(mfid=assigned_project.unique_id, resource_type="dataset"),
             Resource(mfid=alice_only.unique_id, resource_type="dataset"),
+            Resource(mfid=assigned_sample.unique_id, resource_type="sample"),
+            Resource(mfid=shared_sample.unique_id, resource_type="sample"),
         ])
         session.add_all([
             ResourceACL(mfid=both_users.unique_id, accessgroup_id=alice_group.id, read=True, write=False, permission=Role.VIEWER.db_value),
@@ -72,9 +105,13 @@ def _seed(db_engine):
             ResourceACL(mfid=alice_only.unique_id, accessgroup_id=alice_group.id, read=True, write=False, permission=Role.VIEWER.db_value),
             ResourceACL(mfid=both_projects.unique_id, accessgroup_id=project_x_group.id, read=True, write=False, permission=Role.VIEWER.db_value),
             ResourceACL(mfid=both_projects.unique_id, accessgroup_id=project_y_group.id, read=True, write=False, permission=Role.VIEWER.db_value),
+            ResourceACL(mfid=assigned_project.unique_id, accessgroup_id=project_x_group.id, read=True, write=False, permission=Role.VIEWER.db_value),
+            ResourceACL(mfid=assigned_sample.unique_id, accessgroup_id=project_x_group.id, read=True, write=False, permission=Role.VIEWER.db_value),
+            ResourceACL(mfid=shared_sample.unique_id, accessgroup_id=project_x_group.id, read=True, write=False, permission=Role.VIEWER.db_value),
         ])
         session.commit()
         return {
+            "project_x_id": project_x.project_id,
             "project_x_mfid": project_x.unique_id,
             "project_x_group_id": project_x_group.id,
             "project_y_mfid": project_y.unique_id,
@@ -132,6 +169,189 @@ def test_project_selector_requires_membership_and_limits_selector_count(db_engin
 
     assert unauthorized.value.status_code == 403
     assert excessive.value.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("resource_model", "scope", "expected"),
+    [
+        (Dataset, "assigned", ["ds-assigned-project"]),
+        (Dataset, "shared", ["ds-both-projects"]),
+        (Dataset, "all", ["ds-assigned-project", "ds-both-projects"]),
+        (Sample, "assigned", ["sample-assigned-project"]),
+        (Sample, "shared", ["sample-shared-project"]),
+        (Sample, "all", ["sample-assigned-project", "sample-shared-project"]),
+    ],
+)
+def test_project_scope_filter_distinguishes_assignment_and_sharing(
+    db_engine, resource_model, scope, expected
+):
+    seeded = _seed(db_engine)
+    caller = Principal(
+        user_id="0000-0001-1111-1111",
+        groups=(
+            GroupMembership(
+                id=seeded["project_x_group_id"],
+                group_name=seeded["project_x_mfid"],
+                role=Role.VIEWER,
+            ),
+        ),
+    )
+
+    with Session(db_engine) as session:
+        clause = project_scope_filter(
+            session,
+            caller,
+            resource_model,
+            seeded["project_x_mfid"],
+            scope,
+        )
+        rows = session.exec(
+            select(resource_model.unique_id).where(clause).order_by(resource_model.unique_id)
+        ).all()
+
+    assert rows == expected
+
+
+@pytest.mark.parametrize("route", [list_datasets, list_samples])
+def test_project_scope_requires_project_identifier(route):
+    request = Request({"type": "http", "query_string": b"project_scope=all", "headers": []})
+
+    with pytest.raises(HTTPException) as error:
+        route(
+            auth_res=Principal(user_id="admin", platform_role=PlatformRole.ADMIN),
+            request=request,
+            project_scope="all",
+        )
+
+    assert error.value.status_code == 422
+    assert error.value.detail == "project_scope requires project_id or project_mfid"
+
+
+@pytest.mark.parametrize("route", [search_datasets, search_samples])
+def test_project_scoped_search_requires_project_identifier(route):
+    with pytest.raises(HTTPException) as error:
+        route(
+            auth_res=Principal(user_id="admin", platform_role=PlatformRole.ADMIN),
+            q="search term",
+            project_id=None,
+            project_mfid=None,
+            project_scope="all",
+            limit=20,
+        )
+
+    assert error.value.status_code == 422
+    assert error.value.detail == "project_scope requires project_id or project_mfid"
+
+
+def test_project_filter_accepts_matching_slug_and_mfid(db_engine):
+    seeded = _seed(db_engine)
+
+    with Session(db_engine) as session:
+        resolved = resolve_project_filter_mfid(
+            session,
+            seeded["project_x_id"],
+            seeded["project_x_mfid"],
+        )
+
+    assert resolved == seeded["project_x_mfid"]
+
+
+def test_project_filter_rejects_conflicting_slug_and_mfid(db_engine):
+    seeded = _seed(db_engine)
+
+    with Session(db_engine) as session:
+        with pytest.raises(HTTPException) as error:
+            resolve_project_filter_mfid(
+                session,
+                seeded["project_x_id"],
+                seeded["project_y_mfid"],
+            )
+
+    assert error.value.status_code == 422
+    assert error.value.detail == "project_id and project_mfid identify different projects"
+
+
+def test_project_filter_rejects_unknown_slug(db_engine):
+    _seed(db_engine)
+
+    with Session(db_engine) as session:
+        with pytest.raises(HTTPException) as error:
+            resolve_project_filter_mfid(session, "missing-project", None)
+
+    assert error.value.status_code == 404
+
+
+def test_project_scope_collection_responses_report_relation(db_engine):
+    seeded = _seed(db_engine)
+    caller = Principal(
+        user_id="0000-0001-1111-1111",
+        groups=(
+            GroupMembership(
+                id=seeded["project_x_group_id"],
+                group_name=seeded["project_x_mfid"],
+                role=Role.VIEWER,
+            ),
+        ),
+    )
+    query_string = f"project_id={seeded['project_x_id']}&project_scope=all".encode()
+
+    datasets = list_datasets(
+        auth_res=caller,
+        request=Request({"type": "http", "query_string": query_string, "headers": []}),
+        accessible_to_user=None,
+        accessible_to_project=None,
+        include_metadata=False,
+        include_links=False,
+        include_owner=False,
+        limit=100,
+        cursor=None,
+        offset=0,
+        creation_time_gte=None,
+        creation_time_lte=None,
+        modification_time_gte=None,
+        modification_time_lte=None,
+        visibility="all",
+        instrument_mfid=None,
+        project_id=seeded["project_x_id"],
+        project_mfid=None,
+        project_scope="all",
+        sample_mfid=None,
+    )
+    samples = list_samples(
+        auth_res=caller,
+        request=Request({"type": "http", "query_string": query_string, "headers": []}),
+        accessible_to_user=None,
+        accessible_to_project=None,
+        include_metadata=False,
+        include_links=False,
+        include_datasets=False,
+        include_owner=False,
+        limit=100,
+        cursor=None,
+        offset=0,
+        creation_time_gte=None,
+        creation_time_lte=None,
+        modification_time_gte=None,
+        modification_time_lte=None,
+        visibility="all",
+        project_id=seeded["project_x_id"],
+        project_mfid=None,
+        project_scope="all",
+        dataset_mfid=None,
+    )
+
+    assert {
+        item.unique_id: item.project_relation for item in datasets.items
+    } == {
+        "ds-assigned-project": "assigned",
+        "ds-both-projects": "shared",
+    }
+    assert {
+        item.unique_id: item.project_relation for item in samples.items
+    } == {
+        "sample-assigned-project": "assigned",
+        "sample-shared-project": "shared",
+    }
 
 
 def test_project_collection_selector_includes_owned_and_shared_projects(db_engine):
@@ -235,6 +455,28 @@ def test_access_selectors_are_repeated_openapi_arrays():
     assert sample_parameters["dataset_mfid"]["description"] == (
         "Filter samples linked to this canonical dataset MFID."
     )
+    for parameters in (dataset_parameters, sample_parameters):
+        assert parameters["project_id"]["required"] is False
+        assert parameters["project_mfid"]["required"] is False
+        assert parameters["project_scope"]["required"] is False
+        assert parameters["project_scope"]["schema"]["anyOf"][0]["enum"] == [
+            "assigned",
+            "shared",
+            "all",
+        ]
+    for path in ("/datasets/search", "/samples/search"):
+        parameters = {
+            parameter["name"]: parameter
+            for parameter in schema["paths"][path]["get"]["parameters"]
+        }
+        assert parameters["q"]["schema"]["maxLength"] == 200
+        assert parameters["project_id"]["required"] is False
+        assert parameters["project_mfid"]["required"] is False
+        assert parameters["project_scope"]["schema"]["anyOf"][0]["enum"] == [
+            "assigned",
+            "shared",
+            "all",
+        ]
     assert schema["paths"]["/samples/{sample_id}/datasets"]["get"]["deprecated"] is True
     assert schema["paths"]["/datasets/{dsid}/samples"]["get"]["deprecated"] is True
     for schema_name in ("DatasetResponse", "SampleResponse"):
@@ -244,11 +486,13 @@ def test_access_selectors_are_repeated_openapi_arrays():
     assert dataset_properties["instrument"]["anyOf"][0]["$ref"] == "#/components/schemas/InstrumentReferenceRead"
     assert dataset_properties["project"]["anyOf"][0]["$ref"] == "#/components/schemas/ProjectReferenceRead"
     assert dataset_properties["owner"]["anyOf"][0]["$ref"] == "#/components/schemas/UserPublicRead"
+    assert dataset_properties["project_relation"]["anyOf"][0]["enum"] == ["assigned", "shared"]
     for schema_name in ("SampleRead", "SampleResponse"):
         sample_properties = schema["components"]["schemas"][schema_name]["properties"]
         assert sample_properties["project"]["anyOf"][0]["$ref"] == "#/components/schemas/ProjectReferenceRead"
     sample_response_properties = schema["components"]["schemas"]["SampleResponse"]["properties"]
     assert sample_response_properties["owner"]["anyOf"][0]["$ref"] == "#/components/schemas/UserPublicRead"
+    assert sample_response_properties["project_relation"]["anyOf"][0]["enum"] == ["assigned", "shared"]
     assert sample_response_properties["datasets"]["deprecated"] is True
     for path in (
         "/datasets/{dataset_mfid}",

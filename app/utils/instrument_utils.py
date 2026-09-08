@@ -41,6 +41,42 @@ def resolve_instrument_id_to_mfid(instrument_id: str, session) -> "str | None":
     return instrument.unique_id if instrument else None
 
 
+def resolve_instrument_identifiers(
+    session,
+    instrument_id: str | None,
+    instrument_mfid: str | None,
+) -> Instrument | None:
+    if instrument_id is None and instrument_mfid is None:
+        return None
+
+    if instrument_mfid is not None:
+        instrument = session.exec(
+            select(Instrument).where(Instrument.unique_id == instrument_mfid)
+        ).one_or_none()
+        identifier = instrument_mfid
+    else:
+        instrument = session.exec(
+            select(Instrument).where(
+                func.lower(Instrument.instrument_id) == instrument_id.lower()
+            )
+        ).one_or_none()
+        identifier = instrument_id
+
+    if instrument is None:
+        if instrument_mfid is None:
+            raise HTTPException(status_code=400, detail=f"Instrument '{identifier}' is not registered")
+        raise HTTPException(status_code=404, detail=f"Instrument '{identifier}' not found")
+    if (
+        instrument_id is not None
+        and (instrument.instrument_id or "").casefold() != instrument_id.casefold()
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="instrument_id and instrument_mfid identify different instruments",
+        )
+    return instrument
+
+
 def resolve_instrument_mfids_to_ids(mfids, session) -> dict:
     """Batch mfid -> instrument_id, for response serialization. One query
     regardless of how many rows are being resolved."""

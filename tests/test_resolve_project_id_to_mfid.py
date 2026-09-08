@@ -1,8 +1,15 @@
+import pytest
+from fastapi import HTTPException
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
 from app.models.core_models import Project
-from app.utils.project_utils import resolve_project_id_to_mfid, resolve_project_mfids_to_ids, resolve_project_mfids_to_references
+from app.utils.project_utils import (
+    resolve_project_id_to_mfid,
+    resolve_project_identifiers,
+    resolve_project_mfids_to_ids,
+    resolve_project_mfids_to_references,
+)
 
 
 def _engine():
@@ -28,6 +35,32 @@ def test_resolve_project_id_to_mfid():
 def test_resolve_unknown_project_id_returns_none():
     with Session(_engine()) as session:
         assert resolve_project_id_to_mfid("no-such-project", session) is None
+
+
+def test_resolve_project_by_mfid():
+    with Session(_engine()) as session:
+        project = _project(session, "proj_a", "0000-0001")
+        assert resolve_project_identifiers(session, None, project.unique_id) == project
+
+
+def test_resolve_matching_project_id_and_mfid():
+    with Session(_engine()) as session:
+        project = _project(session, "proj_a", "0000-0001")
+        assert resolve_project_identifiers(session, "proj_a", project.unique_id) == project
+
+
+def test_resolve_conflicting_project_id_and_mfid_is_422():
+    with Session(_engine()) as session:
+        project = _project(session, "proj_a", "0000-0001")
+        with pytest.raises(HTTPException) as exc:
+            resolve_project_identifiers(session, "proj_b", project.unique_id)
+        assert exc.value.status_code == 422
+
+
+def test_resolve_unknown_project_identifier_returns_none():
+    with Session(_engine()) as session:
+        assert resolve_project_identifiers(session, "missing", None) is None
+        assert resolve_project_identifiers(session, None, "missing") is None
 
 
 def test_resolve_project_mfids_to_ids_is_batched():

@@ -214,6 +214,37 @@ class TestCreateSample:
             proj = session.exec(select(Project).where(Project.project_id == "proj_mfid_s")).one()
             assert samp.project_mfid == proj.unique_id
 
+    def test_create_sample_with_project_mfid_sets_canonical_project(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            researcher = _user(session, "0000-0012c")
+            ag = _project_with_group(session, "proj_mfid_only_s", "0000-0012c")
+            project = session.exec(select(Project).where(
+                Project.project_id == "proj_mfid_only_s"
+            )).one()
+            project_mfid = project.unique_id
+            session.add(UserAccessGroupLink(
+                user_id=researcher.id,
+                accessgroup_id=ag.id,
+                role="contributor",
+            ))
+            session.commit()
+
+        auth_as("0000-0012c", groups=[])
+        resp = client.post("/samples", json={
+            "sample_name": "s2-mf-only",
+            "project_mfid": project_mfid,
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["project_id"] == "proj_mfid_only_s"
+        assert resp.json()["project"]["unique_id"] == project_mfid
+
+        with Session(db_engine) as session:
+            sample = session.exec(select(Sample).where(
+                Sample.sample_name == "s2-mf-only"
+            )).one()
+            assert sample.project_id == "proj_mfid_only_s"
+            assert sample.project_mfid == project_mfid
+
     def test_create_sample_with_nonexistent_project_id_is_404_for_platform_admin(self, client, db_engine, auth_as):
         auth_as("sa-admin-3", groups=[], platform_role=PlatformRole.ADMIN)
         resp = client.post("/samples", json={"sample_name": "s2c", "project_id": "no-such-project"})

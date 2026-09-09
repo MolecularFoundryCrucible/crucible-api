@@ -15,13 +15,12 @@ from app.models.core_models import (
 )
 from app.utils.auth_utils import (
     access_selector_filter, authorize_user, has_platform_admin_access,
-    load_principal, permission_filter, require_grant, require_permission,
+    load_principal, permission_filter, project_owner_affiliation_filter,
+    require_grant, require_permission,
     resource_capabilities)
 from app.utils.permissions import (
     AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
 from app.utils.search_utils import (
-    MAX_SEARCH_QUERY_LENGTH,
-    SEARCH_QUERY_LIMIT_DESCRIPTION,
     apply_trigram_search,
     configure_trigram_search,
     normalize_search_query,
@@ -34,6 +33,7 @@ from app.utils.project_utils import (
     sql_get_projects_for_user, resolve_project_reference)
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
+from app.models.queries import ProjectListQuery, SearchQuery
 from app.models.projects import (
     ProjectCreate, ProjectMembershipRole, ProjectRead, ProjectUpdate, ProjectWithLead)
 from app.models.users import UserPublicRead
@@ -133,19 +133,21 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
 
 
 @router.get("/projects", response_model=PaginatedResponse[ProjectWithLead])
-def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
-                  project_id: Optional[str] = Query(default=None, description="Exact project slug."),
-                  accessible_to_user: Optional[List[str]] = Query(default=None, description="User references whose effective access must all include each result."),
-                  accessible_to_project: Optional[List[str]] = Query(default=None, description="Project MFIDs or slugs whose direct access must all include each result."),
-                  include_metadata: bool = False,
-                  include_members: bool = Query(default=False, description="Include members for an exact project_id lookup when authorized."),
-                  limit: int = Query(default=100, ge=1, le=1000),
-                  offset: int = Query(default=0, ge=0)):
+def list_projects(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    params: Annotated[ProjectListQuery, Query()],
+):
     '''
     Returns a paginated list of projects the user is authorized to see, including the resolved project lead.
+    Pass affiliation=owner to return only projects authoritatively owned by the caller.
     '''
-    if include_members and project_id is None:
-        raise HTTPException(status_code=422, detail="include_members requires an exact project_id filter")
+    project_id = params.project_id
+    accessible_to_user = params.accessible_to_user
+    accessible_to_project = params.accessible_to_project
+    include_metadata = params.include_metadata
+    include_members = params.include_members
+    limit = params.limit
+    offset = params.offset
 
     user_unique_id = auth_res.user_id
     if include_metadata:
@@ -182,6 +184,9 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
                 ))
             )
 
+        if params.affiliation:
+            base = base.where(project_owner_affiliation_filter(auth_res, Project))
+
         total = session.exec(select(func.count()).select_from(base.subquery())).one()
 
         props = session.exec(
@@ -216,12 +221,7 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
 @router.get("/projects/search", response_model=PaginatedResponse[ProjectRead])
 def search_projects(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    q: str = Query(
-        min_length=3,
-        max_length=MAX_SEARCH_QUERY_LENGTH,
-        description=f"Search term matched against project title and project_id. {SEARCH_QUERY_LIMIT_DESCRIPTION}",
-    ),
-    limit: int = Query(default=20, ge=1, le=50),
+    params: Annotated[SearchQuery, Query()],
 ):
     '''
     Search projects by title or project_id across all projects, not just ones the
@@ -233,7 +233,7 @@ def search_projects(
     open regardless of membership. See GET /projects/{proj_id} for the fields
     that stay member-only.
     '''
-    normalized_q, tokens = normalize_search_query(q)
+    normalized_q, tokens = normalize_search_query(params.q)
     with Session(engine) as session:
         configure_trigram_search(session, get_trgm_search_threshold())
         fields = (Project.project_id, Project.title)
@@ -243,13 +243,15 @@ def search_projects(
             fields=fields,
             prefix_fields=(Project.project_id,),
         )
+        if params.affiliation:
+            query = query.where(project_owner_affiliation_filter(auth_res, Project))
         query = query.order_by(
             trigram_rank(normalized_q, fields).desc(),
             Project.unique_id.desc(),
-        ).limit(limit)
+        ).limit(params.limit)
 
         results = session.exec(query).all()
-        return PaginatedResponse(limit=limit, items=results)
+        return PaginatedResponse(limit=params.limit, items=results)
 
 
 @router.get("/projects/{project_ref}", response_model=ProjectWithLead)

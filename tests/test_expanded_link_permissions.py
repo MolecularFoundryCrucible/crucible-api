@@ -16,6 +16,7 @@ from app.models.core_models import (
     Sample,
     SampleLink,
 )
+from app.models.queries import DatasetListQuery, SampleListQuery
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
 
@@ -333,37 +334,12 @@ def test_collection_link_expansion_stays_filtered_and_batched(
     datasets = datasets_routes.list_datasets(
         principal,
         _request(),
-        accessible_to_user=None,
-        accessible_to_project=None,
-        include_metadata=False,
-        include_links=True,
-        include_owner=False,
-        limit=100,
-        cursor=None,
-        offset=0,
-        creation_time_gte=None,
-        creation_time_lte=None,
-        modification_time_gte=None,
-        modification_time_lte=None,
-        visibility="all",
+        DatasetListQuery(include_links=True),
     )
     samples = samples_routes.list_samples(
         principal,
         _request(),
-        accessible_to_user=None,
-        accessible_to_project=None,
-        include_metadata=False,
-        include_links=True,
-        include_datasets=False,
-        include_owner=False,
-        limit=100,
-        cursor=None,
-        offset=0,
-        creation_time_gte=None,
-        creation_time_lte=None,
-        modification_time_gte=None,
-        modification_time_lte=None,
-        visibility="all",
+        SampleListQuery(include_links=True),
     )
 
     dataset_root = next(item for item in datasets.items if item.unique_id == "dataset-root")

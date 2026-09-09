@@ -39,3 +39,14 @@ DB_CONF_FILE=.env.prod \
 ```
 
 The August 2026 permission rollout is complete. Its ordered procedure is retained only as a [historical runbook](../docs/archive/permission_migration_runbook_2026-08.md). Do not replay it against a current environment. Accepted production cleanup items remain in [production migration data follow-ups](../docs/production_migration_data_followups.md).
+
+## Resource timestamp migration
+
+Revision `8c4f2a1d7e60` converts `idtype.creation_time` and `idtype.modification_time` from timezone-qualified ISO strings to PostgreSQL `TIMESTAMPTZ`. Before applying it, run the read-only audit and stop if any value lacks an explicit timezone:
+
+```bash
+DB_CONF_FILE=.env.prod \
+.venv/bin/python migrations/data/20260908_audit_resource_timestamps.py
+```
+
+The audit script does not mutate data. Pause old API replicas and writers before the schema migration, apply the revision, deploy the API version that models these fields as timezone-aware datetimes, and only then restore traffic. Do not run old and new timestamp models concurrently.

@@ -1,4 +1,5 @@
 import warnings
+from datetime import datetime
 from enum import Enum
 from typing import List, Literal, Optional
 from pydantic import ConfigDict, field_validator, model_validator
@@ -66,8 +67,8 @@ class ProjectWithLead(ProjectRead):
     members remain restricted to project members and platform administrators.'''
     lead: Optional[UserPublicRead] = None
     scientific_metadata: Optional[dict] = None
-    creation_time: Optional[str] = None
-    modification_time: Optional[str] = None
+    creation_time: Optional[datetime] = None
+    modification_time: Optional[datetime] = None
     members: Optional[List[AccessGroupMemberRead]] = None
 
 

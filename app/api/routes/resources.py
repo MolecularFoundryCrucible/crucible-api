@@ -8,7 +8,7 @@ from sqlalchemy.sql import and_, exists
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_utc_isoformat
+from app.general_utils import get_utc_datetime
 from app.models.core_models import (
     AccessGroup,
     Dataset,
@@ -250,7 +250,7 @@ def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
             scientific_metadata=scientific_md,
         )
         attributes.flag_modified(new_md_obj, 'scientific_metadata')
-        resource.modification_time = get_utc_isoformat()
+        resource.modification_time = get_utc_datetime()
 
         session.commit()
         session.refresh(new_md_obj)
@@ -286,7 +286,7 @@ def update_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
             scientific_metadata=md_dict,
         )
         attributes.flag_modified(new_md_obj, 'scientific_metadata')
-        resource.modification_time = get_utc_isoformat()
+        resource.modification_time = get_utc_datetime()
 
         session.commit()
         session.refresh(new_md_obj)

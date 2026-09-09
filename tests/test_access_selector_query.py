@@ -15,6 +15,8 @@ from app.models.core_models import (
 from app.api.routes.projects import list_projects
 from app.api.routes.datasets import list_datasets, search_datasets
 from app.api.routes.samples import list_samples, search_samples
+from app.models.queries import (
+    DatasetListQuery, ProjectListQuery, ResourceSearchQuery, SampleListQuery)
 from app.utils.auth_utils import access_selector_filter, project_scope_filter
 from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role
 from app.utils.project_utils import resolve_project_filter_mfid
@@ -215,32 +217,23 @@ def test_project_scope_filter_distinguishes_assignment_and_sharing(
 @pytest.mark.parametrize("route", [list_datasets, list_samples])
 def test_project_scope_requires_project_identifier(route):
     request = Request({"type": "http", "query_string": b"project_scope=all", "headers": []})
+    query_type = DatasetListQuery if route is list_datasets else SampleListQuery
 
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(ValueError, match="project_scope requires project_id or project_mfid"):
         route(
             auth_res=Principal(user_id="admin", platform_role=PlatformRole.ADMIN),
             request=request,
-            project_scope="all",
+            params=query_type(project_scope="all"),
         )
-
-    assert error.value.status_code == 422
-    assert error.value.detail == "project_scope requires project_id or project_mfid"
 
 
 @pytest.mark.parametrize("route", [search_datasets, search_samples])
 def test_project_scoped_search_requires_project_identifier(route):
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(ValueError, match="project_scope requires project_id or project_mfid"):
         route(
             auth_res=Principal(user_id="admin", platform_role=PlatformRole.ADMIN),
-            q="search term",
-            project_id=None,
-            project_mfid=None,
-            project_scope="all",
-            limit=20,
+            params=ResourceSearchQuery(q="search term", project_scope="all"),
         )
-
-    assert error.value.status_code == 422
-    assert error.value.detail == "project_scope requires project_id or project_mfid"
 
 
 def test_project_filter_accepts_matching_slug_and_mfid(db_engine):
@@ -298,46 +291,18 @@ def test_project_scope_collection_responses_report_relation(db_engine):
     datasets = list_datasets(
         auth_res=caller,
         request=Request({"type": "http", "query_string": query_string, "headers": []}),
-        accessible_to_user=None,
-        accessible_to_project=None,
-        include_metadata=False,
-        include_links=False,
-        include_owner=False,
-        limit=100,
-        cursor=None,
-        offset=0,
-        creation_time_gte=None,
-        creation_time_lte=None,
-        modification_time_gte=None,
-        modification_time_lte=None,
-        visibility="all",
-        instrument_mfid=None,
-        project_id=seeded["project_x_id"],
-        project_mfid=None,
-        project_scope="all",
-        sample_mfid=None,
+        params=DatasetListQuery(
+            project_id=seeded["project_x_id"],
+            project_scope="all",
+        ),
     )
     samples = list_samples(
         auth_res=caller,
         request=Request({"type": "http", "query_string": query_string, "headers": []}),
-        accessible_to_user=None,
-        accessible_to_project=None,
-        include_metadata=False,
-        include_links=False,
-        include_datasets=False,
-        include_owner=False,
-        limit=100,
-        cursor=None,
-        offset=0,
-        creation_time_gte=None,
-        creation_time_lte=None,
-        modification_time_gte=None,
-        modification_time_lte=None,
-        visibility="all",
-        project_id=seeded["project_x_id"],
-        project_mfid=None,
-        project_scope="all",
-        dataset_mfid=None,
+        params=SampleListQuery(
+            project_id=seeded["project_x_id"],
+            project_scope="all",
+        ),
     )
 
     assert {
@@ -366,13 +331,7 @@ def test_project_collection_selector_includes_owned_and_shared_projects(db_engin
 
     response = list_projects(
         auth_res=caller,
-        project_id=None,
-        accessible_to_user=None,
-        accessible_to_project=["project-x"],
-        include_metadata=False,
-        include_members=False,
-        limit=100,
-        offset=0,
+        params=ProjectListQuery(accessible_to_project=["project-x"]),
     )
 
     assert {project.project_id for project in response.items} == {"project-x", "project-y"}
@@ -390,13 +349,7 @@ def test_exact_project_slug_collection_can_include_members(db_engine):
 
     response = list_projects(
         auth_res=caller,
-        project_id="project-x",
-        accessible_to_user=None,
-        accessible_to_project=None,
-        include_metadata=False,
-        include_members=True,
-        limit=100,
-        offset=0,
+        params=ProjectListQuery(project_id="project-x", include_members=True),
     )
 
     assert response.total == 1
@@ -406,19 +359,11 @@ def test_exact_project_slug_collection_can_include_members(db_engine):
 def test_project_collection_member_expansion_requires_exact_slug():
     caller = Principal(user_id="admin", platform_role=PlatformRole.ADMIN)
 
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(ValueError, match="include_members requires an exact project_id filter"):
         list_projects(
             auth_res=caller,
-            project_id=None,
-            accessible_to_user=None,
-            accessible_to_project=None,
-            include_metadata=False,
-            include_members=True,
-            limit=100,
-            offset=0,
+            params=ProjectListQuery(include_members=True),
         )
-
-    assert error.value.status_code == 422
 
 
 def test_access_selectors_are_repeated_openapi_arrays():

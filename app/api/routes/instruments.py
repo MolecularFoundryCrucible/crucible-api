@@ -1,24 +1,25 @@
 from enum import Enum
 import os
-from typing import Annotated, List, Optional, Union
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from typing import Annotated, List
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import func, join
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.general_utils import get_utc_isoformat
+from app.general_utils import get_utc_datetime
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.core_models import AccessGroup, Instrument, Resource, ScientificMetadataBinary, User, UserAccessGroupLink
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
+from app.models.queries import InstrumentListQuery, InstrumentSearchQuery
 from app.models.users import UserPublicRead
 from app.services.resource_details import ResourceDetailOptions, load_instrument_detail
-from app.utils.auth_utils import authorize_user, require_permission, resource_capabilities
+from app.utils.auth_utils import (
+    authorize_user, owner_affiliation_filter, require_permission,
+    resource_capabilities)
 from app.utils.instrument_utils import assert_instrument_id_available
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.search_utils import (
-    MAX_SEARCH_QUERY_LENGTH,
-    SEARCH_QUERY_LIMIT_DESCRIPTION,
     apply_trigram_search,
     configure_trigram_search,
     normalize_search_query,
@@ -91,30 +92,33 @@ def _instrument_owners(session, instruments):
     }
 
 @router.get("/instruments", response_model=PaginatedResponse[InstrumentResponse])
-def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
-                     instrument_id: Optional[str] = Query(default=None, description="Exact instrument slug."),
-                     include_metadata: bool = False,
-                     include_owner: bool = False,
-                     limit: int = Query(default=100, ge=1, le=1000),
-                     offset: int = Query(default=0, ge=0)):
+def list_instruments(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    params: Annotated[InstrumentListQuery, Query()],
+):
     '''
     Returns a paginated list of instruments filtered by any provided query parameters that
     match Instrument attributes. Matching is case-insensitive exact match.
     Use instrument_id for exact slug lookup. Other filterable fields include
     other_id, other_id_source, instrument_name, manufacturer,
     model, owner, location, description, instrument_type, status.
+    Pass affiliation=owner to return only instruments authoritatively owned by the caller.
     Defaults to status=active; pass ?status=maintenance or ?status=decommissioned to see others.
     An exact instrument_id lookup searches every status unless status is also provided.
     '''
-    query_params = dict(request.query_params)
-    for k in ('instrument_id', 'include_metadata', 'include_owner', 'limit', 'offset'):
-        query_params.pop(k, None)
-    if instrument_id is None:
-        query_params.setdefault('status', 'active')
+    param_values = params.model_dump()
+    instrument_id = params.instrument_id
+    include_metadata = params.include_metadata
+    include_owner = params.include_owner
+    limit = params.limit
+    offset = params.offset
+    if instrument_id is None and params.status is None:
+        param_values["status"] = "active"
     filters = [
         func.lower(getattr(Instrument, key)) == value.lower().strip()
-        for key, value in query_params.items()
+        for key, value in param_values.items()
         if key in INSTRUMENT_FILTER_FIELDS
+        and value is not None
     ]
     if instrument_id is not None:
         filters.append(func.lower(Instrument.instrument_id) == instrument_id.lower().strip())
@@ -123,6 +127,8 @@ def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], re
         base = select(Instrument).join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
         for f in filters:
             base = base.where(f)
+        if params.affiliation:
+            base = base.where(owner_affiliation_filter(auth_res, Instrument))
 
         total = session.exec(select(func.count()).select_from(base.subquery())).one()
 
@@ -137,8 +143,15 @@ def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], re
 
         for f in filters:
             statement = statement.where(f)
+        if params.affiliation:
+            statement = statement.where(owner_affiliation_filter(auth_res, Instrument))
 
-        rows = session.exec(statement.order_by(Resource.creation_time.desc()).offset(offset).limit(limit)).all()
+        rows = session.exec(
+            statement
+            .order_by(Resource.creation_time.desc().nulls_last(), Instrument.unique_id.desc())
+            .offset(offset)
+            .limit(limit)
+        ).all()
         owners = _instrument_owners(session, (row[0] for row in rows)) if include_owner else {}
 
         items = []
@@ -166,31 +179,23 @@ def list_instruments(auth_res: Annotated[Principal, Depends(authorize_user)], re
 @router.get("/instruments/search", response_model=PaginatedResponse[InstrumentResponse])
 def search_instruments(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    q: str = Query(
-        min_length=3,
-        max_length=MAX_SEARCH_QUERY_LENGTH,
-        description=(
-            "Search term matched against instrument_name, instrument_type, and manufacturer. "
-            f"{SEARCH_QUERY_LIMIT_DESCRIPTION}"
-        ),
-    ),
-    status: Optional[InstrumentStatus] = Query(default=None, description="Restrict results to one lifecycle status."),
-    include_owner: bool = False,
-    limit: int = Query(default=20, ge=1, le=50),
+    params: Annotated[InstrumentSearchQuery, Query()],
 ):
     '''
     Search instruments by name, type, or manufacturer using fuzzy matching.
     Returns results ordered by match quality. Maximum 50 results.
     '''
-    normalized_q, tokens = normalize_search_query(q)
+    normalized_q, tokens = normalize_search_query(params.q)
     with Session(engine) as session:
         configure_trigram_search(session, get_trgm_search_threshold())
         base = (
             select(Instrument, Resource)
             .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
         )
-        if status is not None:
-            base = base.where(Instrument.status == status.value)
+        if params.status is not None:
+            base = base.where(Instrument.status == params.status)
+        if params.affiliation:
+            base = base.where(owner_affiliation_filter(auth_res, Instrument))
         fields = (
             Instrument.instrument_name,
             Instrument.instrument_type,
@@ -205,14 +210,14 @@ def search_instruments(
         statement = base.order_by(
             trigram_rank(normalized_q, fields).desc(),
             Instrument.unique_id.desc(),
-        ).limit(limit)
+        ).limit(params.limit)
         rows = session.exec(statement).all()
-        owners = _instrument_owners(session, (inst for inst, _ in rows)) if include_owner else {}
+        owners = _instrument_owners(session, (inst for inst, _ in rows)) if params.include_owner else {}
         items = [
             _instrument_response(inst, ri, owner=owners.get(inst.owner))
             for inst, ri in rows
         ]
-        return PaginatedResponse(limit=limit, items=items)
+        return PaginatedResponse(limit=params.limit, items=items)
 
 
 @router.get("/instruments/{instrument_mfid}", response_model=InstrumentResponse)
@@ -270,7 +275,7 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
         db_instrument = Instrument(**instrument_details)
         session.add(db_instrument)
         session.flush()
-        now = get_utc_isoformat()
+        now = get_utc_datetime()
         existing_ri = session.exec(select(Resource).where(Resource.mfid == db_instrument.unique_id)).one_or_none()
         ri = add_or_update(session, Resource,
                            where=(Resource.mfid == db_instrument.unique_id),
@@ -340,7 +345,7 @@ def update_instrument(
 
         ri = session.exec(select(Resource).where(Resource.mfid == instrument_mfid)).one_or_none()
         if ri:
-            ri.modification_time = get_utc_isoformat()
+            ri.modification_time = get_utc_datetime()
 
         session.add(instrument)
         session.commit()

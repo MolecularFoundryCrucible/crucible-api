@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, Optional
 from sqlmodel import SQLModel
 
@@ -10,7 +11,7 @@ class ResourceSearchResult(SQLModel):
     resource_type: Optional[str] = None
     name: Optional[str] = None
     owner_orcid: Optional[str] = None
-    creation_time: Optional[str] = None
-    modification_time: Optional[str] = None
+    creation_time: Optional[datetime] = None
+    modification_time: Optional[datetime] = None
     rank: Optional[float] = None
     scientific_metadata: Optional[Any] = None

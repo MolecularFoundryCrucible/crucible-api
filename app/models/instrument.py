@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional
 from pydantic import ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
@@ -95,8 +96,8 @@ class InstrumentReferenceRead(SQLModel):
 class InstrumentResponse(InstrumentRead):
     '''InstrumentRead extended with Resource timestamps.'''
     resource_type: Optional[str] = "instrument"
-    creation_time: Optional[str] = None
-    modification_time: Optional[str] = None
+    creation_time: Optional[datetime] = None
+    modification_time: Optional[datetime] = None
     scientific_metadata: Optional[dict] = None
     status: Optional[str] = None
     capabilities: Optional[ResourceCapabilities] = None

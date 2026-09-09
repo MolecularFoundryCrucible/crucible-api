@@ -1,4 +1,6 @@
 from fastapi import Response
+from datetime import datetime
+
 from sqlmodel import Session
 
 from app.api.routes.projects import read_project
@@ -27,8 +29,8 @@ def test_project_response_loads_resource_by_project_mfid(db_engine):
         session.add(Resource(
             mfid=project_mfid,
             resource_type="project",
-            creation_time="2026-08-31T12:00:00Z",
-            modification_time="2026-08-31T13:00:00Z",
+            creation_time=datetime.fromisoformat("2026-08-31T12:00:00+00:00"),
+            modification_time=datetime.fromisoformat("2026-08-31T13:00:00+00:00"),
         ))
         session.commit()
 
@@ -38,5 +40,5 @@ def test_project_response_loads_resource_by_project_mfid(db_engine):
         auth_res=Principal(user_id=owner_id),
     )
 
-    assert result.creation_time == "2026-08-31T12:00:00Z"
-    assert result.modification_time == "2026-08-31T13:00:00Z"
+    assert result.creation_time == datetime.fromisoformat("2026-08-31T12:00:00")
+    assert result.modification_time == datetime.fromisoformat("2026-08-31T13:00:00")

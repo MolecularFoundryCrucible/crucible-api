@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Literal, Optional
 from pydantic import ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
@@ -233,8 +234,8 @@ class ScientificMetadataBinaryRead(SQLModel):
 class DatasetResponse(DatasetRead):
     '''DatasetRead extended with Resource timestamps, optional scientific metadata, and deletion status.'''
     resource_type: Optional[str] = "dataset"
-    creation_time: Optional[str] = None
-    modification_time: Optional[str] = None
+    creation_time: Optional[datetime] = None
+    modification_time: Optional[datetime] = None
     scientific_metadata: Optional[dict] = None
     deletion_request: Optional[dict] = None
     links: Optional[List[LinkedResource]] = None

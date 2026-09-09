@@ -46,16 +46,17 @@ def test_timestamp_audit_classifies_standard_offsets_and_invalid_values():
     assert classify(None) == "null"
     assert classify("2026-09-09T12:06:07Z") == "utc"
     assert classify("2026-09-09T12:06:07.123456+00:00") == "utc"
+    assert classify("2026-04-21 18:20:33.43427+00") == "utc"
     assert classify("2026-09-09T05:06:07-07:00") == "non_utc"
-    assert classify("2026-09-09T12:06:07") == "invalid"
-    assert classify("2026-09-09 12:06:07+00:00") == "invalid"
+    assert classify("2026-09-09T12:06:07") == "naive"
+    assert classify("2026-09-09 12:06:07") == "naive"
     assert classify("2026-99-99T12:06:07+00:00") == "invalid"
 
 
 def test_timestamp_audit_allows_nulls_but_blocks_invalid_values():
     counts = {
-        "creation_time": {"null": 10, "invalid": 0, "non_utc": 0, "utc": 5},
-        "modification_time": {"null": 8, "invalid": 0, "non_utc": 0, "utc": 7},
+        "creation_time": {"null": 10, "naive": 3, "invalid": 0, "non_utc": 0, "utc": 5},
+        "modification_time": {"null": 8, "naive": 2, "invalid": 0, "non_utc": 0, "utc": 7},
     }
 
     assert AUDIT_MODULE.has_blocking_values(counts) is False

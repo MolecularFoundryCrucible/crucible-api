@@ -25,9 +25,17 @@ def upgrade() -> None:
                 SELECT 1
                 FROM idtype
                 WHERE
-                    (creation_time IS NOT NULL AND creation_time !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$')
+                    (
+                        creation_time IS NOT NULL
+                        AND creation_time !~ '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:\d{2})?)$'
+                        AND creation_time !~ '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?$'
+                    )
                     OR
-                    (modification_time IS NOT NULL AND modification_time !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$')
+                    (
+                        modification_time IS NOT NULL
+                        AND modification_time !~ '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:\d{2})?)$'
+                        AND modification_time !~ '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?$'
+                    )
             ) THEN
                 RAISE EXCEPTION 'idtype contains an invalid non-null resource timestamp';
             END IF;
@@ -49,7 +57,13 @@ def upgrade() -> None:
         existing_nullable=True,
         nullable=True,
         server_default=sa.text("now()"),
-        postgresql_using="creation_time::timestamptz",
+        postgresql_using=(
+            "CASE "
+            "WHEN creation_time ~ '^\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?$' "
+            "THEN creation_time::timestamp AT TIME ZONE 'America/Los_Angeles' "
+            "ELSE creation_time::timestamptz "
+            "END"
+        ),
     )
     op.alter_column(
         "idtype",
@@ -59,7 +73,13 @@ def upgrade() -> None:
         existing_nullable=True,
         nullable=True,
         server_default=sa.text("now()"),
-        postgresql_using="modification_time::timestamptz",
+        postgresql_using=(
+            "CASE "
+            "WHEN modification_time ~ '^\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?$' "
+            "THEN modification_time::timestamp AT TIME ZONE 'America/Los_Angeles' "
+            "ELSE modification_time::timestamptz "
+            "END"
+        ),
     )
 
 

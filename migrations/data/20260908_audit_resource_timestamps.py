@@ -18,24 +18,37 @@ from sqlmodel import Session
 from app.api.dependencies import get_engine
 
 
-TIMESTAMP_PATTERN = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$"
+AWARE_TIMESTAMP_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:\d{2})?)$"
+)
+NAIVE_TIMESTAMP_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?$"
 )
 
 
 def classify_timestamp(value):
     if value is None:
         return "null"
-    if not isinstance(value, str) or TIMESTAMP_PATTERN.fullmatch(value) is None:
+    if not isinstance(value, str):
         return "invalid"
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        offset = parsed.utcoffset()
-    except (AttributeError, TypeError, ValueError):
+    if AWARE_TIMESTAMP_PATTERN.fullmatch(value) is not None:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            offset = parsed.utcoffset()
+        except (AttributeError, TypeError, ValueError):
+            return "invalid"
+        if offset is None:
+            return "invalid"
+        return "utc" if offset == timedelta(0) else "non_utc"
+    if NAIVE_TIMESTAMP_PATTERN.fullmatch(value) is not None:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except (AttributeError, TypeError, ValueError):
+            return "invalid"
+        if parsed.utcoffset() is None:
+            return "naive"
         return "invalid"
-    if offset is None:
-        return "invalid"
-    return "utc" if offset == timedelta(0) else "non_utc"
+    return "invalid"
 
 
 def has_blocking_values(counts) -> bool:
@@ -50,11 +63,11 @@ def main() -> int:
     with Session(engine) as session:
         database = session.execute(text("SELECT current_database()")).scalar_one()
         counts = {
-            field_name: {state: 0 for state in ("null", "invalid", "non_utc", "utc")}
+            field_name: {state: 0 for state in ("null", "naive", "invalid", "non_utc", "utc")}
             for field_name in ("creation_time", "modification_time")
         }
         samples = {
-            field_name: {state: [] for state in ("null", "invalid", "non_utc")}
+            field_name: {state: [] for state in ("null", "naive", "invalid", "non_utc")}
             for field_name in ("creation_time", "modification_time")
         }
         rows = session.execute(text("""
@@ -73,7 +86,7 @@ def main() -> int:
         print("mode          : READ ONLY")
         for field_name in ("creation_time", "modification_time"):
             print(f"{field_name}:")
-            for state in ("null", "invalid", "non_utc", "utc"):
+            for state in ("null", "naive", "invalid", "non_utc", "utc"):
                 print(f"  {state:9}: {counts[field_name][state]}")
                 if state in samples[field_name] and samples[field_name][state]:
                     print(f"    sample MFIDs: {samples[field_name][state]!r}")
@@ -81,14 +94,17 @@ def main() -> int:
         if has_blocking_values(counts):
             print("BLOCKED: all non-null resource timestamps must be valid")
             return 1
-        has_legacy_nulls = False
+        has_migration_notes = False
         if counts["creation_time"]["null"]:
             print("PASS WITH LEGACY NULLS: missing creation times will remain NULL")
-            has_legacy_nulls = True
+            has_migration_notes = True
+        if counts["creation_time"]["naive"] or counts["modification_time"]["naive"]:
+            print("PASS WITH PACIFIC ASSUMPTION: timezone-less legacy timestamps will be interpreted in America/Los_Angeles")
+            has_migration_notes = True
         if counts["modification_time"]["null"]:
             print("PASS WITH PARTIAL REPAIR: missing modification times will use creation time when available and otherwise remain NULL")
-            has_legacy_nulls = True
-        if not has_legacy_nulls:
+            has_migration_notes = True
+        if not has_migration_notes:
             print("PASS: resource timestamps satisfy migration preconditions")
         if counts["creation_time"]["non_utc"] or counts["modification_time"]["non_utc"]:
             print("INFO: non-UTC offsets will be preserved as instants and normalized by TIMESTAMPTZ")

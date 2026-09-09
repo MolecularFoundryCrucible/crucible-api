@@ -33,10 +33,10 @@ def test_naive_database_timestamp_is_interpreted_as_utc():
     assert response.model_dump(mode="json")["value"] == "2026-09-09T12:06:07.000000Z"
 
 
-def test_resource_lifecycle_timestamps_are_non_nullable_with_database_defaults():
+def test_resource_lifecycle_timestamps_allow_legacy_nulls_with_database_defaults():
     for field_name in ("creation_time", "modification_time"):
         column = Resource.__table__.columns[field_name]
-        assert column.nullable is False
+        assert column.nullable is True
         assert str(column.server_default.arg) == "now()"
 
 
@@ -50,3 +50,15 @@ def test_timestamp_audit_classifies_standard_offsets_and_invalid_values():
     assert classify("2026-09-09T12:06:07") == "invalid"
     assert classify("2026-09-09 12:06:07+00:00") == "invalid"
     assert classify("2026-99-99T12:06:07+00:00") == "invalid"
+
+
+def test_timestamp_audit_allows_nulls_but_blocks_invalid_values():
+    counts = {
+        "creation_time": {"null": 10, "invalid": 0, "non_utc": 0, "utc": 5},
+        "modification_time": {"null": 8, "invalid": 0, "non_utc": 0, "utc": 7},
+    }
+
+    assert AUDIT_MODULE.has_blocking_values(counts) is False
+
+    counts["creation_time"]["invalid"] = 1
+    assert AUDIT_MODULE.has_blocking_values(counts) is True

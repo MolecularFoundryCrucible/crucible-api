@@ -38,6 +38,13 @@ def classify_timestamp(value):
     return "utc" if offset == timedelta(0) else "non_utc"
 
 
+def has_blocking_values(counts) -> bool:
+    return bool(
+        counts["creation_time"]["invalid"]
+        or counts["modification_time"]["invalid"]
+    )
+
+
 def main() -> int:
     engine = get_engine()
     with Session(engine) as session:
@@ -71,17 +78,17 @@ def main() -> int:
                 if state in samples[field_name] and samples[field_name][state]:
                     print(f"    sample MFIDs: {samples[field_name][state]!r}")
 
-        blocking = (
-            counts["creation_time"]["null"]
-            or counts["creation_time"]["invalid"]
-            or counts["modification_time"]["invalid"]
-        )
-        if blocking:
-            print("BLOCKED: creation times must be present and all non-null timestamps must be valid")
+        if has_blocking_values(counts):
+            print("BLOCKED: all non-null resource timestamps must be valid")
             return 1
+        has_legacy_nulls = False
+        if counts["creation_time"]["null"]:
+            print("PASS WITH LEGACY NULLS: missing creation times will remain NULL")
+            has_legacy_nulls = True
         if counts["modification_time"]["null"]:
-            print("PASS WITH REPAIR: migration will set missing modification times from creation times")
-        else:
+            print("PASS WITH PARTIAL REPAIR: missing modification times will use creation time when available and otherwise remain NULL")
+            has_legacy_nulls = True
+        if not has_legacy_nulls:
             print("PASS: resource timestamps satisfy migration preconditions")
         if counts["creation_time"]["non_utc"] or counts["modification_time"]["non_utc"]:
             print("INFO: non-UTC offsets will be preserved as instants and normalized by TIMESTAMPTZ")

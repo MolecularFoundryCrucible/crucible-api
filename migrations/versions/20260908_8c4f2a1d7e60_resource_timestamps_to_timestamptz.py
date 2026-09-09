@@ -25,12 +25,11 @@ def upgrade() -> None:
                 SELECT 1
                 FROM idtype
                 WHERE
-                    creation_time IS NULL
-                    OR creation_time !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$'
+                    (creation_time IS NOT NULL AND creation_time !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$')
                     OR
                     (modification_time IS NOT NULL AND modification_time !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$')
             ) THEN
-                RAISE EXCEPTION 'idtype contains a missing creation time or invalid resource timestamp';
+                RAISE EXCEPTION 'idtype contains an invalid non-null resource timestamp';
             END IF;
         END
         $$
@@ -39,7 +38,7 @@ def upgrade() -> None:
     op.execute(sa.text("""
         UPDATE idtype
         SET modification_time = creation_time
-        WHERE modification_time IS NULL
+        WHERE modification_time IS NULL AND creation_time IS NOT NULL
     """))
 
     op.alter_column(
@@ -48,7 +47,7 @@ def upgrade() -> None:
         existing_type=sa.String(),
         type_=sa.DateTime(timezone=True),
         existing_nullable=True,
-        nullable=False,
+        nullable=True,
         server_default=sa.text("now()"),
         postgresql_using="creation_time::timestamptz",
     )
@@ -58,7 +57,7 @@ def upgrade() -> None:
         existing_type=sa.String(),
         type_=sa.DateTime(timezone=True),
         existing_nullable=True,
-        nullable=False,
+        nullable=True,
         server_default=sa.text("now()"),
         postgresql_using="modification_time::timestamptz",
     )
@@ -69,7 +68,7 @@ def downgrade() -> None:
         "idtype",
         "modification_time",
         existing_type=sa.DateTime(timezone=True),
-        existing_nullable=False,
+        existing_nullable=True,
         server_default=None,
     )
     op.alter_column(
@@ -77,7 +76,7 @@ def downgrade() -> None:
         "modification_time",
         existing_type=sa.DateTime(timezone=True),
         type_=sa.String(),
-        existing_nullable=False,
+        existing_nullable=True,
         nullable=True,
         postgresql_using=(
             "to_char(modification_time AT TIME ZONE 'UTC', "
@@ -88,7 +87,7 @@ def downgrade() -> None:
         "idtype",
         "creation_time",
         existing_type=sa.DateTime(timezone=True),
-        existing_nullable=False,
+        existing_nullable=True,
         server_default=None,
     )
     op.alter_column(
@@ -96,7 +95,7 @@ def downgrade() -> None:
         "creation_time",
         existing_type=sa.DateTime(timezone=True),
         type_=sa.String(),
-        existing_nullable=False,
+        existing_nullable=True,
         nullable=True,
         postgresql_using=(
             "to_char(creation_time AT TIME ZONE 'UTC', "

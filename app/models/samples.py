@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import List, Optional
 from pydantic import ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
@@ -8,6 +7,7 @@ from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.projects import ProjectReferenceRead, ProjectRelation
 from app.models.resource import ResourceCapabilities
+from app.models.timestamps import UtcDatetime
 from app.models.users import UserPublicRead
 
 
@@ -109,8 +109,8 @@ class SampleRead(SQLModel):
 class SampleResponse(SampleRead):
     '''SampleRead extended with Resource timestamps, associated datasets, and deletion status.'''
     resource_type: Optional[str] = "sample"
-    creation_time: Optional[datetime] = None
-    modification_time: Optional[datetime] = None
+    creation_time: Optional[UtcDatetime] = None
+    modification_time: Optional[UtcDatetime] = None
     scientific_metadata: Optional[dict] = None
     datasets: Optional[List[DatasetRead]] = Field(
         default=None,

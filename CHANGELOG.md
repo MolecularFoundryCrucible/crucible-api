@@ -31,7 +31,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - Dataset, sample, instrument, and project collection and search queries now reject unknown parameters with 422. Previously working exact dataset, sample, and instrument filters remain explicit and deprecated where appropriate.
-- Resource creation and modification timestamps now use timezone-aware database columns. Deployments must run the timestamp audit and coordinate migration revision `8c4f2a1d7e60` with the matching application version.
+- API-owned resource creation and modification timestamps now use non-null timezone-aware database columns with server defaults and canonical UTC `Z` response formatting. Deployments must run the timestamp audit and coordinate migration revision `8c4f2a1d7e60` with the matching application version. The producer-supplied dataset `timestamp` field is unchanged.
 - Trigram searches now normalize bounded input, treat prefix wildcard characters literally, bind the request-local similarity threshold, and use canonical unique IDs as deterministic relevance tie-breakers.
 - Dataset, sample, instrument, and generic resource singleton GETs now resolve the public-safe owner object by default. Pass `include_owner=false` to omit it. Collection and search expansion remains opt-in.
 - Large bulk first-thumbnail lookups now emit a structured operator warning above a configurable threshold without rejecting the request, and duplicate identifiers are removed before querying.

@@ -297,13 +297,13 @@ class Resource(SQLModel, table=True):
     __tablename__ = "idtype"
     mfid: str = Field(default=None, primary_key=True, index=True, alias="unique_id")
     resource_type: str = Field(default=None, alias="object_type")
-    creation_time: Optional[datetime] = Field(
+    creation_time: datetime = Field(
         default_factory=get_utc_datetime,
-        sa_column=Column(DateTime(timezone=True)),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
-    modification_time: Optional[datetime] = Field(
+    modification_time: datetime = Field(
         default_factory=get_utc_datetime,
-        sa_column=Column(DateTime(timezone=True)),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
     public: bool = Field(default=False)
     created_with_api_version: Optional[str] = Field(default=None)

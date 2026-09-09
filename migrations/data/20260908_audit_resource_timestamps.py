@@ -6,7 +6,9 @@ Usage:
     DB_CONF_FILE=.env.prod .venv/bin/python migrations/data/20260908_audit_resource_timestamps.py
 """
 import os
+import re
 import sys
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -16,43 +18,73 @@ from sqlmodel import Session
 from app.api.dependencies import get_engine
 
 
+TIMESTAMP_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$"
+)
+
+
+def classify_timestamp(value):
+    if value is None:
+        return "null"
+    if not isinstance(value, str) or TIMESTAMP_PATTERN.fullmatch(value) is None:
+        return "invalid"
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        offset = parsed.utcoffset()
+    except (AttributeError, TypeError, ValueError):
+        return "invalid"
+    if offset is None:
+        return "invalid"
+    return "utc" if offset == timedelta(0) else "non_utc"
+
+
 def main() -> int:
     engine = get_engine()
     with Session(engine) as session:
-        row = session.execute(text(r"""
-            SELECT
-                current_database() AS database,
-                count(*) FILTER (
-                    WHERE creation_time IS NOT NULL
-                    AND creation_time !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$'
-                ) AS invalid_creation_times,
-                count(*) FILTER (
-                    WHERE modification_time IS NOT NULL
-                    AND modification_time !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$'
-                ) AS invalid_modification_times,
-                ARRAY(
-                    SELECT mfid
-                    FROM idtype
-                    WHERE
-                        (creation_time IS NOT NULL AND creation_time !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$')
-                        OR
-                        (modification_time IS NOT NULL AND modification_time !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$')
-                    ORDER BY mfid
-                    LIMIT 20
-                ) AS invalid_sample
+        database = session.execute(text("SELECT current_database()")).scalar_one()
+        counts = {
+            field_name: {state: 0 for state in ("null", "invalid", "non_utc", "utc")}
+            for field_name in ("creation_time", "modification_time")
+        }
+        samples = {
+            field_name: {state: [] for state in ("null", "invalid", "non_utc")}
+            for field_name in ("creation_time", "modification_time")
+        }
+        rows = session.execute(text("""
+            SELECT mfid, creation_time, modification_time
             FROM idtype
-        """)).one()
+            ORDER BY mfid
+        """).execution_options(stream_results=True))
+        for row in rows:
+            for field_name in ("creation_time", "modification_time"):
+                state = classify_timestamp(getattr(row, field_name))
+                counts[field_name][state] += 1
+                if state in samples[field_name] and len(samples[field_name][state]) < 20:
+                    samples[field_name][state].append(row.mfid)
 
-        print(f"connected to  : {row.database!r} on {engine.url.host}:{engine.url.port}")
+        print(f"connected to  : {database!r} on {engine.url.host}:{engine.url.port}")
         print("mode          : READ ONLY")
-        print(f"invalid creation timestamps    : {row.invalid_creation_times}")
-        print(f"invalid modification timestamps: {row.invalid_modification_times}")
-        if row.invalid_sample:
-            print(f"sample MFIDs: {list(row.invalid_sample)!r}")
-        if row.invalid_creation_times or row.invalid_modification_times:
-            print("BLOCKED: resource timestamps require repair before migration")
+        for field_name in ("creation_time", "modification_time"):
+            print(f"{field_name}:")
+            for state in ("null", "invalid", "non_utc", "utc"):
+                print(f"  {state:9}: {counts[field_name][state]}")
+                if state in samples[field_name] and samples[field_name][state]:
+                    print(f"    sample MFIDs: {samples[field_name][state]!r}")
+
+        blocking = (
+            counts["creation_time"]["null"]
+            or counts["creation_time"]["invalid"]
+            or counts["modification_time"]["invalid"]
+        )
+        if blocking:
+            print("BLOCKED: creation times must be present and all non-null timestamps must be valid")
             return 1
-        print("PASS: resource timestamps include explicit timezones")
+        if counts["modification_time"]["null"]:
+            print("PASS WITH REPAIR: migration will set missing modification times from creation times")
+        else:
+            print("PASS: resource timestamps satisfy migration preconditions")
+        if counts["creation_time"]["non_utc"] or counts["modification_time"]["non_utc"]:
+            print("INFO: non-UTC offsets will be preserved as instants and normalized by TIMESTAMPTZ")
     return 0
 
 

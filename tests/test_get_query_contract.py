@@ -75,8 +75,8 @@ def _seed_owned_resources(db_engine):
         ]
         session.add_all(resources)
         session.add_all([
-            Resource(mfid="dataset-alice", resource_type="dataset", creation_time=_dt("2026-01-01T00:00:00+00:00"), modification_time=None),
-            Resource(mfid="dataset-bob", resource_type="dataset", creation_time=_dt("2026-01-02T00:00:00+00:00"), modification_time=None),
+            Resource(mfid="dataset-alice", resource_type="dataset", creation_time=_dt("2026-01-01T00:00:00+00:00"), modification_time=_dt("2026-01-01T00:00:00+00:00")),
+            Resource(mfid="dataset-bob", resource_type="dataset", creation_time=_dt("2026-01-02T00:00:00+00:00"), modification_time=_dt("2026-01-02T00:00:00+00:00")),
             Resource(mfid="sample-alice", resource_type="sample", creation_time=_dt("2026-01-01T00:00:00+00:00"), modification_time=_dt("2026-01-20T00:00:00+00:00")),
             Resource(mfid="sample-bob", resource_type="sample", creation_time=_dt("2026-01-02T00:00:00+00:00"), modification_time=_dt("2026-02-01T00:00:00+00:00")),
             Resource(mfid="instrument-alice", resource_type="instrument", creation_time=_dt("2026-01-01T00:00:00+00:00")),
@@ -102,10 +102,10 @@ def _seed_owned_resources(db_engine):
 
 def _seed_sortable_datasets(db_engine, group_id):
     rows = [
-        ("sort-d", "beta", "2026-01-04T00:00:00+00:00", None),
+        ("sort-d", "beta", "2026-01-04T00:00:00+00:00", "2026-01-04T00:00:00+00:00"),
         ("sort-c", "Alpha", "2026-01-03T00:00:00+00:00", "2026-02-01T00:00:00+00:00"),
         ("sort-b", "alpha", "2026-01-02T00:00:00+00:00", "2026-01-20T00:00:00+00:00"),
-        ("sort-a", None, None, None),
+        ("sort-a", None, "2026-01-05T00:00:00+00:00", "2026-03-01T00:00:00+00:00"),
     ]
     with Session(db_engine) as session:
         for unique_id, name, created, updated in rows:
@@ -114,7 +114,6 @@ def _seed_sortable_datasets(db_engine, group_id):
             session.add(ResourceACL(mfid=unique_id, accessgroup_id=group_id, read=True, write=True, permission=Role.OWNER.db_value))
         session.commit()
         session.exec(update(Dataset).where(Dataset.unique_id == "sort-a").values(dataset_name=None))
-        session.exec(update(Resource).where(Resource.mfid == "sort-a").values(creation_time=None, modification_time=None))
         session.commit()
 
 
@@ -185,9 +184,9 @@ def test_dataset_sorts_are_deterministic_and_nulls_last(client, db_engine, auth_
 
     expected = {
         ("created", "asc"): ["dataset-alice", "dataset-bob", "sort-b", "sort-c", "sort-d", "sort-a"],
-        ("created", "desc"): ["sort-d", "sort-c", "sort-b", "dataset-bob", "dataset-alice", "sort-a"],
+        ("created", "desc"): ["sort-a", "sort-d", "sort-c", "sort-b", "dataset-bob", "dataset-alice"],
         ("updated", "asc"): ["dataset-alice", "dataset-bob", "sort-d", "sort-b", "sort-c", "sort-a"],
-        ("updated", "desc"): ["sort-c", "sort-b", "sort-d", "dataset-bob", "dataset-alice", "sort-a"],
+        ("updated", "desc"): ["sort-a", "sort-c", "sort-b", "sort-d", "dataset-bob", "dataset-alice"],
         ("name", "asc"): ["sort-b", "sort-c", "sort-d", "dataset-alice", "dataset-bob", "sort-a"],
         ("name", "desc"): ["dataset-bob", "dataset-alice", "sort-d", "sort-c", "sort-b", "sort-a"],
     }

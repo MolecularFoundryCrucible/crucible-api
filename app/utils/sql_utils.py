@@ -3,7 +3,7 @@ import logging
 import yaml
 import os
 import urllib.parse
-from app.general_utils import get_secret, get_utc_isoformat, is_orcid
+from app.general_utils import get_secret, get_utc_datetime, is_orcid
 
 logger = logging.getLogger(__name__)
 from fastapi import HTTPException
@@ -116,7 +116,7 @@ def touch_resource_modification_time(session, mfid):
     from app.models.core_models import Resource
     resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
     if resource is not None:
-        resource.modification_time = get_utc_isoformat()
+        resource.modification_time = get_utc_datetime()
         session.add(resource)
     return resource
 

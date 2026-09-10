@@ -15,6 +15,8 @@ from app.models.core_models import (
 from app.api.routes.projects import list_projects
 from app.api.routes.datasets import list_datasets, search_datasets
 from app.api.routes.samples import list_samples, search_samples
+from app.models.query_params import (
+    DatasetListQuery, ProjectListQuery, ResourceSearchQuery, SampleListQuery)
 from app.utils.auth_utils import access_selector_filter, project_scope_filter
 from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role
 from app.utils.project_utils import resolve_project_filter_mfid
@@ -215,32 +217,23 @@ def test_project_scope_filter_distinguishes_assignment_and_sharing(
 @pytest.mark.parametrize("route", [list_datasets, list_samples])
 def test_project_scope_requires_project_identifier(route):
     request = Request({"type": "http", "query_string": b"project_scope=all", "headers": []})
+    query_type = DatasetListQuery if route is list_datasets else SampleListQuery
 
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(ValueError, match="project_scope requires project_id or project_mfid"):
         route(
             auth_res=Principal(user_id="admin", platform_role=PlatformRole.ADMIN),
             request=request,
-            project_scope="all",
+            params=query_type(project_scope="all"),
         )
-
-    assert error.value.status_code == 422
-    assert error.value.detail == "project_scope requires project_id or project_mfid"
 
 
 @pytest.mark.parametrize("route", [search_datasets, search_samples])
 def test_project_scoped_search_requires_project_identifier(route):
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(ValueError, match="project_scope requires project_id or project_mfid"):
         route(
             auth_res=Principal(user_id="admin", platform_role=PlatformRole.ADMIN),
-            q="search term",
-            project_id=None,
-            project_mfid=None,
-            project_scope="all",
-            limit=20,
+            params=ResourceSearchQuery(q="search term", project_scope="all"),
         )
-
-    assert error.value.status_code == 422
-    assert error.value.detail == "project_scope requires project_id or project_mfid"
 
 
 def test_project_filter_accepts_matching_slug_and_mfid(db_engine):
@@ -298,46 +291,18 @@ def test_project_scope_collection_responses_report_relation(db_engine):
     datasets = list_datasets(
         auth_res=caller,
         request=Request({"type": "http", "query_string": query_string, "headers": []}),
-        accessible_to_user=None,
-        accessible_to_project=None,
-        include_metadata=False,
-        include_links=False,
-        include_owner=False,
-        limit=100,
-        cursor=None,
-        offset=0,
-        creation_time_gte=None,
-        creation_time_lte=None,
-        modification_time_gte=None,
-        modification_time_lte=None,
-        visibility="all",
-        instrument_mfid=None,
-        project_id=seeded["project_x_id"],
-        project_mfid=None,
-        project_scope="all",
-        sample_mfid=None,
+        params=DatasetListQuery(
+            project_id=seeded["project_x_id"],
+            project_scope="all",
+        ),
     )
     samples = list_samples(
         auth_res=caller,
         request=Request({"type": "http", "query_string": query_string, "headers": []}),
-        accessible_to_user=None,
-        accessible_to_project=None,
-        include_metadata=False,
-        include_links=False,
-        include_datasets=False,
-        include_owner=False,
-        limit=100,
-        cursor=None,
-        offset=0,
-        creation_time_gte=None,
-        creation_time_lte=None,
-        modification_time_gte=None,
-        modification_time_lte=None,
-        visibility="all",
-        project_id=seeded["project_x_id"],
-        project_mfid=None,
-        project_scope="all",
-        dataset_mfid=None,
+        params=SampleListQuery(
+            project_id=seeded["project_x_id"],
+            project_scope="all",
+        ),
     )
 
     assert {
@@ -354,6 +319,47 @@ def test_project_scope_collection_responses_report_relation(db_engine):
     }
 
 
+def test_dataset_cursor_precedence_and_total_control(db_engine):
+    seeded = _seed(db_engine)
+    caller = Principal(
+        user_id="0000-0001-1111-1111",
+        groups=(
+            GroupMembership(id=seeded["project_x_group_id"], group_name=seeded["project_x_mfid"], role=Role.VIEWER),
+            GroupMembership(id=seeded["project_y_group_id"], group_name=seeded["project_y_mfid"], role=Role.VIEWER),
+        ),
+    )
+    request = Request({"type": "http", "query_string": b"", "headers": []})
+
+    first = list_datasets(
+        auth_res=caller,
+        request=request,
+        params=DatasetListQuery(limit=1),
+    )
+    assert first.total == 2
+    assert first.next_cursor is not None
+
+    continuation = list_datasets(
+        auth_res=caller,
+        request=request,
+        params=DatasetListQuery(
+            limit=1,
+            cursor=first.next_cursor,
+            offset=1000,
+            include_total=True,
+        ),
+    )
+    assert continuation.total == 2
+    assert continuation.offset is None
+    assert len(continuation.items) == 1
+
+    suppressed = list_datasets(
+        auth_res=caller,
+        request=request,
+        params=DatasetListQuery(include_total=False),
+    )
+    assert suppressed.total is None
+
+
 def test_project_collection_selector_includes_owned_and_shared_projects(db_engine):
     seeded = _seed(db_engine)
     caller = Principal(
@@ -366,13 +372,7 @@ def test_project_collection_selector_includes_owned_and_shared_projects(db_engin
 
     response = list_projects(
         auth_res=caller,
-        project_id=None,
-        accessible_to_user=None,
-        accessible_to_project=["project-x"],
-        include_metadata=False,
-        include_members=False,
-        limit=100,
-        offset=0,
+        params=ProjectListQuery(accessible_to_project=["project-x"]),
     )
 
     assert {project.project_id for project in response.items} == {"project-x", "project-y"}
@@ -390,13 +390,7 @@ def test_exact_project_slug_collection_can_include_members(db_engine):
 
     response = list_projects(
         auth_res=caller,
-        project_id="project-x",
-        accessible_to_user=None,
-        accessible_to_project=None,
-        include_metadata=False,
-        include_members=True,
-        limit=100,
-        offset=0,
+        params=ProjectListQuery(project_id="project-x", include_members=True),
     )
 
     assert response.total == 1
@@ -406,25 +400,22 @@ def test_exact_project_slug_collection_can_include_members(db_engine):
 def test_project_collection_member_expansion_requires_exact_slug():
     caller = Principal(user_id="admin", platform_role=PlatformRole.ADMIN)
 
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(ValueError, match="include_members requires an exact project_id filter"):
         list_projects(
             auth_res=caller,
-            project_id=None,
-            accessible_to_user=None,
-            accessible_to_project=None,
-            include_metadata=False,
-            include_members=True,
-            limit=100,
-            offset=0,
+            params=ProjectListQuery(include_members=True),
         )
-
-    assert error.value.status_code == 422
 
 
 def test_access_selectors_are_repeated_openapi_arrays():
     from app.api.main import app
 
     schema = app.openapi()
+    assert schema["components"]["schemas"]["InstrumentStatus"]["enum"] == [
+        "active",
+        "maintenance",
+        "decommissioned",
+    ]
     for path in ("/datasets", "/samples", "/projects"):
         parameters = {
             parameter["name"]: parameter
@@ -434,6 +425,7 @@ def test_access_selectors_are_repeated_openapi_arrays():
         assert parameters["accessible_to_project"]["schema"]["anyOf"][0]["type"] == "array"
         if path == "/projects":
             assert parameters["include_members"]["schema"]["default"] is False
+        assert parameters["include_total"]["required"] is False
         assert "accessible_to" not in parameters
     dataset_parameters = {
         parameter["name"]: parameter
@@ -456,6 +448,8 @@ def test_access_selectors_are_repeated_openapi_arrays():
         "Filter samples linked to this canonical dataset MFID."
     )
     for parameters in (dataset_parameters, sample_parameters):
+        assert parameters["owner_id"]["required"] is False
+        assert parameters["owner_id"]["schema"]["anyOf"][0]["minLength"] == 1
         assert parameters["project_id"]["required"] is False
         assert parameters["project_mfid"]["required"] is False
         assert parameters["project_scope"]["required"] is False
@@ -470,6 +464,7 @@ def test_access_selectors_are_repeated_openapi_arrays():
             for parameter in schema["paths"][path]["get"]["parameters"]
         }
         assert parameters["q"]["schema"]["maxLength"] == 200
+        assert parameters["owner_id"]["required"] is False
         assert parameters["project_id"]["required"] is False
         assert parameters["project_mfid"]["required"] is False
         assert parameters["project_scope"]["schema"]["anyOf"][0]["enum"] == [
@@ -477,6 +472,17 @@ def test_access_selectors_are_repeated_openapi_arrays():
             "shared",
             "all",
         ]
+    instrument_parameters = {
+        parameter["name"]: parameter
+        for parameter in schema["paths"]["/instruments"]["get"]["parameters"]
+    }
+    assert instrument_parameters["owner_id"]["required"] is False
+    assert instrument_parameters["include_total"]["required"] is False
+    instrument_search_parameters = {
+        parameter["name"]: parameter
+        for parameter in schema["paths"]["/instruments/search"]["get"]["parameters"]
+    }
+    assert instrument_search_parameters["owner_id"]["required"] is False
     assert schema["paths"]["/samples/{sample_id}/datasets"]["get"]["deprecated"] is True
     assert schema["paths"]["/datasets/{dsid}/samples"]["get"]["deprecated"] is True
     for schema_name in ("DatasetResponse", "SampleResponse"):

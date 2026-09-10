@@ -1,4 +1,4 @@
-from typing import Annotated, List, Literal, Optional, Union
+from typing import Annotated, Literal, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -8,23 +8,31 @@ import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import exists, func, join, text
-from sqlmodel import and_, Session, select
+from sqlalchemy.orm import joinedload
+from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.general_utils import get_utc_isoformat
+from app.general_utils import get_utc_datetime
 from app.models.core_models import (
     Dataset, DatasetSampleLink,
     DeletionRequest, Project, Resource, Sample, SampleLink, ScientificMetadataBinary, User,
 )
 from app.models.datasets import DatasetRead
+from app.models.facets import FacetResponse
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
+from app.models.query_params import (
+    ResourceSearchQuery, ResourceSort, SampleDetailQuery, SampleFacetQuery, SampleListQuery,
+    SortDirection)
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 
 from app.utils.auth_utils import (
-    access_selector_filter, authorize_user, permission_filter, project_scope_filter,
-    require_permission)
+    authorize_user, permission_filter, project_scope_filter,
+    owner_affiliation_filter, require_permission)
+from app.utils.cursor_utils import (
+    CursorError, cursor_primary_value, filter_fingerprint, new_cursor,
+    validate_cursor)
 from app.utils.instrument_utils import resolve_instrument_mfids_to_references
 from app.utils.permissions import Principal, Permission, Role
 from app.utils.project_utils import (
@@ -34,19 +42,19 @@ from app.utils.project_utils import (
     resolve_project_mfids_to_references,
 )
 from app.utils.search_utils import (
-    MAX_SEARCH_QUERY_LENGTH,
-    SEARCH_QUERY_LIMIT_DESCRIPTION,
     apply_trigram_search,
     configure_trigram_search,
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public, visibility_filter_for
+from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public
 
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
 from app.models.users import UserPublicRead
 from app.services.resource_details import ResourceDetailOptions, load_sample_detail
+from app.services.resource_facets import list_sample_facets
+from app.services.resource_filters import resource_scope_predicates
 
 router = APIRouter(tags=["samples"])
 engine = get_engine()
@@ -158,7 +166,7 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
 
         ri = session.exec(select(Resource).where(Resource.mfid == sample_id)).one_or_none()
         if ri:
-            ri.modification_time = get_utc_isoformat()
+            ri.modification_time = get_utc_datetime()
             if new_public is not None:
                 ri.public = new_public
                 set_public(session, sample_id, bool(new_public))
@@ -247,7 +255,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         session.add(sample)
         session.flush()
 
-        now = get_utc_isoformat()
+        now = get_utc_datetime()
         existing_ri = session.exec(select(Resource).where(Resource.mfid == sample.unique_id)).one_or_none()
         ri = add_or_update(session,
                            Resource,
@@ -283,72 +291,103 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         })
 
 
+@router.get("/samples/facets", response_model=FacetResponse)
+def get_sample_facets(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    params: Annotated[SampleFacetQuery, Query()],
+):
+    with Session(engine) as session:
+        return list_sample_facets(session, auth_res, params)
+
+
 @router.get("/samples", response_model=PaginatedResponse[SampleResponse])
-def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
-                 accessible_to_user: Optional[List[str]] = Query(default=None, description="User references whose effective access must all include each result."),
-                 accessible_to_project: Optional[List[str]] = Query(default=None, description="Project MFIDs or slugs whose direct access must all include each result."),
-                 include_metadata: bool = False,
-                 include_links: bool = False,
-                 include_datasets: bool = False,
-                 include_owner: bool = False,
-                 limit: int = Query(default=100, ge=1, le=1000),
-                 cursor: Optional[str] = None,
-                 offset: int = Query(default=0, ge=0),
-                 creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
-                 modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None,
-                 visibility: Literal["all", "public", "private"] = "all",
-                 project_id: Annotated[Optional[str], Query(
-                     description="Filter samples related to this project slug. May be combined with a matching project_mfid.",
-                 )] = None,
-                 project_mfid: Annotated[Optional[str], Query(
-                     description="Filter samples related to this canonical project MFID.",
-                 )] = None,
-                 project_scope: Annotated[Optional[ProjectScope], Query(
-                     description="Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
-                 )] = None,
-                 dataset_mfid: Annotated[Optional[str], Query(
-                     description="Filter samples linked to this canonical dataset MFID.",
-                 )] = None):
+def list_samples(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    request: Request,
+    params: Annotated[SampleListQuery, Query()],
+):
     '''
     Returns a paginated list of samples the requesting user is authorized to view.
     Default limit is 100, max is 1000.
 
-    Keyset (cursor) pagination: results are ordered by unique_id descending, which is
-    creation order since unique_id is a time-sortable UUIDv7. To fetch the next page,
+    By default, results are ordered by unique_id descending. To fetch a keyset page,
     pass cursor=<next_cursor from the previous response>. The first page omits cursor.
-    next_cursor is null when there are no further pages. total is included only on the
-    first page (cursor omitted); subsequent pages omit it to avoid a redundant count.
+    next_cursor is null when there are no further pages. total is included only when
+    cursor is omitted and offset is zero. Pass include_total=true to request it on
+    any page or include_total=false to suppress it.
 
     Offset pagination is supported for backward compatibility: pass offset=<n> instead
-    of cursor. cursor takes precedence when both are given. Prefer cursor for large
+    of cursor. When both are supplied, cursor takes precedence. Prefer cursor for large
     result sets, since deep offsets are slower.
+    Pass affiliation=owner to return only resources authoritatively owned by the caller.
+    Use owner_id for an exact owner match; owner_orcid remains as a deprecated alias.
+    Pass sort=created, updated, or name with direction=asc or desc for explicit ordering.
     Pass include_links=true to include parent, child, and associated resources for each sample.
     include_datasets is deprecated; use include_links instead.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
     Pass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.
     Pass dataset_mfid to filter by a readable dataset's canonical stable identity.
+    Faceted nullable fields also accept field-specific is_null=true or false filters.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
     import warnings
+    if params.sort is None and "direction" in request.query_params:
+        raise HTTPException(status_code=422, detail="direction requires sort")
+
+    include_metadata = params.include_metadata
+    include_links = params.include_links
+    param_values = params.model_dump()
+    include_datasets = param_values["include_datasets"]
+    include_owner = params.include_owner
+    include_total = params.include_total
+    limit = params.limit
+    cursor = params.cursor
+    offset = params.offset
+    project_id = params.project_id
+    project_mfid = params.project_mfid
+    dataset_mfid = params.dataset_mfid
     if include_datasets:
         warnings.warn("include_datasets is deprecated, use include_links=true instead", DeprecationWarning)
         include_links = True
 
-    if project_scope is not None and project_id is None and project_mfid is None:
-        raise HTTPException(
-            status_code=422,
-            detail="project_scope requires project_id or project_mfid",
+    exact_filters = {
+        key: param_values[key]
+        for key in (
+            "unique_id", "public", "sample_name", "sample_type",
+            "description", "timestamp",
         )
-    effective_project_scope: ProjectScope = project_scope or "assigned"
-
-
-    params_dict = dict(request.query_params)
-    for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
-              'modification_time_lte', 'include_metadata', 'include_links', 'include_datasets',
-              'include_owner', 'limit', 'cursor', 'offset', 'visibility',
-              'accessible_to_user', 'accessible_to_project', 'project_id', 'project_mfid',
-              'project_scope', 'dataset_mfid'):
-        params_dict.pop(k, None)
+        if param_values[key] is not None
+    }
+    owner_id = params.owner_id or param_values["owner_orcid"]
+    if owner_id is not None:
+        exact_filters["owner_orcid"] = owner_id
+    sort_name = params.sort.value if params.sort is not None else "unique_id"
+    direction = params.direction.value if params.sort is not None else SortDirection.DESC.value
+    result_filters = params.normalized_result_filters(
+        exclude={
+            "cursor", "offset", "limit", "sort", "direction",
+            "include_metadata", "include_links", "include_datasets", "include_owner",
+            "include_total", "owner_orcid",
+        },
+    )
+    result_filters["owner_id"] = owner_id
+    filters_digest = filter_fingerprint(result_filters)
+    decoded_cursor = None
+    decoded_primary = None
+    if cursor is not None:
+        try:
+            decoded_cursor = validate_cursor(
+                cursor,
+                kind="sample",
+                sort=sort_name,
+                direction=direction,
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+            if decoded_cursor is not None:
+                decoded_primary = cursor_primary_value(decoded_cursor)
+        except CursorError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     with Session(engine) as session:
         filter_project_mfid = resolve_project_filter_mfid(
@@ -363,34 +402,16 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
             if linked_dataset_id is None:
                 raise HTTPException(status_code=404, detail="Dataset not found or access denied")
 
-        auth_filter = access_selector_filter(
+        scope_predicates = resource_scope_predicates(
             session,
             auth_res,
             Sample,
-            user_refs=accessible_to_user,
-            project_refs=accessible_to_project,
+            params,
+            filter_project_mfid,
         )
-        project_filter = (
-            project_scope_filter(
-                session, auth_res, Sample, filter_project_mfid, effective_project_scope)
-            if filter_project_mfid is not None else None
-        )
-        deletion_filter = deletion_filter_for(Sample)
 
         def apply_filters(q):
-            q = q.where(auth_filter).where(deletion_filter)
-            if visibility != "all":
-                q = q.where(visibility_filter_for(Sample, visibility))
-            if creation_time_gte:
-                q = q.where(Resource.creation_time >= creation_time_gte)
-            if creation_time_lte:
-                q = q.where(Resource.creation_time <= creation_time_lte)
-            if modification_time_gte:
-                q = q.where(Resource.modification_time >= modification_time_gte)
-            if modification_time_lte:
-                q = q.where(Resource.modification_time <= modification_time_lte)
-            if project_filter is not None:
-                q = q.where(project_filter)
+            q = q.where(*scope_predicates)
             if linked_dataset_id is not None:
                 q = q.where(
                     exists()
@@ -400,15 +421,21 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     )
                     .correlate(Sample)
                 )
-            for k, v in params_dict.items():
-                if hasattr(Sample, k) and v is not None:
-                    q = q.where(getattr(Sample, k) == v)
+            for key, value in exact_filters.items():
+                q = q.where(getattr(Sample, key) == value)
+            for column, value in (
+                (Sample.sample_type, params.sample_type_is_null),
+                (Sample.owner_orcid, params.owner_id_is_null),
+                (Sample.project_mfid, params.project_mfid_is_null),
+            ):
+                if value is not None:
+                    q = q.where(column.is_(None) if value else column.is_not(None))
             return q
 
-        # total is only needed on the first page; cursor pages and deep offset pages
-        # skip the redundant count.
         total = None
-        if cursor is None and offset == 0:
+        if include_total is True or (
+            include_total is None and cursor is None and offset == 0
+        ):
             total = session.exec(apply_filters(
                 select(func.count()).select_from(Sample)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
@@ -432,13 +459,44 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
             )
 
         samp_cmd = apply_filters(samp_cmd)
+        if params.sort is ResourceSort.CREATED:
+            primary_sort = Resource.creation_time
+        elif params.sort is ResourceSort.UPDATED:
+            primary_sort = func.coalesce(Resource.modification_time, Resource.creation_time)
+        elif params.sort is ResourceSort.NAME:
+            primary_sort = func.lower(Sample.sample_name)
+        else:
+            primary_sort = None
+
         if cursor is not None:
-            samp_cmd = samp_cmd.where(Sample.unique_id < cursor)
-        samp_cmd = samp_cmd.order_by(Sample.unique_id.desc())
+            if decoded_cursor is None:
+                samp_cmd = samp_cmd.where(Sample.unique_id < cursor)
+            elif primary_sort is None:
+                comparison = Sample.unique_id > decoded_cursor.unique_id if direction == "asc" else Sample.unique_id < decoded_cursor.unique_id
+                samp_cmd = samp_cmd.where(comparison)
+            else:
+                id_comparison = Sample.unique_id > decoded_cursor.unique_id if direction == "asc" else Sample.unique_id < decoded_cursor.unique_id
+                if decoded_cursor.is_null:
+                    samp_cmd = samp_cmd.where(primary_sort.is_(None), id_comparison)
+                else:
+                    primary_comparison = primary_sort > decoded_primary if direction == "asc" else primary_sort < decoded_primary
+                    samp_cmd = samp_cmd.where(or_(
+                        primary_comparison,
+                        and_(primary_sort == decoded_primary, id_comparison),
+                        primary_sort.is_(None),
+                    ))
+        if primary_sort is None:
+            samp_cmd = samp_cmd.order_by(Sample.unique_id.desc())
+        elif direction == "asc":
+            samp_cmd = samp_cmd.order_by(primary_sort.asc().nulls_last(), Sample.unique_id.asc())
+        else:
+            samp_cmd = samp_cmd.order_by(primary_sort.desc().nulls_last(), Sample.unique_id.desc())
         if cursor is None and offset:
             samp_cmd = samp_cmd.offset(offset)
-        samp_cmd = samp_cmd.limit(limit)
+        samp_cmd = samp_cmd.limit(limit + 1)
         rows = session.exec(samp_cmd).all()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
 
         if include_links:
             sample_ids = [row[0].id for row in rows]
@@ -538,7 +596,30 @@ def list_samples(auth_res: Annotated[Principal, Depends(authorize_user)], reques
                     "assigned" if samp.project_mfid == filter_project_mfid else "shared"
                 ) if filter_project_mfid is not None else None,
             }))
-        next_cursor = rows[-1][0].unique_id if len(rows) == limit else None
+        next_cursor = None
+        if has_more:
+            last_row = rows[-1]
+            last_sample = last_row[0]
+            if params.sort is ResourceSort.CREATED:
+                cursor_primary = last_row[1]
+            elif params.sort is ResourceSort.UPDATED:
+                cursor_primary = last_row[2] or last_row[1]
+            elif params.sort is ResourceSort.NAME:
+                cursor_primary = session.exec(
+                    select(func.lower(Sample.sample_name))
+                    .where(Sample.id == last_sample.id)
+                ).one()
+            else:
+                cursor_primary = None
+            next_cursor = new_cursor(
+                kind="sample",
+                sort=sort_name,
+                direction=direction,
+                primary=cursor_primary,
+                unique_id=last_sample.unique_id,
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
         resp_offset = offset if (cursor is None and offset) else None
         return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
 
@@ -563,32 +644,19 @@ def _sample_base_query(principal):
 @router.get("/samples/search", response_model=PaginatedResponse[SampleResponse])
 def search_samples(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    q: str = Query(
-        min_length=3,
-        max_length=MAX_SEARCH_QUERY_LENGTH,
-        description=f"Search term matched against sample_name. {SEARCH_QUERY_LIMIT_DESCRIPTION}",
-    ),
-    project_id: Annotated[Optional[str], Query(
-        description="Restrict results related to this project slug. May be combined with a matching project_mfid.",
-    )] = None,
-    project_mfid: Annotated[Optional[str], Query(
-        description="Restrict results related to this canonical project MFID.",
-    )] = None,
-    project_scope: Annotated[Optional[ProjectScope], Query(
-        description="Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
-    )] = None,
-    limit: int = Query(default=20, ge=1, le=50),
+    params: Annotated[ResourceSearchQuery, Query()],
 ):
     '''
     Search readable samples by name and return results ordered by match quality.
+    Use owner_id for an exact owner match.
     Pass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship. Maximum 50 results.
     '''
 
-    if project_scope is not None and project_id is None and project_mfid is None:
-        raise HTTPException(
-            status_code=422,
-            detail="project_scope requires project_id or project_mfid",
-        )
+    q = params.q
+    project_id = params.project_id
+    project_mfid = params.project_mfid
+    project_scope = params.project_scope
+    limit = params.limit
     effective_project_scope: ProjectScope = project_scope or "assigned"
     normalized_q, tokens = normalize_search_query(q)
 
@@ -610,6 +678,10 @@ def search_samples(
                 filter_project_mfid,
                 effective_project_scope,
             ))
+        if params.affiliation:
+            query = query.where(owner_affiliation_filter(auth_res, Sample))
+        if params.owner_id is not None:
+            query = query.where(Sample.owner_orcid == params.owner_id)
         query = query.order_by(
             trigram_rank(normalized_q, (Sample.sample_name,)).desc(),
             Sample.unique_id.desc(),
@@ -637,13 +709,7 @@ def search_samples(
 def read_sample(
     sample_mfid: str,
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    include_links: bool = False,
-    include_metadata: bool = False,
-    include_owner: bool = True,
-    include_datasets: bool = Query(
-        default=True,
-        description="Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
-    ),
+    params: Annotated[SampleDetailQuery, Query()],
 ):
     '''
     Returns the sample for the provided MFID.
@@ -657,10 +723,10 @@ def read_sample(
             auth_res,
             sample_mfid,
             options=ResourceDetailOptions(
-                include_metadata=include_metadata,
-                include_links=include_links,
-                include_owner=include_owner,
-                include_datasets=include_datasets,
+                include_metadata=params.include_metadata,
+                include_links=params.include_links,
+                include_owner=params.include_owner,
+                include_datasets=params.include_datasets,
             ),
         )
 

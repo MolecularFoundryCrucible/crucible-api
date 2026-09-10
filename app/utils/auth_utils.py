@@ -437,6 +437,45 @@ def permission_filter(principal: Principal, resource_model,
     )
 
 
+def owner_affiliation_filter(principal: Principal, resource_model):
+    from sqlalchemy import exists
+    from app.models.core_models import AccessGroup, ResourceACL
+    from app.utils.permissions import AccessGroupType
+
+    return (
+        exists()
+        .where(
+            ResourceACL.mfid == resource_model.unique_id,
+            ResourceACL.permission == Role.OWNER.db_value,
+            ResourceACL.accessgroup_id == AccessGroup.id,
+            AccessGroup.group_type == AccessGroupType.IDENTITY.value,
+            AccessGroup.group_name == principal.user_id,
+        )
+        .select_from(ResourceACL, AccessGroup)
+        .correlate(resource_model)
+    )
+
+
+def project_owner_affiliation_filter(principal: Principal, project_model):
+    from sqlalchemy import exists
+    from app.models.core_models import AccessGroup, User, UserAccessGroupLink
+    from app.utils.permissions import AccessGroupType
+
+    return (
+        exists()
+        .where(
+            AccessGroup.group_name == project_model.unique_id,
+            AccessGroup.group_type == AccessGroupType.PROJECT.value,
+            UserAccessGroupLink.accessgroup_id == AccessGroup.id,
+            UserAccessGroupLink.role == Role.OWNER.db_value,
+            UserAccessGroupLink.user_id == User.id,
+            User.unique_id == principal.user_id,
+        )
+        .select_from(AccessGroup, UserAccessGroupLink, User)
+        .correlate(project_model)
+    )
+
+
 def access_group_permission_filter(accessgroup_id: int, resource_model,
                                    permission: Permission = Permission.READ):
     from sqlalchemy import exists

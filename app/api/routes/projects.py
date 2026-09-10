@@ -2,7 +2,7 @@ import os
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import Session, select, col
 import networkx as nx
@@ -15,13 +15,15 @@ from app.models.core_models import (
 )
 from app.utils.auth_utils import (
     access_selector_filter, authorize_user, has_platform_admin_access,
-    load_principal, permission_filter, require_grant, require_permission,
+    load_principal, permission_filter, project_owner_affiliation_filter,
+    require_grant, require_permission,
     resource_capabilities)
+from app.utils.cursor_utils import (
+    CursorError, cursor_primary_value, filter_fingerprint, new_cursor,
+    validate_cursor)
 from app.utils.permissions import (
     AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
 from app.utils.search_utils import (
-    MAX_SEARCH_QUERY_LENGTH,
-    SEARCH_QUERY_LIMIT_DESCRIPTION,
     apply_trigram_search,
     configure_trigram_search,
     normalize_search_query,
@@ -34,6 +36,7 @@ from app.utils.project_utils import (
     sql_get_projects_for_user, resolve_project_reference)
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
+from app.models.query_params import ProjectDetailQuery, ProjectListQuery, SearchQuery
 from app.models.projects import (
     ProjectCreate, ProjectMembershipRole, ProjectRead, ProjectUpdate, ProjectWithLead)
 from app.models.users import UserPublicRead
@@ -133,19 +136,40 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
 
 
 @router.get("/projects", response_model=PaginatedResponse[ProjectWithLead])
-def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
-                  project_id: Optional[str] = Query(default=None, description="Exact project slug."),
-                  accessible_to_user: Optional[List[str]] = Query(default=None, description="User references whose effective access must all include each result."),
-                  accessible_to_project: Optional[List[str]] = Query(default=None, description="Project MFIDs or slugs whose direct access must all include each result."),
-                  include_metadata: bool = False,
-                  include_members: bool = Query(default=False, description="Include members for an exact project_id lookup when authorized."),
-                  limit: int = Query(default=100, ge=1, le=1000),
-                  offset: int = Query(default=0, ge=0)):
+def list_projects(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    params: Annotated[ProjectListQuery, Query()],
+):
     '''
     Returns a paginated list of projects the user is authorized to see, including the resolved project lead.
+    Pass affiliation=owner to return only projects authoritatively owned by the caller.
+    Pass include_total=false to omit the exact authorization-filtered count.
     '''
-    if include_members and project_id is None:
-        raise HTTPException(status_code=422, detail="include_members requires an exact project_id filter")
+    project_id = params.project_id
+    accessible_to_user = params.accessible_to_user
+    accessible_to_project = params.accessible_to_project
+    include_metadata = params.include_metadata
+    include_members = params.include_members
+    include_total = params.include_total
+    limit = params.limit
+    cursor = params.cursor
+    offset = params.offset
+    filters_digest = filter_fingerprint(params.normalized_result_filters())
+    decoded_cursor = None
+    decoded_primary = None
+    if cursor is not None:
+        try:
+            decoded_cursor = validate_cursor(
+                cursor,
+                kind="project",
+                sort="project_id",
+                direction="asc",
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+            decoded_primary = cursor_primary_value(decoded_cursor)
+        except CursorError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     user_unique_id = auth_res.user_id
     if include_metadata:
@@ -172,7 +196,12 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
         else:
             user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
             if user is None:
-                return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
+                return PaginatedResponse(
+                    total=None if include_total is False else 0,
+                    limit=limit,
+                    offset=offset if cursor is None else None,
+                    items=[],
+                )
             base = (
                 select(Project)
                 .join(AccessGroup, AccessGroup.group_name == Project.unique_id)
@@ -182,11 +211,33 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
                 ))
             )
 
-        total = session.exec(select(func.count()).select_from(base.subquery())).one()
+        if params.affiliation:
+            base = base.where(project_owner_affiliation_filter(auth_res, Project))
 
-        props = session.exec(
-            base.options(*loader_opts).order_by(col(Project.project_id)).offset(offset).limit(limit)
-        ).all()
+        total = (
+            session.exec(select(func.count()).select_from(base.subquery())).one()
+            if include_total is not False
+            else None
+        )
+
+        page_query = base
+        if decoded_cursor is not None:
+            page_query = page_query.where(or_(
+                Project.project_id > decoded_primary,
+                and_(
+                    Project.project_id == decoded_primary,
+                    Project.unique_id > decoded_cursor.unique_id,
+                ),
+            ))
+        page_query = page_query.options(*loader_opts).order_by(
+            col(Project.project_id),
+            Project.unique_id.asc(),
+        )
+        if cursor is None and offset:
+            page_query = page_query.offset(offset)
+        props = session.exec(page_query.limit(limit + 1)).all()
+        has_more = len(props) > limit
+        props = props[:limit]
 
         orcids = [p.project_lead_orcid for p in props if p.project_lead_orcid]
         leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}
@@ -210,18 +261,31 @@ def list_projects(auth_res: Annotated[Principal, Depends(authorize_user)],
                 members=members,
                 capabilities=_project_capabilities(session, auth_res, proj) if project_id is not None else None,
             ))
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+        next_cursor = None
+        if has_more:
+            last_project = props[-1]
+            next_cursor = new_cursor(
+                kind="project",
+                sort="project_id",
+                direction="asc",
+                primary=last_project.project_id,
+                unique_id=last_project.unique_id,
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+        return PaginatedResponse(
+            total=total,
+            limit=limit,
+            offset=offset if cursor is None else None,
+            items=items,
+            next_cursor=next_cursor,
+        )
 
 
 @router.get("/projects/search", response_model=PaginatedResponse[ProjectRead])
 def search_projects(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    q: str = Query(
-        min_length=3,
-        max_length=MAX_SEARCH_QUERY_LENGTH,
-        description=f"Search term matched against project title and project_id. {SEARCH_QUERY_LIMIT_DESCRIPTION}",
-    ),
-    limit: int = Query(default=20, ge=1, le=50),
+    params: Annotated[SearchQuery, Query()],
 ):
     '''
     Search projects by title or project_id across all projects, not just ones the
@@ -233,7 +297,7 @@ def search_projects(
     open regardless of membership. See GET /projects/{proj_id} for the fields
     that stay member-only.
     '''
-    normalized_q, tokens = normalize_search_query(q)
+    normalized_q, tokens = normalize_search_query(params.q)
     with Session(engine) as session:
         configure_trigram_search(session, get_trgm_search_threshold())
         fields = (Project.project_id, Project.title)
@@ -243,19 +307,24 @@ def search_projects(
             fields=fields,
             prefix_fields=(Project.project_id,),
         )
+        if params.affiliation:
+            query = query.where(project_owner_affiliation_filter(auth_res, Project))
         query = query.order_by(
             trigram_rank(normalized_q, fields).desc(),
             Project.unique_id.desc(),
-        ).limit(limit)
+        ).limit(params.limit)
 
         results = session.exec(query).all()
-        return PaginatedResponse(limit=limit, items=results)
+        return PaginatedResponse(limit=params.limit, items=results)
 
 
 @router.get("/projects/{project_ref}", response_model=ProjectWithLead)
-def read_project(project_ref: str, response: Response,
-                 auth_res: Annotated[Principal, Depends(authorize_user)],
-                 include_metadata: bool = False, include_members: bool = False):
+def read_project(
+    project_ref: str,
+    response: Response,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    params: Annotated[ProjectDetailQuery, Query()],
+):
     '''
     Returns the project object for the provided MFID. Project slugs remain
     accepted temporarily for compatibility.
@@ -279,8 +348,8 @@ def read_project(project_ref: str, response: Response,
             prop.unique_id,
             project=prop,
             options=ResourceDetailOptions(
-                include_metadata=include_metadata,
-                include_members=include_members,
+                include_metadata=params.include_metadata,
+                include_members=params.include_members,
             ),
         )
 

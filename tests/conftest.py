@@ -89,7 +89,8 @@ def auth_as():
     """
     def _set(user_id, groups=None, platform_role=PlatformRole.NONE,
              is_service_account=False):
-        groups = groups or [("test_group", 1)]
+        if groups is None:
+            groups = [("test_group", 1)]
         memberships = tuple(
             GroupMembership(id=g[1], group_name=g[0],
                             role=g[2] if len(g) > 2 else Role.OWNER)

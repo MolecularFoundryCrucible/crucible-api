@@ -43,7 +43,7 @@ from app.models.datasets import (
 from app.models.instrument import InstrumentReferenceRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
-from app.models.queries import (
+from app.models.query_params import (
     DatasetListQuery, ResourceSearchQuery, ResourceSort, SortDirection)
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleRead

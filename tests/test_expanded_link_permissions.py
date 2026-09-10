@@ -16,7 +16,7 @@ from app.models.core_models import (
     Sample,
     SampleLink,
 )
-from app.models.queries import DatasetListQuery, SampleListQuery
+from app.models.query_params import DatasetListQuery, SampleListQuery
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
 

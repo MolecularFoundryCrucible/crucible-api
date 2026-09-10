@@ -15,7 +15,7 @@ from app.models.core_models import (
 from app.api.routes.projects import list_projects
 from app.api.routes.datasets import list_datasets, search_datasets
 from app.api.routes.samples import list_samples, search_samples
-from app.models.queries import (
+from app.models.query_params import (
     DatasetListQuery, ProjectListQuery, ResourceSearchQuery, SampleListQuery)
 from app.utils.auth_utils import access_selector_filter, project_scope_filter
 from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role

@@ -33,7 +33,7 @@ from app.utils.project_utils import (
     sql_get_projects_for_user, resolve_project_reference)
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
-from app.models.queries import ProjectListQuery, SearchQuery
+from app.models.query_params import ProjectListQuery, SearchQuery
 from app.models.projects import (
     ProjectCreate, ProjectMembershipRole, ProjectRead, ProjectUpdate, ProjectWithLead)
 from app.models.users import UserPublicRead

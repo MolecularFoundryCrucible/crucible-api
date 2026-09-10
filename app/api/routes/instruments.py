@@ -10,7 +10,7 @@ from app.models.access_groups import AccessGroupMemberRead
 from app.models.core_models import AccessGroup, Instrument, Resource, ScientificMetadataBinary, User, UserAccessGroupLink
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
-from app.models.queries import InstrumentListQuery, InstrumentSearchQuery, InstrumentStatus
+from app.models.query_params import InstrumentListQuery, InstrumentSearchQuery, InstrumentStatus
 from app.models.users import UserPublicRead
 from app.services.resource_details import ResourceDetailOptions, load_instrument_detail
 from app.utils.auth_utils import (

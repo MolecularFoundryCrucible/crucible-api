@@ -2,7 +2,14 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Literal, Optional
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.models.projects import ProjectScope
 

@@ -20,7 +20,7 @@ from app.models.core_models import (
 from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
-from app.models.queries import (
+from app.models.query_params import (
     ResourceSearchQuery, ResourceSort, SampleListQuery, SortDirection)
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate

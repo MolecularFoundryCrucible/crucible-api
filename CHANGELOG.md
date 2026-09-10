@@ -55,7 +55,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
-- Regenerated the checked-in OpenAPI artifact after adding dataset and sample facets so downstream generated clients receive the facet operations and matching null filters.
+- Regenerated the checked-in OpenAPI artifact with dataset and sample facet operations and matching null filters.
 - Identical thumbnail images uploaded to different datasets now remain independently owned instead of moving an existing thumbnail between datasets.
 - Thumbnail uploads now verify dataset edit access before decoding or processing image data.
 - Thumbnail deletion now applies dataset edit authorization in its initial lookup, consistently returning 404 for absent or inaccessible datasets and avoiding a redundant permission query.

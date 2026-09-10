@@ -54,7 +54,7 @@ def _setup(db_engine):
 
 def test_canonical_get_uses_project_mfid(client, db_engine, auth_as):
     project_mfid, _ = _setup(db_engine)
-    auth_as("0000-0002-2222-2222", platform_role=PlatformRole.NONE)
+    auth_as("0000-0002-2222-2222", groups=[], platform_role=PlatformRole.NONE)
 
     response = client.get(f"/projects/{project_mfid}")
 
@@ -75,7 +75,7 @@ def test_canonical_get_uses_project_mfid(client, db_engine, auth_as):
 
 def test_legacy_slug_get_returns_canonical_location(client, db_engine, auth_as):
     project_mfid, _ = _setup(db_engine)
-    auth_as("0000-0002-2222-2222", platform_role=PlatformRole.NONE)
+    auth_as("0000-0002-2222-2222", groups=[], platform_role=PlatformRole.NONE)
 
     response = client.get("/projects/project-slug")
 
@@ -86,7 +86,7 @@ def test_legacy_slug_get_returns_canonical_location(client, db_engine, auth_as):
 
 def test_exact_slug_query_returns_one_public_safe_project(client, db_engine, auth_as):
     project_mfid, _ = _setup(db_engine)
-    auth_as("0000-0002-2222-2222", platform_role=PlatformRole.NONE)
+    auth_as("0000-0002-2222-2222", groups=[], platform_role=PlatformRole.NONE)
 
     response = client.get("/projects", params={"project_id": "project-slug"})
 
@@ -101,7 +101,7 @@ def test_exact_slug_query_returns_one_public_safe_project(client, db_engine, aut
 
 def test_exact_slug_query_returns_empty_collection_when_missing(client, db_engine, auth_as):
     _setup(db_engine)
-    auth_as("0000-0002-2222-2222", platform_role=PlatformRole.NONE)
+    auth_as("0000-0002-2222-2222", groups=[], platform_role=PlatformRole.NONE)
 
     response = client.get("/projects", params={"project_id": "missing-project"})
 

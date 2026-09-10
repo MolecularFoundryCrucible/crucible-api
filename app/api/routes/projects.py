@@ -2,7 +2,7 @@ import os
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import Session, select, col
 import networkx as nx
@@ -18,6 +18,9 @@ from app.utils.auth_utils import (
     load_principal, permission_filter, project_owner_affiliation_filter,
     require_grant, require_permission,
     resource_capabilities)
+from app.utils.cursor_utils import (
+    CursorError, cursor_primary_value, filter_fingerprint, new_cursor,
+    validate_cursor)
 from app.utils.permissions import (
     AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
 from app.utils.search_utils import (
@@ -149,7 +152,24 @@ def list_projects(
     include_members = params.include_members
     include_total = params.include_total
     limit = params.limit
+    cursor = params.cursor
     offset = params.offset
+    filters_digest = filter_fingerprint(params.normalized_result_filters())
+    decoded_cursor = None
+    decoded_primary = None
+    if cursor is not None:
+        try:
+            decoded_cursor = validate_cursor(
+                cursor,
+                kind="project",
+                sort="project_id",
+                direction="asc",
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+            decoded_primary = cursor_primary_value(decoded_cursor)
+        except CursorError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     user_unique_id = auth_res.user_id
     if include_metadata:
@@ -179,7 +199,7 @@ def list_projects(
                 return PaginatedResponse(
                     total=None if include_total is False else 0,
                     limit=limit,
-                    offset=offset,
+                    offset=offset if cursor is None else None,
                     items=[],
                 )
             base = (
@@ -200,9 +220,24 @@ def list_projects(
             else None
         )
 
-        props = session.exec(
-            base.options(*loader_opts).order_by(col(Project.project_id)).offset(offset).limit(limit)
-        ).all()
+        page_query = base
+        if decoded_cursor is not None:
+            page_query = page_query.where(or_(
+                Project.project_id > decoded_primary,
+                and_(
+                    Project.project_id == decoded_primary,
+                    Project.unique_id > decoded_cursor.unique_id,
+                ),
+            ))
+        page_query = page_query.options(*loader_opts).order_by(
+            col(Project.project_id),
+            Project.unique_id.asc(),
+        )
+        if cursor is None and offset:
+            page_query = page_query.offset(offset)
+        props = session.exec(page_query.limit(limit + 1)).all()
+        has_more = len(props) > limit
+        props = props[:limit]
 
         orcids = [p.project_lead_orcid for p in props if p.project_lead_orcid]
         leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}
@@ -226,7 +261,25 @@ def list_projects(
                 members=members,
                 capabilities=_project_capabilities(session, auth_res, proj) if project_id is not None else None,
             ))
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+        next_cursor = None
+        if has_more:
+            last_project = props[-1]
+            next_cursor = new_cursor(
+                kind="project",
+                sort="project_id",
+                direction="asc",
+                primary=last_project.project_id,
+                unique_id=last_project.unique_id,
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+        return PaginatedResponse(
+            total=total,
+            limit=limit,
+            offset=offset if cursor is None else None,
+            items=items,
+            next_cursor=next_cursor,
+        )
 
 
 @router.get("/projects/search", response_model=PaginatedResponse[ProjectRead])

@@ -387,6 +387,53 @@ def test_include_total_can_suppress_project_and_instrument_counts(client, db_eng
         assert response.json()["total"] is None
 
 
+def test_project_and_instrument_collections_support_compatible_cursors(client, db_engine, auth_as):
+    group_id = _seed_owned_resources(db_engine)
+    with Session(db_engine) as session:
+        session.add(Instrument(
+            unique_id="instrument-null",
+            instrument_id="null-created",
+            instrument_name="Null created instrument",
+            owner=ALICE,
+            location="C",
+        ))
+        session.add(Resource(mfid="instrument-null", resource_type="instrument"))
+        session.commit()
+    auth_as(ALICE, groups=[(ALICE, group_id, Role.OWNER)])
+
+    cases = (
+        ("/projects", {"affiliation": "owner"}),
+        ("/instruments", {"status": "maintenance"}),
+    )
+    for path, changed_filter in cases:
+        expected = _ids(client.get(path))
+        actual = []
+        cursor = None
+        first_cursor = None
+        for page_number in range(len(expected)):
+            params = {"limit": 1, "include_total": page_number == 0}
+            if cursor is not None:
+                params.update({"cursor": cursor, "offset": 999999})
+            response = client.get(path, params=params)
+            assert response.status_code == 200, (path, response.text)
+            body = response.json()
+            actual.extend(item["unique_id"] for item in body["items"])
+            assert body["offset"] == (0 if page_number == 0 else None)
+            assert body["total"] == (len(expected) if page_number == 0 else None)
+            cursor = body["next_cursor"]
+            if page_number == 0:
+                first_cursor = cursor
+                assert first_cursor.startswith("c1.")
+                assert len(first_cursor) < 160
+
+        assert actual == expected
+        assert cursor is None
+        changed = client.get(path, params={"cursor": first_cursor, **changed_filter})
+        assert changed.status_code == 422, (path, changed.text)
+        legacy = client.get(path, params={"cursor": expected[0]})
+        assert legacy.status_code == 422, (path, legacy.text)
+
+
 def test_default_cursor_accepts_legacy_values_and_emits_signed_values(client, db_engine, auth_as):
     group_id = _seed_owned_resources(db_engine)
     auth_as(ALICE, groups=[(ALICE, group_id, Role.OWNER)])

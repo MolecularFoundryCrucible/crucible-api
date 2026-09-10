@@ -6,7 +6,9 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from google.protobuf.message import DecodeError
+from google.protobuf.struct_pb2 import ListValue
+from pydantic import BaseModel, ConfigDict
 
 from app.utils.auth_utils import SECRET_KEY
 
@@ -87,42 +89,99 @@ def filter_fingerprint(filters: dict[str, Any]) -> str:
     return _digest("filters", _canonical_json(_normalize_filter_value(filters)))
 
 
+def _encode_payload(cursor: ResourceCursor) -> bytes:
+    message = ListValue()
+    message.values.add().string_value = cursor.kid
+    primary = message.values.add()
+    if cursor.primary is None:
+        primary.null_value = 0
+    else:
+        primary.string_value = cursor.primary
+    message.values.add().string_value = cursor.unique_id
+    return message.SerializeToString(deterministic=True)
+
+
+def _decode_payload(payload: bytes) -> tuple[str, Optional[str], str]:
+    message = ListValue()
+    try:
+        message.ParseFromString(payload)
+    except DecodeError as exc:
+        raise CursorError("Invalid cursor") from exc
+    if len(message.values) != 3:
+        raise CursorError("Invalid cursor payload")
+    key_value, primary_value, unique_id_value = message.values
+    if key_value.WhichOneof("kind") != "string_value" or not key_value.string_value:
+        raise CursorError("Invalid cursor payload")
+    primary_kind = primary_value.WhichOneof("kind")
+    if primary_kind == "null_value":
+        primary = None
+    elif primary_kind == "string_value":
+        primary = primary_value.string_value
+    else:
+        raise CursorError("Invalid cursor payload")
+    if unique_id_value.WhichOneof("kind") != "string_value" or not unique_id_value.string_value:
+        raise CursorError("Invalid cursor payload")
+    return key_value.string_value, primary, unique_id_value.string_value
+
+
+def _signature_input(cursor: ResourceCursor, payload: bytes) -> bytes:
+    context = _canonical_json({
+        "direction": cursor.direction,
+        "filters": cursor.filters,
+        "kind": cursor.kind,
+        "principal": cursor.principal,
+        "sort": cursor.sort,
+    })
+    return CURSOR_PREFIX.encode("ascii") + len(payload).to_bytes(4, "big") + payload + context
+
+
 def encode_cursor(cursor: ResourceCursor) -> str:
-    payload = _canonical_json(cursor.model_dump())
+    payload = _encode_payload(cursor)
     _, keys = _signing_keys()
     key = keys.get(cursor.kid)
     if key is None:
         raise RuntimeError(f"Unknown cursor signing key ID: {cursor.kid}")
-    signature = hmac.new(key, payload, hashlib.sha256).digest()
+    signature = hmac.new(key, _signature_input(cursor, payload), hashlib.sha256).digest()
     return f"{CURSOR_PREFIX}{_b64encode(payload)}.{_b64encode(signature)}"
 
 
-def decode_cursor(value: str) -> Optional[ResourceCursor]:
+def decode_cursor(
+    value: str,
+    *,
+    kind: str,
+    sort: str,
+    direction: str,
+    filters: str,
+    user_id: str,
+) -> Optional[ResourceCursor]:
     if not value.startswith(CURSOR_PREFIX):
         return None
     try:
         payload_value, signature_value = value[len(CURSOR_PREFIX):].split(".", 1)
         payload = _b64decode(payload_value)
         signature = _b64decode(signature_value)
-        unverified = json.loads(payload)
-        if not isinstance(unverified, dict):
-            raise ValueError("cursor payload must be an object")
-        key_id = unverified.get("kid")
-    except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        key_id, primary, unique_id = _decode_payload(payload)
+    except (ValueError, TypeError, UnicodeDecodeError) as exc:
         raise CursorError("Invalid cursor") from exc
     _, keys = _signing_keys()
     key = keys.get(key_id)
     if key is None:
         raise CursorError("Unknown cursor signing key")
-    expected = hmac.new(key, payload, hashlib.sha256).digest()
+    cursor = ResourceCursor(
+        v=1,
+        kid=key_id,
+        kind=kind,
+        sort=sort,
+        direction=direction,
+        is_null=primary is None,
+        primary=primary,
+        unique_id=unique_id,
+        filters=filters,
+        principal=principal_fingerprint(user_id),
+    )
+    expected = hmac.new(key, _signature_input(cursor, payload), hashlib.sha256).digest()
     if not hmac.compare_digest(signature, expected):
-        raise CursorError("Invalid cursor signature")
-    try:
-        cursor = ResourceCursor.model_validate_json(payload)
-    except ValidationError as exc:
-        raise CursorError("Invalid cursor payload") from exc
-    if cursor.v != 1:
-        raise CursorError("Unsupported cursor version")
+        raise CursorError("Invalid cursor or request context")
     return cursor
 
 
@@ -135,15 +194,18 @@ def validate_cursor(
     filters: str,
     user_id: str,
 ) -> Optional[ResourceCursor]:
-    cursor = decode_cursor(value)
+    cursor = decode_cursor(
+        value,
+        kind=kind,
+        sort=sort,
+        direction=direction,
+        filters=filters,
+        user_id=user_id,
+    )
     if cursor is None:
         if sort != "unique_id":
             raise CursorError("Legacy cursors cannot be combined with explicit sorting")
         return None
-    expected = (kind, sort, direction, filters, principal_fingerprint(user_id))
-    actual = (cursor.kind, cursor.sort, cursor.direction, cursor.filters, cursor.principal)
-    if actual != expected:
-        raise CursorError("Cursor does not match this request")
     return cursor
 
 

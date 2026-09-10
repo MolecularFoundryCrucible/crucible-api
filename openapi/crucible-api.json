@@ -9740,6 +9740,26 @@
             }
           },
           {
+            "description": "Opaque continuation cursor returned by a previous page.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque continuation cursor returned by a previous page.",
+              "title": "Cursor"
+            }
+          },
+          {
             "in": "query",
             "name": "offset",
             "required": false,
@@ -11023,6 +11043,26 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque continuation cursor returned by a previous page.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque continuation cursor returned by a previous page.",
+              "title": "Cursor"
             }
           },
           {

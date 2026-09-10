@@ -1,7 +1,7 @@
 import os
 from typing import Annotated, List
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from sqlalchemy import func, join
+from sqlalchemy import and_, func, join, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
@@ -18,6 +18,9 @@ from app.services.resource_details import ResourceDetailOptions, load_instrument
 from app.utils.auth_utils import (
     authorize_user, owner_affiliation_filter, require_permission,
     resource_capabilities)
+from app.utils.cursor_utils import (
+    CursorError, cursor_primary_value, filter_fingerprint, new_cursor,
+    validate_cursor)
 from app.utils.instrument_utils import assert_instrument_id_available
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.search_utils import (
@@ -109,6 +112,7 @@ def list_instruments(
     include_owner = params.include_owner
     include_total = params.include_total
     limit = params.limit
+    cursor = params.cursor
     offset = params.offset
     param_values["owner"] = params.owner_id or param_values["owner"]
     if instrument_id is None and params.status is None:
@@ -121,6 +125,22 @@ def list_instruments(
     ]
     if instrument_id is not None:
         filters.append(func.lower(Instrument.instrument_id) == instrument_id.lower().strip())
+    filters_digest = filter_fingerprint(params.normalized_result_filters())
+    decoded_cursor = None
+    decoded_primary = None
+    if cursor is not None:
+        try:
+            decoded_cursor = validate_cursor(
+                cursor,
+                kind="instrument",
+                sort="created",
+                direction="desc",
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+            decoded_primary = cursor_primary_value(decoded_cursor)
+        except CursorError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     with Session(engine) as session:
         base = select(Instrument).join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
@@ -149,12 +169,25 @@ def list_instruments(
         if params.affiliation:
             statement = statement.where(owner_affiliation_filter(auth_res, Instrument))
 
-        rows = session.exec(
-            statement
-            .order_by(Resource.creation_time.desc().nulls_last(), Instrument.unique_id.desc())
-            .offset(offset)
-            .limit(limit)
-        ).all()
+        if decoded_cursor is not None:
+            id_comparison = Instrument.unique_id < decoded_cursor.unique_id
+            if decoded_cursor.is_null:
+                statement = statement.where(Resource.creation_time.is_(None), id_comparison)
+            else:
+                statement = statement.where(or_(
+                    Resource.creation_time < decoded_primary,
+                    and_(Resource.creation_time == decoded_primary, id_comparison),
+                    Resource.creation_time.is_(None),
+                ))
+        statement = statement.order_by(
+            Resource.creation_time.desc().nulls_last(),
+            Instrument.unique_id.desc(),
+        )
+        if cursor is None and offset:
+            statement = statement.offset(offset)
+        rows = session.exec(statement.limit(limit + 1)).all()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
         owners = _instrument_owners(session, (row[0] for row in rows)) if include_owner else {}
 
         items = []
@@ -176,7 +209,25 @@ def list_instruments(
                     owner=owners.get(inst.owner),
                     capabilities=_instrument_capabilities(session, auth_res, inst) if instrument_id is not None else None,
                 ))
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+        next_cursor = None
+        if has_more:
+            last_instrument, last_resource = rows[-1][:2]
+            next_cursor = new_cursor(
+                kind="instrument",
+                sort="created",
+                direction="desc",
+                primary=last_resource.creation_time if last_resource else None,
+                unique_id=last_instrument.unique_id,
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+        return PaginatedResponse(
+            total=total,
+            limit=limit,
+            offset=offset if cursor is None else None,
+            items=items,
+            next_cursor=next_cursor,
+        )
 
 
 @router.get("/instruments/search", response_model=PaginatedResponse[InstrumentResponse])

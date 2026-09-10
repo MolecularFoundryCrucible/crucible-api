@@ -33,9 +33,9 @@ Crucible Graph Explorer calls Nano collection and count methods with `owner_orci
 
 Dataset, sample, and instrument collections currently ignore unknown query keys that do not match an accepted model field or allowlist entry. A misspelled scope or identity parameter can therefore return an unfiltered page. Query parameters that affect result scope must fail validation when unknown or invalid.
 
-### Pagination and ordering are inconsistent
+### Pagination and ordering were inconsistent
 
-Datasets and samples use `unique_id DESC` with cursor and offset compatibility. Projects, instruments, files, users, members, and workflow collections use offset pagination. Search endpoints use deterministic relevance ordering but no continuation. A single generic cursor cannot be applied safely until each endpoint has a total deterministic ordering.
+Datasets and samples use cursor and offset compatibility with their default and explicit sort orders. Project and instrument collections now provide cursors over their existing deterministic orders while retaining offset compatibility. Files, users, members, and workflow collections remain offset-paginated. Search endpoints use deterministic relevance ordering but no continuation. A cursor should be added to another endpoint only after its complete ordering and compatibility behavior are defined.
 
 ### Singleton expansion parameters are reasonable
 
@@ -129,6 +129,8 @@ Replace dynamic database-attribute inspection with declared query parameters. Th
 
 Instrument and project collections receive explicit models for their currently supported parameters and `affiliation`. Instrument status becomes an explicitly typed enum on the collection instead of a hidden prose-only filter.
 
+Project collections accept opaque cursors over their existing `project_id ASC` order with canonical unique ID as a deterministic tie-breaker. Instrument collections accept opaque cursors over their existing `creation_time DESC NULLS LAST, unique_id DESC` order. Omitting cursor preserves existing ordering, offset behavior, and totals. When cursor and offset are supplied together, cursor takes precedence consistently with dataset and sample collections.
+
 Do not automatically expose every persistence column. A filter remains public only when it has a stable client meaning, safe validation, and tested composition with authorization and pagination.
 
 ### Singleton GET parameters
@@ -160,19 +162,13 @@ If the FastAPI upgrade is not acceptable after compatibility testing, explicitly
 
 ## Versioned cursor design
 
-New sample and dataset responses emit an opaque base64url-encoded, HMAC-signed, versioned cursor containing:
+Dataset, sample, project, and instrument collection responses emit an opaque base64url-encoded, HMAC-signed, versioned cursor. The transmitted cursor payload is an internal Protobuf value containing only:
 
-- Cursor contract version
-- Resource kind
-- Sort field
-- Direction
-- Whether the primary value is null
-- Last normalized primary value when the sort has one in addition to the unique ID
+- Signing key identifier
+- Last normalized primary value when the order has one in addition to the unique ID
 - Last unique ID
-- A hash of normalized result-shaping filters
-- A non-reversible authenticated-principal fingerprint
 
-Do not include credentials, user profiles, raw search text, authorization claims, or sensitive metadata. Cursor values are parsed into typed structures and used only through allowlisted bound SQL expressions. The signature detects modification but does not grant access, and every page reapplies authorization. Cursor signing supports an explicit key identifier and rotation policy. `CRUCIBLE_CURSOR_SIGNING_KEYS` is a JSON object mapping key IDs to secrets and `CRUCIBLE_CURSOR_ACTIVE_KEY_ID` selects the key used for new cursors. Rotation first adds a new key while retaining the old key, then changes the active key ID. Removing an old key invalidates outstanding cursors signed by it and must wait for the documented client pagination window. A single `CRUCIBLE_CURSOR_SIGNING_KEY` is supported as a deployment fallback, and deployments without either cursor setting fall back to the API authentication secret.
+The cursor contract version is carried by its prefix. Resource kind, sort, direction, normalized result-filter fingerprint, and non-reversible authenticated-principal fingerprint are bound as non-transmitted HMAC context. Changing any of them invalidates the cursor without exposing them in the token. Do not include credentials, user profiles, raw search text, authorization claims, or sensitive metadata. Cursor values are parsed into typed structures and used only through allowlisted bound SQL expressions. The signature detects modification but does not grant access, and every page reapplies authorization. Cursor signing supports an explicit key identifier and rotation policy. `CRUCIBLE_CURSOR_SIGNING_KEYS` is a JSON object mapping key IDs to secrets and `CRUCIBLE_CURSOR_ACTIVE_KEY_ID` selects the key used for new cursors. Rotation first adds a new key while retaining the old key, then changes the active key ID. Removing an old key invalidates outstanding cursors signed by it and must wait for the documented client pagination window. A single `CRUCIBLE_CURSOR_SIGNING_KEY` is supported as a deployment fallback, and deployments without either cursor setting fall back to the API authentication secret.
 
 The filter hash binds the cursor to affiliation, project, relationship, visibility, time, and exact-field filters. Preferred and deprecated owner aliases normalize to the same canonical owner identity. It excludes representation-only expansions, page size, offset, and `include_total` so a caller can change `limit`, expansion flags, or total-count preference while following the same result set. Using a cursor with a different principal, resource type, sort, direction, or result-shaping filter returns 422.
 
@@ -186,7 +182,7 @@ ORDER BY primary_value ASC NULLS LAST, unique_id ASC
 
 Descending ordering reverses both comparisons. Nullable ordering includes an explicit null rank so missing values remain last across page boundaries.
 
-Legacy raw MFID cursors continue to mean `unique_id < cursor` only when sort is omitted and the legacy `unique_id DESC` compatibility order applies. Emit only the new cursor format after deployment so active old clients can continue echoing cursors without understanding their contents. Query one row beyond the requested limit to determine whether another page exists, return only the requested rows, and set `next_cursor` to null when the extra row is absent.
+Legacy raw MFID cursors continue to mean `unique_id < cursor` only on dataset and sample collections when sort is omitted and the legacy `unique_id DESC` compatibility order applies. Project and instrument collections accept only signed cursors because they had no legacy cursor contract. Emit only the new cursor format after deployment so active old clients can continue echoing cursors without understanding their contents. Query one row beyond the requested limit to determine whether another page exists, return only the requested rows, and set `next_cursor` to null when the extra row is absent.
 
 Keyset pagination is a live view. The unique-ID tie-breaker makes a fixed set deterministic, but an item can move between pages if its name or modification time changes during traversal. The API documents this behavior, and interactive clients restart from the first page after mutations or refreshes. Snapshot pagination is deferred to a bulk synchronization or export contract.
 
@@ -225,7 +221,7 @@ Keep the combined All view on a fixed documented order. If global sorting become
 5. Implemented: add created, updated, and name sorting to dataset and sample collections.
 6. Implemented: add the versioned cursor codec, filter binding, legacy cursor acceptance, lexicographic predicates, and signing-key rotation.
 7. Implemented: apply requested ordering consistently to offset pagination.
-8. Implemented: preserve cursor precedence over offset and add `include_total` plus preferred exact `owner_id` controls without removing legacy aliases.
+8. Implemented: preserve cursor precedence over offset, add project and instrument cursors over their existing deterministic orders, and add `include_total` plus preferred exact `owner_id` controls without removing legacy aliases.
 9. Pending deployment evidence: run the timestamp audit and capture representative PostgreSQL query plans before adding any indexes.
 10. Completed: refresh route documentation, `CHANGELOG.md`, and generated OpenAPI deterministically.
 11. After API deployment: update the Hub generated client and enable Owned plus type-specific table sorting.
@@ -259,6 +255,9 @@ The schema change needs a coordinated deployment because application versions th
 - A final page containing exactly `limit` rows returns no next cursor.
 - Case-normalized name ordering is deterministic.
 - Default raw MFID cursors remain accepted.
+- Project and instrument collections paginate through their existing orders without duplicates or omissions, including null instrument creation times.
+- Project and instrument no-cursor requests preserve existing offset, ordering, and total behavior.
+- Project and instrument collections reject raw cursor values because those routes had no legacy raw-cursor contract.
 - New cursors reject changed result filters, resource kinds, sorts, and directions.
 - New cursors reject tampering and use by a different authenticated principal.
 - Changing expansion flags or page size does not invalidate a cursor.
@@ -274,7 +273,7 @@ The schema change needs a coordinated deployment because application versions th
 - Unified sample and dataset collection
 - Globally sorted Hub All view
 - Type, project, or owner sorting
-- Dataset and sample sorting, time filtering, and cursor parity for project and instrument collections
+- Dataset and sample sorting and time-filter parity for project and instrument collections
 - Cursor conversion for every remaining API collection
 - Removal of offset pagination
 - Removal of legacy exact filters or raw cursors

@@ -37,6 +37,7 @@ dependencies = [
     "prometheus-fastapi-instrumentator>=7.1.0",
     "nano-crucible",
     "alembic>=1.19.1",
+    "protobuf>=5.29.6,<6",
 ]
 
 [tool.uv.sources]

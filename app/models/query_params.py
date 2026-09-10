@@ -290,6 +290,12 @@ class ProjectListQuery(StrictQueryModel):
         description="Include members for an exact project_id lookup when authorized.",
     )
     limit: int = Field(default=100, ge=1, le=1000)
+    cursor: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=4096,
+        description="Opaque continuation cursor returned by a previous page.",
+    )
     offset: int = Field(default=0, ge=0)
 
     @field_validator("accessible_to_user", "accessible_to_project")
@@ -307,6 +313,15 @@ class ProjectListQuery(StrictQueryModel):
         if self.include_members and self.project_id is None:
             raise ValueError("include_members requires an exact project_id filter")
         return self
+
+    def normalized_result_filters(self) -> dict:
+        return self.model_dump(
+            mode="json",
+            exclude={
+                "cursor", "offset", "limit", "include_metadata",
+                "include_members", "include_total",
+            },
+        )
 
 
 class InstrumentListQuery(StrictQueryModel):
@@ -327,6 +342,12 @@ class InstrumentListQuery(StrictQueryModel):
         ),
     )
     limit: int = Field(default=100, ge=1, le=1000)
+    cursor: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=4096,
+        description="Opaque continuation cursor returned by a previous page.",
+    )
     offset: int = Field(default=0, ge=0)
     other_id: Optional[str] = None
     other_id_source: Optional[str] = None
@@ -358,6 +379,19 @@ class InstrumentListQuery(StrictQueryModel):
         if self.affiliation and (self.owner_id is not None or owner is not None):
             raise ValueError("affiliation cannot be combined with an exact owner filter")
         return self
+
+    def normalized_result_filters(self) -> dict:
+        values = self.model_dump(
+            mode="json",
+            exclude={
+                "cursor", "offset", "limit", "include_metadata",
+                "include_owner", "include_total", "owner",
+            },
+        )
+        values["owner_id"] = self.owner_id or self.__dict__.get("owner")
+        if self.instrument_id is None and self.status is None:
+            values["status"] = InstrumentStatus.ACTIVE.value
+        return values
 
 
 class SearchQuery(StrictQueryModel):

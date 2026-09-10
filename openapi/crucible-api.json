@@ -5067,6 +5067,11 @@
             "title": "First Name",
             "type": "string"
           },
+          "is_service_account": {
+            "default": false,
+            "title": "Is Service Account",
+            "type": "boolean"
+          },
           "last_name": {
             "title": "Last Name",
             "type": "string"

@@ -28,6 +28,12 @@ class SortDirection(str, Enum):
     DESC = "desc"
 
 
+class InstrumentStatus(str, Enum):
+    ACTIVE = "active"
+    MAINTENANCE = "maintenance"
+    DECOMMISSIONED = "decommissioned"
+
+
 class StrictQueryModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -260,7 +266,7 @@ class InstrumentListQuery(StrictQueryModel):
     location: Optional[str] = None
     description: Optional[str] = None
     instrument_type: Optional[str] = None
-    status: Optional[Literal["active", "maintenance", "decommissioned"]] = Field(
+    status: Optional[InstrumentStatus] = Field(
         default=None,
         description="Restrict results to one lifecycle status.",
     )
@@ -309,7 +315,7 @@ class ResourceSearchQuery(SearchQuery):
 
 
 class InstrumentSearchQuery(SearchQuery):
-    status: Optional[Literal["active", "maintenance", "decommissioned"]] = Field(
+    status: Optional[InstrumentStatus] = Field(
         default=None,
         description="Restrict results to one lifecycle status.",
     )

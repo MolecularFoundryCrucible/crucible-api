@@ -1,4 +1,3 @@
-from enum import Enum
 import os
 from typing import Annotated, List
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -11,7 +10,7 @@ from app.models.access_groups import AccessGroupMemberRead
 from app.models.core_models import AccessGroup, Instrument, Resource, ScientificMetadataBinary, User, UserAccessGroupLink
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
-from app.models.queries import InstrumentListQuery, InstrumentSearchQuery
+from app.models.queries import InstrumentListQuery, InstrumentSearchQuery, InstrumentStatus
 from app.models.users import UserPublicRead
 from app.services.resource_details import ResourceDetailOptions, load_instrument_detail
 from app.utils.auth_utils import (
@@ -47,12 +46,6 @@ INSTRUMENT_FILTER_FIELDS = {
     "instrument_type",
     "status",
 }
-
-
-class InstrumentStatus(str, Enum):
-    ACTIVE = "active"
-    MAINTENANCE = "maintenance"
-    DECOMMISSIONED = "decommissioned"
 
 
 VALID_INSTRUMENT_STATUSES = tuple(status.value for status in InstrumentStatus)

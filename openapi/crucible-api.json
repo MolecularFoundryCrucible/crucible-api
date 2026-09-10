@@ -2197,6 +2197,15 @@
         "title": "InstrumentResponse",
         "type": "object"
       },
+      "InstrumentStatus": {
+        "enum": [
+          "active",
+          "maintenance",
+          "decommissioned"
+        ],
+        "title": "InstrumentStatus",
+        "type": "string"
+      },
       "InstrumentUpdate": {
         "additionalProperties": false,
         "description": "Partial update schema for Instrument. Only provided fields are modified.",
@@ -9823,12 +9832,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "enum": [
-                    "active",
-                    "maintenance",
-                    "decommissioned"
-                  ],
-                  "type": "string"
+                  "$ref": "#/components/schemas/InstrumentStatus"
                 },
                 {
                   "type": "null"
@@ -9978,12 +9982,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "enum": [
-                    "active",
-                    "maintenance",
-                    "decommissioned"
-                  ],
-                  "type": "string"
+                  "$ref": "#/components/schemas/InstrumentStatus"
                 },
                 {
                   "type": "null"

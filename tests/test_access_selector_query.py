@@ -370,6 +370,11 @@ def test_access_selectors_are_repeated_openapi_arrays():
     from app.api.main import app
 
     schema = app.openapi()
+    assert schema["components"]["schemas"]["InstrumentStatus"]["enum"] == [
+        "active",
+        "maintenance",
+        "decommissioned",
+    ]
     for path in ("/datasets", "/samples", "/projects"):
         parameters = {
             parameter["name"]: parameter

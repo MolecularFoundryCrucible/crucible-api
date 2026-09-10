@@ -816,6 +816,17 @@
               }
             ],
             "title": "Parent Dataset Id"
+          },
+          "relationship_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relationship Type"
           }
         },
         "title": "DatasetLink",
@@ -2437,6 +2448,15 @@
       },
       "LinkedResource": {
         "properties": {
+          "direction": {
+            "enum": [
+              "source",
+              "target",
+              "undirected"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
           "name": {
             "anyOf": [
               {
@@ -2448,14 +2468,16 @@
             ],
             "title": "Name"
           },
-          "relationship": {
-            "enum": [
-              "parent",
-              "child",
-              "associated"
+          "relationship_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Relationship",
-            "type": "string"
+            "title": "Relationship Type"
           },
           "resource_type": {
             "title": "Resource Type",
@@ -2469,7 +2491,7 @@
         "required": [
           "unique_id",
           "resource_type",
-          "relationship"
+          "direction"
         ],
         "title": "LinkedResource",
         "type": "object"
@@ -4179,6 +4201,17 @@
               }
             ],
             "title": "Parent Sample Id"
+          },
+          "relationship_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relationship Type"
           },
           "sample_id": {
             "anyOf": [
@@ -6691,7 +6724,7 @@
     },
     "/datasets/{child_dataset_id}/parents": {
       "get": {
-        "description": "Returns a paginated list of parent datasets for a given dataset.",
+        "description": "Returns a paginated list of parent datasets for a given dataset.\n\nrelationship_type restricts the result to links of that kind. Links with no\nrecorded type are excluded when the filter is set.",
         "operationId": "list_parent_datasets_datasets__child_dataset_id__parents_get",
         "parameters": [
           {
@@ -6724,6 +6757,26 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relationship_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relationship Type"
             }
           }
         ],
@@ -8101,7 +8154,7 @@
     },
     "/datasets/{parent_dataset_id}/children": {
       "get": {
-        "description": "Returns a paginated list of child datasets for a given parent dataset.",
+        "description": "Returns a paginated list of child datasets for a given parent dataset.\n\nrelationship_type restricts the result to links of that kind. Links with no\nrecorded type are excluded when the filter is set.",
         "operationId": "list_child_datasets_datasets__parent_dataset_id__children_get",
         "parameters": [
           {
@@ -8134,6 +8187,26 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relationship_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relationship Type"
             }
           }
         ],
@@ -8224,6 +8297,7 @@
         ]
       },
       "post": {
+        "description": "Link two datasets as parent and child.\n\nrelationship_type describes the child relative to the parent, so\nis_part_of means \"child is_part_of parent\". Omit it to leave the kind\nunspecified; on a link that already exists, omitting it preserves the\ntype already stored rather than clearing it.",
         "operationId": "link_dataset_parent_child_datasets__parent_dataset_id__children__child_dataset_id__post",
         "parameters": [
           {
@@ -8240,6 +8314,26 @@
             "required": true,
             "schema": {
               "title": "Child Dataset Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relationship_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relationship Type"
             }
           }
         ],
@@ -13342,7 +13436,7 @@
     },
     "/samples/{child_sample_id}/parents": {
       "get": {
-        "description": "Returns a paginated list of parent samples for a given child sample.",
+        "description": "Returns a paginated list of parent samples for a given child sample.\n\nrelationship_type restricts the result to links of that kind. Links with no\nrecorded type are excluded when the filter is set.",
         "operationId": "list_parent_samples_samples__child_sample_id__parents_get",
         "parameters": [
           {
@@ -13375,6 +13469,26 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relationship_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relationship Type"
             }
           }
         ],
@@ -13413,7 +13527,7 @@
     },
     "/samples/{parent_sample_id}/children": {
       "get": {
-        "description": "Returns a paginated list of child samples for a given parent sample.",
+        "description": "Returns a paginated list of child samples for a given parent sample.\n\nrelationship_type restricts the result to links of that kind. Links with no\nrecorded type are excluded when the filter is set.",
         "operationId": "list_child_samples_samples__parent_sample_id__children_get",
         "parameters": [
           {
@@ -13446,6 +13560,26 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relationship_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relationship Type"
             }
           }
         ],
@@ -13536,6 +13670,7 @@
         ]
       },
       "post": {
+        "description": "Link two samples as parent and child.\n\nrelationship_type describes the child relative to the parent, so\nis_part_of means \"child is_part_of parent\". Omit it to leave the kind\nunspecified; on a link that already exists, omitting it preserves the\ntype already stored rather than clearing it.",
         "operationId": "link_sample_parent_child_samples__parent_sample_id__children__child_sample_id__post",
         "parameters": [
           {
@@ -13552,6 +13687,26 @@
             "required": true,
             "schema": {
               "title": "Child Sample Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relationship_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relationship Type"
             }
           }
         ],

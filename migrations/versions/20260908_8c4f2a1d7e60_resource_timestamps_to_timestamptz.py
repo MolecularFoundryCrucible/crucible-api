@@ -1,7 +1,7 @@
 """convert resource timestamps to timestamptz
 
 Revision ID: 8c4f2a1d7e60
-Revises: 6e2f9c4a8b17
+Revises: b7e4a1c96d38
 Create Date: 2026-09-08 00:00:00.000000
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision: str = "8c4f2a1d7e60"
-down_revision: Union[str, Sequence[str], None] = "6e2f9c4a8b17"
+down_revision: Union[str, Sequence[str], None] = "b7e4a1c96d38"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

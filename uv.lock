@@ -331,6 +331,7 @@ name = "crucible-api"
 version = "3.0.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "alembic" },
     { name = "anthropic" },
     { name = "cachetools" },
     { name = "cloudevents" },
@@ -373,6 +374,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", specifier = ">=1.19.1" },
     { name = "anthropic", specifier = ">=0.40.0" },
     { name = "cachetools", specifier = ">=5.5.2" },
     { name = "cloudevents", specifier = ">=1.12.0" },

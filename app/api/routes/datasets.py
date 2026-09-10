@@ -9,7 +9,8 @@ import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import exists, func, join, text
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import selectinload
+
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
@@ -660,8 +661,8 @@ def list_datasets(
             children_by_dataset: dict = {}
             samples_by_dataset: dict = {}
             if dataset_ids:
-                for child_id, parent in session.exec(
-                    select(DatasetLink.child_dataset_id, Dataset)
+                for child_id, parent, relationship_type in session.exec(
+                    select(DatasetLink.child_dataset_id, Dataset, DatasetLink.relationship_type)
                     .join(Dataset, Dataset.id == DatasetLink.parent_dataset_id)
                     .where(DatasetLink.child_dataset_id.in_(dataset_ids))
                     .where(permission_filter(auth_res, Dataset, Permission.READ))
@@ -669,10 +670,10 @@ def list_datasets(
                     .order_by(DatasetLink.child_dataset_id, Dataset.unique_id)
                 ).all():
                     parents_by_dataset.setdefault(child_id, []).append(
-                        LinkedResource(unique_id=parent.unique_id, resource_type="dataset", name=parent.dataset_name, relationship="parent")
+                        LinkedResource(unique_id=parent.unique_id, resource_type="dataset", name=parent.dataset_name, direction="source", relationship_type=relationship_type)
                     )
-                for parent_id, child in session.exec(
-                    select(DatasetLink.parent_dataset_id, Dataset)
+                for parent_id, child, relationship_type in session.exec(
+                    select(DatasetLink.parent_dataset_id, Dataset, DatasetLink.relationship_type)
                     .join(Dataset, Dataset.id == DatasetLink.child_dataset_id)
                     .where(DatasetLink.parent_dataset_id.in_(dataset_ids))
                     .where(permission_filter(auth_res, Dataset, Permission.READ))
@@ -680,7 +681,7 @@ def list_datasets(
                     .order_by(DatasetLink.parent_dataset_id, Dataset.unique_id)
                 ).all():
                     children_by_dataset.setdefault(parent_id, []).append(
-                        LinkedResource(unique_id=child.unique_id, resource_type="dataset", name=child.dataset_name, relationship="child")
+                        LinkedResource(unique_id=child.unique_id, resource_type="dataset", name=child.dataset_name, direction="target", relationship_type=relationship_type)
                     )
                 for ds_id, samp in session.exec(
                     select(DatasetSampleLink.dataset_id, Sample)
@@ -691,7 +692,7 @@ def list_datasets(
                     .order_by(DatasetSampleLink.dataset_id, Sample.unique_id)
                 ).all():
                     samples_by_dataset.setdefault(ds_id, []).append(
-                        LinkedResource(unique_id=samp.unique_id, resource_type="sample", name=samp.sample_name, relationship="associated")
+                        LinkedResource(unique_id=samp.unique_id, resource_type="sample", name=samp.sample_name, direction="undirected")
                     )
 
         # Batch-resolve owners if requested
@@ -879,7 +880,16 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], datase
 
 
 @router.post("/datasets/{parent_dataset_id}/children/{child_dataset_id}", response_model=DatasetLink)
-def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[Principal, Depends(authorize_user)]):
+def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[Principal, Depends(authorize_user)],
+                              relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
+    '''
+    Link two datasets as parent and child.
+
+    relationship_type describes the child relative to the parent, so
+    is_part_of means "child is_part_of parent". Omit it to leave the kind
+    unspecified; on a link that already exists, omitting it preserves the
+    type already stored rather than clearing it.
+    '''
 
     with Session(engine) as session:
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).first()
@@ -900,11 +910,19 @@ def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Ann
 
         require_permission(session, auth_res, child_dataset_id, Permission.EDIT)
 
+        # Only pass relationship_type when the caller supplied one: add_or_update
+        # overwrites every kwarg it is given, so passing None would blank the
+        # stored type on a re-POST that just meant "make sure this link exists".
+        link_fields = {}
+        if relationship_type is not None:
+            link_fields["relationship_type"] = relationship_type
+
         link = add_or_update(session,
                      DatasetLink,
                      where=and_(DatasetLink.parent_dataset_id == parent.id, DatasetLink.child_dataset_id == child.id),
                      parent_dataset_id=parent.id,
-                     child_dataset_id=child.id)
+                     child_dataset_id=child.id,
+                     **link_fields)
 
         touch_resource_modification_time(session, parent_dataset_id)
         touch_resource_modification_time(session, child_dataset_id)
@@ -954,9 +972,13 @@ def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, a
 @router.get("/datasets/{child_dataset_id}/parents", response_model=PaginatedResponse[DatasetRead])
 def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                          limit: int = Query(default=100, ge=1, le=1000),
-                         offset: int = Query(default=0, ge=0)):
+                         offset: int = Query(default=0, ge=0),
+                         relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
     '''
     Returns a paginated list of parent datasets for a given dataset.
+
+    relationship_type restricts the result to links of that kind. Links with no
+    recorded type are excluded when the filter is set.
     '''
     with Session(engine) as session:
         child = session.exec(select(Dataset).where(Dataset.unique_id == child_dataset_id)).one_or_none()
@@ -974,6 +996,8 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[Principal, D
             .where(DatasetLink.child_dataset_id == child.id)
             .where(auth_filter).where(deletion_filter)
         )
+        if relationship_type is not None:
+            query = query.where(DatasetLink.relationship_type == relationship_type)
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         parents = session.exec(query.offset(offset).limit(limit)).all()
         instrument_references = resolve_instrument_mfids_to_references((d.instrument_mfid for d in parents), session)
@@ -991,9 +1015,13 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[Principal, D
 @router.get("/datasets/{parent_dataset_id}/children", response_model=PaginatedResponse[DatasetRead])
 def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                         limit: int = Query(default=100, ge=1, le=1000),
-                        offset: int = Query(default=0, ge=0)):
+                        offset: int = Query(default=0, ge=0),
+                        relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
     '''
     Returns a paginated list of child datasets for a given parent dataset.
+
+    relationship_type restricts the result to links of that kind. Links with no
+    recorded type are excluded when the filter is set.
     '''
     with Session(engine) as session:
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
@@ -1011,6 +1039,8 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[Principal, D
             .where(DatasetLink.parent_dataset_id == parent.id)
             .where(auth_filter).where(deletion_filter)
         )
+        if relationship_type is not None:
+            query = query.where(DatasetLink.relationship_type == relationship_type)
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         children = session.exec(query.offset(offset).limit(limit)).all()
         instrument_references = resolve_instrument_mfids_to_references((d.instrument_mfid for d in children), session)
@@ -1555,18 +1585,23 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[Principal, Depends(author
 
         ds_list = session.exec(
             select(Dataset)
-            .options(joinedload(Dataset.parents))
             .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
             .where(auth_filter).where(deletion_filter)
             .where(Dataset.project_mfid == target.project_mfid)
         ).unique().all()
 
-        allowed_ids = {dataset.unique_id for dataset in ds_list}
-        edges = []
-        for dataset in ds_list:
-            for parent in dataset.parents:
-                if parent.unique_id in allowed_ids:
-                    edges.append((parent.unique_id, dataset.unique_id))
+        # Read edges from the link table rather than walking Dataset.parents, so
+        # each edge can carry its relationship_type. Restricting both endpoints
+        # to ds_list yields the same edge set the relationship walk did.
+        id_to_uid = {dataset.id: dataset.unique_id for dataset in ds_list}
+        node_ids = list(id_to_uid.keys())
+        edge_rows = session.exec(
+            select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id, DatasetLink.relationship_type)
+            .where(DatasetLink.parent_dataset_id.in_(node_ids))
+            .where(DatasetLink.child_dataset_id.in_(node_ids))
+        ).all() if node_ids else []
+
+        edges = [(id_to_uid[r[0]], id_to_uid[r[1]], {"relationship_type": r[2]}) for r in edge_rows]
 
         G = nx.DiGraph(edges)
         for dataset in ds_list:
@@ -1648,12 +1683,12 @@ def dataset_graph_cte(dataset_id: str, auth_res: Annotated[Principal, Depends(au
 
         # Fetch all edges whose both endpoints are within the component
         edge_rows = session.exec(
-            select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id)
+            select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id, DatasetLink.relationship_type)
             .where(DatasetLink.parent_dataset_id.in_(node_ids))
             .where(DatasetLink.child_dataset_id.in_(node_ids))
         ).all()
 
-        G = nx.DiGraph((id_to_uid[r[0]], id_to_uid[r[1]]) for r in edge_rows)
+        G = nx.DiGraph((id_to_uid[r[0]], id_to_uid[r[1]], {"relationship_type": r[2]}) for r in edge_rows)
         for r in rows:
             G.add_node(r.unique_id, dataset_name=r.dataset_name)
 

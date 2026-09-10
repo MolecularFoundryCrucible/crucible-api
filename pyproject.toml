@@ -36,6 +36,7 @@ dependencies = [
     "uvicorn==0.32.1",
     "prometheus-fastapi-instrumentator>=7.1.0",
     "nano-crucible",
+    "alembic>=1.19.1",
 ]
 
 [tool.uv.sources]

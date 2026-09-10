@@ -39,7 +39,7 @@ Datasets and samples use `unique_id DESC` with cursor and offset compatibility. 
 
 ### Singleton expansion parameters are reasonable
 
-Canonical singleton reads use explicit `include_metadata`, `include_links`, `include_owner`, `include_members`, and compatibility `include_datasets` flags. These flags should remain explicit rather than being replaced by a generic expansion language. Collection filters do not belong on singleton reads because the path already identifies the resource.
+Canonical and generic singleton reads use strict query models with explicit `include_metadata`, `include_links`, `include_owner`, `include_members`, and compatibility `include_datasets` flags. Unsupported singleton parameters return 422. These flags remain explicit rather than being replaced by a generic expansion language. Collection filters do not belong on singleton reads because the path already identifies the resource.
 
 ## Compatibility policy
 
@@ -133,7 +133,7 @@ Do not automatically expose every persistence column. A filter remains public on
 
 ### Singleton GET parameters
 
-Keep current explicit representation controls. Standardize their descriptions, defaults, and authorization behavior in OpenAPI. Do not add ownership, visibility, access-selector, sort, or pagination parameters to singleton reads.
+Keep current explicit representation controls. Standardize their descriptions, defaults, authorization behavior, and strict unknown-parameter validation in OpenAPI. Do not add ownership, visibility, access-selector, sort, or pagination parameters to singleton reads.
 
 Retain exact mutable-slug lookup behavior used by current clients. Do not rename OpenAPI path parameter variables in this release. A later major contract may standardize path parameter names and remove deprecated sample `include_datasets` behavior after client migration.
 
@@ -249,7 +249,7 @@ The schema change needs a coordinated deployment because application versions th
 - Every declared filter composes with authorization and deletion filtering.
 - Known Nano, Lens, Hub, and Graph Explorer parameter combinations remain valid.
 - Deprecated exact owner and name filters retain current behavior.
-- Unknown and misspelled parameters return 422.
+- Unknown and misspelled parameters return 422 on the modernized collection, search, canonical singleton, and generic resource singleton routes.
 - `affiliation=owner` returns only resources authoritatively owned by the caller for all four resource types.
 - Repeated affiliation values use OR semantics, and unsupported values return 422.
 - `affiliation=owner` cannot be combined with an exact owner selector.

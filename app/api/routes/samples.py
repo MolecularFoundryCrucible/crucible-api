@@ -21,7 +21,8 @@ from app.models.datasets import DatasetRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
-    ResourceSearchQuery, ResourceSort, SampleListQuery, SortDirection)
+    ResourceSearchQuery, ResourceSort, SampleDetailQuery, SampleListQuery,
+    SortDirection)
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 
@@ -717,13 +718,7 @@ def search_samples(
 def read_sample(
     sample_mfid: str,
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    include_links: bool = False,
-    include_metadata: bool = False,
-    include_owner: bool = True,
-    include_datasets: bool = Query(
-        default=True,
-        description="Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
-    ),
+    params: Annotated[SampleDetailQuery, Query()],
 ):
     '''
     Returns the sample for the provided MFID.
@@ -737,10 +732,10 @@ def read_sample(
             auth_res,
             sample_mfid,
             options=ResourceDetailOptions(
-                include_metadata=include_metadata,
-                include_links=include_links,
-                include_owner=include_owner,
-                include_datasets=include_datasets,
+                include_metadata=params.include_metadata,
+                include_links=params.include_links,
+                include_owner=params.include_owner,
+                include_datasets=params.include_datasets,
             ),
         )
 

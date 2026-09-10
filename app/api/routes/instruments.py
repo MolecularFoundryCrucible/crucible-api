@@ -10,7 +10,9 @@ from app.models.access_groups import AccessGroupMemberRead
 from app.models.core_models import AccessGroup, Instrument, Resource, ScientificMetadataBinary, User, UserAccessGroupLink
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
-from app.models.query_params import InstrumentListQuery, InstrumentSearchQuery, InstrumentStatus
+from app.models.query_params import (
+    InstrumentDetailQuery, InstrumentListQuery, InstrumentSearchQuery,
+    InstrumentStatus)
 from app.models.users import UserPublicRead
 from app.services.resource_details import ResourceDetailOptions, load_instrument_detail
 from app.utils.auth_utils import (
@@ -225,8 +227,11 @@ def search_instruments(
 
 
 @router.get("/instruments/{instrument_mfid}", response_model=InstrumentResponse)
-def read_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], instrument_mfid: str,
-                    include_metadata: bool = False, include_owner: bool = True):
+def read_instrument(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    instrument_mfid: str,
+    params: Annotated[InstrumentDetailQuery, Query()],
+):
     '''
     Returns the instrument with the provided unique ID, or 404 if not found.
     The owner identity is resolved by default. Pass include_owner=false to omit it.
@@ -237,8 +242,8 @@ def read_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], ins
             auth_res,
             instrument_mfid,
             options=ResourceDetailOptions(
-                include_metadata=include_metadata,
-                include_owner=include_owner,
+                include_metadata=params.include_metadata,
+                include_owner=params.include_owner,
             ),
         )
 

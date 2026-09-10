@@ -149,6 +149,16 @@ def test_unknown_collection_and_search_parameters_are_rejected(client, db_engine
         response = client.get(path, params={"q": "search", "affilition": "owner"})
         assert response.status_code == 422, (path, response.text)
 
+    for path in (
+        "/datasets/dataset-alice",
+        "/samples/sample-alice",
+        "/instruments/instrument-alice",
+        "/projects/alice-project",
+        "/resources/dataset-alice",
+    ):
+        response = client.get(path, params={"include_metdata": "true"})
+        assert response.status_code == 422, (path, response.text)
+
 
 def test_affiliation_owner_filters_search_endpoints(client, db_engine, auth_as, monkeypatch):
     group_id = _seed_owned_resources(db_engine)

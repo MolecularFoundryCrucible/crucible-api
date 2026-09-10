@@ -33,7 +33,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
-- Dataset, sample, instrument, and project collection and search queries now reject unknown parameters with 422. Previously working exact dataset, sample, and instrument filters remain explicit and deprecated where appropriate.
+- Dataset, sample, instrument, and project collection, search, and singleton queries now reject unknown parameters with 422. The generic resource singleton follows the same rule. Previously working exact dataset, sample, and instrument filters remain explicit and deprecated where appropriate.
 - Dataset and sample pagination preserves the legacy behavior in which cursor takes precedence when cursor and offset are supplied together.
 - API-owned resource creation and modification timestamps now use timezone-aware database columns with server defaults and canonical UTC `Z` response formatting. New resources receive UTC values, missing legacy timestamps remain null, timezone-less legacy values are interpreted in `America/Los_Angeles`, and unparseable non-null values block migration revision `8c4f2a1d7e60`. The producer-supplied dataset `timestamp` field is unchanged.
 - Trigram searches now normalize bounded input, treat prefix wildcard characters literally, bind the request-local similarity threshold, and use canonical unique IDs as deterministic relevance tie-breakers.

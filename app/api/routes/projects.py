@@ -33,7 +33,7 @@ from app.utils.project_utils import (
     sql_get_projects_for_user, resolve_project_reference)
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
-from app.models.query_params import ProjectListQuery, SearchQuery
+from app.models.query_params import ProjectDetailQuery, ProjectListQuery, SearchQuery
 from app.models.projects import (
     ProjectCreate, ProjectMembershipRole, ProjectRead, ProjectUpdate, ProjectWithLead)
 from app.models.users import UserPublicRead
@@ -266,9 +266,12 @@ def search_projects(
 
 
 @router.get("/projects/{project_ref}", response_model=ProjectWithLead)
-def read_project(project_ref: str, response: Response,
-                 auth_res: Annotated[Principal, Depends(authorize_user)],
-                 include_metadata: bool = False, include_members: bool = False):
+def read_project(
+    project_ref: str,
+    response: Response,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    params: Annotated[ProjectDetailQuery, Query()],
+):
     '''
     Returns the project object for the provided MFID. Project slugs remain
     accepted temporarily for compatibility.
@@ -292,8 +295,8 @@ def read_project(project_ref: str, response: Response,
             prop.unique_id,
             project=prop,
             options=ResourceDetailOptions(
-                include_metadata=include_metadata,
-                include_members=include_members,
+                include_metadata=params.include_metadata,
+                include_members=params.include_members,
             ),
         )
 

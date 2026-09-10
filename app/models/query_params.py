@@ -45,6 +45,36 @@ class StrictQueryModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class DatasetDetailQuery(StrictQueryModel):
+    include_metadata: bool = False
+    include_links: bool = False
+    include_owner: bool = True
+
+
+class SampleDetailQuery(DatasetDetailQuery):
+    include_datasets: bool = Field(
+        default=True,
+        description=(
+            "Include legacy embedded dataset objects. Set false and use include_links or "
+            "GET /datasets?sample_mfid=... for efficient relationship access."
+        ),
+    )
+
+
+class ProjectDetailQuery(StrictQueryModel):
+    include_metadata: bool = False
+    include_members: bool = False
+
+
+class InstrumentDetailQuery(StrictQueryModel):
+    include_metadata: bool = False
+    include_owner: bool = True
+
+
+class ResourceDetailQuery(SampleDetailQuery):
+    pass
+
+
 class ResourceCollectionQuery(StrictQueryModel):
     accessible_to_user: Optional[list[str]] = Field(
         default=None,

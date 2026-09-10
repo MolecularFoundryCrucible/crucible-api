@@ -5,6 +5,7 @@ from sqlmodel import Session
 
 from app.api.routes.projects import read_project
 from app.models.core_models import Project, Resource, User
+from app.models.query_params import ProjectDetailQuery
 from app.utils.permissions import Principal
 
 
@@ -38,6 +39,7 @@ def test_project_response_loads_resource_by_project_mfid(db_engine):
         project_ref=project_mfid,
         response=Response(),
         auth_res=Principal(user_id=owner_id),
+        params=ProjectDetailQuery(),
     )
 
     assert result.creation_time == datetime.fromisoformat("2026-08-31T12:00:00+00:00")

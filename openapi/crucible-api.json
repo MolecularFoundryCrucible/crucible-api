@@ -12519,13 +12519,13 @@
             }
           },
           {
-            "description": "For samples, include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+            "description": "Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
             "in": "query",
             "name": "include_datasets",
             "required": false,
             "schema": {
               "default": true,
-              "description": "For samples, include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+              "description": "Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
               "title": "Include Datasets",
               "type": "boolean"
             }
@@ -14172,21 +14172,21 @@
           },
           {
             "in": "query",
-            "name": "include_links",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Include Links",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "query",
             "name": "include_metadata",
             "required": false,
             "schema": {
               "default": false,
               "title": "Include Metadata",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_links",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Links",
               "type": "boolean"
             }
           },
@@ -15402,7 +15402,7 @@
   },
   "servers": [
     {
-      "url": "/api/v3"
+      "url": "/testapi"
     }
   ]
 }

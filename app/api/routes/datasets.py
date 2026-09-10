@@ -44,7 +44,8 @@ from app.models.instrument import InstrumentReferenceRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
-    DatasetListQuery, ResourceSearchQuery, ResourceSort, SortDirection)
+    DatasetDetailQuery, DatasetListQuery, ResourceSearchQuery, ResourceSort,
+    SortDirection)
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
@@ -866,9 +867,11 @@ def search_datasets(
 
 
 @router.get("/datasets/{dataset_mfid}", response_model=DatasetResponse)
-def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dataset_mfid: str,
-                 include_metadata: bool = False, include_links: bool = False,
-                 include_owner: bool = True):
+def read_dataset(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    dataset_mfid: str,
+    params: Annotated[DatasetDetailQuery, Query()],
+):
     '''
     Returns the dataset with the provided MFID.
     Pass include_links=true to include parent, child, and associated resources.
@@ -881,9 +884,9 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], datase
             auth_res,
             dataset_mfid,
             options=ResourceDetailOptions(
-                include_metadata=include_metadata,
-                include_links=include_links,
-                include_owner=include_owner,
+                include_metadata=params.include_metadata,
+                include_links=params.include_links,
+                include_owner=params.include_owner,
             ),
         )
 

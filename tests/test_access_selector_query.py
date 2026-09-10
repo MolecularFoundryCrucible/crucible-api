@@ -319,6 +319,47 @@ def test_project_scope_collection_responses_report_relation(db_engine):
     }
 
 
+def test_dataset_cursor_precedence_and_total_control(db_engine):
+    seeded = _seed(db_engine)
+    caller = Principal(
+        user_id="0000-0001-1111-1111",
+        groups=(
+            GroupMembership(id=seeded["project_x_group_id"], group_name=seeded["project_x_mfid"], role=Role.VIEWER),
+            GroupMembership(id=seeded["project_y_group_id"], group_name=seeded["project_y_mfid"], role=Role.VIEWER),
+        ),
+    )
+    request = Request({"type": "http", "query_string": b"", "headers": []})
+
+    first = list_datasets(
+        auth_res=caller,
+        request=request,
+        params=DatasetListQuery(limit=1),
+    )
+    assert first.total == 2
+    assert first.next_cursor is not None
+
+    continuation = list_datasets(
+        auth_res=caller,
+        request=request,
+        params=DatasetListQuery(
+            limit=1,
+            cursor=first.next_cursor,
+            offset=1000,
+            include_total=True,
+        ),
+    )
+    assert continuation.total == 2
+    assert continuation.offset is None
+    assert len(continuation.items) == 1
+
+    suppressed = list_datasets(
+        auth_res=caller,
+        request=request,
+        params=DatasetListQuery(include_total=False),
+    )
+    assert suppressed.total is None
+
+
 def test_project_collection_selector_includes_owned_and_shared_projects(db_engine):
     seeded = _seed(db_engine)
     caller = Principal(
@@ -384,6 +425,7 @@ def test_access_selectors_are_repeated_openapi_arrays():
         assert parameters["accessible_to_project"]["schema"]["anyOf"][0]["type"] == "array"
         if path == "/projects":
             assert parameters["include_members"]["schema"]["default"] is False
+        assert parameters["include_total"]["required"] is False
         assert "accessible_to" not in parameters
     dataset_parameters = {
         parameter["name"]: parameter
@@ -406,6 +448,8 @@ def test_access_selectors_are_repeated_openapi_arrays():
         "Filter samples linked to this canonical dataset MFID."
     )
     for parameters in (dataset_parameters, sample_parameters):
+        assert parameters["owner_id"]["required"] is False
+        assert parameters["owner_id"]["schema"]["anyOf"][0]["minLength"] == 1
         assert parameters["project_id"]["required"] is False
         assert parameters["project_mfid"]["required"] is False
         assert parameters["project_scope"]["required"] is False
@@ -420,6 +464,7 @@ def test_access_selectors_are_repeated_openapi_arrays():
             for parameter in schema["paths"][path]["get"]["parameters"]
         }
         assert parameters["q"]["schema"]["maxLength"] == 200
+        assert parameters["owner_id"]["required"] is False
         assert parameters["project_id"]["required"] is False
         assert parameters["project_mfid"]["required"] is False
         assert parameters["project_scope"]["schema"]["anyOf"][0]["enum"] == [
@@ -427,6 +472,17 @@ def test_access_selectors_are_repeated_openapi_arrays():
             "shared",
             "all",
         ]
+    instrument_parameters = {
+        parameter["name"]: parameter
+        for parameter in schema["paths"]["/instruments"]["get"]["parameters"]
+    }
+    assert instrument_parameters["owner_id"]["required"] is False
+    assert instrument_parameters["include_total"]["required"] is False
+    instrument_search_parameters = {
+        parameter["name"]: parameter
+        for parameter in schema["paths"]["/instruments/search"]["get"]["parameters"]
+    }
+    assert instrument_search_parameters["owner_id"]["required"] is False
     assert schema["paths"]["/samples/{sample_id}/datasets"]["get"]["deprecated"] is True
     assert schema["paths"]["/datasets/{dsid}/samples"]["get"]["deprecated"] is True
     for schema_name in ("DatasetResponse", "SampleResponse"):

@@ -300,12 +300,14 @@ def list_samples(
     By default, results are ordered by unique_id descending. To fetch a keyset page,
     pass cursor=<next_cursor from the previous response>. The first page omits cursor.
     next_cursor is null when there are no further pages. total is included only when
-    cursor is omitted and offset is zero.
+    cursor is omitted and offset is zero. Pass include_total=true to request it on
+    any page or include_total=false to suppress it.
 
     Offset pagination is supported for backward compatibility: pass offset=<n> instead
-    of cursor. Supplying both returns 422. Prefer cursor for large result sets, since
-    deep offsets are slower.
+    of cursor. When both are supplied, cursor takes precedence. Prefer cursor for large
+    result sets, since deep offsets are slower.
     Pass affiliation=owner to return only resources authoritatively owned by the caller.
+    Use owner_id for an exact owner match; owner_orcid remains as a deprecated alias.
     Pass sort=created, updated, or name with direction=asc or desc for explicit ordering.
     Pass include_links=true to include parent, child, and associated resources for each sample.
     include_datasets is deprecated; use include_links instead.
@@ -315,8 +317,6 @@ def list_samples(
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
     import warnings
-    if params.cursor is not None and "offset" in request.query_params:
-        raise HTTPException(status_code=422, detail="cursor and offset cannot be combined")
     if params.sort is None and "direction" in request.query_params:
         raise HTTPException(status_code=422, detail="direction requires sort")
 
@@ -327,6 +327,7 @@ def list_samples(
     param_values = params.model_dump()
     include_datasets = param_values["include_datasets"]
     include_owner = params.include_owner
+    include_total = params.include_total
     limit = params.limit
     cursor = params.cursor
     offset = params.offset
@@ -348,18 +349,23 @@ def list_samples(
         key: param_values[key]
         for key in (
             "unique_id", "public", "sample_name", "sample_type",
-            "owner_orcid", "description", "timestamp",
+            "description", "timestamp",
         )
         if param_values[key] is not None
     }
+    owner_id = params.owner_id or param_values["owner_orcid"]
+    if owner_id is not None:
+        exact_filters["owner_orcid"] = owner_id
     sort_name = params.sort.value if params.sort is not None else "unique_id"
     direction = params.direction.value if params.sort is not None else SortDirection.DESC.value
     result_filters = params.normalized_result_filters(
         exclude={
             "cursor", "offset", "limit", "sort", "direction",
             "include_metadata", "include_links", "include_datasets", "include_owner",
+            "include_total", "owner_orcid",
         },
     )
+    result_filters["owner_id"] = owner_id
     filters_digest = filter_fingerprint(result_filters)
     decoded_cursor = None
     decoded_primary = None
@@ -434,10 +440,10 @@ def list_samples(
                 q = q.where(getattr(Sample, key) == value)
             return q
 
-        # total is only needed on the first page; cursor pages and deep offset pages
-        # skip the redundant count.
         total = None
-        if cursor is None and offset == 0:
+        if include_total is True or (
+            include_total is None and cursor is None and offset == 0
+        ):
             total = session.exec(apply_filters(
                 select(func.count()).select_from(Sample)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
@@ -650,6 +656,7 @@ def search_samples(
 ):
     '''
     Search readable samples by name and return results ordered by match quality.
+    Use owner_id for an exact owner match.
     Pass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship. Maximum 50 results.
     '''
 
@@ -681,6 +688,8 @@ def search_samples(
             ))
         if params.affiliation:
             query = query.where(owner_affiliation_filter(auth_res, Sample))
+        if params.owner_id is not None:
+            query = query.where(Sample.owner_orcid == params.owner_id)
         query = query.order_by(
             trigram_rank(normalized_q, (Sample.sample_name,)).desc(),
             Sample.unique_id.desc(),

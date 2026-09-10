@@ -176,6 +176,15 @@ def test_affiliation_owner_filters_search_endpoints(client, db_engine, auth_as, 
         field = "project_id" if path == "/projects/search" else "unique_id"
         assert [item[field] for item in response.json()["items"]] == identifiers
 
+    for path, term, identifier in (
+        ("/datasets/search", "search", "dataset-bob"),
+        ("/samples/search", "search", "sample-bob"),
+        ("/instruments/search", "search", "instrument-bob"),
+    ):
+        response = client.get(path, params={"q": term, "owner_id": BOB})
+        assert response.status_code == 200, (path, response.text)
+        assert _ids(response) == [identifier]
+
 
 def test_dataset_sorts_are_deterministic_and_nulls_last(client, db_engine, auth_as):
     group_id = _seed_owned_resources(db_engine)
@@ -297,9 +306,11 @@ def test_query_parameter_conflicts_and_time_validation_return_422(client, db_eng
 
     cases = [
         {"direction": "asc"},
-        {"cursor": "dataset-alice", "offset": 0},
         {"sort": "name", "cursor": "dataset-alice"},
         {"affiliation": "owner", "owner_orcid": ALICE},
+        {"affiliation": "owner", "owner_id": ALICE},
+        {"owner_id": ALICE, "owner_orcid": BOB},
+        {"owner_id": ""},
         {"creation_time_gte": "2026-01-01T00:00:00"},
         {"creation_time_gte": "2026-02-01T00:00:00+00:00", "creation_time_lte": "2026-01-01T00:00:00+00:00"},
         [("accessible_to_user", "")],
@@ -308,6 +319,62 @@ def test_query_parameter_conflicts_and_time_validation_return_422(client, db_eng
     for params in cases:
         response = client.get("/datasets", params=params)
         assert response.status_code == 422, (params, response.text)
+
+
+def test_cursor_takes_precedence_over_offset(client, db_engine, auth_as):
+    group_id = _seed_owned_resources(db_engine)
+    auth_as(ALICE, groups=[(ALICE, group_id, Role.OWNER)])
+
+    for path, expected in (
+        ("/datasets", ["dataset-alice"]),
+        ("/samples", ["sample-alice"]),
+    ):
+        first = client.get(path, params={"limit": 1})
+        assert first.status_code == 200, first.text
+        continuation = client.get(path, params={
+            "limit": 1,
+            "cursor": first.json()["next_cursor"],
+            "offset": 1000,
+        })
+        assert continuation.status_code == 200, continuation.text
+        assert _ids(continuation) == expected
+        assert continuation.json()["offset"] is None
+
+
+def test_include_total_controls_count_without_changing_cursor(client, db_engine, auth_as):
+    group_id = _seed_owned_resources(db_engine)
+    auth_as(ALICE, groups=[(ALICE, group_id, Role.OWNER)])
+
+    for path in ("/datasets", "/samples"):
+        default_page = client.get(path, params={"limit": 1})
+        assert default_page.status_code == 200, default_page.text
+        assert default_page.json()["total"] == 2
+
+        suppressed = client.get(path, params={"limit": 1, "include_total": False})
+        assert suppressed.status_code == 200, suppressed.text
+        assert suppressed.json()["total"] is None
+
+        deep_offset = client.get(path, params={"limit": 1, "offset": 1})
+        assert deep_offset.status_code == 200, deep_offset.text
+        assert deep_offset.json()["total"] is None
+
+        requested = client.get(path, params={
+            "limit": 1,
+            "cursor": default_page.json()["next_cursor"],
+            "include_total": True,
+        })
+        assert requested.status_code == 200, requested.text
+        assert requested.json()["total"] == 2
+
+
+def test_include_total_can_suppress_project_and_instrument_counts(client, db_engine, auth_as):
+    group_id = _seed_owned_resources(db_engine)
+    auth_as(ALICE, groups=[(ALICE, group_id, Role.OWNER)])
+
+    for path in ("/projects", "/instruments"):
+        response = client.get(path, params={"include_total": False})
+        assert response.status_code == 200, response.text
+        assert response.json()["total"] is None
 
 
 def test_default_cursor_accepts_legacy_values_and_emits_signed_values(client, db_engine, auth_as):
@@ -345,3 +412,24 @@ def test_legacy_exact_filters_remain_available(client, db_engine, auth_as):
     assert _ids(dataset) == ["dataset-alice"]
     assert _ids(sample) == ["sample-alice"]
     assert _ids(owner) == ["dataset-bob"]
+
+
+def test_owner_id_filters_collections_and_matching_legacy_aliases(client, db_engine, auth_as):
+    group_id = _seed_owned_resources(db_engine)
+    auth_as(ALICE, groups=[(ALICE, group_id, Role.OWNER)])
+
+    cases = (
+        ("/datasets", "owner_orcid", "dataset-bob"),
+        ("/samples", "owner_orcid", "sample-bob"),
+        ("/instruments", "owner", "instrument-bob"),
+    )
+    for path, alias, expected in cases:
+        neutral = client.get(path, params={"owner_id": BOB})
+        matching_alias = client.get(path, params={"owner_id": BOB, alias: BOB})
+        legacy = client.get(path, params={alias: BOB})
+        assert neutral.status_code == 200, (path, neutral.text)
+        assert matching_alias.status_code == 200, (path, matching_alias.text)
+        assert legacy.status_code == 200, (path, legacy.text)
+        assert _ids(neutral) == [expected]
+        assert _ids(matching_alias) == [expected]
+        assert _ids(legacy) == [expected]

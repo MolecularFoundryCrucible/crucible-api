@@ -140,12 +140,14 @@ def list_projects(
     '''
     Returns a paginated list of projects the user is authorized to see, including the resolved project lead.
     Pass affiliation=owner to return only projects authoritatively owned by the caller.
+    Pass include_total=false to omit the exact authorization-filtered count.
     '''
     project_id = params.project_id
     accessible_to_user = params.accessible_to_user
     accessible_to_project = params.accessible_to_project
     include_metadata = params.include_metadata
     include_members = params.include_members
+    include_total = params.include_total
     limit = params.limit
     offset = params.offset
 
@@ -174,7 +176,12 @@ def list_projects(
         else:
             user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
             if user is None:
-                return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
+                return PaginatedResponse(
+                    total=None if include_total is False else 0,
+                    limit=limit,
+                    offset=offset,
+                    items=[],
+                )
             base = (
                 select(Project)
                 .join(AccessGroup, AccessGroup.group_name == Project.unique_id)
@@ -187,7 +194,11 @@ def list_projects(
         if params.affiliation:
             base = base.where(project_owner_affiliation_filter(auth_res, Project))
 
-        total = session.exec(select(func.count()).select_from(base.subquery())).one()
+        total = (
+            session.exec(select(func.count()).select_from(base.subquery())).one()
+            if include_total is not False
+            else None
+        )
 
         props = session.exec(
             base.options(*loader_opts).order_by(col(Project.project_id)).offset(offset).limit(limit)

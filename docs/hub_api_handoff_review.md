@@ -103,7 +103,9 @@ Add repeatable `affiliation` filtering to dataset, sample, instrument, and proje
 
 Replace raw model-column filtering with endpoint-specific typed query models after a reviewed FastAPI upgrade. Preserve legacy exact filters used by working clients as explicit deprecated parameters, preserve offset pagination, accept raw MFID cursors for the default order, and reject unknown parameters only after supported legacy inputs are declared.
 
-Add `sort=created|updated|name` and `direction=asc|desc` to dataset and sample collections. Omitted sort preserves the current `unique_id DESC` order, while explicit `sort=created` uses authoritative resource creation time because callers can preassign MFIDs. Every ordering uses a stable unique-ID tie-breaker, missing values sort last, and new signed opaque cursors bind to the principal, resource kind, ordering, and result-shaping filters. Cursor and offset are mutually exclusive, time values receive timezone-aware validation, and mutable sorts have documented live-view behavior under concurrent changes.
+Add `sort=created|updated|name` and `direction=asc|desc` to dataset and sample collections. Omitted sort preserves the current `unique_id DESC` order, while explicit `sort=created` uses authoritative resource creation time because callers can preassign MFIDs. Every ordering uses a stable unique-ID tie-breaker, missing values sort last, and new signed opaque cursors bind to the principal, resource kind, ordering, and result-shaping filters. Preserve legacy cursor precedence when cursor and offset are supplied together, validate time values as timezone-aware, and document mutable sorts as a live view under concurrent changes.
+
+Use `owner_id` as the preferred exact human-or-service-account filter on dataset, sample, and instrument collections and searches. Retain `owner_orcid` and `owner` as deprecated aliases, accept a preferred and legacy pair only when they match, and reject combining an exact owner with current-caller `affiliation`. Add `include_total` to all four collections: true requests an exact authorization-filtered count, false suppresses it, and omission preserves each endpoint's legacy count behavior. Total preference does not change cursor identity or row membership.
 
 The implementation converts API-owned resource creation and modification values to nullable PostgreSQL `TIMESTAMPTZ` columns after a read-only audit. New resources receive API-generated UTC values and database defaults, while missing legacy values remain null. Unparseable non-null timestamps block migration, timezone-less legacy values are interpreted in `America/Los_Angeles`, missing modification times use creation times when available, explicitly offset values preserve their instants, and non-null API responses use canonical UTC `Z` formatting. The producer-supplied dataset `timestamp` field is outside this lifecycle policy. The migration requires pausing incompatible API versions. Cursor signing uses an identified key ring so new keys can be activated while old keys remain valid through a rotation window. Production query-plan evidence remains a deployment task, and no speculative index is included.
 
@@ -187,6 +189,10 @@ Preserve deterministic ordering and cursor pagination where already supported. A
 Decision: Defer until the underlying product concepts are defined.
 
 Pins and recently viewed resources require persistence, privacy, retention, and ordering decisions. Pending-work summaries should be built from authoritative workflow resources. Implement those resources first, measure the Hub's request and latency needs, and add a bounded composition endpoint only if it provides a demonstrated benefit.
+
+Do not update a project's or instrument's `modification_time` when a child dataset or sample changes. That timestamp remains the lifecycle time of the resource itself. If latest related activity becomes a product requirement, add a separately named `last_activity_time` backed by defined durable events or a purpose-built aggregate.
+
+Project sample and dataset counts and instrument dataset counts remain deferred. If required, expose them through an explicit opt-in and bulk authorization-aware aggregates. Project counting semantics must distinguish primary assignment from shared access before implementation.
 
 ### 15. Mutation response models
 

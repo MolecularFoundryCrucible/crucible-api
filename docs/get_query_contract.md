@@ -47,7 +47,7 @@ Canonical singleton reads use explicit `include_metadata`, `include_links`, `inc
 - Existing documented query parameters retain their names and behavior.
 - Legacy exact filters observed in working clients become explicit deprecated parameters in OpenAPI before eventual removal.
 - Existing offset pagination remains available.
-- Cursor and offset pagination are mutually exclusive. Supplying both returns 422 instead of applying silent precedence.
+- Existing cursor precedence is preserved when cursor and offset are supplied together. The cursor controls page position and the offset is ignored.
 - Existing raw MFID cursors remain accepted for the legacy default ordering. New responses emit a versioned opaque cursor.
 - A raw legacy cursor combined with non-default sorting returns 422.
 - Existing generated-client path parameter names are not renamed in this compatibility release because OpenAPI name changes can break source compatibility even when the URL is unchanged.
@@ -78,10 +78,12 @@ Ownership must follow authoritative permission state. Dataset, sample, and instr
 
 Keep current identity filters for compatibility:
 
+- Dataset, sample, and instrument collections and search endpoints accept `owner_id` as the preferred exact stable identity filter for either a human or service account.
 - Dataset and sample `owner_orcid` remains an explicit deprecated exact filter.
 - Instrument `owner` remains an explicit deprecated exact filter.
 - These filters continue to support existing administrative and Graph Explorer workflows.
-- `affiliation=owner` cannot be combined with a legacy owner filter. The API returns 422 rather than guessing whether the caller intended intersection or substitution.
+- A preferred owner filter and its deprecated alias may be combined only when their values match.
+- `affiliation=owner` cannot be combined with an exact owner filter. The API returns 422 rather than guessing whether the caller intended intersection or substitution.
 
 ### Sample and dataset sorting
 
@@ -113,14 +115,14 @@ Sorting happens after authorization and filtering and before offset or cursor pa
 Replace dynamic database-attribute inspection with declared query parameters. The initial query models preserve these dataset and sample filter families:
 
 - Access selectors: `accessible_to_user`, `accessible_to_project`
-- Affiliation: repeatable `affiliation` and deprecated resource-specific owner alias
+- Ownership: repeatable current-caller `affiliation`, preferred exact `owner_id`, and deprecated resource-specific owner alias
 - Project relation: `project_id`, `project_mfid`, `project_scope`
 - Cross-resource relation: `sample_mfid` or `dataset_mfid`
 - Dataset instrument: `instrument_mfid`
 - Visibility: `visibility`
 - Time bounds: creation and modification lower and upper bounds
 - Expansions: metadata, links, owner, and deprecated sample datasets
-- Pagination: limit, cursor, and offset
+- Pagination: limit, cursor, offset, and optional exact-total control
 - Sorting: sort and direction
 - Explicit legacy exact resource fields currently supported by Nano or known clients
 - Dataset keyword filtering, which is currently implemented separately from model-column filtering
@@ -150,7 +152,7 @@ Create reusable Pydantic query components with `extra="forbid"`:
 - Affiliation values
 - Sort field and direction
 
-Compose endpoint-specific models rather than one model containing irrelevant fields. Model validators and route-level parameter-presence checks enforce incompatible combinations, matching slug and MFID pairs, legacy alias agreement, cursor and offset exclusivity, cursor compatibility, and expansion restrictions.
+Compose endpoint-specific models rather than one model containing irrelevant fields. Model validators and route-level parameter-presence checks enforce incompatible combinations, matching slug and MFID pairs, legacy alias agreement, cursor compatibility, and expansion restrictions.
 
 Repeated ordinary values use OR semantics within one filter family, while different filter families compose with AND. Existing access selectors retain their documented AND semantics. Every repeated parameter has a bounded item count, and blank identity values are rejected or normalized consistently before cursor fingerprinting.
 
@@ -172,7 +174,7 @@ New sample and dataset responses emit an opaque base64url-encoded, HMAC-signed, 
 
 Do not include credentials, user profiles, raw search text, authorization claims, or sensitive metadata. Cursor values are parsed into typed structures and used only through allowlisted bound SQL expressions. The signature detects modification but does not grant access, and every page reapplies authorization. Cursor signing supports an explicit key identifier and rotation policy. `CRUCIBLE_CURSOR_SIGNING_KEYS` is a JSON object mapping key IDs to secrets and `CRUCIBLE_CURSOR_ACTIVE_KEY_ID` selects the key used for new cursors. Rotation first adds a new key while retaining the old key, then changes the active key ID. Removing an old key invalidates outstanding cursors signed by it and must wait for the documented client pagination window. A single `CRUCIBLE_CURSOR_SIGNING_KEY` is supported as a deployment fallback, and deployments without either cursor setting fall back to the API authentication secret.
 
-The filter hash binds the cursor to affiliation, project, relationship, visibility, time, and exact-field filters. It excludes representation-only expansions and page size so a caller can change `limit` or expansion flags while following the same result set. Using a cursor with a different principal, resource type, sort, direction, or result-shaping filter returns 422.
+The filter hash binds the cursor to affiliation, project, relationship, visibility, time, and exact-field filters. Preferred and deprecated owner aliases normalize to the same canonical owner identity. It excludes representation-only expansions, page size, offset, and `include_total` so a caller can change `limit`, expansion flags, or total-count preference while following the same result set. Using a cursor with a different principal, resource type, sort, direction, or result-shaping filter returns 422.
 
 For a non-null ascending primary value, the keyset predicate is conceptually:
 
@@ -188,7 +190,7 @@ Legacy raw MFID cursors continue to mean `unique_id < cursor` only when sort is 
 
 Keyset pagination is a live view. The unique-ID tie-breaker makes a fixed set deterministic, but an item can move between pages if its name or modification time changes during traversal. The API documents this behavior, and interactive clients restart from the first page after mutations or refreshes. Snapshot pagination is deferred to a bulk synchronization or export contract.
 
-`total` remains an exact authorization-filtered count on the first page and is omitted from cursor continuation and deep offset responses. Optional total suppression, full pagination links, and snapshot metadata may be added later without changing row membership or cursor semantics.
+`total` remains an exact authorization-filtered count on the first dataset or sample page and is omitted by default from cursor continuations and deep offset responses. Project and instrument collections retain their existing default count behavior. Every collection accepts `include_total=true` to request an exact count and `include_total=false` to suppress it. Omitting the flag preserves each endpoint's legacy behavior. Full pagination links and snapshot metadata remain deferred.
 
 ## Query execution order
 
@@ -223,11 +225,12 @@ Keep the combined All view on a fixed documented order. If global sorting become
 5. Implemented: add created, updated, and name sorting to dataset and sample collections.
 6. Implemented: add the versioned cursor codec, filter binding, legacy cursor acceptance, lexicographic predicates, and signing-key rotation.
 7. Implemented: apply requested ordering consistently to offset pagination.
-8. Pending deployment evidence: run the timestamp audit and capture representative PostgreSQL query plans before adding any indexes.
-9. Completed: refresh route documentation, `CHANGELOG.md`, and generated OpenAPI deterministically.
-10. After API deployment: update the Hub generated client and enable Owned plus type-specific table sorting.
-11. After API contract stabilization: update Nano signatures to expose the new typed parameters and deprecate unrestricted collection `**kwargs` without removing them in the same release.
-12. Before merge: verify Crucible Lens and Graph Explorer against their existing queries.
+8. Implemented: preserve cursor precedence over offset and add `include_total` plus preferred exact `owner_id` controls without removing legacy aliases.
+9. Pending deployment evidence: run the timestamp audit and capture representative PostgreSQL query plans before adding any indexes.
+10. Completed: refresh route documentation, `CHANGELOG.md`, and generated OpenAPI deterministically.
+11. After API deployment: update the Hub generated client and enable Owned plus type-specific table sorting.
+12. After API contract stabilization: update Nano signatures to expose the new typed parameters and deprecate unrestricted collection `**kwargs` without removing them in the same release.
+13. Before merge: verify Crucible Lens and Graph Explorer against their existing queries.
 
 ## Timestamp migration deployment
 
@@ -249,8 +252,8 @@ The schema change needs a coordinated deployment because application versions th
 - Unknown and misspelled parameters return 422.
 - `affiliation=owner` returns only resources authoritatively owned by the caller for all four resource types.
 - Repeated affiliation values use OR semantics, and unsupported values return 422.
-- `affiliation=owner` cannot be combined with a legacy owner selector.
-- Cursor and offset supplied together return 422.
+- `affiliation=owner` cannot be combined with an exact owner selector.
+- Cursor takes precedence when cursor and offset are supplied together.
 - Every supported sort works in both directions.
 - Equal and null primary values paginate without duplicates or omissions.
 - A final page containing exactly `limit` rows returns no next cursor.
@@ -259,6 +262,7 @@ The schema change needs a coordinated deployment because application versions th
 - New cursors reject changed result filters, resource kinds, sorts, and directions.
 - New cursors reject tampering and use by a different authenticated principal.
 - Changing expansion flags or page size does not invalidate a cursor.
+- Changing `include_total` does not invalidate a cursor, and the flag controls exact-count calculation without changing row membership.
 - Offset and cursor pages apply the same selected ordering.
 - Explicit `sort=created` uses resource creation time, while omitted sort preserves legacy unique-ID order.
 - Time bounds reject malformed or timezone-ambiguous values.
@@ -270,9 +274,19 @@ The schema change needs a coordinated deployment because application versions th
 - Unified sample and dataset collection
 - Globally sorted Hub All view
 - Type, project, or owner sorting
-- Cursor conversion for every API collection
+- Dataset and sample sorting, time filtering, and cursor parity for project and instrument collections
+- Cursor conversion for every remaining API collection
 - Removal of offset pagination
 - Removal of legacy exact filters or raw cursors
 - Path parameter renaming
-- Generic query languages, arbitrary column selection, or client-provided SQL field names
+- Generic query languages, arbitrary field selection, broad expansion syntax, or client-provided SQL field names
 - Changes to singleton response shapes
+- ETag and `If-None-Match` conditional singleton reads
+- Optional dataset, sample, or other related-resource counts on project and instrument responses
+- Project lifecycle status and status filtering
+- Full pagination links and snapshot pagination
+- Parent activity propagation through `modification_time`
+
+Project and instrument `modification_time` continues to describe a direct mutation of that resource. Creating, updating, linking, unlinking, or deleting a child dataset or sample does not modify its parent project's or instrument's lifecycle timestamp. A future activity feature should use a separately named `last_activity_time` derived from durable activity events or a purpose-built aggregate, with explicit event coverage, authorization, retention, ordering, and backfill semantics.
+
+If project or instrument counts are later required, expose them through an explicit opt-in such as `include_counts=true`, compute them with bounded bulk aggregates rather than per-row queries, and define whether project counts cover primary assignment only or also shared access. Instrument counts should count assigned datasets only. Counts must include only resources visible under the documented permission and deletion policy.

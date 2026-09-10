@@ -5897,7 +5897,7 @@
     },
     "/datasets": {
       "get": {
-        "description": "Returns a paginated list of datasets the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nBy default, results are ordered by unique_id descending. To fetch a keyset page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only when\ncursor is omitted and offset is zero.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. Supplying both returns 422. Prefer cursor for large result sets, since\ndeep offsets are slower.\nPass affiliation=owner to return only resources authoritatively owned by the caller.\nPass sort=created, updated, or name with direction=asc or desc for explicit ordering.\nPass include_links=true to include parent, child, and associated resources for each dataset.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass instrument_mfid to filter by the instrument's canonical stable identity.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.\nPass sample_mfid to filter by a readable sample's canonical stable identity.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
+        "description": "Returns a paginated list of datasets the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nBy default, results are ordered by unique_id descending. To fetch a keyset page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only when\ncursor is omitted and offset is zero. Pass include_total=true to request it on\nany page or include_total=false to suppress it.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. When both are supplied, cursor takes precedence. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass affiliation=owner to return only resources authoritatively owned by the caller.\nUse owner_id for an exact owner match; owner_orcid remains as a deprecated alias.\nPass sort=created, updated, or name with direction=asc or desc for explicit ordering.\nPass include_links=true to include parent, child, and associated resources for each dataset.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass instrument_mfid to filter by the instrument's canonical stable identity.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.\nPass sample_mfid to filter by a readable sample's canonical stable identity.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
         "operationId": "list_datasets_datasets_get",
         "parameters": [
           {
@@ -6000,6 +6000,24 @@
             }
           },
           {
+            "description": "Exact authorization-filtered total. Omit to preserve legacy endpoint behavior; true always computes it and false always omits it.",
+            "in": "query",
+            "name": "include_total",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact authorization-filtered total. Omit to preserve legacy endpoint behavior; true always computes it and false always omits it.",
+              "title": "Include Total"
+            }
+          },
+          {
             "in": "query",
             "name": "limit",
             "required": false,
@@ -6032,13 +6050,13 @@
             }
           },
           {
-            "description": "Compatibility offset. Cannot be supplied with cursor.",
+            "description": "Compatibility offset. A supplied cursor takes precedence.",
             "in": "query",
             "name": "offset",
             "required": false,
             "schema": {
               "default": 0,
-              "description": "Compatibility offset. Cannot be supplied with cursor.",
+              "description": "Compatibility offset. A supplied cursor takes precedence.",
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -6326,8 +6344,27 @@
             }
           },
           {
+            "description": "Exact stable owner identifier for a human or service account.",
+            "in": "query",
+            "name": "owner_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact stable owner identifier for a human or service account.",
+              "title": "Owner Id"
+            }
+          },
+          {
             "deprecated": true,
-            "description": "Deprecated exact owner filter. Use affiliation=owner for the authenticated caller.",
+            "description": "Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
             "in": "query",
             "name": "owner_orcid",
             "required": false,
@@ -6341,7 +6378,7 @@
                 }
               ],
               "deprecated": true,
-              "description": "Deprecated exact owner filter. Use affiliation=owner for the authenticated caller.",
+              "description": "Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
               "title": "Owner Orcid"
             }
           },
@@ -6592,7 +6629,7 @@
     },
     "/datasets/search": {
       "get": {
-        "description": "Search readable datasets by name and return results ordered by match quality.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship. Maximum 50 results.",
+        "description": "Search readable datasets by name and return results ordered by match quality.\nUse owner_id for an exact owner match.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship. Maximum 50 results.",
         "operationId": "search_datasets_datasets_search_get",
         "parameters": [
           {
@@ -6641,6 +6678,25 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Exact stable owner identifier for a human or service account.",
+            "in": "query",
+            "name": "owner_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact stable owner identifier for a human or service account.",
+              "title": "Owner Id"
             }
           },
           {
@@ -9589,7 +9645,7 @@
     },
     "/instruments": {
       "get": {
-        "description": "Returns a paginated list of instruments filtered by any provided query parameters that\nmatch Instrument attributes. Matching is case-insensitive exact match.\nUse instrument_id for exact slug lookup. Other filterable fields include\nother_id, other_id_source, instrument_name, manufacturer,\nmodel, owner, location, description, instrument_type, status.\nPass affiliation=owner to return only instruments authoritatively owned by the caller.\nDefaults to status=active; pass ?status=maintenance or ?status=decommissioned to see others.\nAn exact instrument_id lookup searches every status unless status is also provided.",
+        "description": "Returns a paginated list of instruments filtered by any provided query parameters that\nmatch Instrument attributes. Matching is case-insensitive exact match.\nUse instrument_id for exact slug lookup. Other filterable fields include\nother_id, other_id_source, instrument_name, manufacturer,\nmodel, owner, location, description, instrument_type, status.\nUse owner_id for an exact owner match; owner remains as a deprecated alias.\nPass affiliation=owner to return only instruments authoritatively owned by the caller.\nPass include_total=false to omit the exact authorization-filtered count.\nDefaults to status=active; pass ?status=maintenance or ?status=decommissioned to see others.\nAn exact instrument_id lookup searches every status unless status is also provided.",
         "operationId": "list_instruments_instruments_get",
         "parameters": [
           {
@@ -9651,6 +9707,24 @@
               "default": false,
               "title": "Include Owner",
               "type": "boolean"
+            }
+          },
+          {
+            "description": "Exact authorization-filtered total. Omit to preserve legacy endpoint behavior; true always computes it and false always omits it.",
+            "in": "query",
+            "name": "include_total",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact authorization-filtered total. Omit to preserve legacy endpoint behavior; true always computes it and false always omits it.",
+              "title": "Include Total"
             }
           },
           {
@@ -9757,8 +9831,27 @@
             }
           },
           {
+            "description": "Exact stable owner identifier for a human or service account.",
+            "in": "query",
+            "name": "owner_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact stable owner identifier for a human or service account.",
+              "title": "Owner Id"
+            }
+          },
+          {
             "deprecated": true,
-            "description": "Deprecated exact owner filter. Use affiliation=owner for the authenticated caller.",
+            "description": "Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
             "in": "query",
             "name": "owner",
             "required": false,
@@ -9772,7 +9865,7 @@
                 }
               ],
               "deprecated": true,
-              "description": "Deprecated exact owner filter. Use affiliation=owner for the authenticated caller.",
+              "description": "Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
               "title": "Owner"
             }
           },
@@ -9923,7 +10016,7 @@
     },
     "/instruments/search": {
       "get": {
-        "description": "Search instruments by name, type, or manufacturer using fuzzy matching.\nReturns results ordered by match quality. Maximum 50 results.",
+        "description": "Search instruments by name, type, or manufacturer using fuzzy matching.\nReturns results ordered by match quality. Maximum 50 results.\nUse owner_id for an exact owner match.",
         "operationId": "search_instruments_instruments_search_get",
         "parameters": [
           {
@@ -9972,6 +10065,25 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Exact stable owner identifier for a human or service account.",
+            "in": "query",
+            "name": "owner_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact stable owner identifier for a human or service account.",
+              "title": "Owner Id"
             }
           },
           {
@@ -10771,7 +10883,7 @@
     },
     "/projects": {
       "get": {
-        "description": "Returns a paginated list of projects the user is authorized to see, including the resolved project lead.\nPass affiliation=owner to return only projects authoritatively owned by the caller.",
+        "description": "Returns a paginated list of projects the user is authorized to see, including the resolved project lead.\nPass affiliation=owner to return only projects authoritatively owned by the caller.\nPass include_total=false to omit the exact authorization-filtered count.",
         "operationId": "list_projects_projects_get",
         "parameters": [
           {
@@ -10869,6 +10981,24 @@
               "default": false,
               "title": "Include Metadata",
               "type": "boolean"
+            }
+          },
+          {
+            "description": "Exact authorization-filtered total. Omit to preserve legacy endpoint behavior; true always computes it and false always omits it.",
+            "in": "query",
+            "name": "include_total",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact authorization-filtered total. Omit to preserve legacy endpoint behavior; true always computes it and false always omits it.",
+              "title": "Include Total"
             }
           },
           {
@@ -12737,7 +12867,7 @@
     },
     "/samples": {
       "get": {
-        "description": "Returns a paginated list of samples the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nBy default, results are ordered by unique_id descending. To fetch a keyset page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only when\ncursor is omitted and offset is zero.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. Supplying both returns 422. Prefer cursor for large result sets, since\ndeep offsets are slower.\nPass affiliation=owner to return only resources authoritatively owned by the caller.\nPass sort=created, updated, or name with direction=asc or desc for explicit ordering.\nPass include_links=true to include parent, child, and associated resources for each sample.\ninclude_datasets is deprecated; use include_links instead.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.\nPass dataset_mfid to filter by a readable dataset's canonical stable identity.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
+        "description": "Returns a paginated list of samples the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nBy default, results are ordered by unique_id descending. To fetch a keyset page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only when\ncursor is omitted and offset is zero. Pass include_total=true to request it on\nany page or include_total=false to suppress it.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. When both are supplied, cursor takes precedence. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass affiliation=owner to return only resources authoritatively owned by the caller.\nUse owner_id for an exact owner match; owner_orcid remains as a deprecated alias.\nPass sort=created, updated, or name with direction=asc or desc for explicit ordering.\nPass include_links=true to include parent, child, and associated resources for each sample.\ninclude_datasets is deprecated; use include_links instead.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.\nPass dataset_mfid to filter by a readable dataset's canonical stable identity.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
         "operationId": "list_samples_samples_get",
         "parameters": [
           {
@@ -12840,6 +12970,24 @@
             }
           },
           {
+            "description": "Exact authorization-filtered total. Omit to preserve legacy endpoint behavior; true always computes it and false always omits it.",
+            "in": "query",
+            "name": "include_total",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact authorization-filtered total. Omit to preserve legacy endpoint behavior; true always computes it and false always omits it.",
+              "title": "Include Total"
+            }
+          },
+          {
             "in": "query",
             "name": "limit",
             "required": false,
@@ -12872,13 +13020,13 @@
             }
           },
           {
-            "description": "Compatibility offset. Cannot be supplied with cursor.",
+            "description": "Compatibility offset. A supplied cursor takes precedence.",
             "in": "query",
             "name": "offset",
             "required": false,
             "schema": {
               "default": 0,
-              "description": "Compatibility offset. Cannot be supplied with cursor.",
+              "description": "Compatibility offset. A supplied cursor takes precedence.",
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -13162,8 +13310,27 @@
             }
           },
           {
+            "description": "Exact stable owner identifier for a human or service account.",
+            "in": "query",
+            "name": "owner_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact stable owner identifier for a human or service account.",
+              "title": "Owner Id"
+            }
+          },
+          {
             "deprecated": true,
-            "description": "Deprecated exact owner filter. Use affiliation=owner for the authenticated caller.",
+            "description": "Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
             "in": "query",
             "name": "owner_orcid",
             "required": false,
@@ -13177,7 +13344,7 @@
                 }
               ],
               "deprecated": true,
-              "description": "Deprecated exact owner filter. Use affiliation=owner for the authenticated caller.",
+              "description": "Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
               "title": "Owner Orcid"
             }
           },
@@ -13294,7 +13461,7 @@
     },
     "/samples/search": {
       "get": {
-        "description": "Search readable samples by name and return results ordered by match quality.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship. Maximum 50 results.",
+        "description": "Search readable samples by name and return results ordered by match quality.\nUse owner_id for an exact owner match.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship. Maximum 50 results.",
         "operationId": "search_samples_samples_search_get",
         "parameters": [
           {
@@ -13343,6 +13510,25 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Exact stable owner identifier for a human or service account.",
+            "in": "query",
+            "name": "owner_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact stable owner identifier for a human or service account.",
+              "title": "Owner Id"
             }
           },
           {

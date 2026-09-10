@@ -445,12 +445,14 @@ def list_datasets(
     By default, results are ordered by unique_id descending. To fetch a keyset page,
     pass cursor=<next_cursor from the previous response>. The first page omits cursor.
     next_cursor is null when there are no further pages. total is included only when
-    cursor is omitted and offset is zero.
+    cursor is omitted and offset is zero. Pass include_total=true to request it on
+    any page or include_total=false to suppress it.
 
     Offset pagination is supported for backward compatibility: pass offset=<n> instead
-    of cursor. Supplying both returns 422. Prefer cursor for large result sets, since
-    deep offsets are slower.
+    of cursor. When both are supplied, cursor takes precedence. Prefer cursor for large
+    result sets, since deep offsets are slower.
     Pass affiliation=owner to return only resources authoritatively owned by the caller.
+    Use owner_id for an exact owner match; owner_orcid remains as a deprecated alias.
     Pass sort=created, updated, or name with direction=asc or desc for explicit ordering.
     Pass include_links=true to include parent, child, and associated resources for each dataset.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
@@ -459,8 +461,6 @@ def list_datasets(
     Pass sample_mfid to filter by a readable sample's canonical stable identity.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
-    if params.cursor is not None and "offset" in request.query_params:
-        raise HTTPException(status_code=422, detail="cursor and offset cannot be combined")
     if params.sort is None and "direction" in request.query_params:
         raise HTTPException(status_code=422, detail="direction requires sort")
 
@@ -469,6 +469,7 @@ def list_datasets(
     include_metadata = params.include_metadata
     include_links = params.include_links
     include_owner = params.include_owner
+    include_total = params.include_total
     limit = params.limit
     cursor = params.cursor
     offset = params.offset
@@ -488,20 +489,25 @@ def list_datasets(
     exact_filters = {
         key: param_values[key]
         for key in (
-            "unique_id", "public", "dataset_name", "owner_orcid",
+            "unique_id", "public", "dataset_name",
             "instrument_name", "timestamp", "size", "data_format",
             "data_type", "measurement", "session_name",
         )
         if param_values[key] is not None
     }
+    owner_id = params.owner_id or param_values["owner_orcid"]
+    if owner_id is not None:
+        exact_filters["owner_orcid"] = owner_id
     sort_name = params.sort.value if params.sort is not None else "unique_id"
     direction = params.direction.value if params.sort is not None else SortDirection.DESC.value
     result_filters = params.normalized_result_filters(
         exclude={
             "cursor", "offset", "limit", "sort", "direction",
-            "include_metadata", "include_links", "include_owner",
+            "include_metadata", "include_links", "include_owner", "include_total",
+            "owner_orcid",
         },
     )
+    result_filters["owner_id"] = owner_id
     filters_digest = filter_fingerprint(result_filters)
     decoded_cursor = None
     decoded_primary = None
@@ -579,10 +585,10 @@ def list_datasets(
                 q = q.where(getattr(Dataset, key) == value)
             return q
 
-        # total is only needed on the first page; cursor pages and deep offset pages
-        # skip the redundant count.
         total = None
-        if cursor is None and offset == 0:
+        if include_total is True or (
+            include_total is None and cursor is None and offset == 0
+        ):
             count_query = apply_filters(
                 select(func.count()).select_from(Dataset)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
@@ -796,6 +802,7 @@ def search_datasets(
 ):
     '''
     Search readable datasets by name and return results ordered by match quality.
+    Use owner_id for an exact owner match.
     Pass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship. Maximum 50 results.
     '''
 
@@ -827,6 +834,8 @@ def search_datasets(
             ))
         if params.affiliation:
             query = query.where(owner_affiliation_filter(auth_res, Dataset))
+        if params.owner_id is not None:
+            query = query.where(Dataset.owner_orcid == params.owner_id)
         query = query.order_by(
             trigram_rank(normalized_q, (Dataset.dataset_name,)).desc(),
             Dataset.unique_id.desc(),

@@ -95,7 +95,9 @@ def list_instruments(
     Use instrument_id for exact slug lookup. Other filterable fields include
     other_id, other_id_source, instrument_name, manufacturer,
     model, owner, location, description, instrument_type, status.
+    Use owner_id for an exact owner match; owner remains as a deprecated alias.
     Pass affiliation=owner to return only instruments authoritatively owned by the caller.
+    Pass include_total=false to omit the exact authorization-filtered count.
     Defaults to status=active; pass ?status=maintenance or ?status=decommissioned to see others.
     An exact instrument_id lookup searches every status unless status is also provided.
     '''
@@ -103,8 +105,10 @@ def list_instruments(
     instrument_id = params.instrument_id
     include_metadata = params.include_metadata
     include_owner = params.include_owner
+    include_total = params.include_total
     limit = params.limit
     offset = params.offset
+    param_values["owner"] = params.owner_id or param_values["owner"]
     if instrument_id is None and params.status is None:
         param_values["status"] = "active"
     filters = [
@@ -123,7 +127,11 @@ def list_instruments(
         if params.affiliation:
             base = base.where(owner_affiliation_filter(auth_res, Instrument))
 
-        total = session.exec(select(func.count()).select_from(base.subquery())).one()
+        total = (
+            session.exec(select(func.count()).select_from(base.subquery())).one()
+            if include_total is not False
+            else None
+        )
 
         if include_metadata:
             statement = (
@@ -177,6 +185,7 @@ def search_instruments(
     '''
     Search instruments by name, type, or manufacturer using fuzzy matching.
     Returns results ordered by match quality. Maximum 50 results.
+    Use owner_id for an exact owner match.
     '''
     normalized_q, tokens = normalize_search_query(params.q)
     with Session(engine) as session:
@@ -189,6 +198,8 @@ def search_instruments(
             base = base.where(Instrument.status == params.status)
         if params.affiliation:
             base = base.where(owner_affiliation_filter(auth_res, Instrument))
+        if params.owner_id is not None:
+            base = base.where(Instrument.owner == params.owner_id)
         fields = (
             Instrument.instrument_name,
             Instrument.instrument_type,

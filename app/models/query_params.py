@@ -67,6 +67,13 @@ class ResourceCollectionQuery(StrictQueryModel):
     include_metadata: bool = False
     include_links: bool = False
     include_owner: bool = False
+    include_total: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Exact authorization-filtered total. Omit to preserve legacy endpoint behavior; "
+            "true always computes it and false always omits it."
+        ),
+    )
     limit: int = Field(default=100, ge=1, le=1000)
     cursor: Optional[str] = Field(
         default=None,
@@ -77,7 +84,7 @@ class ResourceCollectionQuery(StrictQueryModel):
     offset: int = Field(
         default=0,
         ge=0,
-        description="Compatibility offset. Cannot be supplied with cursor.",
+        description="Compatibility offset. A supplied cursor takes precedence.",
     )
     creation_time_gte: Optional[AwareDatetime] = Field(default=None, description="Inclusive creation-time lower bound.")
     creation_time_lte: Optional[AwareDatetime] = Field(default=None, description="Inclusive creation-time upper bound.")
@@ -158,9 +165,14 @@ class DatasetListQuery(ResourceCollectionQuery):
     unique_id: Optional[str] = None
     public: Optional[bool] = None
     dataset_name: Optional[str] = None
+    owner_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Exact stable owner identifier for a human or service account.",
+    )
     owner_orcid: Annotated[Optional[str], Field(
         deprecated=True,
-        description="Deprecated exact owner filter. Use affiliation=owner for the authenticated caller.",
+        description="Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
     )] = None
     instrument_name: Optional[str] = None
     timestamp: Optional[str] = None
@@ -172,8 +184,11 @@ class DatasetListQuery(ResourceCollectionQuery):
 
     @model_validator(mode="after")
     def validate_affiliation(self):
-        if self.affiliation and self.__dict__.get("owner_orcid") is not None:
-            raise ValueError("affiliation cannot be combined with owner_orcid")
+        owner_orcid = self.__dict__.get("owner_orcid")
+        if self.owner_id is not None and owner_orcid is not None and self.owner_id != owner_orcid:
+            raise ValueError("owner_id and owner_orcid must identify the same owner")
+        if self.affiliation and (self.owner_id is not None or owner_orcid is not None):
+            raise ValueError("affiliation cannot be combined with an exact owner filter")
         return self
 
 
@@ -190,17 +205,25 @@ class SampleListQuery(ResourceCollectionQuery):
     public: Optional[bool] = None
     sample_name: Optional[str] = None
     sample_type: Optional[str] = None
+    owner_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Exact stable owner identifier for a human or service account.",
+    )
     owner_orcid: Annotated[Optional[str], Field(
         deprecated=True,
-        description="Deprecated exact owner filter. Use affiliation=owner for the authenticated caller.",
+        description="Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
     )] = None
     description: Optional[str] = None
     timestamp: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_affiliation(self):
-        if self.affiliation and self.__dict__.get("owner_orcid") is not None:
-            raise ValueError("affiliation cannot be combined with owner_orcid")
+        owner_orcid = self.__dict__.get("owner_orcid")
+        if self.owner_id is not None and owner_orcid is not None and self.owner_id != owner_orcid:
+            raise ValueError("owner_id and owner_orcid must identify the same owner")
+        if self.affiliation and (self.owner_id is not None or owner_orcid is not None):
+            raise ValueError("affiliation cannot be combined with an exact owner filter")
         return self
 
 
@@ -225,6 +248,13 @@ class ProjectListQuery(StrictQueryModel):
         description=AFFILIATION_DESCRIPTION,
     )
     include_metadata: bool = False
+    include_total: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Exact authorization-filtered total. Omit to preserve legacy endpoint behavior; "
+            "true always computes it and false always omits it."
+        ),
+    )
     include_members: bool = Field(
         default=False,
         description="Include members for an exact project_id lookup when authorized.",
@@ -259,6 +289,13 @@ class InstrumentListQuery(StrictQueryModel):
     )
     include_metadata: bool = False
     include_owner: bool = False
+    include_total: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Exact authorization-filtered total. Omit to preserve legacy endpoint behavior; "
+            "true always computes it and false always omits it."
+        ),
+    )
     limit: int = Field(default=100, ge=1, le=1000)
     offset: int = Field(default=0, ge=0)
     other_id: Optional[str] = None
@@ -266,9 +303,14 @@ class InstrumentListQuery(StrictQueryModel):
     instrument_name: Optional[str] = None
     manufacturer: Optional[str] = None
     model: Optional[str] = None
+    owner_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Exact stable owner identifier for a human or service account.",
+    )
     owner: Annotated[Optional[str], Field(
         deprecated=True,
-        description="Deprecated exact owner filter. Use affiliation=owner for the authenticated caller.",
+        description="Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
     )] = None
     location: Optional[str] = None
     description: Optional[str] = None
@@ -280,8 +322,11 @@ class InstrumentListQuery(StrictQueryModel):
 
     @model_validator(mode="after")
     def validate_affiliation(self):
-        if self.affiliation and self.__dict__.get("owner") is not None:
-            raise ValueError("affiliation cannot be combined with owner")
+        owner = self.__dict__.get("owner")
+        if self.owner_id is not None and owner is not None and self.owner_id != owner:
+            raise ValueError("owner_id and owner must identify the same owner")
+        if self.affiliation and (self.owner_id is not None or owner is not None):
+            raise ValueError("affiliation cannot be combined with an exact owner filter")
         return self
 
 
@@ -301,6 +346,11 @@ class SearchQuery(StrictQueryModel):
 
 
 class ResourceSearchQuery(SearchQuery):
+    owner_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Exact stable owner identifier for a human or service account.",
+    )
     project_id: Optional[str] = Field(
         default=None,
         description="Restrict results related to this project slug. May be combined with a matching project_mfid.",
@@ -318,12 +368,25 @@ class ResourceSearchQuery(SearchQuery):
     def validate_project_scope(self):
         if self.project_scope is not None and self.project_id is None and self.project_mfid is None:
             raise ValueError("project_scope requires project_id or project_mfid")
+        if self.affiliation and self.owner_id is not None:
+            raise ValueError("affiliation cannot be combined with owner_id")
         return self
 
 
 class InstrumentSearchQuery(SearchQuery):
+    owner_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Exact stable owner identifier for a human or service account.",
+    )
     status: Optional[InstrumentStatus] = Field(
         default=None,
         description="Restrict results to one lifecycle status.",
     )
     include_owner: bool = False
+
+    @model_validator(mode="after")
+    def validate_affiliation(self):
+        if self.affiliation and self.owner_id is not None:
+            raise ValueError("affiliation cannot be combined with owner_id")
+        return self

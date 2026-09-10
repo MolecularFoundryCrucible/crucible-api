@@ -180,9 +180,9 @@ Use a dedicated previewable atomic operation rather than generic dataset PATCH. 
 
 ### 13. Search and collection semantics
 
-Decision: The affiliation filter and minimum dataset and sample sorting contract are accepted as part of `docs/get_query_contract.md`. Broader facets, group summaries, unified collection sorting, and cursor conversion for other collections remain deferred pending concrete requirements.
+Decision: The affiliation filter, minimum dataset and sample sorting contract, and bounded dataset and sample facet endpoints are accepted as part of `docs/get_query_contract.md`. General group summaries and a broad aggregation query language remain deferred.
 
-Preserve deterministic ordering and cursor pagination where already supported. Add individual sort options, facets, or group summaries only after specifying fields, cardinality, permission behavior, page stability, and continuation semantics. Do not create a generic query language or broad aggregation framework for speculative needs.
+Dataset facets cover session, measurement, data format, owner, instrument, and project. Sample facets cover sample type, owner, and project. Stored values remain exact, null receives its own selectable bucket, relation buckets carry canonical identifiers and resolved references, and counts apply the caller's authorization and supplied scope filters. Bucket results use bounded cursor pagination. Month and year grouping remains deferred because the producer-supplied timestamp contract is not enforceable; a future creation-time facet must define UTC calendar semantics explicitly.
 
 ### 14. Home and activity summaries
 

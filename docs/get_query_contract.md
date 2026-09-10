@@ -133,6 +133,24 @@ Project collections accept opaque cursors over their existing `project_id ASC` o
 
 Do not automatically expose every persistence column. A filter remains public only when it has a stable client meaning, safe validation, and tested composition with authorization and pagination.
 
+### Dataset and sample facets
+
+Add authorization-scoped `GET /datasets/facets` and `GET /samples/facets` collection operations. These endpoints return distinct selectable values and counts, not grouped resource records or general statistical aggregations.
+
+Dataset facet fields are `session`, `measurement`, `data_format`, `owner`, `instrument`, and `project`. Sample facet fields are `sample_type`, `owner`, and `project`. The field allowlists are explicit enums and do not expose arbitrary persistence columns.
+
+Text facets preserve stored values exactly. The API does not trim, case-fold, relabel, or merge values, so `XAS`, `xas`, an empty string, and null remain distinct buckets. Null is represented as JSON null and appears after concrete values. Clients provide contextual labels such as "Unspecified" or "No registered instrument" rather than relying on an API sentinel string.
+
+Owner buckets contain the stable stored owner identifier and its public-safe resolved user reference when available. Project and instrument buckets contain the canonical MFID and the existing resolved `ProjectReferenceRead` or `InstrumentReferenceRead`. A null dataset instrument bucket means that no canonical registered instrument is assigned, even when a legacy free-text instrument label remains on the dataset.
+
+Facet counts include only active resources readable by the authenticated caller after the supplied access, affiliation, visibility, project, relationship, lifecycle-time, exact-value, and null filters are applied. The endpoints accept only filters relevant to their facet contract and reject unknown parameters. They do not accept resource ordering, response expansions, offsets, or exact-total controls.
+
+Buckets use raw stored-value ascending order with null last and bounded `limit` plus opaque cursor pagination. Cursors are signed, bound to the caller, resource type, facet field, and normalized filters, and are not valid on resource-list endpoints. Changing the page limit while following a cursor is allowed.
+
+The corresponding dataset and sample collection routes expose optional field-specific `*_is_null` booleans. Omission does not constrain nullability, true selects null values, and false selects non-null values. A true null selector conflicts with a concrete selector for the same field and returns 422.
+
+Month or year facets remain deferred. A future lifecycle-time facet should use API-managed `creation_time` in UTC and a name such as `created_month`. The producer-supplied `timestamp` field remains unsuitable for server-side calendar grouping because its format and timezone are not enforced.
+
 ### Singleton GET parameters
 
 Keep current explicit representation controls. Standardize their descriptions, defaults, authorization behavior, and strict unknown-parameter validation in OpenAPI. Do not add ownership, visibility, access-selector, sort, or pagination parameters to singleton reads.

@@ -35,6 +35,7 @@ from app.models.core_models import (
     UserAccessGroupLink,
 )
 from app.models.response_schemas import DatasetSampleLinkResponse
+from app.models.facets import FacetResponse
 from app.models.datasets import (
     AssociatedFileCreate, AssociatedFileRead,
     DatasetCreate, DatasetRead, DatasetResponse, DatasetUpdate,
@@ -44,15 +45,17 @@ from app.models.instrument import InstrumentReferenceRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
-    DatasetDetailQuery, DatasetListQuery, ResourceSearchQuery, ResourceSort,
+    DatasetDetailQuery, DatasetFacetQuery, DatasetListQuery, ResourceSearchQuery, ResourceSort,
     SortDirection)
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
 from app.services.resource_details import ResourceDetailOptions, load_dataset_detail
+from app.services.resource_facets import list_dataset_facets
+from app.services.resource_filters import resource_scope_predicates
 from app.services.thumbnails import InvalidThumbnailImage, ThumbnailTooLarge, normalize_thumbnail
 from app.utils.auth_utils import (
-    access_selector_filter, authorize_user, permission_filter, project_scope_filter,
+    authorize_user, permission_filter, project_scope_filter,
     owner_affiliation_filter, require_permission)
 from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor,
@@ -76,7 +79,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.user_utils import resolve_create_owner
-from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
+from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
@@ -433,6 +436,15 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
         })
 
 
+@router.get("/datasets/facets", response_model=FacetResponse)
+def get_dataset_facets(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    params: Annotated[DatasetFacetQuery, Query()],
+):
+    with Session(engine) as session:
+        return list_dataset_facets(session, auth_res, params)
+
+
 @router.get("/datasets", response_model=PaginatedResponse[DatasetResponse])
 def list_datasets(
     auth_res: Annotated[Principal, Depends(authorize_user)],
@@ -460,13 +472,12 @@ def list_datasets(
     Pass instrument_mfid to filter by the instrument's canonical stable identity.
     Pass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.
     Pass sample_mfid to filter by a readable sample's canonical stable identity.
+    Faceted nullable fields also accept field-specific is_null=true or false filters.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
     if params.sort is None and "direction" in request.query_params:
         raise HTTPException(status_code=422, detail="direction requires sort")
 
-    accessible_to_user = params.accessible_to_user
-    accessible_to_project = params.accessible_to_project
     include_metadata = params.include_metadata
     include_links = params.include_links
     include_owner = params.include_owner
@@ -474,17 +485,10 @@ def list_datasets(
     limit = params.limit
     cursor = params.cursor
     offset = params.offset
-    creation_time_gte = params.normalized_time("creation_time_gte")
-    creation_time_lte = params.normalized_time("creation_time_lte")
-    modification_time_gte = params.normalized_time("modification_time_gte")
-    modification_time_lte = params.normalized_time("modification_time_lte")
-    visibility = params.visibility
     instrument_mfid = params.instrument_mfid
     project_id = params.project_id
     project_mfid = params.project_mfid
-    project_scope = params.project_scope
     sample_mfid = params.sample_mfid
-    effective_project_scope: ProjectScope = project_scope or "assigned"
     keyword_filter = params.keyword
     param_values = params.model_dump()
     exact_filters = {
@@ -540,39 +544,19 @@ def list_datasets(
             if linked_sample_id is None:
                 raise HTTPException(status_code=404, detail="Sample not found or access denied")
 
-        auth_filter = access_selector_filter(
+        scope_predicates = resource_scope_predicates(
             session,
             auth_res,
             Dataset,
-            user_refs=accessible_to_user,
-            project_refs=accessible_to_project,
+            params,
+            filter_project_mfid,
         )
-        project_filter = (
-            project_scope_filter(
-                session, auth_res, Dataset, filter_project_mfid, effective_project_scope)
-            if filter_project_mfid is not None else None
-        )
-        deletion_filter = deletion_filter_for(Dataset)
 
         # Base filters shared between count and data queries
         def apply_filters(q):
-            q = q.where(auth_filter).where(deletion_filter)
-            if params.affiliation:
-                q = q.where(owner_affiliation_filter(auth_res, Dataset))
-            if visibility != "all":
-                q = q.where(visibility_filter_for(Dataset, visibility))
-            if creation_time_gte:
-                q = q.where(Resource.creation_time >= creation_time_gte)
-            if creation_time_lte:
-                q = q.where(Resource.creation_time <= creation_time_lte)
-            if modification_time_gte:
-                q = q.where(Resource.modification_time >= modification_time_gte)
-            if modification_time_lte:
-                q = q.where(Resource.modification_time <= modification_time_lte)
+            q = q.where(*scope_predicates)
             if instrument_mfid is not None:
                 q = q.where(Dataset.instrument_mfid == instrument_mfid)
-            if project_filter is not None:
-                q = q.where(project_filter)
             if linked_sample_id is not None:
                 q = q.where(
                     exists()
@@ -584,6 +568,16 @@ def list_datasets(
                 )
             for key, value in exact_filters.items():
                 q = q.where(getattr(Dataset, key) == value)
+            for column, value in (
+                (Dataset.session_name, params.session_name_is_null),
+                (Dataset.measurement, params.measurement_is_null),
+                (Dataset.data_format, params.data_format_is_null),
+                (Dataset.owner_orcid, params.owner_id_is_null),
+                (Dataset.instrument_mfid, params.instrument_mfid_is_null),
+                (Dataset.project_mfid, params.project_mfid_is_null),
+            ):
+                if value is not None:
+                    q = q.where(column.is_(None) if value else column.is_not(None))
             return q
 
         total = None

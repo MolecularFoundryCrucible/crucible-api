@@ -793,6 +793,18 @@
         "title": "DatasetCreate",
         "type": "object"
       },
+      "DatasetFacetField": {
+        "enum": [
+          "session",
+          "measurement",
+          "data_format",
+          "owner",
+          "instrument",
+          "project"
+        ],
+        "title": "DatasetFacetField",
+        "type": "string"
+      },
       "DatasetLink": {
         "properties": {
           "child_dataset_id": {
@@ -1724,6 +1736,82 @@
         "title": "ExtractMetadataRequest",
         "type": "object"
       },
+      "FacetBucket": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "value",
+          "count"
+        ],
+        "title": "FacetBucket",
+        "type": "object"
+      },
+      "FacetResponse": {
+        "properties": {
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/FacetBucket"
+                },
+                {
+                  "$ref": "#/components/schemas/OwnerFacetBucket"
+                },
+                {
+                  "$ref": "#/components/schemas/ProjectFacetBucket"
+                },
+                {
+                  "$ref": "#/components/schemas/InstrumentFacetBucket"
+                }
+              ]
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "field",
+          "limit",
+          "items"
+        ],
+        "title": "FacetResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1980,6 +2068,43 @@
           "location"
         ],
         "title": "InstrumentCreate",
+        "type": "object"
+      },
+      "InstrumentFacetBucket": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "instrument": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InstrumentReferenceRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "value",
+          "count",
+          "instrument"
+        ],
+        "title": "InstrumentFacetBucket",
         "type": "object"
       },
       "InstrumentReferenceRead": {
@@ -2517,6 +2642,43 @@
           "status"
         ],
         "title": "LivenessResponse",
+        "type": "object"
+      },
+      "OwnerFacetBucket": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserPublicRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "value",
+          "count",
+          "owner"
+        ],
+        "title": "OwnerFacetBucket",
         "type": "object"
       },
       "PaginatedResponse_AccessGroupMemberRead_": {
@@ -3482,6 +3644,43 @@
         "title": "ProjectCreate",
         "type": "object"
       },
+      "ProjectFacetBucket": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectReferenceRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "value",
+          "count",
+          "project"
+        ],
+        "title": "ProjectFacetBucket",
+        "type": "object"
+      },
       "ProjectMembershipRole": {
         "enum": [
           "viewer",
@@ -4197,6 +4396,15 @@
         ],
         "title": "SampleCreate",
         "type": "object"
+      },
+      "SampleFacetField": {
+        "enum": [
+          "sample_type",
+          "owner",
+          "project"
+        ],
+        "title": "SampleFacetField",
+        "type": "string"
       },
       "SampleLink": {
         "properties": {
@@ -5897,7 +6105,7 @@
     },
     "/datasets": {
       "get": {
-        "description": "Returns a paginated list of datasets the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nBy default, results are ordered by unique_id descending. To fetch a keyset page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only when\ncursor is omitted and offset is zero. Pass include_total=true to request it on\nany page or include_total=false to suppress it.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. When both are supplied, cursor takes precedence. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass affiliation=owner to return only resources authoritatively owned by the caller.\nUse owner_id for an exact owner match; owner_orcid remains as a deprecated alias.\nPass sort=created, updated, or name with direction=asc or desc for explicit ordering.\nPass include_links=true to include parent, child, and associated resources for each dataset.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass instrument_mfid to filter by the instrument's canonical stable identity.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.\nPass sample_mfid to filter by a readable sample's canonical stable identity.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
+        "description": "Returns a paginated list of datasets the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nBy default, results are ordered by unique_id descending. To fetch a keyset page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only when\ncursor is omitted and offset is zero. Pass include_total=true to request it on\nany page or include_total=false to suppress it.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. When both are supplied, cursor takes precedence. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass affiliation=owner to return only resources authoritatively owned by the caller.\nUse owner_id for an exact owner match; owner_orcid remains as a deprecated alias.\nPass sort=created, updated, or name with direction=asc or desc for explicit ordering.\nPass include_links=true to include parent, child, and associated resources for each dataset.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass instrument_mfid to filter by the instrument's canonical stable identity.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.\nPass sample_mfid to filter by a readable sample's canonical stable identity.\nFaceted nullable fields also accept field-specific is_null=true or false filters.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
         "operationId": "list_datasets_datasets_get",
         "parameters": [
           {
@@ -6493,6 +6701,114 @@
               ],
               "title": "Session Name"
             }
+          },
+          {
+            "description": "Filter by whether session_name is null.",
+            "in": "query",
+            "name": "session_name_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by whether session_name is null.",
+              "title": "Session Name Is Null"
+            }
+          },
+          {
+            "description": "Filter by whether measurement is null.",
+            "in": "query",
+            "name": "measurement_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by whether measurement is null.",
+              "title": "Measurement Is Null"
+            }
+          },
+          {
+            "description": "Filter by whether data_format is null.",
+            "in": "query",
+            "name": "data_format_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by whether data_format is null.",
+              "title": "Data Format Is Null"
+            }
+          },
+          {
+            "description": "Filter by whether the stored owner identifier is null.",
+            "in": "query",
+            "name": "owner_id_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by whether the stored owner identifier is null.",
+              "title": "Owner Id Is Null"
+            }
+          },
+          {
+            "description": "Filter by whether a canonical registered instrument is assigned.",
+            "in": "query",
+            "name": "instrument_mfid_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by whether a canonical registered instrument is assigned.",
+              "title": "Instrument Mfid Is Null"
+            }
+          },
+          {
+            "description": "Filter by whether a canonical primary project is assigned.",
+            "in": "query",
+            "name": "project_mfid_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by whether a canonical primary project is assigned.",
+              "title": "Project Mfid Is Null"
+            }
           }
         ],
         "responses": {
@@ -6567,6 +6883,510 @@
           }
         ],
         "summary": "Create Dataset",
+        "tags": [
+          "datasets"
+        ]
+      }
+    },
+    "/datasets/facets": {
+      "get": {
+        "operationId": "get_dataset_facets_datasets_facets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "accessible_to_user",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Accessible To User"
+            }
+          },
+          {
+            "in": "query",
+            "name": "accessible_to_project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Accessible To Project"
+            }
+          },
+          {
+            "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics.",
+            "in": "query",
+            "name": "affiliation",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/Affiliation"
+                  },
+                  "maxItems": 5,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics.",
+              "title": "Affiliation"
+            }
+          },
+          {
+            "description": "Restrict the resources contributing to bucket counts by public visibility.",
+            "in": "query",
+            "name": "visibility",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "description": "Restrict the resources contributing to bucket counts by public visibility.",
+              "enum": [
+                "all",
+                "public",
+                "private"
+              ],
+              "title": "Visibility",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Project slug. May be combined with a matching project_mfid.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Project slug. May be combined with a matching project_mfid.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Canonical project MFID. May be combined with a matching project_id.",
+            "in": "query",
+            "name": "project_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Canonical project MFID. May be combined with a matching project_id.",
+              "title": "Project Mfid"
+            }
+          },
+          {
+            "description": "Project relationship to include. Requires a project filter and defaults to assigned.",
+            "in": "query",
+            "name": "project_scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "assigned",
+                    "shared",
+                    "all"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Project relationship to include. Requires a project filter and defaults to assigned.",
+              "title": "Project Scope"
+            }
+          },
+          {
+            "description": "Inclusive creation-time lower bound.",
+            "in": "query",
+            "name": "creation_time_gte",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive creation-time lower bound.",
+              "title": "Creation Time Gte"
+            }
+          },
+          {
+            "description": "Inclusive creation-time upper bound.",
+            "in": "query",
+            "name": "creation_time_lte",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive creation-time upper bound.",
+              "title": "Creation Time Lte"
+            }
+          },
+          {
+            "description": "Inclusive modification-time lower bound.",
+            "in": "query",
+            "name": "modification_time_gte",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive modification-time lower bound.",
+              "title": "Modification Time Gte"
+            }
+          },
+          {
+            "description": "Inclusive modification-time upper bound.",
+            "in": "query",
+            "name": "modification_time_lte",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive modification-time upper bound.",
+              "title": "Modification Time Lte"
+            }
+          },
+          {
+            "description": "Maximum number of facet buckets to return.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "description": "Maximum number of facet buckets to return.",
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque continuation cursor returned by a previous facet page.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque continuation cursor returned by a previous facet page.",
+              "title": "Cursor"
+            }
+          },
+          {
+            "description": "Dataset field to group into facet buckets.",
+            "in": "query",
+            "name": "field",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DatasetFacetField",
+              "description": "Dataset field to group into facet buckets."
+            }
+          },
+          {
+            "in": "query",
+            "name": "sample_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sample Mfid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "instrument_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Instrument Mfid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "session_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Name"
+            }
+          },
+          {
+            "in": "query",
+            "name": "measurement",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Measurement"
+            }
+          },
+          {
+            "in": "query",
+            "name": "data_format",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Data Format"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Owner Id"
+            }
+          },
+          {
+            "description": "Restrict contributing datasets by whether session_name is null.",
+            "in": "query",
+            "name": "session_name_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict contributing datasets by whether session_name is null.",
+              "title": "Session Name Is Null"
+            }
+          },
+          {
+            "description": "Restrict contributing datasets by whether measurement is null.",
+            "in": "query",
+            "name": "measurement_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict contributing datasets by whether measurement is null.",
+              "title": "Measurement Is Null"
+            }
+          },
+          {
+            "description": "Restrict contributing datasets by whether data_format is null.",
+            "in": "query",
+            "name": "data_format_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict contributing datasets by whether data_format is null.",
+              "title": "Data Format Is Null"
+            }
+          },
+          {
+            "description": "Restrict contributing datasets by whether the stored owner identifier is null.",
+            "in": "query",
+            "name": "owner_id_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict contributing datasets by whether the stored owner identifier is null.",
+              "title": "Owner Id Is Null"
+            }
+          },
+          {
+            "description": "Restrict contributing datasets by canonical instrument assignment.",
+            "in": "query",
+            "name": "instrument_mfid_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict contributing datasets by canonical instrument assignment.",
+              "title": "Instrument Mfid Is Null"
+            }
+          },
+          {
+            "description": "Restrict contributing datasets by canonical primary project assignment.",
+            "in": "query",
+            "name": "project_mfid_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict contributing datasets by canonical primary project assignment.",
+              "title": "Project Mfid Is Null"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FacetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Dataset Facets",
         "tags": [
           "datasets"
         ]
@@ -12907,7 +13727,7 @@
     },
     "/samples": {
       "get": {
-        "description": "Returns a paginated list of samples the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nBy default, results are ordered by unique_id descending. To fetch a keyset page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only when\ncursor is omitted and offset is zero. Pass include_total=true to request it on\nany page or include_total=false to suppress it.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. When both are supplied, cursor takes precedence. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass affiliation=owner to return only resources authoritatively owned by the caller.\nUse owner_id for an exact owner match; owner_orcid remains as a deprecated alias.\nPass sort=created, updated, or name with direction=asc or desc for explicit ordering.\nPass include_links=true to include parent, child, and associated resources for each sample.\ninclude_datasets is deprecated; use include_links instead.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.\nPass dataset_mfid to filter by a readable dataset's canonical stable identity.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
+        "description": "Returns a paginated list of samples the requesting user is authorized to view.\nDefault limit is 100, max is 1000.\n\nBy default, results are ordered by unique_id descending. To fetch a keyset page,\npass cursor=<next_cursor from the previous response>. The first page omits cursor.\nnext_cursor is null when there are no further pages. total is included only when\ncursor is omitted and offset is zero. Pass include_total=true to request it on\nany page or include_total=false to suppress it.\n\nOffset pagination is supported for backward compatibility: pass offset=<n> instead\nof cursor. When both are supplied, cursor takes precedence. Prefer cursor for large\nresult sets, since deep offsets are slower.\nPass affiliation=owner to return only resources authoritatively owned by the caller.\nUse owner_id for an exact owner match; owner_orcid remains as a deprecated alias.\nPass sort=created, updated, or name with direction=asc or desc for explicit ordering.\nPass include_links=true to include parent, child, and associated resources for each sample.\ninclude_datasets is deprecated; use include_links instead.\nPass visibility=public or visibility=private to narrow by the resource's public ACL entry.\nPass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.\nPass dataset_mfid to filter by a readable dataset's canonical stable identity.\nFaceted nullable fields also accept field-specific is_null=true or false filters.\nAccess selectors use AND semantics and only narrow resources readable by the caller.",
         "operationId": "list_samples_samples_get",
         "parameters": [
           {
@@ -13419,6 +14239,60 @@
               ],
               "title": "Timestamp"
             }
+          },
+          {
+            "description": "Filter by whether sample_type is null.",
+            "in": "query",
+            "name": "sample_type_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by whether sample_type is null.",
+              "title": "Sample Type Is Null"
+            }
+          },
+          {
+            "description": "Filter by whether the stored owner identifier is null.",
+            "in": "query",
+            "name": "owner_id_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by whether the stored owner identifier is null.",
+              "title": "Owner Id Is Null"
+            }
+          },
+          {
+            "description": "Filter by whether a canonical primary project is assigned.",
+            "in": "query",
+            "name": "project_mfid_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by whether a canonical primary project is assigned.",
+              "title": "Project Mfid Is Null"
+            }
           }
         ],
         "responses": {
@@ -13494,6 +14368,408 @@
           }
         ],
         "summary": "Create Sample",
+        "tags": [
+          "samples"
+        ]
+      }
+    },
+    "/samples/facets": {
+      "get": {
+        "operationId": "get_sample_facets_samples_facets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "accessible_to_user",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Accessible To User"
+            }
+          },
+          {
+            "in": "query",
+            "name": "accessible_to_project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Accessible To Project"
+            }
+          },
+          {
+            "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics.",
+            "in": "query",
+            "name": "affiliation",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/Affiliation"
+                  },
+                  "maxItems": 5,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics.",
+              "title": "Affiliation"
+            }
+          },
+          {
+            "description": "Restrict the resources contributing to bucket counts by public visibility.",
+            "in": "query",
+            "name": "visibility",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "description": "Restrict the resources contributing to bucket counts by public visibility.",
+              "enum": [
+                "all",
+                "public",
+                "private"
+              ],
+              "title": "Visibility",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Project slug. May be combined with a matching project_mfid.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Project slug. May be combined with a matching project_mfid.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Canonical project MFID. May be combined with a matching project_id.",
+            "in": "query",
+            "name": "project_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Canonical project MFID. May be combined with a matching project_id.",
+              "title": "Project Mfid"
+            }
+          },
+          {
+            "description": "Project relationship to include. Requires a project filter and defaults to assigned.",
+            "in": "query",
+            "name": "project_scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "assigned",
+                    "shared",
+                    "all"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Project relationship to include. Requires a project filter and defaults to assigned.",
+              "title": "Project Scope"
+            }
+          },
+          {
+            "description": "Inclusive creation-time lower bound.",
+            "in": "query",
+            "name": "creation_time_gte",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive creation-time lower bound.",
+              "title": "Creation Time Gte"
+            }
+          },
+          {
+            "description": "Inclusive creation-time upper bound.",
+            "in": "query",
+            "name": "creation_time_lte",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive creation-time upper bound.",
+              "title": "Creation Time Lte"
+            }
+          },
+          {
+            "description": "Inclusive modification-time lower bound.",
+            "in": "query",
+            "name": "modification_time_gte",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive modification-time lower bound.",
+              "title": "Modification Time Gte"
+            }
+          },
+          {
+            "description": "Inclusive modification-time upper bound.",
+            "in": "query",
+            "name": "modification_time_lte",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive modification-time upper bound.",
+              "title": "Modification Time Lte"
+            }
+          },
+          {
+            "description": "Maximum number of facet buckets to return.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "description": "Maximum number of facet buckets to return.",
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque continuation cursor returned by a previous facet page.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque continuation cursor returned by a previous facet page.",
+              "title": "Cursor"
+            }
+          },
+          {
+            "description": "Sample field to group into facet buckets.",
+            "in": "query",
+            "name": "field",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SampleFacetField",
+              "description": "Sample field to group into facet buckets."
+            }
+          },
+          {
+            "in": "query",
+            "name": "dataset_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dataset Mfid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sample_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sample Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Owner Id"
+            }
+          },
+          {
+            "description": "Restrict contributing samples by whether sample_type is null.",
+            "in": "query",
+            "name": "sample_type_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict contributing samples by whether sample_type is null.",
+              "title": "Sample Type Is Null"
+            }
+          },
+          {
+            "description": "Restrict contributing samples by whether the stored owner identifier is null.",
+            "in": "query",
+            "name": "owner_id_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict contributing samples by whether the stored owner identifier is null.",
+              "title": "Owner Id Is Null"
+            }
+          },
+          {
+            "description": "Restrict contributing samples by canonical primary project assignment.",
+            "in": "query",
+            "name": "project_mfid_is_null",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict contributing samples by canonical primary project assignment.",
+              "title": "Project Mfid Is Null"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FacetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Sample Facets",
         "tags": [
           "samples"
         ]

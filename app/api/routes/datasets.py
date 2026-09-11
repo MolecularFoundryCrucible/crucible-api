@@ -28,6 +28,7 @@ from app.models.core_models import (
     Keyword,
     Project,
     Resource,
+    ResourceACL,
     Sample,
     ScientificMetadataBinary,
     Thumbnail,
@@ -37,7 +38,8 @@ from app.models.core_models import (
 from app.models.response_schemas import DatasetSampleLinkResponse
 from app.models.datasets import (
     AssociatedFileCreate, AssociatedFileRead,
-    DatasetCreate, DatasetRead, DatasetResponse, DatasetUpdate,
+    DatasetCreate, DatasetInstrumentAssign, DatasetInstrumentRead,
+    DatasetRead, DatasetResponse, DatasetUpdate,
     ThumbnailCreate, ThumbnailPreviewRead, ThumbnailRead, ThumbnailUpdate,
 )
 from app.models.instrument import InstrumentReferenceRead
@@ -397,8 +399,9 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
                 raise HTTPException(
                     status_code=409,
                     detail=(
-                        "Dataset instrument reassignment is temporarily unavailable. "
-                        "Omit instrument_id and instrument_name unless resubmitting the current value."
+                        "Dataset instrument assignment is not editable here. "
+                        "Use PUT /datasets/{dataset_mfid}/instrument, which keeps the "
+                        "instrument columns and the resource ACL in step."
                     ),
                 )
 
@@ -427,6 +430,106 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
         })
+
+
+@router.put("/datasets/{dsid}/instrument", response_model=DatasetInstrumentRead)
+def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str,
+                              assignment: DatasetInstrumentAssign,
+                              background_tasks: BackgroundTasks):
+    '''
+    Assign or reassign the dataset's instrument, by slug or MFID.
+
+    The three instrument columns are written from one resolved instrument row,
+    so instrument_id (the integer FK), instrument_mfid, and the instrument_name
+    label cannot drift apart. Nothing about the instrument is taken from the
+    request body beyond the identifier used to look it up.
+
+    The instrument's access group is granted contributor on the dataset, the
+    same grant dataset creation makes. Reassignment removes the grant belonging
+    to the outgoing instrument's group only — resourceacl records no provenance,
+    so a broader sweep could not tell a derived grant from a deliberate one.
+
+    Resubmitting the dataset's current instrument changes no columns but still
+    ensures the ACL row exists, which repairs datasets whose instrument columns
+    were backfilled without the accompanying grant.
+    '''
+    user_unique_id = auth_res.user_id
+
+    with Session(engine) as session:
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        require_permission(session, auth_res, dsid, Permission.MANAGE_ACL)
+
+        instrument = resolve_instrument_identifiers(
+            session, assignment.instrument_id, assignment.instrument_mfid)
+
+        previous_instrument = None
+        if ds.instrument_mfid is not None:
+            previous_instrument = session.exec(
+                select(Instrument).where(Instrument.unique_id == ds.instrument_mfid)
+            ).one_or_none()
+        elif ds.instrument_id is not None:
+            previous_instrument = session.get(Instrument, ds.instrument_id)
+        previous_instrument_name = ds.instrument_name
+        # Built before the commit expires these rows, so the response never
+        # depends on reloading an instrument mid-serialization.
+        previous_reference = (
+            InstrumentReferenceRead.model_validate(previous_instrument)
+            if previous_instrument is not None else None
+        )
+        new_reference = InstrumentReferenceRead.model_validate(instrument)
+
+        new_ag = session.exec(
+            select(AccessGroup).where(
+                AccessGroup.group_name == instrument.unique_id,
+                AccessGroup.group_type == AccessGroupType.INSTRUMENT.value,
+            )
+        ).one_or_none()
+        if new_ag is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Instrument '{instrument.unique_id}' has no access group provisioned")
+
+        if previous_instrument is not None and previous_instrument.unique_id != instrument.unique_id:
+            old_ag = session.exec(
+                select(AccessGroup).where(
+                    AccessGroup.group_name == previous_instrument.unique_id,
+                    AccessGroup.group_type == AccessGroupType.INSTRUMENT.value,
+                )
+            ).one_or_none()
+            if old_ag is not None:
+                stale = session.exec(
+                    select(ResourceACL).where(
+                        ResourceACL.mfid == dsid,
+                        ResourceACL.accessgroup_id == old_ag.id,
+                    )
+                ).one_or_none()
+                if stale is not None:
+                    session.delete(stale)
+                    session.flush()
+
+        sql_create_resource_acl(new_ag, dsid, read=True, write=True,
+                                session=session, permission=Role.CONTRIBUTOR)
+
+        ds.instrument_id = instrument.id
+        ds.instrument_mfid = instrument.unique_id
+        ds.instrument_name = instrument.instrument_name
+        session.add(ds)
+
+        ri = touch_resource_modification_time(session, dsid)
+        session.commit()
+        session.refresh(ds)
+
+        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri),
+                                  user_unique_id, "update")
+        return DatasetInstrumentRead(
+            dataset_mfid=dsid,
+            previous_instrument=previous_reference,
+            previous_instrument_name=previous_instrument_name,
+            instrument=new_reference,
+        )
 
 
 @router.get("/datasets", response_model=PaginatedResponse[DatasetResponse])

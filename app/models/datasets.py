@@ -110,12 +110,12 @@ class DatasetUpdate(SQLModel):
     instrument_name: Optional[str] = Field(
         default=None,
         deprecated=True,
-        description="Deprecated for dataset updates. Only the current value is accepted.",
+        description="Deprecated for dataset updates. Only the current value is accepted. Use PUT /datasets/{dataset_mfid}/instrument.",
     )
     instrument_id: Optional[str] = Field(
         default=None,
         deprecated=True,
-        description="Deprecated for dataset updates. Only the current value is accepted.",
+        description="Deprecated for dataset updates. Only the current value is accepted. Use PUT /datasets/{dataset_mfid}/instrument.",
     )
     data_format: Optional[str] = None
     measurement: Optional[str] = None
@@ -123,6 +123,57 @@ class DatasetUpdate(SQLModel):
     session_name: Optional[str] = None
     timestamp: Optional[str] = None
     public: Optional[bool] = None
+
+
+class DatasetInstrumentAssign(SQLModel):
+    '''Body for PUT /datasets/{dataset_mfid}/instrument.
+
+    Either identifier resolves the instrument; supplying both is checked for
+    agreement by resolve_instrument_identifiers. instrument_name is not
+    accepted — it is a label derived from the resolved instrument, so letting
+    a caller set it independently is how the three columns drift apart.
+    '''
+    model_config = ConfigDict(extra="forbid")
+
+    instrument_id: Optional[str] = Field(
+        default=None,
+        description="Registered instrument slug. May be combined with a matching instrument_mfid.",
+    )
+    instrument_mfid: Optional[str] = Field(
+        default=None,
+        description="Canonical registered instrument MFID. May be combined with a matching instrument_id.",
+    )
+
+    @field_validator("instrument_id", "instrument_mfid", mode="before")
+    @classmethod
+    def blank_identifiers_to_none(cls, v):
+        return blank_to_none(v)
+
+    @field_validator("instrument_mfid")
+    @classmethod
+    def check_instrument_mfid(cls, v):
+        if v is not None and not is_valid_mfid(v):
+            raise ValueError("instrument_mfid must be a valid mfid: 26-character lowercase Crockford's Base32")
+        return v
+
+    @model_validator(mode="after")
+    def require_an_identifier(self):
+        if self.instrument_id is None and self.instrument_mfid is None:
+            raise ValueError("Provide instrument_id or instrument_mfid")
+        return self
+
+
+class DatasetInstrumentRead(SQLModel):
+    '''Result of PUT /datasets/{dataset_mfid}/instrument.'''
+    dataset_mfid: str
+    previous_instrument: Optional[InstrumentReferenceRead] = None
+    previous_instrument_name: Optional[str] = Field(
+        default=None,
+        description="The dataset's instrument_name before the change. For datasets whose "
+                    "name never named a registered instrument, this is the only record of it.",
+    )
+    instrument: InstrumentReferenceRead
+
 
 class DatasetRead(SQLModel):
     '''Response model for Dataset. Includes all server-generated fields.'''

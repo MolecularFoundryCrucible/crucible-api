@@ -1,10 +1,11 @@
+from datetime import datetime
 from typing import Optional, List
 from pydantic import ConfigDict
-from sqlalchemy import JSON, Column, BigInteger, func, Index, text, Text, String
+from sqlalchemy import JSON, Column, BigInteger, DateTime, func, Index, text, Text, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel,Relationship, Column
 from mfid import mfid
-from app.general_utils import get_utc_isoformat
+from app.general_utils import get_utc_datetime, get_utc_isoformat
 
 
 def get_mfid_value():
@@ -305,8 +306,14 @@ class Resource(SQLModel, table=True):
     __tablename__ = "idtype"
     mfid: str = Field(default=None, primary_key=True, index=True, alias="unique_id")
     resource_type: str = Field(default=None, alias="object_type")
-    creation_time: Optional[str] = Field(default_factory=get_utc_isoformat)
-    modification_time: Optional[str] = Field(default_factory=get_utc_isoformat)
+    creation_time: Optional[datetime] = Field(
+        default_factory=get_utc_datetime,
+        sa_column=Column(DateTime(timezone=True), nullable=True, server_default=func.now()),
+    )
+    modification_time: Optional[datetime] = Field(
+        default_factory=get_utc_datetime,
+        sa_column=Column(DateTime(timezone=True), nullable=True, server_default=func.now()),
+    )
     public: bool = Field(default=False)
     created_with_api_version: Optional[str] = Field(default=None)
     api_version_githash: Optional[str] = Field(default=None)

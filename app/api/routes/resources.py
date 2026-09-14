@@ -8,7 +8,7 @@ from sqlalchemy.sql import and_, exists
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_utc_isoformat
+from app.general_utils import get_utc_datetime
 from app.models.core_models import (
     AccessGroup,
     Dataset,
@@ -30,6 +30,7 @@ from app.models.samples import SampleResponse
 from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
+from app.models.query_params import ResourceDetailQuery
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
 from app.utils.auth_utils import (
     authorize_user, permission_filter, require_grant, require_permission,
@@ -128,13 +129,11 @@ def search_resource_metadata_v2(
 
 
 @router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse, InstrumentResponse, ProjectWithLead])
-def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resource_id: str,
-                 include_metadata: bool = False, include_links: bool = False,
-                 include_owner: bool = True,
-                 include_datasets: bool = Query(
-                     default=True,
-                     description="For samples, include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
-                 )):
+def get_resource(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    resource_id: str,
+    params: Annotated[ResourceDetailQuery, Query()],
+):
     """
     Fetch a dataset, sample, instrument, or project by ID without knowing its type in advance.
     Resolves the type from idtype, then returns the full resource record.
@@ -155,10 +154,10 @@ def get_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resour
             auth_res,
             resource,
             ResourceDetailOptions(
-                include_metadata=include_metadata,
-                include_links=include_links,
-                include_owner=include_owner,
-                include_datasets=include_datasets,
+                include_metadata=params.include_metadata,
+                include_links=params.include_links,
+                include_owner=params.include_owner,
+                include_datasets=params.include_datasets,
             ),
         )
 
@@ -250,7 +249,7 @@ def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
             scientific_metadata=scientific_md,
         )
         attributes.flag_modified(new_md_obj, 'scientific_metadata')
-        resource.modification_time = get_utc_isoformat()
+        resource.modification_time = get_utc_datetime()
 
         session.commit()
         session.refresh(new_md_obj)
@@ -286,7 +285,7 @@ def update_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
             scientific_metadata=md_dict,
         )
         attributes.flag_modified(new_md_obj, 'scientific_metadata')
-        resource.modification_time = get_utc_isoformat()
+        resource.modification_time = get_utc_datetime()
 
         session.commit()
         session.refresh(new_md_obj)

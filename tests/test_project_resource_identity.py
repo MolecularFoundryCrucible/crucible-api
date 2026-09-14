@@ -1,8 +1,11 @@
 from fastapi import Response
+from datetime import datetime
+
 from sqlmodel import Session
 
 from app.api.routes.projects import read_project
 from app.models.core_models import Project, Resource, User
+from app.models.query_params import ProjectDetailQuery
 from app.utils.permissions import Principal
 
 
@@ -27,8 +30,8 @@ def test_project_response_loads_resource_by_project_mfid(db_engine):
         session.add(Resource(
             mfid=project_mfid,
             resource_type="project",
-            creation_time="2026-08-31T12:00:00Z",
-            modification_time="2026-08-31T13:00:00Z",
+            creation_time=datetime.fromisoformat("2026-08-31T12:00:00+00:00"),
+            modification_time=datetime.fromisoformat("2026-08-31T13:00:00+00:00"),
         ))
         session.commit()
 
@@ -36,7 +39,11 @@ def test_project_response_loads_resource_by_project_mfid(db_engine):
         project_ref=project_mfid,
         response=Response(),
         auth_res=Principal(user_id=owner_id),
+        params=ProjectDetailQuery(),
     )
 
-    assert result.creation_time == "2026-08-31T12:00:00Z"
-    assert result.modification_time == "2026-08-31T13:00:00Z"
+    assert result.creation_time == datetime.fromisoformat("2026-08-31T12:00:00+00:00")
+    assert result.modification_time == datetime.fromisoformat("2026-08-31T13:00:00+00:00")
+    serialized = result.model_dump(mode="json")
+    assert serialized["creation_time"] == "2026-08-31T12:00:00.000000Z"
+    assert serialized["modification_time"] == "2026-08-31T13:00:00.000000Z"

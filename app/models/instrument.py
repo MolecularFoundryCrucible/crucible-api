@@ -4,6 +4,7 @@ from sqlmodel import SQLModel
 
 from app.general_utils import blank_to_none
 from app.models.resource import ResourceCapabilities
+from app.models.timestamps import UtcDatetime
 from app.models.users import UserPublicRead
 
 
@@ -95,8 +96,8 @@ class InstrumentReferenceRead(SQLModel):
 class InstrumentResponse(InstrumentRead):
     '''InstrumentRead extended with Resource timestamps.'''
     resource_type: Optional[str] = "instrument"
-    creation_time: Optional[str] = None
-    modification_time: Optional[str] = None
+    creation_time: Optional[UtcDatetime] = None
+    modification_time: Optional[UtcDatetime] = None
     scientific_metadata: Optional[dict] = None
     status: Optional[str] = None
     capabilities: Optional[ResourceCapabilities] = None

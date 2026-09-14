@@ -16,6 +16,13 @@ from app.models.core_models import (
     Sample,
     SampleLink,
 )
+from app.models.query_params import (
+    DatasetDetailQuery,
+    DatasetListQuery,
+    ResourceDetailQuery,
+    SampleDetailQuery,
+    SampleListQuery,
+)
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
 
@@ -220,17 +227,17 @@ def test_singleton_and_generic_routes_filter_expanded_links(
     dataset = datasets_routes.read_dataset(
         principal,
         "dataset-root",
-        include_links=True,
+        DatasetDetailQuery(include_links=True),
     )
     sample = samples_routes.read_sample(
         "sample-root",
         principal,
-        include_links=True,
+        SampleDetailQuery(include_links=True),
     )
     generic_sample = resources_routes.get_resource(
         principal,
         "sample-root",
-        include_links=True,
+        ResourceDetailQuery(include_links=True),
     )
     generic_links = resources_routes.get_resource_links(
         "dataset-root",
@@ -273,14 +280,12 @@ def test_singleton_sample_can_omit_embedded_datasets_without_omitting_links(
     sample = samples_routes.read_sample(
         "sample-root",
         principal,
-        include_links=True,
-        include_datasets=False,
+        SampleDetailQuery(include_links=True, include_datasets=False),
     )
     generic_sample = resources_routes.get_resource(
         principal,
         "sample-root",
-        include_links=True,
-        include_datasets=False,
+        ResourceDetailQuery(include_links=True, include_datasets=False),
     )
 
     assert sample.model_dump()["datasets"] is None
@@ -313,8 +318,7 @@ def test_singleton_sample_omits_dataset_query_when_expansions_are_disabled(
     sample = samples_routes.read_sample(
         "sample-root",
         principal,
-        include_links=False,
-        include_datasets=False,
+        SampleDetailQuery(include_links=False, include_datasets=False),
     )
 
     assert sample.model_dump()["datasets"] is None
@@ -333,37 +337,12 @@ def test_collection_link_expansion_stays_filtered_and_batched(
     datasets = datasets_routes.list_datasets(
         principal,
         _request(),
-        accessible_to_user=None,
-        accessible_to_project=None,
-        include_metadata=False,
-        include_links=True,
-        include_owner=False,
-        limit=100,
-        cursor=None,
-        offset=0,
-        creation_time_gte=None,
-        creation_time_lte=None,
-        modification_time_gte=None,
-        modification_time_lte=None,
-        visibility="all",
+        DatasetListQuery(include_links=True),
     )
     samples = samples_routes.list_samples(
         principal,
         _request(),
-        accessible_to_user=None,
-        accessible_to_project=None,
-        include_metadata=False,
-        include_links=True,
-        include_datasets=False,
-        include_owner=False,
-        limit=100,
-        cursor=None,
-        offset=0,
-        creation_time_gte=None,
-        creation_time_lte=None,
-        modification_time_gte=None,
-        modification_time_lte=None,
-        visibility="all",
+        SampleListQuery(include_links=True),
     )
 
     dataset_root = next(item for item in datasets.items if item.unique_id == "dataset-root")

@@ -5,6 +5,7 @@ from pydantic import ConfigDict, field_validator, model_validator
 from sqlmodel import SQLModel
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.resource import ResourceCapabilities
+from app.models.timestamps import UtcDatetime
 from app.models.users import UserPublicRead
 
 
@@ -66,8 +67,8 @@ class ProjectWithLead(ProjectRead):
     members remain restricted to project members and platform administrators.'''
     lead: Optional[UserPublicRead] = None
     scientific_metadata: Optional[dict] = None
-    creation_time: Optional[str] = None
-    modification_time: Optional[str] = None
+    creation_time: Optional[UtcDatetime] = None
+    modification_time: Optional[UtcDatetime] = None
     members: Optional[List[AccessGroupMemberRead]] = None
 
 

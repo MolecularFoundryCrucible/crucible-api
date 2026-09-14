@@ -126,6 +126,11 @@ class ResourceCollectionQuery(StrictQueryModel):
         max_length=4096,
         description="Opaque continuation cursor returned by a previous page.",
     )
+    anchor_mfid: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Start the page at this readable resource, inclusive, using the requested ordering.",
+    )
     offset: int = Field(
         default=0,
         ge=0,

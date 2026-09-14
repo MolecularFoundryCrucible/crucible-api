@@ -291,6 +291,117 @@ def test_keyset_pagination_matches_every_explicit_order(client, db_engine, auth_
             assert actual == expected
 
 
+def test_dataset_anchor_is_inclusive_and_uses_deterministic_sorting(client, db_engine, auth_as):
+    group_id = _seed_owned_resources(db_engine)
+    _seed_sortable_datasets(db_engine, group_id)
+    auth_as(ALICE, groups=[(ALICE, group_id, Role.OWNER)])
+
+    ascending = client.get("/datasets", params={
+        "anchor_mfid": "sort-c",
+        "sort": "name",
+        "direction": "asc",
+        "limit": 2,
+    })
+    assert ascending.status_code == 200, ascending.text
+    assert _ids(ascending) == ["sort-c", "sort-d"]
+    assert ascending.json()["total"] == 6
+
+    continuation = client.get("/datasets", params={
+        "sort": "name",
+        "direction": "asc",
+        "limit": 2,
+        "cursor": ascending.json()["next_cursor"],
+    })
+    assert continuation.status_code == 200, continuation.text
+    assert _ids(continuation) == ["dataset-alice", "dataset-bob"]
+
+    descending = client.get("/datasets", params={
+        "anchor_mfid": "sort-c",
+        "sort": "name",
+        "direction": "desc",
+        "limit": 2,
+    })
+    assert descending.status_code == 200, descending.text
+    assert _ids(descending) == ["sort-c", "sort-b"]
+
+    null_anchor = client.get("/datasets", params={
+        "anchor_mfid": "sort-a",
+        "sort": "name",
+        "direction": "asc",
+    })
+    assert null_anchor.status_code == 200, null_anchor.text
+    assert _ids(null_anchor) == ["sort-a"]
+
+
+def test_sample_anchor_supports_both_directions(client, db_engine, auth_as):
+    group_id = _seed_owned_resources(db_engine)
+    auth_as(ALICE, groups=[(ALICE, group_id, Role.OWNER)])
+
+    ascending = client.get("/samples", params={
+        "anchor_mfid": "sample-alice",
+        "sort": "created",
+        "direction": "asc",
+    })
+    descending = client.get("/samples", params={
+        "anchor_mfid": "sample-bob",
+        "sort": "created",
+        "direction": "desc",
+    })
+    assert ascending.status_code == 200, ascending.text
+    assert descending.status_code == 200, descending.text
+    assert _ids(ascending) == ["sample-alice", "sample-bob"]
+    assert _ids(descending) == ["sample-bob", "sample-alice"]
+
+
+def test_anchor_rejects_other_page_positions_and_hides_excluded_resources(client, db_engine, auth_as):
+    group_id = _seed_owned_resources(db_engine)
+    auth_as(ALICE, groups=[(ALICE, group_id, Role.OWNER)])
+
+    for path, anchor, wrong_type in (
+        ("/datasets", "dataset-bob", "sample-alice"),
+        ("/samples", "sample-bob", "dataset-alice"),
+    ):
+        for params in (
+            {"anchor_mfid": anchor, "cursor": anchor},
+            {"anchor_mfid": anchor, "offset": 0},
+            {"anchor_mfid": anchor, "offset": 1},
+        ):
+            response = client.get(path, params=params)
+            assert response.status_code == 422, (path, params, response.text)
+
+        for params in (
+            {"anchor_mfid": "missing"},
+            {"anchor_mfid": anchor, "affiliation": "owner"},
+            {"anchor_mfid": wrong_type},
+        ):
+            response = client.get(path, params=params)
+            assert response.status_code == 404, (path, params, response.text)
+
+    auth_as(BOB, groups=[])
+    for path, anchor in (("/datasets", "dataset-alice"), ("/samples", "sample-alice")):
+        inaccessible = client.get(path, params={"anchor_mfid": anchor})
+        assert inaccessible.status_code == 404, (path, inaccessible.text)
+
+
+def test_anchor_mfid_is_documented_only_for_dataset_and_sample_collections(client):
+    paths = client.get("/openapi.json").json()["paths"]
+    for path in ("/datasets", "/samples"):
+        parameters = {
+            parameter["name"]: parameter
+            for parameter in paths[path]["get"]["parameters"]
+        }
+        anchor = parameters["anchor_mfid"]
+        assert anchor["required"] is False
+        assert "inclusive" in anchor["description"]
+
+    for path in ("/projects", "/instruments"):
+        names = {
+            parameter["name"]
+            for parameter in paths[path]["get"]["parameters"]
+        }
+        assert "anchor_mfid" not in names
+
+
 def test_cursor_normalizes_equivalent_time_filters(client, db_engine, auth_as):
     group_id = _seed_owned_resources(db_engine)
     auth_as(ALICE, groups=[(ALICE, group_id, Role.OWNER)])

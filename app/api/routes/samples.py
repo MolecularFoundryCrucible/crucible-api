@@ -22,17 +22,13 @@ from app.models.facets import FacetResponse
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
-    ResourceSearchQuery, ResourceSort, SampleDetailQuery, SampleFacetQuery, SampleListQuery,
-    SortDirection)
+    ResourceSearchQuery, SampleDetailQuery, SampleFacetQuery, SampleListQuery)
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 
 from app.utils.auth_utils import (
     authorize_user, permission_filter, project_scope_filter,
     owner_affiliation_filter, require_permission)
-from app.utils.cursor_utils import (
-    CursorError, cursor_primary_value, filter_fingerprint, new_cursor,
-    validate_cursor)
 from app.utils.instrument_utils import resolve_instrument_mfids_to_references
 from app.utils.permissions import Principal, Permission, Role
 from app.utils.project_utils import (
@@ -55,10 +51,22 @@ from app.models.users import UserPublicRead
 from app.services.resource_details import ResourceDetailOptions, load_sample_detail
 from app.services.resource_facets import list_sample_facets
 from app.services.resource_filters import resource_scope_predicates
+from app.services.resource_pagination import (
+    ResourcePaginationSpec,
+    execute_resource_page,
+    prepare_resource_pagination,
+)
 
 router = APIRouter(tags=["samples"])
 engine = get_engine()
 RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
+SAMPLE_PAGINATION = ResourcePaginationSpec(
+    kind="sample",
+    unique_id_column=Sample.unique_id,
+    created_sort=Resource.creation_time,
+    updated_sort=func.coalesce(Resource.modification_time, Resource.creation_time),
+    name_sort=func.lower(Sample.sample_name),
+)
 
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
@@ -322,6 +330,8 @@ def list_samples(
     Pass affiliation=owner to return only resources authoritatively owned by the caller.
     Use owner_id for an exact owner match; owner_orcid remains as a deprecated alias.
     Pass sort=created, updated, or name with direction=asc or desc for explicit ordering.
+    Pass anchor_mfid without cursor or offset to start an inclusive page at a resource
+    within the authorized, filtered, and ordered collection.
     Pass include_links=true to include parent, child, and associated resources for each sample.
     include_datasets is deprecated; use include_links instead.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
@@ -331,8 +341,6 @@ def list_samples(
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
     import warnings
-    if params.sort is None and "direction" in request.query_params:
-        raise HTTPException(status_code=422, detail="direction requires sort")
 
     include_metadata = params.include_metadata
     include_links = params.include_links
@@ -340,9 +348,6 @@ def list_samples(
     include_datasets = param_values["include_datasets"]
     include_owner = params.include_owner
     include_total = params.include_total
-    limit = params.limit
-    cursor = params.cursor
-    offset = params.offset
     project_id = params.project_id
     project_mfid = params.project_mfid
     dataset_mfid = params.dataset_mfid
@@ -361,33 +366,21 @@ def list_samples(
     owner_id = params.owner_id or param_values["owner_orcid"]
     if owner_id is not None:
         exact_filters["owner_orcid"] = owner_id
-    sort_name = params.sort.value if params.sort is not None else "unique_id"
-    direction = params.direction.value if params.sort is not None else SortDirection.DESC.value
     result_filters = params.normalized_result_filters(
         exclude={
-            "cursor", "offset", "limit", "sort", "direction",
+            "anchor_mfid", "cursor", "offset", "limit", "sort", "direction",
             "include_metadata", "include_links", "include_datasets", "include_owner",
             "include_total", "owner_orcid",
         },
     )
     result_filters["owner_id"] = owner_id
-    filters_digest = filter_fingerprint(result_filters)
-    decoded_cursor = None
-    decoded_primary = None
-    if cursor is not None:
-        try:
-            decoded_cursor = validate_cursor(
-                cursor,
-                kind="sample",
-                sort=sort_name,
-                direction=direction,
-                filters=filters_digest,
-                user_id=auth_res.user_id,
-            )
-            if decoded_cursor is not None:
-                decoded_primary = cursor_primary_value(decoded_cursor)
-        except CursorError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    pagination = prepare_resource_pagination(
+        params=params,
+        query_params=request.query_params,
+        spec=SAMPLE_PAGINATION,
+        result_filters=result_filters,
+        user_id=auth_res.user_id,
+    )
 
     with Session(engine) as session:
         filter_project_mfid = resolve_project_filter_mfid(
@@ -433,9 +426,7 @@ def list_samples(
             return q
 
         total = None
-        if include_total is True or (
-            include_total is None and cursor is None and offset == 0
-        ):
+        if pagination.should_include_total(include_total):
             total = session.exec(apply_filters(
                 select(func.count()).select_from(Sample)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
@@ -459,44 +450,8 @@ def list_samples(
             )
 
         samp_cmd = apply_filters(samp_cmd)
-        if params.sort is ResourceSort.CREATED:
-            primary_sort = Resource.creation_time
-        elif params.sort is ResourceSort.UPDATED:
-            primary_sort = func.coalesce(Resource.modification_time, Resource.creation_time)
-        elif params.sort is ResourceSort.NAME:
-            primary_sort = func.lower(Sample.sample_name)
-        else:
-            primary_sort = None
-
-        if cursor is not None:
-            if decoded_cursor is None:
-                samp_cmd = samp_cmd.where(Sample.unique_id < cursor)
-            elif primary_sort is None:
-                comparison = Sample.unique_id > decoded_cursor.unique_id if direction == "asc" else Sample.unique_id < decoded_cursor.unique_id
-                samp_cmd = samp_cmd.where(comparison)
-            else:
-                id_comparison = Sample.unique_id > decoded_cursor.unique_id if direction == "asc" else Sample.unique_id < decoded_cursor.unique_id
-                if decoded_cursor.is_null:
-                    samp_cmd = samp_cmd.where(primary_sort.is_(None), id_comparison)
-                else:
-                    primary_comparison = primary_sort > decoded_primary if direction == "asc" else primary_sort < decoded_primary
-                    samp_cmd = samp_cmd.where(or_(
-                        primary_comparison,
-                        and_(primary_sort == decoded_primary, id_comparison),
-                        primary_sort.is_(None),
-                    ))
-        if primary_sort is None:
-            samp_cmd = samp_cmd.order_by(Sample.unique_id.desc())
-        elif direction == "asc":
-            samp_cmd = samp_cmd.order_by(primary_sort.asc().nulls_last(), Sample.unique_id.asc())
-        else:
-            samp_cmd = samp_cmd.order_by(primary_sort.desc().nulls_last(), Sample.unique_id.desc())
-        if cursor is None and offset:
-            samp_cmd = samp_cmd.offset(offset)
-        samp_cmd = samp_cmd.limit(limit + 1)
-        rows = session.exec(samp_cmd).all()
-        has_more = len(rows) > limit
-        rows = rows[:limit]
+        page = execute_resource_page(session, samp_cmd, pagination)
+        rows = page.rows
 
         if include_links:
             sample_ids = [row[0].id for row in rows]
@@ -596,32 +551,13 @@ def list_samples(
                     "assigned" if samp.project_mfid == filter_project_mfid else "shared"
                 ) if filter_project_mfid is not None else None,
             }))
-        next_cursor = None
-        if has_more:
-            last_row = rows[-1]
-            last_sample = last_row[0]
-            if params.sort is ResourceSort.CREATED:
-                cursor_primary = last_row[1]
-            elif params.sort is ResourceSort.UPDATED:
-                cursor_primary = last_row[2] or last_row[1]
-            elif params.sort is ResourceSort.NAME:
-                cursor_primary = session.exec(
-                    select(func.lower(Sample.sample_name))
-                    .where(Sample.id == last_sample.id)
-                ).one()
-            else:
-                cursor_primary = None
-            next_cursor = new_cursor(
-                kind="sample",
-                sort=sort_name,
-                direction=direction,
-                primary=cursor_primary,
-                unique_id=last_sample.unique_id,
-                filters=filters_digest,
-                user_id=auth_res.user_id,
-            )
-        resp_offset = offset if (cursor is None and offset) else None
-        return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
+        return PaginatedResponse(
+            total=total,
+            limit=pagination.limit,
+            offset=pagination.response_offset,
+            items=items,
+            next_cursor=page.next_cursor,
+        )
 
 
 def _sample_base_query(principal):

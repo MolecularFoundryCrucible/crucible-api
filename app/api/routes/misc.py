@@ -106,7 +106,7 @@ def list_ingestors():
     '''
     ingestors =['AFMIngestor',
                 'PtychographyH5Ingestor',
-                'SimpleTiledImageScopeFoundryH5Ingestor,' 
+                'SimpleTiledImageScopeFoundryH5Ingestor',
                 'BioGlowIngestor',
                 'QSpleemSVRampIngestor',
                 'QSpleemSVRampSpinIngestor',
@@ -116,16 +116,16 @@ def list_ingestors():
                 'QSpleemARRESEKIngestor',
                 'QSpleemARRESMMIngestor',
                 'RgaTeyBatchIngestor',
-                'CanonCaptureScopeFoundryH5Ingestor,' 
+                'CanonCaptureScopeFoundryH5Ingestor', 
                 'SingleSpecScopeFoundryH5Ingestor',
                 'HyperspecScopeFoundryH5Ingestor',
                 'HyperspecSweepScopeFoundryH5Ingestor',
                 'ToupcamLiveScopeFoundryH5Ingestor',
                 'CLSyncRasterScanIngestor',
-                'CLHyperspecIngestor,' 
+                'CLHyperspecIngestor',
                 'SpinbotSpecLineIngestor',
-                'SpinbotCameraCaptureIngestor,' 
-                'SpinbotPhotoRunIngestor,' 
+                'SpinbotCameraCaptureIngestor',
+                'SpinbotPhotoRunIngestor', 
                 'InSituPlIngestor',
                 'InorganicXRDIngestor',
                 'CziIngestor',

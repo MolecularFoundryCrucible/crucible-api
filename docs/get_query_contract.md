@@ -93,6 +93,7 @@ Add these parameters to `GET /samples` and `GET /datasets`:
 | --- | --- | --- | --- |
 | `sort` | optional enum | `created`, `updated`, `name` | omitted legacy ordering |
 | `direction` | optional enum | `asc`, `desc` | `desc` when sort is present |
+| `anchor_mfid` | optional string | canonical dataset or sample MFID | omitted |
 
 This first delivery intentionally excludes type, project, and owner sorting. Those require additional nullable expressions or identity joins and should be added only after the minimum sorts are verified with production-scale query plans.
 
@@ -108,7 +109,7 @@ When sort is omitted, the endpoint retains the existing `unique_id DESC` order a
 
 Creation and modification query parameters use timezone-aware datetime validation rather than accepting arbitrary strings. Revision `8c4f2a1d7e60` converts the API-owned resource creation and modification columns from ISO strings to nullable PostgreSQL `TIMESTAMPTZ` columns with database defaults. New resources receive API-generated UTC values, while missing legacy values remain null rather than receiving invented history. The read-only audit reports null, timezone-less, invalid, non-UTC, and UTC values separately, and any unparseable non-null timestamp blocks migration. Timezone-less legacy values are interpreted in `America/Los_Angeles`, missing modification times are repaired from creation times when available, and legacy values with explicit offsets are preserved as instants. Non-null API responses normalize both fields to fixed-microsecond UTC RFC 3339 values ending in `Z`. The producer-supplied dataset `timestamp` field remains an unconstrained domain value and is not part of this lifecycle timestamp policy.
 
-Sorting happens after authorization and filtering and before offset or cursor pagination. Invalid sort values return FastAPI's standard 422 validation response. Sort and direction appear as enums in OpenAPI.
+Sorting happens after authorization and filtering and before offset, anchor, or cursor pagination. Invalid sort values return FastAPI's standard 422 validation response. Sort and direction appear as enums in OpenAPI.
 
 ### Explicit collection filters
 
@@ -122,7 +123,7 @@ Replace dynamic database-attribute inspection with declared query parameters. Th
 - Visibility: `visibility`
 - Time bounds: creation and modification lower and upper bounds
 - Expansions: metadata, links, owner, and deprecated sample datasets
-- Pagination: limit, cursor, offset, and optional exact-total control
+- Pagination: limit, cursor, offset, optional inclusive anchor, and optional exact-total control
 - Sorting: sort and direction
 - Explicit legacy exact resource fields currently supported by Nano or known clients
 - Dataset keyword filtering, which is currently implemented separately from model-column filtering
@@ -172,7 +173,9 @@ Create reusable Pydantic query components with `extra="forbid"`:
 - Affiliation values
 - Sort field and direction
 
-Compose endpoint-specific models rather than one model containing irrelevant fields. Model validators and route-level parameter-presence checks enforce incompatible combinations, matching slug and MFID pairs, legacy alias agreement, cursor compatibility, and expansion restrictions.
+Compose endpoint-specific models rather than one model containing irrelevant fields. Model validators and shared pagination parameter-presence checks enforce incompatible combinations, matching slug and MFID pairs, legacy alias agreement, cursor compatibility, and expansion restrictions.
+
+Shared dataset and sample pagination mechanics live in `app/services/resource_pagination.py`. The service validates page-position combinations, resolves configured sort expressions, applies anchor or cursor boundaries, orders and bounds the query, and emits continuation cursors. Routes continue to own authorization, resource filters, relationship expansion, and response serialization.
 
 Repeated ordinary values use OR semantics within one filter family, while different filter families compose with AND. Existing access selectors retain their documented AND semantics. Every repeated parameter has a bounded item count, and blank identity values are rejected or normalized consistently before cursor fingerprinting.
 
@@ -190,6 +193,8 @@ The cursor contract version is carried by its prefix. Resource kind, sort, direc
 
 The filter hash binds the cursor to affiliation, project, relationship, visibility, time, and exact-field filters. Preferred and deprecated owner aliases normalize to the same canonical owner identity. It excludes representation-only expansions, page size, offset, and `include_total` so a caller can change `limit`, expansion flags, or total-count preference while following the same result set. Using a cursor with a different principal, resource type, sort, direction, or result-shaping filter returns 422.
 
+Dataset and sample collections accept `anchor_mfid` on a request without `cursor` or an explicitly supplied `offset`. The anchor must be a readable active resource in the collection after every supplied scope and result filter is applied. A missing, inaccessible, wrong-type, deleted, or filtered-out anchor returns 404. The returned page starts with the anchor and continues inclusively in the requested deterministic ordering. The anchor uses the same normalized primary value and unique-ID tie-breaker as cursor pagination, including null-last ordering. It does not change the result set or cursor identity, so the returned `next_cursor` can be followed without resending `anchor_mfid`. Two requests using the same anchor, filters, sort, and opposite directions can provide the two sides of a local navigation sequence after the client reverses one side and removes the duplicate anchor.
+
 For a non-null ascending primary value, the keyset predicate is conceptually:
 
 ```sql
@@ -204,14 +209,14 @@ Legacy raw MFID cursors continue to mean `unique_id < cursor` only on dataset an
 
 Keyset pagination is a live view. The unique-ID tie-breaker makes a fixed set deterministic, but an item can move between pages if its name or modification time changes during traversal. The API documents this behavior, and interactive clients restart from the first page after mutations or refreshes. Snapshot pagination is deferred to a bulk synchronization or export contract.
 
-`total` remains an exact authorization-filtered count on the first dataset or sample page and is omitted by default from cursor continuations and deep offset responses. Project and instrument collections retain their existing default count behavior. Every collection accepts `include_total=true` to request an exact count and `include_total=false` to suppress it. Omitting the flag preserves each endpoint's legacy behavior. Full pagination links and snapshot metadata remain deferred.
+`total` remains an exact authorization-filtered count on the first or anchored dataset or sample page and is omitted by default from cursor continuations and deep offset responses. Project and instrument collections retain their existing default count behavior. Every collection accepts `include_total=true` to request an exact count and `include_total=false` to suppress it. Omitting the flag preserves each endpoint's legacy behavior. Full pagination links and snapshot metadata remain deferred.
 
 ## Query execution order
 
 All collection implementations follow this logical pipeline:
 
 ```text
-authorized rows -> active/deletion policy -> declared filters -> deterministic ordering -> page boundary -> representation expansion
+authorized rows -> active/deletion policy -> declared filters -> deterministic ordering -> offset, anchor, or cursor boundary -> representation expansion
 ```
 
 Ordering joins must not bypass permission predicates or reveal hidden values through validation errors. Count queries and data queries use the same result-shaping predicates. Representation expansions do not affect totals, cursor identity, or row membership.
@@ -240,11 +245,12 @@ Keep the combined All view on a fixed documented order. If global sorting become
 6. Implemented: add the versioned cursor codec, filter binding, legacy cursor acceptance, lexicographic predicates, and signing-key rotation.
 7. Implemented: apply requested ordering consistently to offset pagination.
 8. Implemented: preserve cursor precedence over offset, add project and instrument cursors over their existing deterministic orders, and add `include_total` plus preferred exact `owner_id` controls without removing legacy aliases.
-9. Pending deployment evidence: run the timestamp audit and capture representative PostgreSQL query plans before adding any indexes.
-10. Completed: refresh route documentation, `CHANGELOG.md`, and generated OpenAPI deterministically.
-11. After API deployment: update the Hub generated client and enable Owned plus type-specific table sorting.
-12. After API contract stabilization: update Nano signatures to expose the new typed parameters and deprecate unrestricted collection `**kwargs` without removing them in the same release.
-13. Before merge: verify Crucible Lens and Graph Explorer against their existing queries.
+9. Implemented: add inclusive `anchor_mfid` placement to dataset and sample collections without changing continuation cursors.
+10. Pending deployment evidence: run the timestamp audit and capture representative PostgreSQL query plans before adding any indexes.
+11. Completed: refresh route documentation, `CHANGELOG.md`, and generated OpenAPI deterministically.
+12. After API deployment: update the Hub generated client and enable Owned plus type-specific table sorting.
+13. After API contract stabilization: update Nano signatures to expose the new typed parameters and deprecate unrestricted collection `**kwargs` without removing them in the same release.
+14. Before merge: verify Crucible Lens and Graph Explorer against their existing queries.
 
 ## Timestamp migration deployment
 
@@ -281,6 +287,9 @@ The schema change needs a coordinated deployment because application versions th
 - Changing expansion flags or page size does not invalidate a cursor.
 - Changing `include_total` does not invalidate a cursor, and the flag controls exact-count calculation without changing row membership.
 - Offset and cursor pages apply the same selected ordering.
+- Anchored dataset and sample pages start with the anchor in both directions and preserve equal-primary tie-breaking and null-last ordering.
+- Anchors excluded by authorization, lifecycle policy, resource type, or supplied filters return 404.
+- `anchor_mfid` rejects cursor and explicitly supplied offset combinations, while anchored continuation cursors work without resending the anchor.
 - Explicit `sort=created` uses resource creation time, while omitted sort preserves legacy unique-ID order.
 - Time bounds reject malformed or timezone-ambiguous values.
 - Concurrent changes to mutable sort values follow the documented live-view behavior.

@@ -47,21 +47,22 @@ from app.models.instrument import InstrumentReferenceRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
-    DatasetDetailQuery, DatasetFacetQuery, DatasetListQuery, ResourceSearchQuery, ResourceSort,
-    SortDirection)
+    DatasetDetailQuery, DatasetFacetQuery, DatasetListQuery, ResourceSearchQuery)
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
 from app.services.resource_details import ResourceDetailOptions, load_dataset_detail
 from app.services.resource_facets import list_dataset_facets
 from app.services.resource_filters import resource_scope_predicates
+from app.services.resource_pagination import (
+    ResourcePaginationSpec,
+    execute_resource_page,
+    prepare_resource_pagination,
+)
 from app.services.thumbnails import InvalidThumbnailImage, ThumbnailTooLarge, normalize_thumbnail
 from app.utils.auth_utils import (
     authorize_user, permission_filter, project_scope_filter,
     owner_affiliation_filter, require_permission)
-from app.utils.cursor_utils import (
-    CursorError, cursor_primary_value, filter_fingerprint, new_cursor,
-    validate_cursor)
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.project_utils import (
     project_standing_by_mfid,
@@ -88,6 +89,13 @@ from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_ur
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
 RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
+DATASET_PAGINATION = ResourcePaginationSpec(
+    kind="dataset",
+    unique_id_column=Dataset.unique_id,
+    created_sort=Resource.creation_time,
+    updated_sort=func.coalesce(Resource.modification_time, Resource.creation_time),
+    name_sort=func.lower(Dataset.dataset_name),
+)
 LARGE_THUMBNAIL_LOOKUP_WARNING_SIZE = int(
     os.environ.get("THUMBNAIL_LARGE_LOOKUP_WARNING_SIZE", "1000")
 )
@@ -568,6 +576,8 @@ def list_datasets(
     Pass affiliation=owner to return only resources authoritatively owned by the caller.
     Use owner_id for an exact owner match; owner_orcid remains as a deprecated alias.
     Pass sort=created, updated, or name with direction=asc or desc for explicit ordering.
+    Pass anchor_mfid without cursor or offset to start an inclusive page at a resource
+    within the authorized, filtered, and ordered collection.
     Pass include_links=true to include parent, child, and associated resources for each dataset.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
     Pass instrument_mfid to filter by the instrument's canonical stable identity.
@@ -576,16 +586,10 @@ def list_datasets(
     Faceted nullable fields also accept field-specific is_null=true or false filters.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
-    if params.sort is None and "direction" in request.query_params:
-        raise HTTPException(status_code=422, detail="direction requires sort")
-
     include_metadata = params.include_metadata
     include_links = params.include_links
     include_owner = params.include_owner
     include_total = params.include_total
-    limit = params.limit
-    cursor = params.cursor
-    offset = params.offset
     instrument_mfid = params.instrument_mfid
     project_id = params.project_id
     project_mfid = params.project_mfid
@@ -604,33 +608,21 @@ def list_datasets(
     owner_id = params.owner_id or param_values["owner_orcid"]
     if owner_id is not None:
         exact_filters["owner_orcid"] = owner_id
-    sort_name = params.sort.value if params.sort is not None else "unique_id"
-    direction = params.direction.value if params.sort is not None else SortDirection.DESC.value
     result_filters = params.normalized_result_filters(
         exclude={
-            "cursor", "offset", "limit", "sort", "direction",
+            "anchor_mfid", "cursor", "offset", "limit", "sort", "direction",
             "include_metadata", "include_links", "include_owner", "include_total",
             "owner_orcid",
         },
     )
     result_filters["owner_id"] = owner_id
-    filters_digest = filter_fingerprint(result_filters)
-    decoded_cursor = None
-    decoded_primary = None
-    if cursor is not None:
-        try:
-            decoded_cursor = validate_cursor(
-                cursor,
-                kind="dataset",
-                sort=sort_name,
-                direction=direction,
-                filters=filters_digest,
-                user_id=auth_res.user_id,
-            )
-            if decoded_cursor is not None:
-                decoded_primary = cursor_primary_value(decoded_cursor)
-        except CursorError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    pagination = prepare_resource_pagination(
+        params=params,
+        query_params=request.query_params,
+        spec=DATASET_PAGINATION,
+        result_filters=result_filters,
+        user_id=auth_res.user_id,
+    )
 
     with Session(engine) as session:
         filter_project_mfid = resolve_project_filter_mfid(
@@ -682,9 +674,7 @@ def list_datasets(
             return q
 
         total = None
-        if include_total is True or (
-            include_total is None and cursor is None and offset == 0
-        ):
+        if pagination.should_include_total(include_total):
             count_query = apply_filters(
                 select(func.count()).select_from(Dataset)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
@@ -717,45 +707,8 @@ def list_datasets(
         query = apply_filters(query)
         if keyword_filter:
             query = generate_kw_query(session, query, keyword_filter)
-        if params.sort is ResourceSort.CREATED:
-            primary_sort = Resource.creation_time
-        elif params.sort is ResourceSort.UPDATED:
-            primary_sort = func.coalesce(Resource.modification_time, Resource.creation_time)
-        elif params.sort is ResourceSort.NAME:
-            primary_sort = func.lower(Dataset.dataset_name)
-        else:
-            primary_sort = None
-
-        if cursor is not None:
-            if decoded_cursor is None:
-                query = query.where(Dataset.unique_id < cursor)
-            elif primary_sort is None:
-                comparison = Dataset.unique_id > decoded_cursor.unique_id if direction == "asc" else Dataset.unique_id < decoded_cursor.unique_id
-                query = query.where(comparison)
-            else:
-                id_comparison = Dataset.unique_id > decoded_cursor.unique_id if direction == "asc" else Dataset.unique_id < decoded_cursor.unique_id
-                if decoded_cursor.is_null:
-                    query = query.where(primary_sort.is_(None), id_comparison)
-                else:
-                    primary_comparison = primary_sort > decoded_primary if direction == "asc" else primary_sort < decoded_primary
-                    query = query.where(or_(
-                        primary_comparison,
-                        and_(primary_sort == decoded_primary, id_comparison),
-                        primary_sort.is_(None),
-                    ))
-        if primary_sort is None:
-            query = query.order_by(Dataset.unique_id.desc())
-        elif direction == "asc":
-            query = query.order_by(primary_sort.asc().nulls_last(), Dataset.unique_id.asc())
-        else:
-            query = query.order_by(primary_sort.desc().nulls_last(), Dataset.unique_id.desc())
-        if cursor is None and offset:
-            query = query.offset(offset)
-        query = query.limit(limit + 1)
-
-        results = session.exec(query).all()
-        has_more = len(results) > limit
-        results = results[:limit]
+        page = execute_resource_page(session, query, pagination)
+        results = page.rows
 
         if include_links:
             dataset_ids = [row[0].id for row in results]
@@ -845,32 +798,13 @@ def list_datasets(
                     "assigned" if dataset.project_mfid == filter_project_mfid else "shared"
                 ) if filter_project_mfid is not None else None,
             }))
-        next_cursor = None
-        if has_more:
-            last_row = results[-1]
-            last_dataset = last_row[0]
-            if params.sort is ResourceSort.CREATED:
-                cursor_primary = last_row[1]
-            elif params.sort is ResourceSort.UPDATED:
-                cursor_primary = last_row[2] or last_row[1]
-            elif params.sort is ResourceSort.NAME:
-                cursor_primary = session.exec(
-                    select(func.lower(Dataset.dataset_name))
-                    .where(Dataset.id == last_dataset.id)
-                ).one()
-            else:
-                cursor_primary = None
-            next_cursor = new_cursor(
-                kind="dataset",
-                sort=sort_name,
-                direction=direction,
-                primary=cursor_primary,
-                unique_id=last_dataset.unique_id,
-                filters=filters_digest,
-                user_id=auth_res.user_id,
-            )
-        resp_offset = offset if (cursor is None and offset) else None
-        return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
+        return PaginatedResponse(
+            total=total,
+            limit=pagination.limit,
+            offset=pagination.response_offset,
+            items=items,
+            next_cursor=page.next_cursor,
+        )
 
 
 def _dataset_base_query(principal):

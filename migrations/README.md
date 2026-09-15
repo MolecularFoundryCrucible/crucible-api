@@ -42,15 +42,6 @@ The August 2026 permission rollout is complete. Its ordered procedure is retaine
 
 ## Resource timestamp migration
 
-Revision `8c4f2a1d7e60` directly converts the API-owned `idtype.creation_time` and `idtype.modification_time` fields to PostgreSQL `TIMESTAMPTZ`. Revision `3f2b6a9c1d84` adds database enforcement for generated creation and modification times, immutable creation times, and automatically advanced modification times. Follow [the resource timestamp migration runbook](../docs/resource_timestamp_online_migration_runbook.md) to coordinate the migration with the main application rollout while production pods remain running.
+Revisions `8c4f2a1d7e60` and `3f2b6a9c1d84` converted API-owned lifecycle timestamps to PostgreSQL `TIMESTAMPTZ` and added database enforcement. Production completed this migration on 2026-09-15. Current behavior is documented in the [resource timestamp policy](../docs/resource_timestamp_policy.md), and the rollout evidence is retained in the [archived migration record](../docs/archive/resource_timestamp_migration_2026-09.md).
 
-Before any production schema write, run the read-only audit:
-
-```bash
-DB_CONF_FILE=.env.prod \
-.venv/bin/python migrations/data/20260908_audit_resource_timestamps.py
-```
-
-The audit reports every approved legacy format separately. Dashed and compact date-only values use midnight in `America/Los_Angeles`; `_am` uses midnight and `_pm` uses noon in that zone; `YYYY-MM-DD_HHMMSS` preserves its encoded local time; and other timezone-less values use the same zone. Empty strings and `NaN` become null. A missing modification time uses creation time when one exists and otherwise remains null. Explicitly offset values preserve their instants. Unsupported non-null values block migration. The producer-supplied `dataset.timestamp` remains unconstrained text and is not normalized or used to repair either lifecycle timestamp.
-
-The audit script does not mutate data. Production pods remain running during the direct schema migration and rolling application deployment. Do not scale or delete production pods as part of this migration without a separately approved maintenance plan.
+`migrations/data/20260908_audit_resource_timestamps.py` remains a read-only diagnostic for databases that have not reached revision `8c4f2a1d7e60`. Do not replay the completed production procedure against a current environment.

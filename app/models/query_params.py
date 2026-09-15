@@ -35,6 +35,12 @@ class SortDirection(str, Enum):
     DESC = "desc"
 
 
+class FacetSort(str, Enum):
+    VALUE = "value"
+    LABEL = "label"
+    COUNT = "count"
+
+
 class InstrumentStatus(str, Enum):
     ACTIVE = "active"
     MAINTENANCE = "maintenance"
@@ -321,6 +327,11 @@ class ResourceFacetQuery(StrictQueryModel):
     creation_time_lte: Optional[AwareDatetime] = Field(default=None, description="Inclusive creation-time upper bound.")
     modification_time_gte: Optional[AwareDatetime] = Field(default=None, description="Inclusive modification-time lower bound.")
     modification_time_lte: Optional[AwareDatetime] = Field(default=None, description="Inclusive modification-time upper bound.")
+    sort: FacetSort = Field(
+        default=FacetSort.VALUE,
+        description="Order buckets by raw value, canonical label, or count.",
+    )
+    direction: SortDirection = Field(default=SortDirection.ASC, description="Facet bucket ordering direction.")
     limit: int = Field(default=100, ge=1, le=1000, description="Maximum number of facet buckets to return.")
     cursor: Optional[str] = Field(default=None, min_length=1, max_length=4096, description="Opaque continuation cursor returned by a previous facet page.")
 
@@ -349,7 +360,7 @@ class ResourceFacetQuery(StrictQueryModel):
         return value.astimezone(timezone.utc) if value is not None else None
 
     def cursor_filters(self) -> dict:
-        values = self.model_dump(mode="json", exclude={"cursor", "limit"})
+        values = self.model_dump(mode="json", exclude={"cursor", "direction", "limit", "sort"})
         for field_name in (
             "creation_time_gte",
             "creation_time_lte",

@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.instrument import InstrumentReferenceRead
 from app.models.projects import ProjectReferenceRead
@@ -11,6 +11,10 @@ class FacetBucket(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     value: Optional[str]
+    label: Optional[str] = Field(
+        default=None,
+        description="Canonical display label. Null only for the null bucket.",
+    )
     count: int
 
 

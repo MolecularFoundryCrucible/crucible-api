@@ -11,3 +11,10 @@
 
 - Add an entry under `Unreleased` in `CHANGELOG.md` for changes that affect API users, operators, or downstream clients.
 - Internal-only changes do not require a changelog entry.
+
+## Database changes
+
+- Every change to a `table=True` SQLModel requires a matching Alembic revision in `migrations/versions/`.
+- Keep a single linear Alembic head and verify the revision chain after schema changes.
+- Put one-time audits and backfills in `migrations/data/`. They must default to read-only or rollback behavior and require an explicit commit flag for writes.
+- Do not run a migration or data write against staging or production unless the user explicitly authorizes that operation.

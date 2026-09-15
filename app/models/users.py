@@ -59,6 +59,12 @@ class UserPublicRead(SQLModel):
     username: Optional[str] = None
     first_name: str
     last_name: str
+    is_service_account: bool = False
+
+    @field_validator("is_service_account", mode="before")
+    @classmethod
+    def normalize_service_account(cls, v):
+        return False if v is None else v
 
 
 class AccountProfileUpdate(SQLModel):

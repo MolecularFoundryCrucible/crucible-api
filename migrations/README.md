@@ -39,3 +39,18 @@ DB_CONF_FILE=.env.prod \
 ```
 
 The August 2026 permission rollout is complete. Its ordered procedure is retained only as a [historical runbook](../docs/archive/permission_migration_runbook_2026-08.md). Do not replay it against a current environment. Accepted production cleanup items remain in [production migration data follow-ups](../docs/production_migration_data_followups.md).
+
+## Resource timestamp migration
+
+Revision `8c4f2a1d7e60` directly converts the API-owned `idtype.creation_time` and `idtype.modification_time` fields to PostgreSQL `TIMESTAMPTZ`. Revision `3f2b6a9c1d84` adds database enforcement for generated creation and modification times, immutable creation times, and automatically advanced modification times. Follow [the resource timestamp migration runbook](../docs/resource_timestamp_online_migration_runbook.md) to coordinate the migration with the main application rollout while production pods remain running.
+
+Before any production schema write, run the read-only audit:
+
+```bash
+DB_CONF_FILE=.env.prod \
+.venv/bin/python migrations/data/20260908_audit_resource_timestamps.py
+```
+
+The audit reports every approved legacy format separately. Dashed and compact date-only values use midnight in `America/Los_Angeles`; `_am` uses midnight and `_pm` uses noon in that zone; `YYYY-MM-DD_HHMMSS` preserves its encoded local time; and other timezone-less values use the same zone. Empty strings and `NaN` become null. A missing modification time uses creation time when one exists and otherwise remains null. Explicitly offset values preserve their instants. Unsupported non-null values block migration. The producer-supplied `dataset.timestamp` remains unconstrained text and is not normalized or used to repair either lifecycle timestamp.
+
+The audit script does not mutate data. Production pods remain running during the direct schema migration and rolling application deployment. Do not scale or delete production pods as part of this migration without a separately approved maintenance plan.

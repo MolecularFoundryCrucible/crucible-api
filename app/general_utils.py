@@ -140,6 +140,11 @@ def run_rclone_command(source_path= "", destination_path= "", cmd="copy", client
 def get_utc_isoformat():
     return datetime.now(timezone.utc).isoformat()
 
+
+def get_utc_datetime():
+    return datetime.now(timezone.utc)
+
+
 def checkhash(file):
     """Calculate SHA256 hash of a file.
     

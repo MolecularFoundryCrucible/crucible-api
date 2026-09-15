@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.general_utils import get_secret, get_utc_isoformat
+from app.general_utils import get_secret, get_utc_datetime
 from app.models.core_models import (
     AccessGroup,
     AssociatedFile,
@@ -28,6 +28,7 @@ from app.models.core_models import (
     Keyword,
     Project,
     Resource,
+    ResourceACL,
     Sample,
     ScientificMetadataBinary,
     Thumbnail,
@@ -35,22 +36,33 @@ from app.models.core_models import (
     UserAccessGroupLink,
 )
 from app.models.response_schemas import DatasetSampleLinkResponse
+from app.models.facets import FacetResponse
 from app.models.datasets import (
     AssociatedFileCreate, AssociatedFileRead,
-    DatasetCreate, DatasetRead, DatasetResponse, DatasetUpdate,
+    DatasetCreate, DatasetInstrumentAssign, DatasetInstrumentRead,
+    DatasetRead, DatasetResponse, DatasetUpdate,
     ThumbnailCreate, ThumbnailPreviewRead, ThumbnailRead, ThumbnailUpdate,
 )
 from app.models.instrument import InstrumentReferenceRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
+from app.models.query_params import (
+    DatasetDetailQuery, DatasetFacetQuery, DatasetListQuery, ResourceSearchQuery)
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
 from app.services.resource_details import ResourceDetailOptions, load_dataset_detail
+from app.services.resource_facets import list_dataset_facets
+from app.services.resource_filters import resource_scope_predicates
+from app.services.resource_pagination import (
+    ResourcePaginationSpec,
+    execute_resource_page,
+    prepare_resource_pagination,
+)
 from app.services.thumbnails import InvalidThumbnailImage, ThumbnailTooLarge, normalize_thumbnail
 from app.utils.auth_utils import (
-    access_selector_filter, authorize_user, permission_filter, project_scope_filter,
-    require_permission)
+    authorize_user, permission_filter, project_scope_filter,
+    owner_affiliation_filter, require_permission)
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.project_utils import (
     project_standing_by_mfid,
@@ -64,21 +76,26 @@ from app.utils.instrument_utils import (
 )
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.search_utils import (
-    MAX_SEARCH_QUERY_LENGTH,
-    SEARCH_QUERY_LIMIT_DESCRIPTION,
     apply_trigram_search,
     configure_trigram_search,
     normalize_search_query,
     trigram_rank,
 )
 from app.utils.user_utils import resolve_create_owner
-from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for, visibility_filter_for
+from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
 RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
+DATASET_PAGINATION = ResourcePaginationSpec(
+    kind="dataset",
+    unique_id_column=Dataset.unique_id,
+    created_sort=Resource.creation_time,
+    updated_sort=func.coalesce(Resource.modification_time, Resource.creation_time),
+    name_sort=func.lower(Dataset.dataset_name),
+)
 LARGE_THUMBNAIL_LOOKUP_WARNING_SIZE = int(
     os.environ.get("THUMBNAIL_LARGE_LOOKUP_WARNING_SIZE", "1000")
 )
@@ -271,7 +288,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         session.flush()
 
         # get time
-        now = get_utc_isoformat()
+        now = get_utc_datetime()
         
         # fetch resource
         existing_ri = session.exec(select(Resource).where(Resource.mfid == ds.unique_id)).one_or_none()
@@ -397,8 +414,9 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
                 raise HTTPException(
                     status_code=409,
                     detail=(
-                        "Dataset instrument reassignment is temporarily unavailable. "
-                        "Omit instrument_id and instrument_name unless resubmitting the current value."
+                        "Dataset instrument assignment is not editable here. "
+                        "Use PUT /datasets/{dataset_mfid}/instrument, which keeps the "
+                        "instrument columns and the resource ACL in step."
                     ),
                 )
 
@@ -406,7 +424,7 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
-            ri.modification_time = get_utc_isoformat()
+            ri.modification_time = get_utc_datetime()
             ri.public = upds.public
             set_public(session, upds.unique_id, bool(upds.public))
 
@@ -429,71 +447,182 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
         })
 
 
+@router.put("/datasets/{dsid}/instrument", response_model=DatasetInstrumentRead)
+def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str,
+                              assignment: DatasetInstrumentAssign,
+                              background_tasks: BackgroundTasks):
+    '''
+    Assign or reassign the dataset's instrument, by slug or MFID.
+
+    The three instrument columns are written from one resolved instrument row,
+    so instrument_id (the integer FK), instrument_mfid, and the instrument_name
+    label cannot drift apart. Nothing about the instrument is taken from the
+    request body beyond the identifier used to look it up.
+
+    The instrument's access group is granted contributor on the dataset, the
+    same grant dataset creation makes. Reassignment removes the grant belonging
+    to the outgoing instrument's group only — resourceacl records no provenance,
+    so a broader sweep could not tell a derived grant from a deliberate one.
+
+    Resubmitting the dataset's current instrument changes no columns but still
+    ensures the ACL row exists, which repairs datasets whose instrument columns
+    were backfilled without the accompanying grant.
+    '''
+    user_unique_id = auth_res.user_id
+
+    with Session(engine) as session:
+        ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
+        if ds is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        require_permission(session, auth_res, dsid, Permission.MANAGE_ACL)
+
+        instrument = resolve_instrument_identifiers(
+            session, assignment.instrument_id, assignment.instrument_mfid)
+
+        previous_instrument = None
+        if ds.instrument_mfid is not None:
+            previous_instrument = session.exec(
+                select(Instrument).where(Instrument.unique_id == ds.instrument_mfid)
+            ).one_or_none()
+        elif ds.instrument_id is not None:
+            previous_instrument = session.get(Instrument, ds.instrument_id)
+        previous_instrument_name = ds.instrument_name
+        # Built before the commit expires these rows, so the response never
+        # depends on reloading an instrument mid-serialization.
+        previous_reference = (
+            InstrumentReferenceRead.model_validate(previous_instrument)
+            if previous_instrument is not None else None
+        )
+        new_reference = InstrumentReferenceRead.model_validate(instrument)
+
+        new_ag = session.exec(
+            select(AccessGroup).where(
+                AccessGroup.group_name == instrument.unique_id,
+                AccessGroup.group_type == AccessGroupType.INSTRUMENT.value,
+            )
+        ).one_or_none()
+        if new_ag is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Instrument '{instrument.unique_id}' has no access group provisioned")
+
+        if previous_instrument is not None and previous_instrument.unique_id != instrument.unique_id:
+            old_ag = session.exec(
+                select(AccessGroup).where(
+                    AccessGroup.group_name == previous_instrument.unique_id,
+                    AccessGroup.group_type == AccessGroupType.INSTRUMENT.value,
+                )
+            ).one_or_none()
+            if old_ag is not None:
+                stale = session.exec(
+                    select(ResourceACL).where(
+                        ResourceACL.mfid == dsid,
+                        ResourceACL.accessgroup_id == old_ag.id,
+                    )
+                ).one_or_none()
+                if stale is not None:
+                    session.delete(stale)
+                    session.flush()
+
+        sql_create_resource_acl(new_ag, dsid, read=True, write=True,
+                                session=session, permission=Role.CONTRIBUTOR)
+
+        ds.instrument_id = instrument.id
+        ds.instrument_mfid = instrument.unique_id
+        ds.instrument_name = instrument.instrument_name
+        session.add(ds)
+
+        ri = touch_resource_modification_time(session, dsid)
+        session.commit()
+        session.refresh(ds)
+
+        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri),
+                                  user_unique_id, "update")
+        return DatasetInstrumentRead(
+            dataset_mfid=dsid,
+            previous_instrument=previous_reference,
+            previous_instrument_name=previous_instrument_name,
+            instrument=new_reference,
+        )
+@router.get("/datasets/facets", response_model=FacetResponse)
+def get_dataset_facets(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    params: Annotated[DatasetFacetQuery, Query()],
+):
+    with Session(engine) as session:
+        return list_dataset_facets(session, auth_res, params)
+
+
 @router.get("/datasets", response_model=PaginatedResponse[DatasetResponse])
-def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
-                  accessible_to_user: Optional[List[str]] = Query(default=None, description="User references whose effective access must all include each result."),
-                  accessible_to_project: Optional[List[str]] = Query(default=None, description="Project MFIDs or slugs whose direct access must all include each result."),
-                  include_metadata: bool = False,
-                  include_links: bool = False,
-                  include_owner: bool = False,
-                  limit: int = Query(default=100, ge=1, le=1000),
-                  cursor: Optional[str] = None,
-                  offset: int = Query(default=0, ge=0),
-                  creation_time_gte: Optional[str] = None, creation_time_lte: Optional[str] = None,
-                  modification_time_gte: Optional[str] = None, modification_time_lte: Optional[str] = None,
-                  visibility: Literal["all", "public", "private"] = "all",
-                  instrument_mfid: Annotated[Optional[str], Query(
-                      description="Filter datasets assigned to this canonical instrument MFID.",
-                  )] = None,
-                  project_id: Annotated[Optional[str], Query(
-                      description="Filter datasets related to this project slug. May be combined with a matching project_mfid.",
-                  )] = None,
-                  project_mfid: Annotated[Optional[str], Query(
-                      description="Filter datasets related to this canonical project MFID.",
-                  )] = None,
-                  project_scope: Annotated[Optional[ProjectScope], Query(
-                      description="Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
-                  )] = None,
-                  sample_mfid: Annotated[Optional[str], Query(
-                      description="Filter datasets linked to this canonical sample MFID.",
-                  )] = None):
+def list_datasets(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    request: Request,
+    params: Annotated[DatasetListQuery, Query()],
+):
     '''
     Returns a paginated list of datasets the requesting user is authorized to view.
     Default limit is 100, max is 1000.
 
-    Keyset (cursor) pagination: results are ordered by unique_id descending, which is
-    creation order since unique_id is a time-sortable UUIDv7. To fetch the next page,
+    By default, results are ordered by unique_id descending. To fetch a keyset page,
     pass cursor=<next_cursor from the previous response>. The first page omits cursor.
-    next_cursor is null when there are no further pages. total is included only on the
-    first page (cursor omitted); subsequent pages omit it to avoid a redundant count.
+    next_cursor is null when there are no further pages. total is included only when
+    cursor is omitted and offset is zero. Pass include_total=true to request it on
+    any page or include_total=false to suppress it.
 
     Offset pagination is supported for backward compatibility: pass offset=<n> instead
-    of cursor. cursor takes precedence when both are given. Prefer cursor for large
+    of cursor. When both are supplied, cursor takes precedence. Prefer cursor for large
     result sets, since deep offsets are slower.
+    Pass affiliation=owner to return only resources authoritatively owned by the caller.
+    Use owner_id for an exact owner match; owner_orcid remains as a deprecated alias.
+    Pass sort=created, updated, or name with direction=asc or desc for explicit ordering.
+    Pass anchor_mfid without cursor or offset to start an inclusive page at a resource
+    within the authorized, filtered, and ordered collection.
     Pass include_links=true to include parent, child, and associated resources for each dataset.
     Pass visibility=public or visibility=private to narrow by the resource's public ACL entry.
     Pass instrument_mfid to filter by the instrument's canonical stable identity.
     Pass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship.
     Pass sample_mfid to filter by a readable sample's canonical stable identity.
+    Faceted nullable fields also accept field-specific is_null=true or false filters.
     Access selectors use AND semantics and only narrow resources readable by the caller.
     '''
-    if project_scope is not None and project_id is None and project_mfid is None:
-        raise HTTPException(
-            status_code=422,
-            detail="project_scope requires project_id or project_mfid",
+    include_metadata = params.include_metadata
+    include_links = params.include_links
+    include_owner = params.include_owner
+    include_total = params.include_total
+    instrument_mfid = params.instrument_mfid
+    project_id = params.project_id
+    project_mfid = params.project_mfid
+    sample_mfid = params.sample_mfid
+    keyword_filter = params.keyword
+    param_values = params.model_dump()
+    exact_filters = {
+        key: param_values[key]
+        for key in (
+            "unique_id", "public", "dataset_name",
+            "instrument_name", "timestamp", "size", "data_format",
+            "data_type", "measurement", "session_name",
         )
-    effective_project_scope: ProjectScope = project_scope or "assigned"
-
-    params_dict = dict(request.query_params)
-    keyword_filter = params_dict.pop('keyword', None)
-
-    # extract parameters from filters
-    for k in ('creation_time_gte', 'creation_time_lte', 'modification_time_gte',
-              'modification_time_lte', 'include_metadata', 'include_links', 'include_owner',
-              'limit', 'cursor', 'offset', 'visibility', 'accessible_to_user',
-              'accessible_to_project', 'instrument_mfid', 'project_id', 'project_mfid',
-              'project_scope', 'sample_mfid'):
-        params_dict.pop(k, None)
+        if param_values[key] is not None
+    }
+    owner_id = params.owner_id or param_values["owner_orcid"]
+    if owner_id is not None:
+        exact_filters["owner_orcid"] = owner_id
+    result_filters = params.normalized_result_filters(
+        exclude={
+            "anchor_mfid", "cursor", "offset", "limit", "sort", "direction",
+            "include_metadata", "include_links", "include_owner", "include_total",
+            "owner_orcid",
+        },
+    )
+    result_filters["owner_id"] = owner_id
+    pagination = prepare_resource_pagination(
+        params=params,
+        query_params=request.query_params,
+        spec=DATASET_PAGINATION,
+        result_filters=result_filters,
+        user_id=auth_res.user_id,
+    )
 
     with Session(engine) as session:
         filter_project_mfid = resolve_project_filter_mfid(
@@ -508,37 +637,19 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
             if linked_sample_id is None:
                 raise HTTPException(status_code=404, detail="Sample not found or access denied")
 
-        auth_filter = access_selector_filter(
+        scope_predicates = resource_scope_predicates(
             session,
             auth_res,
             Dataset,
-            user_refs=accessible_to_user,
-            project_refs=accessible_to_project,
+            params,
+            filter_project_mfid,
         )
-        project_filter = (
-            project_scope_filter(
-                session, auth_res, Dataset, filter_project_mfid, effective_project_scope)
-            if filter_project_mfid is not None else None
-        )
-        deletion_filter = deletion_filter_for(Dataset)
 
         # Base filters shared between count and data queries
         def apply_filters(q):
-            q = q.where(auth_filter).where(deletion_filter)
-            if visibility != "all":
-                q = q.where(visibility_filter_for(Dataset, visibility))
-            if creation_time_gte:
-                q = q.where(Resource.creation_time >= creation_time_gte)
-            if creation_time_lte:
-                q = q.where(Resource.creation_time <= creation_time_lte)
-            if modification_time_gte:
-                q = q.where(Resource.modification_time >= modification_time_gte)
-            if modification_time_lte:
-                q = q.where(Resource.modification_time <= modification_time_lte)
+            q = q.where(*scope_predicates)
             if instrument_mfid is not None:
                 q = q.where(Dataset.instrument_mfid == instrument_mfid)
-            if project_filter is not None:
-                q = q.where(project_filter)
             if linked_sample_id is not None:
                 q = q.where(
                     exists()
@@ -548,15 +659,22 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                     )
                     .correlate(Dataset)
                 )
-            for key, value in params_dict.items():
-                if hasattr(Dataset, key):
-                    q = q.where(getattr(Dataset, key) == value)
+            for key, value in exact_filters.items():
+                q = q.where(getattr(Dataset, key) == value)
+            for column, value in (
+                (Dataset.session_name, params.session_name_is_null),
+                (Dataset.measurement, params.measurement_is_null),
+                (Dataset.data_format, params.data_format_is_null),
+                (Dataset.owner_orcid, params.owner_id_is_null),
+                (Dataset.instrument_mfid, params.instrument_mfid_is_null),
+                (Dataset.project_mfid, params.project_mfid_is_null),
+            ):
+                if value is not None:
+                    q = q.where(column.is_(None) if value else column.is_not(None))
             return q
 
-        # total is only needed on the first page; cursor pages and deep offset pages
-        # skip the redundant count.
         total = None
-        if cursor is None and offset == 0:
+        if pagination.should_include_total(include_total):
             count_query = apply_filters(
                 select(func.count()).select_from(Dataset)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
@@ -589,14 +707,8 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
         query = apply_filters(query)
         if keyword_filter:
             query = generate_kw_query(session, query, keyword_filter)
-        if cursor is not None:
-            query = query.where(Dataset.unique_id < cursor)
-        query = query.order_by(Dataset.unique_id.desc())
-        if cursor is None and offset:
-            query = query.offset(offset)
-        query = query.limit(limit)
-
-        results = session.exec(query).all()
+        page = execute_resource_page(session, query, pagination)
+        results = page.rows
 
         if include_links:
             dataset_ids = [row[0].id for row in results]
@@ -686,9 +798,13 @@ def list_datasets(auth_res: Annotated[Principal, Depends(authorize_user)], reque
                     "assigned" if dataset.project_mfid == filter_project_mfid else "shared"
                 ) if filter_project_mfid is not None else None,
             }))
-        next_cursor = results[-1][0].unique_id if len(results) == limit else None
-        resp_offset = offset if (cursor is None and offset) else None
-        return PaginatedResponse(total=total, limit=limit, offset=resp_offset, items=items, next_cursor=next_cursor)
+        return PaginatedResponse(
+            total=total,
+            limit=pagination.limit,
+            offset=pagination.response_offset,
+            items=items,
+            next_cursor=page.next_cursor,
+        )
 
 
 def _dataset_base_query(principal):
@@ -712,32 +828,19 @@ def _dataset_base_query(principal):
 @router.get("/datasets/search", response_model=PaginatedResponse[DatasetResponse])
 def search_datasets(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    q: str = Query(
-        min_length=3,
-        max_length=MAX_SEARCH_QUERY_LENGTH,
-        description=f"Search term matched against dataset_name. {SEARCH_QUERY_LIMIT_DESCRIPTION}",
-    ),
-    project_id: Annotated[Optional[str], Query(
-        description="Restrict results related to this project slug. May be combined with a matching project_mfid.",
-    )] = None,
-    project_mfid: Annotated[Optional[str], Query(
-        description="Restrict results related to this canonical project MFID.",
-    )] = None,
-    project_scope: Annotated[Optional[ProjectScope], Query(
-        description="Project relationship to include. Requires project_id or project_mfid; defaults to assigned.",
-    )] = None,
-    limit: int = Query(default=20, ge=1, le=50),
+    params: Annotated[ResourceSearchQuery, Query()],
 ):
     '''
     Search readable datasets by name and return results ordered by match quality.
+    Use owner_id for an exact owner match.
     Pass project_id or project_mfid with project_scope=assigned, shared, or all to filter by project relationship. Maximum 50 results.
     '''
 
-    if project_scope is not None and project_id is None and project_mfid is None:
-        raise HTTPException(
-            status_code=422,
-            detail="project_scope requires project_id or project_mfid",
-        )
+    q = params.q
+    project_id = params.project_id
+    project_mfid = params.project_mfid
+    project_scope = params.project_scope
+    limit = params.limit
     effective_project_scope: ProjectScope = project_scope or "assigned"
     normalized_q, tokens = normalize_search_query(q)
 
@@ -759,6 +862,10 @@ def search_datasets(
                 filter_project_mfid,
                 effective_project_scope,
             ))
+        if params.affiliation:
+            query = query.where(owner_affiliation_filter(auth_res, Dataset))
+        if params.owner_id is not None:
+            query = query.where(Dataset.owner_orcid == params.owner_id)
         query = query.order_by(
             trigram_rank(normalized_q, (Dataset.dataset_name,)).desc(),
             Dataset.unique_id.desc(),
@@ -789,9 +896,11 @@ def search_datasets(
 
 
 @router.get("/datasets/{dataset_mfid}", response_model=DatasetResponse)
-def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dataset_mfid: str,
-                 include_metadata: bool = False, include_links: bool = False,
-                 include_owner: bool = True):
+def read_dataset(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    dataset_mfid: str,
+    params: Annotated[DatasetDetailQuery, Query()],
+):
     '''
     Returns the dataset with the provided MFID.
     Pass include_links=true to include parent, child, and associated resources.
@@ -804,9 +913,9 @@ def read_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], datase
             auth_res,
             dataset_mfid,
             options=ResourceDetailOptions(
-                include_metadata=include_metadata,
-                include_links=include_links,
-                include_owner=include_owner,
+                include_metadata=params.include_metadata,
+                include_links=params.include_links,
+                include_owner=params.include_owner,
             ),
         )
 
@@ -1174,7 +1283,7 @@ def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
-            ri.modification_time = get_utc_isoformat()
+            ri.modification_time = get_utc_datetime()
 
         session.commit()
         session.refresh(tn_obj)
@@ -1348,7 +1457,7 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
-            ri.modification_time = get_utc_isoformat()
+            ri.modification_time = get_utc_datetime()
 
         session.commit()
         session.refresh(af_obj)

@@ -39,6 +39,10 @@ def test_membership_and_project_schemas_do_not_expose_email():
 
     assert "email" not in components["AccessGroupMemberRead"]["properties"]
     assert "email" not in components["UserPublicRead"]["properties"]
+    assert (
+        components["UserPublicRead"]["properties"]["is_service_account"]["type"]
+        == "boolean"
+    )
     assert components["ProjectWithLead"]["properties"]["lead"]["anyOf"][0] == {
         "$ref": "#/components/schemas/UserPublicRead"
     }
@@ -91,6 +95,21 @@ def test_exact_collection_returns_private_self_and_public_other(db_engine):
     assert isinstance(self_result.items[0], UserRead)
     assert self_result.items[0].email == "alice@example.com"
     assert isinstance(other_result.items[0], UserPublicRead)
+    assert other_result.items[0].is_service_account is False
+
+
+def test_public_profile_identifies_service_accounts():
+    result = UserPublicRead.model_validate(
+        User(
+            first_name="Beamline",
+            last_name="Collector",
+            unique_id="0tkn2knjast3h0008nyq9zps2c",
+            username="beamline-collector",
+            is_service_account=True,
+        )
+    )
+
+    assert result.is_service_account is True
 
 
 def test_canonical_singleton_returns_public_profile_to_other_caller(db_engine):

@@ -29,6 +29,11 @@ INSTRUMENT_PAYLOAD = {
     "location": "b30",
 }
 
+INSTRUMENT_UPDATE_ROUTE_REQUIRED = (
+    "Dataset instrument assignment is not editable here. "
+    "Use PUT /datasets/{dataset_mfid}/instrument, which keeps the instrument columns and the resource ACL in step."
+)
+
 
 class TestCreateInstrument:
     def test_creates_operator_group_with_editor_acl(self, client, db_engine, auth_as):
@@ -102,7 +107,7 @@ class TestCreateInstrument:
             _user(session, "0000-0002")
             _user(session, "0000-0003")
         auth_as("0000-0002", groups=[])
-        resp = client.post("/instruments", json={**INSTRUMENT_PAYLOAD, "owner": "0000-0003"})
+        resp = client.post("/instruments", json={**INSTRUMENT_PAYLOAD, "owner": "0000-0003@x.com"})
         assert resp.status_code == 403
         assert resp.json()["detail"] == "Only platform administrators may create an instrument on behalf of another user"
 
@@ -261,16 +266,20 @@ class TestDatasetInstrumentResolution:
         resp = client.post("/datasets", json={"dataset_name": "d3", "instrument_name": "HiP_Microscope"})
         assert resp.status_code == 200, resp.text
 
-    def test_update_dataset_rejects_unregistered_instrument(self, client, db_engine, auth_as):
+    def test_update_dataset_rejects_instrument_name_reassignment(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
-            _user(session, "0000-0007")
+            owner = _user(session, "0000-0007")
+            owner_group_id = session.exec(select(AccessGroup.id).where(
+                AccessGroup.group_name == owner.unique_id
+            )).one()
 
-        auth_as("0000-0007", groups=[])
+        auth_as("0000-0007", groups=[("0000-0007", owner_group_id, Role.OWNER)])
         resp = client.post("/datasets", json={"dataset_name": "d4"})
         dsid = resp.json()["unique_id"]
 
         resp = client.patch(f"/datasets/{dsid}", json={"instrument_name": "no-such-instrument"})
-        assert resp.status_code == 400
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == INSTRUMENT_UPDATE_ROUTE_REQUIRED
 
 
 class TestInstrumentIdOnDataset:
@@ -398,7 +407,7 @@ class TestInstrumentIdOnDataset:
         assert resp.status_code == 200, resp.text
         assert resp.json()["instrument_id"] == "xrd-id-1"
 
-    def test_patch_dataset_with_instrument_id(self, client, db_engine, auth_as):
+    def test_patch_dataset_rejects_instrument_id_reassignment(self, client, db_engine, auth_as):
         self._register(client, db_engine, auth_as)
         with Session(db_engine) as session:
             _user(session, "0000-0013")
@@ -412,10 +421,10 @@ class TestInstrumentIdOnDataset:
         dsid = resp.json()["unique_id"]
 
         resp = client.patch(f"/datasets/{dsid}", json={"instrument_id": "xrd-id-1"})
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["instrument_id"] == "xrd-id-1"
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == INSTRUMENT_UPDATE_ROUTE_REQUIRED
 
-    def test_patch_dataset_with_unregistered_instrument_id_is_400(self, client, db_engine, auth_as):
+    def test_patch_dataset_rejects_unregistered_instrument_id_reassignment(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             _user(session, "0000-0014")
             ag = session.exec(select(AccessGroup).where(
@@ -428,7 +437,8 @@ class TestInstrumentIdOnDataset:
         dsid = resp.json()["unique_id"]
 
         resp = client.patch(f"/datasets/{dsid}", json={"instrument_id": "no-such-slug"})
-        assert resp.status_code == 400
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == INSTRUMENT_UPDATE_ROUTE_REQUIRED
 
 
 class TestProjectMfidOnDataset:

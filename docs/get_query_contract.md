@@ -65,7 +65,11 @@ Sample fields:
 - `owner`
 - `project`
 
-Text values are preserved exactly. Null is a separate bucket and sorts after concrete values. Owner, project, and instrument buckets include stable identifiers and public-safe resolved references when available. Facet pages use bounded opaque cursor pagination.
+Text values are preserved exactly. Every bucket returns an optional canonical `label`. Text-facet labels equal their stored values. Owner labels use nonblank full name, username, then stable identifier. Project labels use nonblank title, project ID, then MFID. Instrument labels use nonblank instrument name, instrument ID, then MFID. Unresolved relationships use the raw stored value. Null buckets have null labels and always sort after concrete values. Owner, project, and instrument buckets also include stable identifiers and public-safe resolved references when available.
+
+Facet endpoints accept `sort=value|label|count` and `direction=asc|desc`. The default `sort=value&direction=asc` preserves raw stored-value ordering. Label ordering uses a case-insensitive canonical label key. Count ordering uses the requested count direction. Label and count ties break by raw stored value ascending, and null remains last. Resolved labels do not affect value or count ordering.
+
+Facet pages use bounded opaque cursor pagination. Continuation requests must resend the same field, filters, sort, and direction; the limit may change. Cursors are bound to the authenticated principal and complete result-shaping query context, and authorization is reapplied on every request. Pagination is a live view, so changes to resources or authorization between requests can move buckets and may cause duplicates or omissions.
 
 Dataset and sample list routes expose matching `*_is_null` filters. Omission does not constrain nullability, `true` selects null values, and `false` selects non-null values. Combining `true` with a concrete value for the same field returns 422.
 

@@ -114,7 +114,6 @@ SELECT instrument_id FROM instrument WHERE length(instrument_id) NOT BETWEEN 3 A
 
 ## Deferred work
 
-- Unknown query parameters are still ignored by the instrument, sample, and dataset collection routes. Native Pydantic query models with `extra="forbid"` require FastAPI 0.115.0 or newer, while this repository pins 0.112.2. Address this with a planned framework upgrade instead of custom route validation.
 - `ThumbnailRead` exposes the internal integer `dataset_id` and omits the canonical dataset MFID. A future contract should add `dataset_mfid` and decide whether to deprecate the internal ID.
 - `AssociatedFileRead` calls the file identifier `mfid` instead of `unique_id` and exposes both `dataset_id` and `dataset_mfid`. A future compatibility plan should standardize those public names.
 - Production slug audit and owner-selected renames are operational work, not automatic database migrations.

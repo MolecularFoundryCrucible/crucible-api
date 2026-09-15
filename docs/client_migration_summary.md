@@ -1,8 +1,8 @@
 # Client migration summary
 
-Status: the repository `staging` branch includes the contract documented here. Verify `GET /health/ready` and the deployed OpenAPI before treating a staging rebuild as live. This repository does not establish downstream client rollout status.
+Status: deployed to production from `main` commit `24a24ab9ce74b01f841750df7003091ce4b57119` with database revision `3f2b6a9c1d84`. Verify `GET /health/ready` and the deployed OpenAPI before testing any environment. This repository does not establish downstream client rollout status.
 
-Use this document to update Crucible clients for the identifier, permission, ownership, and response-contract changes. The staging OpenAPI is available through [Swagger UI](https://crucible.lbl.gov/testapi-staging/docs) and [OpenAPI JSON](https://crucible.lbl.gov/testapi-staging/openapi.json).
+Use this document to update Crucible clients for the identifier, permission, ownership, query, and response-contract changes. Production exposes [Swagger UI](https://crucible.lbl.gov/api/v3/docs) and [OpenAPI JSON](https://crucible.lbl.gov/api/v3/openapi.json). The repository pins the reviewed contract in [`openapi/crucible-api.json`](../openapi/crucible-api.json).
 
 ## Contract authority and ownership
 
@@ -15,13 +15,13 @@ The generated `crucible-api` OpenAPI document is the authoritative HTTP contract
   "status": "ok",
   "build": {
     "api_version": "3.0.0",
-    "git_commit": "fa20ff1f705cc12439f488800a6fb70437647d1d",
-    "branch": "staging"
+    "git_commit": "24a24ab9ce74b01f841750df7003091ce4b57119",
+    "branch": "main"
   },
   "database": {
     "status": "ok",
     "latency_ms": 2.5,
-    "schema_revisions": ["d6e1f8a2c4b7"]
+    "schema_revisions": ["3f2b6a9c1d84"]
   }
 }
 ```
@@ -126,7 +126,7 @@ Content-Type: application/json
 
 Use `?confirm=true` to execute. Dataset and sample PATCH requests no longer accept project reassignment fields. Dataset PATCH also rejects `owner_orcid`, and project PATCH rejects all project-lead identity fields.
 
-Dataset instrument assignment is also no longer mutable through generic PATCH. Omit `instrument_id` and `instrument_name` when updating a dataset. Existing clients may temporarily resubmit the current value, but changing or clearing it returns `409 Conflict`. Both fields are marked deprecated in the PATCH request schema. See [`docs/dataset_instrument_assignment.md`](dataset_instrument_assignment.md) for the planned dedicated operation.
+Dataset instrument assignment is no longer mutable through generic PATCH. Omit `instrument_id` and `instrument_name` when updating a dataset. Existing clients may temporarily resubmit the current value, but changing or clearing it returns `409 Conflict`. Use `PUT /datasets/{dataset_mfid}/instrument` for assignment or reassignment. See [dataset instrument assignment](dataset_instrument_assignment.md).
 
 ## Deletion contract
 
@@ -334,5 +334,6 @@ Use the returned `unique_id` MFID for canonical user routes. To authenticate as 
 - [Identifier route contract](resource_identifier_routes.md)
 - [Remote file records](remote_file_records.md)
 - [Historical permission migration runbook](archive/permission_migration_runbook_2026-08.md)
-- [Candidate OpenAPI artifact](../openapi/crucible-api.json)
+- [Repository OpenAPI artifact](../openapi/crucible-api.json)
+- [Production OpenAPI](https://crucible.lbl.gov/api/v3/openapi.json)
 - [Staging OpenAPI](https://crucible.lbl.gov/testapi-staging/openapi.json)

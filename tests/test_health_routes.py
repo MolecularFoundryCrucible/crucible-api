@@ -9,6 +9,7 @@ def _response_body(response):
 
 
 def test_readiness_reports_build_and_schema_provenance(monkeypatch):
+    monkeypatch.delenv("EXPECTED_DB_REVISIONS", raising=False)
     monkeypatch.setattr(misc, "_check_db", lambda: ("ok", 2.5, ["head_a", "head_b"]))
     monkeypatch.setattr(misc, "api_version", lambda: "3.0.0")
     monkeypatch.setattr(misc, "git_commit", lambda: "abc123")
@@ -33,6 +34,7 @@ def test_readiness_reports_build_and_schema_provenance(monkeypatch):
 
 
 def test_readiness_reports_database_failure(monkeypatch):
+    monkeypatch.delenv("EXPECTED_DB_REVISIONS", raising=False)
     monkeypatch.setattr(misc, "_check_db", lambda: ("error", None, []))
     monkeypatch.setattr(misc, "api_version", lambda: "3.0.0")
     monkeypatch.setattr(misc, "git_commit", lambda: None)
@@ -54,6 +56,31 @@ def test_readiness_reports_database_failure(monkeypatch):
             "schema_revisions": [],
         },
     }
+
+
+def test_readiness_rejects_unexpected_schema_revision(monkeypatch):
+    monkeypatch.setenv("EXPECTED_DB_REVISIONS", "head_b")
+    monkeypatch.setattr(misc, "_check_db", lambda: ("ok", 2.5, ["head_a"]))
+
+    response = misc.readiness()
+
+    assert response.status_code == 503
+    assert _response_body(response)["status"] == "degraded"
+    assert _response_body(response)["database"] == {
+        "status": "error",
+        "latency_ms": 2.5,
+        "schema_revisions": ["head_a"],
+    }
+
+
+def test_readiness_accepts_expected_schema_revision(monkeypatch):
+    monkeypatch.setenv("EXPECTED_DB_REVISIONS", "head_b, head_a")
+    monkeypatch.setattr(misc, "_check_db", lambda: ("ok", 2.5, ["head_a", "head_b"]))
+
+    response = misc.readiness()
+
+    assert response.status_code == 200
+    assert _response_body(response)["database"]["status"] == "ok"
 
 
 def test_database_check_sorts_multiple_schema_heads(monkeypatch):

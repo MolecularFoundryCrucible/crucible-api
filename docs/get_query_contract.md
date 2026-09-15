@@ -107,7 +107,7 @@ Mappings:
 
 When sort is omitted, the endpoint retains the existing `unique_id DESC` order and accepts legacy raw MFID cursors. Explicit `sort=created` uses the authoritative resource creation time because clients may provide a preassigned MFID whose lexical order does not represent API creation time. `direction` without `sort` returns 422. Updated, created, and name ordering apply the selected primary value, then `unique_id` in the same direction. Missing primary values sort last in both directions. Name sorting uses one documented case-normalization and database collation strategy across both resource types.
 
-Creation and modification query parameters use timezone-aware datetime validation rather than accepting arbitrary strings. Revision `8c4f2a1d7e60` converts the API-owned resource creation and modification columns from ISO strings to nullable PostgreSQL `TIMESTAMPTZ` columns with database defaults. New resources receive API-generated UTC values, while missing legacy values remain null rather than receiving invented history. The read-only audit reports null, timezone-less, invalid, non-UTC, and UTC values separately, and any unparseable non-null timestamp blocks migration. Timezone-less legacy values are interpreted in `America/Los_Angeles`, missing modification times are repaired from creation times when available, and legacy values with explicit offsets are preserved as instants. Non-null API responses normalize both fields to fixed-microsecond UTC RFC 3339 values ending in `Z`. The producer-supplied dataset `timestamp` field remains an unconstrained domain value and is not part of this lifecycle timestamp policy.
+Creation and modification query parameters use timezone-aware datetime validation rather than accepting arbitrary strings. Revision `8c4f2a1d7e60` converts the API-owned resource creation and modification columns from ISO strings to nullable PostgreSQL `TIMESTAMPTZ` columns with database defaults. Revision `3f2b6a9c1d84` enforces database-generated lifecycle values, immutable creation times, and automatically advanced modification times. New resources receive API-generated UTC values, while missing legacy values remain null rather than receiving invented history. The read-only audit reports null, timezone-less, invalid, non-UTC, and UTC values separately, and any unparseable non-null timestamp blocks migration. Timezone-less legacy values are interpreted in `America/Los_Angeles`, missing modification times are repaired from creation times when available, and legacy values with explicit offsets are preserved as instants. Non-null API responses normalize both fields to fixed-microsecond UTC RFC 3339 values ending in `Z`. The producer-supplied dataset `timestamp` field remains an unconstrained domain value and is not part of this lifecycle timestamp policy.
 
 Sorting happens after authorization and filtering and before offset, anchor, or cursor pagination. Invalid sort values return FastAPI's standard 422 validation response. Sort and direction appear as enums in OpenAPI.
 
@@ -254,12 +254,12 @@ Keep the combined All view on a fixed documented order. If global sorting become
 
 ## Timestamp migration deployment
 
-The schema change needs a coordinated deployment because application versions that model the resource timestamps as strings and versions that model them as datetimes should not run concurrently.
+The timestamp schema change uses a coordinated direct migration while production pods remain running. Follow [the resource timestamp migration runbook](resource_timestamp_online_migration_runbook.md).
 
-1. Run `migrations/data/20260908_audit_resource_timestamps.py` against the target database. Stop for any unparseable non-null creation or modification time. Missing values remain null, timezone-less values are interpreted in `America/Los_Angeles`, missing modification times use creation time when available, and explicitly offset values are preserved as instants.
-2. Capture the required backup and pause API writers and old API replicas.
-3. Apply Alembic revision `8c4f2a1d7e60`.
-4. Deploy only API versions containing the datetime model change before resuming traffic.
+1. Run `migrations/data/20260908_audit_resource_timestamps.py` against the target database and stop for any unsupported format.
+2. Capture the required backup and prepare the reviewed main deployment behind its expected-schema readiness check.
+3. Apply through revision `3f2b6a9c1d84` during low traffic without scaling production pods down.
+4. Complete the rolling application deployment immediately after the migration commits.
 5. Exercise default, owner-affiliated, created, updated, and name collection queries and capture `EXPLAIN ANALYZE` plans on representative data.
 6. Add indexes in a later reviewed migration only if the captured plans justify them.
 

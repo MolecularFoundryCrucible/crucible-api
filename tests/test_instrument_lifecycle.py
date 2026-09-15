@@ -29,9 +29,9 @@ INSTRUMENT_PAYLOAD = {
     "location": "b30",
 }
 
-REASSIGNMENT_UNAVAILABLE = (
-    "Dataset instrument reassignment is temporarily unavailable. "
-    "Omit instrument_id and instrument_name unless resubmitting the current value."
+INSTRUMENT_UPDATE_ROUTE_REQUIRED = (
+    "Dataset instrument assignment is not editable here. "
+    "Use PUT /datasets/{dataset_mfid}/instrument, which keeps the instrument columns and the resource ACL in step."
 )
 
 
@@ -279,7 +279,7 @@ class TestDatasetInstrumentResolution:
 
         resp = client.patch(f"/datasets/{dsid}", json={"instrument_name": "no-such-instrument"})
         assert resp.status_code == 409
-        assert resp.json()["detail"] == REASSIGNMENT_UNAVAILABLE
+        assert resp.json()["detail"] == INSTRUMENT_UPDATE_ROUTE_REQUIRED
 
 
 class TestInstrumentIdOnDataset:
@@ -422,7 +422,7 @@ class TestInstrumentIdOnDataset:
 
         resp = client.patch(f"/datasets/{dsid}", json={"instrument_id": "xrd-id-1"})
         assert resp.status_code == 409
-        assert resp.json()["detail"] == REASSIGNMENT_UNAVAILABLE
+        assert resp.json()["detail"] == INSTRUMENT_UPDATE_ROUTE_REQUIRED
 
     def test_patch_dataset_rejects_unregistered_instrument_id_reassignment(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
@@ -438,7 +438,7 @@ class TestInstrumentIdOnDataset:
 
         resp = client.patch(f"/datasets/{dsid}", json={"instrument_id": "no-such-slug"})
         assert resp.status_code == 409
-        assert resp.json()["detail"] == REASSIGNMENT_UNAVAILABLE
+        assert resp.json()["detail"] == INSTRUMENT_UPDATE_ROUTE_REQUIRED
 
 
 class TestProjectMfidOnDataset:

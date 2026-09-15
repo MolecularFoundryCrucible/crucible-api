@@ -53,6 +53,20 @@ def test_timestamp_audit_classifies_standard_offsets_and_invalid_values():
     assert classify("2026-99-99T12:06:07+00:00") == "invalid"
 
 
+def test_timestamp_audit_classifies_approved_legacy_formats():
+    classify = AUDIT_MODULE.classify_timestamp
+
+    assert classify("2025-02-24") == "date_only"
+    assert classify("20250704") == "date_only"
+    assert classify("2026-03-02_015757") == "naive"
+    assert classify("20251209_am") == "meridiem_date"
+    assert classify("20260323_pm") == "meridiem_date"
+    assert classify("") == "missing_sentinel"
+    assert classify("NaN") == "missing_sentinel"
+    assert classify("20260231") == "invalid"
+    assert classify("2026-03-02_256100") == "invalid"
+
+
 def test_timestamp_audit_allows_nulls_but_blocks_invalid_values():
     counts = {
         "creation_time": {"null": 10, "naive": 3, "invalid": 0, "non_utc": 0, "utc": 5},

@@ -17,8 +17,42 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+ALLOWED_TIMESTAMP_PATTERN = (
+    r"^("
+    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:\d{2})?)"
+    r"|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?"
+    r"|\d{4}-\d{2}-\d{2}"
+    r"|\d{8}"
+    r"|\d{4}-\d{2}-\d{2}_\d{6}"
+    r"|\d{8}_(am|pm)"
+    r")$"
+)
+
+
+def _timestamp_conversion(column_name: str) -> str:
+    return (
+        "CASE "
+        f"WHEN {column_name} IS NULL OR {column_name} IN ('', 'NaN') THEN NULL "
+        f"WHEN {column_name} ~ '^\\d{{4}}-\\d{{2}}-\\d{{2}}$' "
+        f"THEN {column_name}::date::timestamp AT TIME ZONE 'America/Los_Angeles' "
+        f"WHEN {column_name} ~ '^\\d{{8}}$' "
+        f"THEN to_date({column_name}, 'YYYYMMDD')::timestamp AT TIME ZONE 'America/Los_Angeles' "
+        f"WHEN {column_name} ~ '^\\d{{4}}-\\d{{2}}-\\d{{2}}_\\d{{6}}$' "
+        f"THEN (to_date(left({column_name}, 10), 'YYYY-MM-DD') + "
+        f"to_timestamp(right({column_name}, 6), 'HH24MISS')::time) AT TIME ZONE 'America/Los_Angeles' "
+        f"WHEN {column_name} ~ '^\\d{{8}}_(am|pm)$' "
+        f"THEN (to_date(left({column_name}, 8), 'YYYYMMDD')::timestamp + "
+        f"CASE WHEN right({column_name}, 2) = 'pm' THEN interval '12 hours' ELSE interval '0 hours' END) "
+        "AT TIME ZONE 'America/Los_Angeles' "
+        f"WHEN {column_name} ~ '^\\d{{4}}-\\d{{2}}-\\d{{2}}[T ]\\d{{2}}:\\d{{2}}:\\d{{2}}(\\.\\d{{1,6}})?$' "
+        f"THEN {column_name}::timestamp AT TIME ZONE 'America/Los_Angeles' "
+        f"ELSE {column_name}::timestamptz "
+        "END"
+    )
+
+
 def upgrade() -> None:
-    op.execute(sa.text(r"""
+    op.execute(sa.text(rf"""
         DO $$
         BEGIN
             IF EXISTS (
@@ -27,20 +61,28 @@ def upgrade() -> None:
                 WHERE
                     (
                         creation_time IS NOT NULL
-                        AND creation_time !~ '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:\d{2})?)$'
-                        AND creation_time !~ '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?$'
+                        AND creation_time NOT IN ('', 'NaN')
+                        AND creation_time !~ '{ALLOWED_TIMESTAMP_PATTERN}'
                     )
                     OR
                     (
                         modification_time IS NOT NULL
-                        AND modification_time !~ '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:\d{2})?)$'
-                        AND modification_time !~ '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?$'
+                        AND modification_time NOT IN ('', 'NaN')
+                        AND modification_time !~ '{ALLOWED_TIMESTAMP_PATTERN}'
                     )
             ) THEN
                 RAISE EXCEPTION 'idtype contains an invalid non-null resource timestamp';
             END IF;
         END
         $$
+    """))
+
+    op.execute(sa.text("""
+        UPDATE idtype
+        SET
+            creation_time = CASE WHEN creation_time IN ('', 'NaN') THEN NULL ELSE creation_time END,
+            modification_time = CASE WHEN modification_time IN ('', 'NaN') THEN NULL ELSE modification_time END
+        WHERE creation_time IN ('', 'NaN') OR modification_time IN ('', 'NaN')
     """))
 
     op.execute(sa.text("""
@@ -57,13 +99,7 @@ def upgrade() -> None:
         existing_nullable=True,
         nullable=True,
         server_default=sa.text("now()"),
-        postgresql_using=(
-            "CASE "
-            "WHEN creation_time ~ '^\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?$' "
-            "THEN creation_time::timestamp AT TIME ZONE 'America/Los_Angeles' "
-            "ELSE creation_time::timestamptz "
-            "END"
-        ),
+        postgresql_using=_timestamp_conversion("creation_time"),
     )
     op.alter_column(
         "idtype",
@@ -73,15 +109,8 @@ def upgrade() -> None:
         existing_nullable=True,
         nullable=True,
         server_default=sa.text("now()"),
-        postgresql_using=(
-            "CASE "
-            "WHEN modification_time ~ '^\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?$' "
-            "THEN modification_time::timestamp AT TIME ZONE 'America/Los_Angeles' "
-            "ELSE modification_time::timestamptz "
-            "END"
-        ),
+        postgresql_using=_timestamp_conversion("modification_time"),
     )
-
 
 def downgrade() -> None:
     op.alter_column(

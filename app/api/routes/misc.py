@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Annotated, List
 
@@ -28,6 +29,11 @@ def _check_db():
         return "error", None, []
 
 
+def _expected_schema_revisions():
+    configured = os.getenv("EXPECTED_DB_REVISIONS", "")
+    return sorted(revision.strip() for revision in configured.split(",") if revision.strip())
+
+
 @router.get("/health/live", response_model=LivenessResponse)
 def liveness():
     """Liveness probe. Returns 200 when the process is running."""
@@ -42,7 +48,9 @@ def liveness():
 def readiness():
     """Readiness probe with database, schema, and build provenance."""
     db_status, db_ms, schema_revisions = _check_db()
-    ok = db_status == "ok"
+    expected_revisions = _expected_schema_revisions()
+    schema_matches = not expected_revisions or schema_revisions == expected_revisions
+    ok = db_status == "ok" and schema_matches
     return JSONResponse(
         status_code=200 if ok else 503,
         content={
@@ -53,7 +61,7 @@ def readiness():
                 "branch": branch_name(),
             },
             "database": {
-                "status": db_status,
+                "status": "ok" if ok else "error",
                 "latency_ms": db_ms,
                 "schema_revisions": schema_revisions,
             },

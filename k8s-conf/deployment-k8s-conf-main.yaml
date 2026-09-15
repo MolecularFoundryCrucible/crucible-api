@@ -71,6 +71,11 @@ spec:
             configMapKeyRef:
               key: db_auth
               name: crucible-api-config-main
+        - name: "EXPECTED_DB_REVISIONS"
+          valueFrom:
+            configMapKeyRef:
+              key: EXPECTED_DB_REVISIONS
+              name: crucible-api-config-main
         - name: "ANTHROPIC_BASE_URL"
           valueFrom:
             configMapKeyRef:
@@ -167,7 +172,6 @@ spec:
         persistentVolumeClaim:
           claimName: mf-storage-prod-pvc
           readOnly: true
-
 
 
 

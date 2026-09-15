@@ -42,13 +42,15 @@ The August 2026 permission rollout is complete. Its ordered procedure is retaine
 
 ## Resource timestamp migration
 
-Revision `8c4f2a1d7e60` converts the API-owned `idtype.creation_time` and `idtype.modification_time` fields from timezone-qualified ISO strings to nullable PostgreSQL `TIMESTAMPTZ` columns with database defaults. New resources receive UTC values from the API and omitted values receive the database default, while unknown legacy values remain null. Before applying it, run the read-only audit:
+Revision `8c4f2a1d7e60` directly converts the API-owned `idtype.creation_time` and `idtype.modification_time` fields to PostgreSQL `TIMESTAMPTZ`. Revision `3f2b6a9c1d84` adds database enforcement for generated creation and modification times, immutable creation times, and automatically advanced modification times. Follow [the resource timestamp migration runbook](../docs/resource_timestamp_online_migration_runbook.md) to coordinate the migration with the main application rollout while production pods remain running.
+
+Before any production schema write, run the read-only audit:
 
 ```bash
 DB_CONF_FILE=.env.prod \
 .venv/bin/python migrations/data/20260908_audit_resource_timestamps.py
 ```
 
-The audit reports null, timezone-less, invalid, non-UTC, and UTC values separately for both columns. Any unparseable non-null timestamp blocks migration. Missing legacy timestamps remain null rather than receiving invented history. Timezone-less legacy values are interpreted in the `America/Los_Angeles` zone, applying the applicable Pacific standard or daylight-saving offset for their date. The migration repairs a missing modification time from the corresponding creation time when one exists and otherwise leaves it null. Legacy timestamp strings with explicit offsets are preserved as instants even when they use PostgreSQL's space separator or shortened UTC offset. The producer-supplied `dataset.timestamp` field is not included in this policy.
+The audit reports every approved legacy format separately. Dashed and compact date-only values use midnight in `America/Los_Angeles`; `_am` uses midnight and `_pm` uses noon in that zone; `YYYY-MM-DD_HHMMSS` preserves its encoded local time; and other timezone-less values use the same zone. Empty strings and `NaN` become null. A missing modification time uses creation time when one exists and otherwise remains null. Explicitly offset values preserve their instants. Unsupported non-null values block migration. The producer-supplied `dataset.timestamp` remains unconstrained text and is not normalized or used to repair either lifecycle timestamp.
 
-The audit script does not mutate data. Pause old API replicas and writers before the schema migration, apply the revision, deploy the API version that models these fields as timezone-aware datetimes and serializes them as canonical UTC RFC 3339 values, and only then restore traffic. Do not run old and new timestamp models concurrently.
+The audit script does not mutate data. Production pods remain running during the direct schema migration and rolling application deployment. Do not scale or delete production pods as part of this migration without a separately approved maintenance plan.

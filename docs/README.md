@@ -5,10 +5,12 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 ## Current API and client guidance
 
 - [Client migration summary](client_migration_summary.md): consolidated downstream client actions and compatibility behavior.
+- [GET query contract](get_query_contract.md): collection filters, sorting, pagination, anchors, facets, and compatibility behavior.
 - [Permission system API changes](permission_system_api_changes.md): role, access, ownership, membership, and authorization contracts.
 - [Resource identifier routes](resource_identifier_routes.md): canonical MFIDs, human-readable lookups, and compatibility aliases.
 - [Database deletion contract](database_deletion_contract.md): reviewed deletion and direct force-delete behavior.
-- [Dataset instrument assignment](dataset_instrument_assignment.md): current PATCH compatibility behavior and the deferred reassignment operation.
+- [Dataset instrument assignment](dataset_instrument_assignment.md): creation, PATCH compatibility, and atomic reassignment behavior.
+- [Resource timestamp policy](resource_timestamp_policy.md): database-owned creation and modification times and the separate producer timestamp field.
 - [Graph route migration](graph_routes_migration.md): current graph security behavior and deferred route consolidation.
 - [Remote file records](remote_file_records.md): implemented non-GCS file catalog behavior and deferred resource-generic attachment.
 - [Route package conventions](../app/api/routes/readme.md): route module and shared dependency guidance.

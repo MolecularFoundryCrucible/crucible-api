@@ -95,7 +95,7 @@ Do not extend the mechanism to other create operations until a client demonstrat
 
 ### 4. GET query contract modernization
 
-Decision: Implemented on `feature/get-query-contract`, pending review and deployment validation. The detailed compatibility, migration, and delivery record is in `docs/get_query_contract.md`.
+Decision: Deployed to production on 2026-09-15. The supported contract is summarized in `docs/get_query_contract.md` and defined by OpenAPI.
 
 Effective access and ownership are different relations. The existing `accessible_to_user` filters must not be overloaded to mean ownership, and the Hub must not filter already paginated results locally.
 
@@ -176,9 +176,9 @@ Expose relationship-specific capability guidance only when it is derived from th
 
 ### 12. Dataset instrument reassignment
 
-Decision: Good design, but blocked on access-grant provenance.
+Decision: Implemented with `PUT /datasets/{dataset_mfid}/instrument`.
 
-Use a dedicated previewable atomic operation rather than generic dataset PATCH. Before implementation, make instrument-derived access distinguishable from explicit grants so reassignment can remove only derived access. The operation must validate source and target authority, update instrument references and derived ACLs in one transaction, update the resource version or modification state, and return the authoritative assignment result.
+The operation resolves a stable instrument identifier, updates all stored instrument references and the derived contributor grant atomically, advances modification time, and leaves unrelated grants unchanged. Generic dataset PATCH cannot reassign or clear an instrument. Clearing remains unsupported. See `docs/dataset_instrument_assignment.md`.
 
 ### 13. Search and collection semantics
 

@@ -179,6 +179,10 @@ def search_users(
             f"{SEARCH_QUERY_LIMIT_DESCRIPTION}"
         ),
     ),
+    is_service_account: Optional[bool] = Query(
+        default=None,
+        description="Restrict results to service accounts or human users.",
+    ),
     limit: int = Query(default=20, ge=1, le=50),
 ):
     '''
@@ -195,6 +199,8 @@ def search_users(
             fields=fields,
             prefix_fields=fields,
         )
+        if is_service_account is not None:
+            query = query.where(User.is_service_account == is_service_account)
         results = session.exec(
             query.order_by(
                 trigram_rank(normalized_q, fields).desc(),

@@ -236,6 +236,10 @@ An ordinary human caller may create only for themselves. Platform contributors a
 
 Platform administrators can use `GET /service_accounts` for a paginated, searchable directory and `GET /service_accounts/{unique_id}` for administrator-visible details. These responses expose `platform_role` and never expose the API key. The detail response includes non-secret key validity, creation date, and expiration date when a key exists. Project membership routes reject roles above contributor for a non-admin service account.
 
+Authorized resource managers can use `GET /users/search?q={query}&is_service_account=true` for public-safe service-account autocomplete. The optional filter is applied before ranking and limiting. It does not expose administrative service-account fields.
+
+Project responses expose the acting principal's general `capabilities.max_grant_role`, while project member responses expose the stored membership role. A future target-aware membership contract may return effective role and assignable roles for a selected identity. Until then, clients should cap service-account choices at viewer and contributor and treat API authorization as authoritative.
+
 Responses that contain an API key send `Cache-Control: no-store`. Creation and rotation remain the preferred service-account credential flows; administrative retrieval through `POST /users/{user_id}/apikey` remains available for compatibility.
 
 Revision `7a1c4e8d2f90` adds the PostgreSQL enum value and must run before deploying code that creates service accounts with the new default. It does not change existing users. Existing service accounts with `platform_role=admin` must be moved to `contributor` individually after their ingestion workflow is verified, then removed from the legacy `admin` group.

@@ -16771,6 +16771,24 @@
             }
           },
           {
+            "description": "Restrict results to service accounts or human users.",
+            "in": "query",
+            "name": "is_service_account",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict results to service accounts or human users.",
+              "title": "Is Service Account"
+            }
+          },
+          {
             "in": "query",
             "name": "limit",
             "required": false,

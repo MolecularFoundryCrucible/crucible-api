@@ -48,11 +48,12 @@ def granted(session, role):
 
 
 class TestEditingTheRecord:
-    def test_operator_with_editor_may_edit(self, session):
+    def test_service_account_is_capped_below_editor(self, session):
         granted(session, Role.EDITOR)
         principal = op(session, Role.ADMIN)
-        require_permission(session, principal, MFID, Permission.EDIT,
-                           legacy_group=NAME)
+        with pytest.raises(HTTPException):
+            require_permission(session, principal, MFID, Permission.EDIT,
+                               legacy_group=NAME)
         capabilities = resource_capabilities(
             session,
             principal,
@@ -61,7 +62,7 @@ class TestEditingTheRecord:
             legacy_status_group=NAME,
         )
         assert capabilities.model_dump() == {
-            "can_edit": True,
+            "can_edit": False,
             "can_manage_access": False,
             "can_change_status": False,
             "can_transfer": False,
@@ -76,10 +77,10 @@ class TestEditingTheRecord:
             require_permission(session, stranger, MFID, Permission.EDIT, legacy_group=NAME)
         assert exc.value.status_code == 403
 
-    def test_before_migration_group_membership_still_works(self, session):
-        """No ACL rows yet — instruments only get them at registration."""
-        require_permission(session, op(session, Role.VIEWER), MFID, Permission.EDIT,
-                           legacy_group=NAME)
+    def test_legacy_group_membership_does_not_bypass_the_cap(self, session):
+        with pytest.raises(HTTPException):
+            require_permission(session, op(session, Role.VIEWER), MFID, Permission.EDIT,
+                               legacy_group=NAME)
 
 
 class TestRetiring:
@@ -90,11 +91,12 @@ class TestRetiring:
             require_permission(session, op(session, Role.ADMIN), MFID, Permission.DELETE,
                                legacy_group=NAME)
 
-    def test_an_admin_can(self, session):
+    def test_service_account_group_admin_is_still_capped(self, session):
         granted(session, Role.ADMIN)
         principal = op(session, Role.ADMIN)
-        require_permission(session, principal, MFID, Permission.DELETE,
-                           legacy_group=NAME)
+        with pytest.raises(HTTPException):
+            require_permission(session, principal, MFID, Permission.DELETE,
+                               legacy_group=NAME)
         capabilities = resource_capabilities(
             session,
             principal,
@@ -102,10 +104,10 @@ class TestRetiring:
             legacy_edit_group=NAME,
             legacy_status_group=NAME,
         )
-        assert capabilities.can_manage_access is True
-        assert capabilities.can_change_status is True
+        assert capabilities.can_manage_access is False
+        assert capabilities.can_change_status is False
         assert capabilities.can_transfer is False
-        assert capabilities.max_grant_role == "admin"
+        assert capabilities.max_grant_role is None
 
     def test_platform_admin_can(self, session):
         granted(session, Role.EDITOR)

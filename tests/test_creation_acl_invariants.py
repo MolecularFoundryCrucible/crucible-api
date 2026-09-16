@@ -107,7 +107,12 @@ def test_publishing_rolls_back_when_public_group_is_missing(
             is_service_account=True,
         ))
         session.commit()
-    auth_as("service-account", groups=[], is_service_account=True)
+    auth_as(
+        "service-account",
+        groups=[],
+        platform_role=PlatformRole.CONTRIBUTOR,
+        is_service_account=True,
+    )
     response = client.post("/samples", json={
         "sample_name": "missing-public-group",
         "public": True,

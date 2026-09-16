@@ -167,7 +167,7 @@ Response is now `PaginatedResponse[Union[ProjectWithLead, ProjectMinimalRead]]`,
 
 `GET /datasets`, `GET /samples`, and `GET /projects` accept repeated `accessible_to_user` and `accessible_to_project` query parameters. User references may be MFIDs, ORCIDs, usernames, or emails. Project references may be MFIDs or slugs. The API resolves each reference once, deduplicates canonical principals, and returns resources accessible to every selected principal using AND semantics.
 
-Selectors only narrow resources readable by the caller. Inspecting another user requires platform-admin authority. Inspecting a project requires membership in that project or platform-admin authority. At most 10 selectors may be supplied in one request.
+Selectors only narrow resources readable by the caller. Inspecting another user requires platform-contributor or platform-admin authority. Inspecting a project requires membership in that project, platform-contributor authority, or platform-admin authority. At most 10 selectors may be supplied in one request.
 
 ```http
 GET /datasets?accessible_to_user={user_ref}
@@ -229,6 +229,14 @@ Platform administrators may omit `unique_id` when creating a human user. The API
 The route now performs proposal lookup before opening a database transaction, uses a bounded timeout, returns 502 on upstream failure, deduplicates project IDs, fetches projects and their groups in bounded queries, rejects unknown explicitly requested projects, and creates identity and project memberships atomically. ORCID-less users make no external request.
 
 A human caller may create only for themselves. Service accounts and platform administrators may create for another registered identity. For datasets and samples, when `project_id` is supplied, the effective owner must have contributor-or-above standing in that project. The existing deferred instrument-to-project authorization behavior is unchanged.
+
+`platform_role=contributor` grants platform-wide read and create access. New service accounts receive this role by default and can read projects and resources, create resources and child records, and use `accessible_to_user` for another registered identity. `is_service_account` alone grants no global access. Non-admin service accounts remain capped at contributor even when an ACL or group standing would otherwise grant a higher role. They cannot edit existing values, delete resources, manage ACLs, transfer ownership, register instruments, or use platform-administrator routes.
+
+Revision `7a1c4e8d2f90` adds the PostgreSQL enum value and must run before deploying code that creates service accounts with the new default. It does not change existing users. Existing service accounts with `platform_role=admin` must be moved to `contributor` individually after their ingestion workflow is verified, then removed from the legacy `admin` group.
+
+Contributor-level additive operations include initial metadata creation, associated-file creation, upload initiation and completion, keyword association, ingestion-request creation, and same-project dataset-to-sample and parent-child linking. Metadata overwrite, metadata merge, relationship-type changes, cross-project linking, resource updates, file updates, unlinking, deletion, ACL changes, and ownership transfer retain their existing higher permission requirements.
+
+`POST /datasets/{dataset_mfid}/files` accepts `storage_path` when `storage_backend` is not `gcs`, allowing a complete catalog-only file record to be created without a follow-up editor operation. GCS storage paths remain assigned only by the upload completion route.
 
 The deprecated dataset `source_folder` field has been removed from `DatasetCreate`, `DatasetRead`, and dataset responses. File locations belong to associated-file records. Existing database columns and historical revision records are unchanged, while new dataset revision records omit the field.
 

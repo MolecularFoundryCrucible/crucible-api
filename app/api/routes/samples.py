@@ -30,7 +30,8 @@ from app.utils.auth_utils import (
     authorize_user, permission_filter, project_scope_filter,
     owner_affiliation_filter, require_permission)
 from app.utils.instrument_utils import resolve_instrument_mfids_to_references
-from app.utils.permissions import Principal, Permission, Role
+from app.utils.link_utils import require_link_create_permissions
+from app.utils.permissions import Principal, Permission, Role, has_global_permission
 from app.utils.project_utils import (
     project_standing_by_mfid,
     resolve_project_filter_mfid,
@@ -81,15 +82,12 @@ def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annota
     is_part_of means "child is_part_of parent". Omit it to leave the kind
     unspecified; on a link that already exists, omitting it preserves the
     type already stored rather than clearing it.
+    Same-project links require contributor access to the parent and read access
+    to the child. Cross-project links and relationship-type changes require
+    editor access to both samples.
     '''
 
     with Session(engine) as session:
-        # Both, not either: the pre-role check passed on any one.
-
-        require_permission(session, auth_res, parent_sample_id, Permission.EDIT)
-
-        require_permission(session, auth_res, child_sample_id, Permission.EDIT)
-
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()
         if not parent_sample:
             raise HTTPException(status_code=404, detail="Parent sample not found")
@@ -97,19 +95,27 @@ def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annota
         if not child_sample:
             raise HTTPException(status_code=404, detail="Child sample not found")
 
-        # Only pass relationship_type when the caller supplied one: add_or_update
-        # overwrites every kwarg it is given, so passing None would blank the
-        # stored type on a re-POST that just meant "make sure this link exists".
-        link_fields = {}
-        if relationship_type is not None:
-            link_fields["relationship_type"] = relationship_type
+        require_link_create_permissions(session, auth_res, parent_sample, child_sample)
 
-        link = add_or_update(session,
-                     SampleLink,
-                     where=and_(SampleLink.parent_sample_id == parent_sample.id, SampleLink.sample_id == child_sample.id),
-                     parent_sample_id=parent_sample.id,
-                     sample_id=child_sample.id,
-                     **link_fields)
+        link = session.exec(
+            select(SampleLink).where(
+                SampleLink.parent_sample_id == parent_sample.id,
+                SampleLink.sample_id == child_sample.id,
+            )
+        ).one_or_none()
+        if link is not None:
+            if relationship_type is None or link.relationship_type == relationship_type:
+                return link
+            require_permission(session, auth_res, parent_sample_id, Permission.EDIT)
+            require_permission(session, auth_res, child_sample_id, Permission.EDIT)
+            link.relationship_type = relationship_type
+        else:
+            link = SampleLink(
+                parent_sample_id=parent_sample.id,
+                sample_id=child_sample.id,
+                relationship_type=relationship_type,
+            )
+        session.add(link)
 
         touch_resource_modification_time(session, parent_sample_id)
         touch_resource_modification_time(session, child_sample_id)
@@ -237,17 +243,20 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         if not auth_res.is_platform_admin:
             owner_orcid = resolved_owner_orcid or user_unique_id
             if project is not None:
-                if owner_orcid != user_unique_id and not auth_res.is_service_account:
+                if (
+                    owner_orcid != user_unique_id
+                    and not has_global_permission(auth_res, Permission.CREATE)
+                ):
                     raise HTTPException(
                         status_code=403,
-                        detail="Only service accounts and platform administrators may create a sample on behalf of another user")
+                        detail="Only platform contributors and administrators may create a sample on behalf of another user")
                 standing = project_standing_by_mfid(owner_orcid, project.unique_id, session)
                 if standing is None or standing < Role.CONTRIBUTOR:
                     raise HTTPException(
                         status_code=403,
                         detail=f"'{owner_orcid}' must be contributor or above in project '{project.project_id}' to create there")
             elif owner_orcid != user_unique_id:
-                if not auth_res.is_service_account:
+                if not has_global_permission(auth_res, Permission.CREATE):
                     raise HTTPException(
                         status_code=400,
                         detail="Creating on behalf of another user requires project_id, to verify their standing there")

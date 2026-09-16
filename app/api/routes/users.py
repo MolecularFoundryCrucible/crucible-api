@@ -15,7 +15,7 @@ from app.models.core_models import (
     AccessGroup, Dataset, Project, Sample, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
 )
 from app.utils.auth_utils import authorize_user, fetch_acl_rows, find_or_add_api_access, has_platform_admin_access, is_instrument_group_member, permission_filter, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
-from app.utils.permissions import AccessGroupType, effective_role, Principal, Role
+from app.utils.permissions import AccessGroupType, Permission, effective_role, has_global_permission, Principal, Role
 from app.utils.search_utils import (
     MAX_SEARCH_QUERY_LENGTH,
     SEARCH_QUERY_LIMIT_DESCRIPTION,
@@ -440,8 +440,12 @@ def read_user_access_to_dataset(dataset_mfid: str, user_id: str, auth_res: Annot
 
         if access_principal.is_platform_admin:
             access = EffectiveAccess.PLATFORM_ADMIN
+        elif has_global_permission(access_principal, Permission.READ):
+            access = EffectiveAccess.CONTRIBUTOR
         else:
             role = effective_role(access_principal, fetch_acl_rows(session, dataset_mfid))
+            if access_principal.is_service_account and role is not None:
+                role = min(role, Role.CONTRIBUTOR)
             access = EffectiveAccess(role.db_value) if role is not None else EffectiveAccess.NONE
 
         return EffectiveResourceAccessRead(

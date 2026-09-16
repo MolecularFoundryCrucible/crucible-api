@@ -18,6 +18,16 @@ AFFILIATION_DESCRIPTION = (
     "Relationship between the authenticated caller and each result. "
     "Repeated values use OR semantics."
 )
+ACCESSIBLE_TO_USER_DESCRIPTION = (
+    "User references whose effective access must all include each result. "
+    "Ordinary callers may select only themselves; platform contributors and "
+    "administrators may select other users."
+)
+ACCESSIBLE_TO_PROJECT_DESCRIPTION = (
+    "Project MFIDs or slugs whose direct access must all include each result. "
+    "Ordinary callers must hold standing in each selected project; platform "
+    "contributors and administrators may select any project."
+)
 
 
 class Affiliation(str, Enum):
@@ -101,13 +111,13 @@ class ResourceCollectionQuery(StrictQueryModel):
         default=None,
         min_length=1,
         max_length=10,
-        description="User references whose effective access must all include each result.",
+        description=ACCESSIBLE_TO_USER_DESCRIPTION,
     )
     accessible_to_project: Optional[list[str]] = Field(
         default=None,
         min_length=1,
         max_length=10,
-        description="Project MFIDs or slugs whose direct access must all include each result.",
+        description=ACCESSIBLE_TO_PROJECT_DESCRIPTION,
     )
     affiliation: Optional[list[Affiliation]] = Field(
         default=None,
@@ -311,8 +321,18 @@ class SampleListQuery(ResourceCollectionQuery):
 
 
 class ResourceFacetQuery(StrictQueryModel):
-    accessible_to_user: Optional[list[str]] = Field(default=None, min_length=1, max_length=10)
-    accessible_to_project: Optional[list[str]] = Field(default=None, min_length=1, max_length=10)
+    accessible_to_user: Optional[list[str]] = Field(
+        default=None,
+        min_length=1,
+        max_length=10,
+        description=ACCESSIBLE_TO_USER_DESCRIPTION,
+    )
+    accessible_to_project: Optional[list[str]] = Field(
+        default=None,
+        min_length=1,
+        max_length=10,
+        description=ACCESSIBLE_TO_PROJECT_DESCRIPTION,
+    )
     affiliation: Optional[list[Affiliation]] = Field(
         default=None,
         min_length=1,
@@ -434,13 +454,13 @@ class ProjectListQuery(StrictQueryModel):
         default=None,
         min_length=1,
         max_length=10,
-        description="User references whose effective access must all include each result.",
+        description=ACCESSIBLE_TO_USER_DESCRIPTION,
     )
     accessible_to_project: Optional[list[str]] = Field(
         default=None,
         min_length=1,
         max_length=10,
-        description="Project MFIDs or slugs whose direct access must all include each result.",
+        description=ACCESSIBLE_TO_PROJECT_DESCRIPTION,
     )
     affiliation: Optional[list[Affiliation]] = Field(
         default=None,

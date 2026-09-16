@@ -10,7 +10,8 @@ from app.api.routes.samples import create_sample
 from app.models.core_models import AccessGroup, Dataset, ResourceACL, Sample, User
 from app.models.datasets import DatasetCreate
 from app.models.samples import SampleCreate
-from app.utils.permissions import AccessGroupType, Principal, PUBLIC_GROUP_NAME, Role
+from app.utils.permissions import (
+    AccessGroupType, PlatformRole, Principal, PUBLIC_GROUP_NAME, Role)
 
 
 SERVICE_ACCOUNT_ID = "0tkn2knjast3h0008nyq9zps2c"
@@ -97,7 +98,11 @@ def test_dataset_owner_reference_resolves_to_canonical_identity(db_engine):
         owner_group_id = owner_group.id
 
     response = asyncio.run(create_dataset(
-        Principal(user_id=SERVICE_ACCOUNT_ID, is_service_account=True),
+        Principal(
+            user_id=SERVICE_ACCOUNT_ID,
+            platform_role=PlatformRole.CONTRIBUTOR,
+            is_service_account=True,
+        ),
         DatasetCreate(dataset_name="owned-by-reference", owner="dataset-owner"),
         BackgroundTasks(),
     ))

@@ -250,7 +250,17 @@ class AssociatedFileCreate(SQLModel):
     size: int
     sha256_hash: str
     storage_backend: str = "gcs"
+    storage_path: Optional[str] = Field(
+        default=None,
+        description="Backend-specific location for a non-GCS catalog-only file.",
+    )
     access_note: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_storage_path(self):
+        if self.storage_backend == "gcs" and self.storage_path is not None:
+            raise ValueError("storage_path is assigned by the upload API for GCS files")
+        return self
 
 
 class AssociatedFileRead(SQLModel):

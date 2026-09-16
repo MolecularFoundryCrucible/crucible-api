@@ -214,6 +214,7 @@ def list_join_requests(
     '''
     user_unique_id = auth_res.user_id
     is_admin = has_platform_admin_access(auth_res)
+    may_act_as_lead = not auth_res.is_service_account or is_admin
 
     with Session(engine) as session:
         filters = []
@@ -224,13 +225,21 @@ def list_join_requests(
                 AccessGroup.group_name == proj.unique_id,
                 AccessGroup.group_type == AccessGroupType.PROJECT.value,
             )).one_or_none() if proj else None
-            if not is_admin and not (ag and _is_group_lead(user_unique_id, ag.id, session)):
+            if not is_admin and not (
+                may_act_as_lead
+                and ag
+                and _is_group_lead(user_unique_id, ag.id, session)
+            ):
                 raise HTTPException(status_code=403, detail="Only admins, or the lead of the requested group, can list join requests.")
             if ag is None:
                 return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
             filters.append(AccessGroupJoinRequest.accessgroup_id == ag.id)
         elif not is_admin:
-            led_ids = _led_accessgroup_ids(user_unique_id, session)
+            led_ids = (
+                _led_accessgroup_ids(user_unique_id, session)
+                if may_act_as_lead
+                else []
+            )
             if not led_ids:
                 return PaginatedResponse(total=0, limit=limit, offset=offset, items=[])
             filters.append(col(AccessGroupJoinRequest.accessgroup_id).in_(led_ids))
@@ -267,6 +276,7 @@ def get_join_request(
     '''
     user_unique_id = auth_res.user_id
     is_admin = has_platform_admin_access(auth_res)
+    may_act_as_lead = not auth_res.is_service_account or is_admin
 
     with Session(engine) as session:
         req = session.exec(
@@ -275,7 +285,14 @@ def get_join_request(
         if req is None:
             raise HTTPException(status_code=404, detail="Join request not found.")
 
-        if not is_admin and user_unique_id != req.requester_id and not _is_group_lead(user_unique_id, req.accessgroup_id, session):
+        if (
+            not is_admin
+            and user_unique_id != req.requester_id
+            and not (
+                may_act_as_lead
+                and _is_group_lead(user_unique_id, req.accessgroup_id, session)
+            )
+        ):
             raise HTTPException(status_code=403, detail="Only admins, the lead of this group, or the requester can view this join request.")
 
         return _to_join_request_read(req, _resolve_group_project_id(req.accessgroup_id, session))
@@ -294,6 +311,7 @@ def review_join_request(
     '''
     user_unique_id = auth_res.user_id
     is_admin = has_platform_admin_access(auth_res)
+    may_act_as_lead = not auth_res.is_service_account or is_admin
 
     with Session(engine) as session:
         req = session.exec(
@@ -304,7 +322,10 @@ def review_join_request(
         if req is None:
             raise HTTPException(status_code=404, detail="Join request not found.")
 
-        if not is_admin and not _is_group_lead(user_unique_id, req.accessgroup_id, session):
+        if not is_admin and not (
+            may_act_as_lead
+            and _is_group_lead(user_unique_id, req.accessgroup_id, session)
+        ):
             raise HTTPException(status_code=403, detail="Only admins or the lead of this group can review join requests.")
 
         if req.status != "pending":

@@ -8,7 +8,7 @@ The generated OpenAPI document defines the complete parameter schemas. This docu
 
 Dataset, sample, project, and instrument collections use endpoint-specific query models and reject unknown parameters with 422. They share these controls where applicable:
 
-- `accessible_to_user` and `accessible_to_project` constrain effective access.
+- `accessible_to_user` and `accessible_to_project` constrain effective access. Platform contributors and administrators may select another user or project; ordinary callers remain limited to themselves and projects where they hold standing.
 - Repeatable `affiliation=owner` selects resources authoritatively owned by the current caller.
 - `owner_id` is the preferred exact person or service-account owner filter. `owner_orcid` remains a deprecated alias on supported routes.
 - `project_id`, `project_mfid`, and `project_scope=assigned|shared|all` constrain project relationships on dataset and sample collections.

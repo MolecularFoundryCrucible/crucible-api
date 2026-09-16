@@ -22,7 +22,8 @@ from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor,
     validate_cursor)
 from app.utils.permissions import (
-    AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
+    AccessGroupType, Permission, Principal, Role, can_grant, effective_role,
+    has_global_permission)
 from app.utils.search_utils import (
     apply_trigram_search,
     configure_trigram_search,
@@ -191,7 +192,7 @@ def list_projects(
                 base = base.where(Project.project_id == project_id)
         elif project_id is not None:
             base = select(Project).where(Project.project_id == project_id)
-        elif has_platform_admin_access(auth_res):
+        elif has_global_permission(auth_res, Permission.READ):
             base = select(Project)
         else:
             user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
@@ -245,7 +246,7 @@ def list_projects(
         items = []
         for proj in props:
             may_see_private_fields = (
-                has_platform_admin_access(auth_res)
+                has_global_permission(auth_res, Permission.READ)
                 or auth_res.role_in(proj.unique_id) is not None
             )
             lead_user = leads.get(proj.project_lead_orcid)
@@ -579,7 +580,10 @@ def remove_user_from_project(project_ref: str, orcid: str, auth_res: Annotated[P
             raise HTTPException(status_code=404, detail=f"Project {project_ref} not found")
 
         is_self = user_unique_id == orcid and not email and not username
-        caller_is_owner = is_project_owner(user_unique_id, proj.project_id, session)
+        caller_is_owner = (
+            not auth_res.is_service_account
+            and is_project_owner(user_unique_id, proj.project_id, session)
+        )
         if not is_admin and not caller_is_owner and not is_self:
             raise HTTPException(status_code=403, detail="Only platform admins, the project lead, or the member themselves can remove a member.")
 

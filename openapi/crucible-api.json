@@ -323,6 +323,18 @@
             "default": "gcs",
             "title": "Storage Backend",
             "type": "string"
+          },
+          "storage_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Backend-specific location for a non-GCS catalog-only file.",
+            "title": "Storage Path"
           }
         },
         "required": [
@@ -6238,7 +6250,7 @@
         "operationId": "list_datasets_datasets_get",
         "parameters": [
           {
-            "description": "User references whose effective access must all include each result.",
+            "description": "User references whose effective access must all include each result. Ordinary callers may select only themselves; platform contributors and administrators may select other users.",
             "in": "query",
             "name": "accessible_to_user",
             "required": false,
@@ -6256,12 +6268,12 @@
                   "type": "null"
                 }
               ],
-              "description": "User references whose effective access must all include each result.",
+              "description": "User references whose effective access must all include each result. Ordinary callers may select only themselves; platform contributors and administrators may select other users.",
               "title": "Accessible To User"
             }
           },
           {
-            "description": "Project MFIDs or slugs whose direct access must all include each result.",
+            "description": "Project MFIDs or slugs whose direct access must all include each result. Ordinary callers must hold standing in each selected project; platform contributors and administrators may select any project.",
             "in": "query",
             "name": "accessible_to_project",
             "required": false,
@@ -6279,7 +6291,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Project MFIDs or slugs whose direct access must all include each result.",
+              "description": "Project MFIDs or slugs whose direct access must all include each result. Ordinary callers must hold standing in each selected project; platform contributors and administrators may select any project.",
               "title": "Accessible To Project"
             }
           },
@@ -7041,6 +7053,7 @@
         "operationId": "get_dataset_facets_datasets_facets_get",
         "parameters": [
           {
+            "description": "User references whose effective access must all include each result. Ordinary callers may select only themselves; platform contributors and administrators may select other users.",
             "in": "query",
             "name": "accessible_to_user",
             "required": false,
@@ -7058,10 +7071,12 @@
                   "type": "null"
                 }
               ],
+              "description": "User references whose effective access must all include each result. Ordinary callers may select only themselves; platform contributors and administrators may select other users.",
               "title": "Accessible To User"
             }
           },
           {
+            "description": "Project MFIDs or slugs whose direct access must all include each result. Ordinary callers must hold standing in each selected project; platform contributors and administrators may select any project.",
             "in": "query",
             "name": "accessible_to_project",
             "required": false,
@@ -7079,6 +7094,7 @@
                   "type": "null"
                 }
               ],
+              "description": "Project MFIDs or slugs whose direct access must all include each result. Ordinary callers must hold standing in each selected project; platform contributors and administrators may select any project.",
               "title": "Accessible To Project"
             }
           },
@@ -8243,7 +8259,7 @@
         ]
       },
       "post": {
-        "description": "Adds a file record to a dataset.\nCreates the record if one with the same sha256_hash and dataset does not already exist.\nUse POST /datasets/{dsid}/files/{file_id}/ingest to trigger ingestion.",
+        "description": "Adds a file record to a dataset.\nCreates the record if one with the same sha256_hash and dataset does not already exist.\nUse POST /datasets/{dsid}/files/{file_id}/ingest to trigger ingestion.\nRequires contributor access. A repeated hash returns the existing record unchanged.",
         "operationId": "add_associated_file_datasets__dsid__files_post",
         "parameters": [
           {
@@ -8540,7 +8556,7 @@
         ]
       },
       "post": {
-        "description": "Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object.\nOtherwise, the keyword will be created and then added to the dataset.",
+        "description": "Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object.\nOtherwise, the keyword will be created and then added to the dataset.\nRequires contributor access.",
         "operationId": "add_keyword_datasets__dsid__keywords_post",
         "parameters": [
           {
@@ -8809,6 +8825,7 @@
         ]
       },
       "post": {
+        "description": "Links a dataset to a readable sample in the same project with contributor access.\n\nCross-project links retain the editor requirement on both resources.",
         "operationId": "link_dataset_sample_datasets__dsid__samples__sample_id__post",
         "parameters": [
           {
@@ -9098,7 +9115,7 @@
     },
     "/datasets/{dsid}/upload/complete": {
       "post": {
-        "description": "Finalise a GCS resumable upload.\nVerifies the blob landed in GCS, registers it as an AssociatedFile on the dataset,\nand deletes the upload session record.",
+        "description": "Finalise a GCS resumable upload.\nRequires contributor access to the dataset and ownership of the upload session.\nVerifies the blob landed in GCS, registers it as an AssociatedFile on the dataset,\nand deletes the upload session record.",
         "operationId": "complete_resumable_upload_datasets__dsid__upload_complete_post",
         "parameters": [
           {
@@ -9156,7 +9173,7 @@
     },
     "/datasets/{dsid}/upload/initiate": {
       "post": {
-        "description": "Initiate a GCS resumable upload session for a large file.\nReturns an upload_id and a resumable_uri the client uses to PUT chunks directly to GCS\n(no API credentials needed for the chunk transfers).\nCall POST /datasets/{dsid}/upload/complete when all chunks are uploaded.",
+        "description": "Initiate a GCS resumable upload session for a large file.\nRequires contributor access to the dataset.\nReturns an upload_id and a resumable_uri the client uses to PUT chunks directly to GCS\n(no API credentials needed for the chunk transfers).\nCall POST /datasets/{dsid}/upload/complete when all chunks are uploaded.",
         "operationId": "initiate_resumable_upload_datasets__dsid__upload_initiate_post",
         "parameters": [
           {
@@ -9214,7 +9231,7 @@
     },
     "/datasets/{dsid}/upload/initiate/multipart": {
       "post": {
-        "description": "Vend a short-lived GCS OAuth2 access token for parallel client-side uploads.\nThe client uses this token with google-cloud-storage transfer_manager.upload_chunks_concurrently().\nReturns upload_id — pass it to POST /datasets/{dsid}/upload/complete after the transfer.\nIf existing_file is set, the file already exists; skip the upload entirely.",
+        "description": "Vend a short-lived GCS OAuth2 access token for parallel client-side uploads.\nRequires contributor access to the dataset.\nThe client uses this token with google-cloud-storage transfer_manager.upload_chunks_concurrently().\nReturns upload_id — pass it to POST /datasets/{dsid}/upload/complete after the transfer.\nIf existing_file is set, the file already exists; skip the upload entirely.",
         "operationId": "initiate_multipart_upload_datasets__dsid__upload_initiate_multipart_post",
         "parameters": [
           {
@@ -9415,7 +9432,7 @@
         ]
       },
       "post": {
-        "description": "Link two datasets as parent and child.\n\nrelationship_type describes the child relative to the parent, so\nis_part_of means \"child is_part_of parent\". Omit it to leave the kind\nunspecified; on a link that already exists, omitting it preserves the\ntype already stored rather than clearing it.",
+        "description": "Link two datasets as parent and child.\n\nrelationship_type describes the child relative to the parent, so\nis_part_of means \"child is_part_of parent\". Omit it to leave the kind\nunspecified; on a link that already exists, omitting it preserves the\ntype already stored rather than clearing it.\nSame-project links require contributor access to the parent and read access\nto the child. Cross-project links and relationship-type changes require\neditor access to both datasets.",
         "operationId": "link_dataset_parent_child_datasets__parent_dataset_id__children__child_dataset_id__post",
         "parameters": [
           {
@@ -11973,7 +11990,7 @@
             }
           },
           {
-            "description": "User references whose effective access must all include each result.",
+            "description": "User references whose effective access must all include each result. Ordinary callers may select only themselves; platform contributors and administrators may select other users.",
             "in": "query",
             "name": "accessible_to_user",
             "required": false,
@@ -11991,12 +12008,12 @@
                   "type": "null"
                 }
               ],
-              "description": "User references whose effective access must all include each result.",
+              "description": "User references whose effective access must all include each result. Ordinary callers may select only themselves; platform contributors and administrators may select other users.",
               "title": "Accessible To User"
             }
           },
           {
-            "description": "Project MFIDs or slugs whose direct access must all include each result.",
+            "description": "Project MFIDs or slugs whose direct access must all include each result. Ordinary callers must hold standing in each selected project; platform contributors and administrators may select any project.",
             "in": "query",
             "name": "accessible_to_project",
             "required": false,
@@ -12014,7 +12031,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Project MFIDs or slugs whose direct access must all include each result.",
+              "description": "Project MFIDs or slugs whose direct access must all include each result. Ordinary callers must hold standing in each selected project; platform contributors and administrators may select any project.",
               "title": "Accessible To Project"
             }
           },
@@ -13886,6 +13903,7 @@
         ]
       },
       "post": {
+        "description": "Creates initial metadata with contributor access. Replacing metadata requires editor access.",
         "operationId": "create_resource_metadata_resources__unique_id__metadata_post",
         "parameters": [
           {
@@ -13959,7 +13977,7 @@
         "operationId": "list_samples_samples_get",
         "parameters": [
           {
-            "description": "User references whose effective access must all include each result.",
+            "description": "User references whose effective access must all include each result. Ordinary callers may select only themselves; platform contributors and administrators may select other users.",
             "in": "query",
             "name": "accessible_to_user",
             "required": false,
@@ -13977,12 +13995,12 @@
                   "type": "null"
                 }
               ],
-              "description": "User references whose effective access must all include each result.",
+              "description": "User references whose effective access must all include each result. Ordinary callers may select only themselves; platform contributors and administrators may select other users.",
               "title": "Accessible To User"
             }
           },
           {
-            "description": "Project MFIDs or slugs whose direct access must all include each result.",
+            "description": "Project MFIDs or slugs whose direct access must all include each result. Ordinary callers must hold standing in each selected project; platform contributors and administrators may select any project.",
             "in": "query",
             "name": "accessible_to_project",
             "required": false,
@@ -14000,7 +14018,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Project MFIDs or slugs whose direct access must all include each result.",
+              "description": "Project MFIDs or slugs whose direct access must all include each result. Ordinary callers must hold standing in each selected project; platform contributors and administrators may select any project.",
               "title": "Accessible To Project"
             }
           },
@@ -14625,6 +14643,7 @@
         "operationId": "get_sample_facets_samples_facets_get",
         "parameters": [
           {
+            "description": "User references whose effective access must all include each result. Ordinary callers may select only themselves; platform contributors and administrators may select other users.",
             "in": "query",
             "name": "accessible_to_user",
             "required": false,
@@ -14642,10 +14661,12 @@
                   "type": "null"
                 }
               ],
+              "description": "User references whose effective access must all include each result. Ordinary callers may select only themselves; platform contributors and administrators may select other users.",
               "title": "Accessible To User"
             }
           },
           {
+            "description": "Project MFIDs or slugs whose direct access must all include each result. Ordinary callers must hold standing in each selected project; platform contributors and administrators may select any project.",
             "in": "query",
             "name": "accessible_to_project",
             "required": false,
@@ -14663,6 +14684,7 @@
                   "type": "null"
                 }
               ],
+              "description": "Project MFIDs or slugs whose direct access must all include each result. Ordinary callers must hold standing in each selected project; platform contributors and administrators may select any project.",
               "title": "Accessible To Project"
             }
           },
@@ -15445,7 +15467,7 @@
         ]
       },
       "post": {
-        "description": "Link two samples as parent and child.\n\nrelationship_type describes the child relative to the parent, so\nis_part_of means \"child is_part_of parent\". Omit it to leave the kind\nunspecified; on a link that already exists, omitting it preserves the\ntype already stored rather than clearing it.",
+        "description": "Link two samples as parent and child.\n\nrelationship_type describes the child relative to the parent, so\nis_part_of means \"child is_part_of parent\". Omit it to leave the kind\nunspecified; on a link that already exists, omitting it preserves the\ntype already stored rather than clearing it.\nSame-project links require contributor access to the parent and read access\nto the child. Cross-project links and relationship-type changes require\neditor access to both samples.",
         "operationId": "link_sample_parent_child_samples__parent_sample_id__children__child_sample_id__post",
         "parameters": [
           {
@@ -16987,7 +17009,7 @@
   },
   "servers": [
     {
-      "url": "/api/v3"
+      "url": "/testapi"
     }
   ]
 }

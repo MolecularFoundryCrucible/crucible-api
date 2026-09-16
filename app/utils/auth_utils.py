@@ -23,7 +23,8 @@ from app.models.core_models import ApiToken
 from app.models.resource import ResourceCapabilities
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, THRESHOLDS, GroupMembership, Permission, PlatformRole,
-    Principal, Role, can_grant, effective_role, has_permission)
+    Principal, Role, can_grant, effective_role, has_global_permission,
+    has_permission)
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import join
@@ -292,9 +293,14 @@ def fetch_acl_rows(session, mfid: str):
 
 def _has_resource_permission(principal: Principal, acl_rows, permission: Permission,
                              legacy_group: Optional[str] = None) -> bool:
-    if principal.is_platform_admin:
+    if has_global_permission(principal, permission):
         return True
     if not acl_rows and legacy_group is not None:
+        if (
+            principal.is_service_account
+            and THRESHOLDS[permission] > Role.CONTRIBUTOR
+        ):
+            return False
         return any(g.group_name in ("admin", legacy_group) for g in principal.groups)
     return has_permission(principal, acl_rows, permission)
 
@@ -313,7 +319,7 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
     max_grant_role = None
     if principal.is_platform_admin:
         max_grant_role = Role.ADMIN.db_value
-    else:
+    elif not principal.is_service_account:
         for target in (Role.ADMIN, Role.EDITOR, Role.CONTRIBUTOR, Role.VIEWER):
             if can_grant(
                 actor_role,
@@ -381,6 +387,8 @@ def require_grant(session, principal: Principal, mfid: str, target: Role,
 
     if principal.is_platform_admin:
         return
+    if principal.is_service_account:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     actor = effective_role(principal, fetch_acl_rows(session, mfid))
     if not can_grant(
@@ -407,8 +415,13 @@ def permission_filter(principal: Principal, resource_model,
     from sqlalchemy import exists, false, true
     from app.models.core_models import ResourceACL
 
-    if principal.is_platform_admin:
+    if has_global_permission(principal, permission):
         return true()
+    if (
+        principal.is_service_account
+        and THRESHOLDS[permission] > Role.CONTRIBUTOR
+    ):
+        return false()
 
     threshold = THRESHOLDS[permission]
     group_ids = principal.group_ids_at_or_above(threshold)
@@ -508,7 +521,10 @@ def project_scope_filter(session, caller: Principal, resource_model,
     ).one_or_none()
     if project is None:
         raise HTTPException(status_code=404, detail=f"Project '{project_mfid}' not found")
-    if not has_platform_admin_access(caller) and caller.role_in(project.unique_id) is None:
+    if (
+        not has_global_permission(caller, Permission.READ)
+        and caller.role_in(project.unique_id) is None
+    ):
         raise HTTPException(status_code=403, detail="Not authorized to inspect project access")
 
     group = session.exec(
@@ -533,18 +549,20 @@ def project_scope_filter(session, caller: Principal, resource_model,
 
 
 def has_platform_admin_access(principal: Principal) -> bool:
-    return principal.is_platform_admin or any(
-        group.group_name == "admin" for group in principal.groups
+    return principal.is_platform_admin or (
+        not principal.is_service_account
+        and any(group.group_name == "admin" for group in principal.groups)
     )
 
 
 def require_platform_admin(principal: Principal) -> None:
     """Raise 403 unless the caller has platform-wide bypass.
 
-    Accepts admin-group membership as well as platform_role for now. On a
+    Accepts human admin-group membership as well as platform_role for now. On a
     database where the phase 1 backfill has not run, platform_role is 'none'
     for everyone, and checking it alone would lock every admin route with no
-    recovery short of direct database access. Drop the group arm in phase 5.
+    recovery short of direct database access. Service accounts require an
+    explicit platform role. Drop the group arm in phase 5.
     """
     if has_platform_admin_access(principal):
         return
@@ -558,14 +576,24 @@ def require_self_or_platform_admin(principal: Principal, orcid: str) -> None:
     require_platform_admin(principal)
 
 
-def resolve_access_principal(session, caller: Principal, user_ref: Optional[str]) -> Principal:
+def resolve_access_principal(
+    session,
+    caller: Principal,
+    user_ref: Optional[str],
+    *,
+    allow_global_contributor: bool = False,
+) -> Principal:
     if user_ref is None:
         return caller
 
     from app.utils.user_utils import resolve_user_by_identifier
 
     user = resolve_user_by_identifier(session, user_ref)
-    require_self_or_platform_admin(caller, user.unique_id)
+    if not (
+        allow_global_contributor
+        and has_global_permission(caller, Permission.READ)
+    ):
+        require_self_or_platform_admin(caller, user.unique_id)
     if caller.user_id == user.unique_id:
         return caller
     return load_principal(session, user.unique_id)
@@ -591,7 +619,12 @@ def access_selector_filter(session, caller: Principal, resource_model,
     seen = set()
 
     for user_ref in requested_users:
-        principal = resolve_access_principal(session, caller, user_ref)
+        principal = resolve_access_principal(
+            session,
+            caller,
+            user_ref,
+            allow_global_contributor=True,
+        )
         key = ("user", principal.user_id)
         if key in seen:
             continue
@@ -602,7 +635,10 @@ def access_selector_filter(session, caller: Principal, resource_model,
         project = resolve_project_reference(project_ref, session)
         if project is None:
             raise HTTPException(status_code=404, detail=f"Project '{project_ref}' not found")
-        if not has_platform_admin_access(caller) and caller.role_in(project.unique_id) is None:
+        if (
+            not has_global_permission(caller, Permission.READ)
+            and caller.role_in(project.unique_id) is None
+        ):
             raise HTTPException(status_code=403, detail="Not authorized to inspect project access")
         key = ("project", project.unique_id)
         if key in seen:

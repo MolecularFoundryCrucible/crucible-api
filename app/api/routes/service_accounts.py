@@ -7,7 +7,7 @@ from app.api.dependencies import get_engine
 from app.models.core_models import User
 from app.models.users import ServiceAccountCreate, ServiceAccountRead
 from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin
-from app.utils.permissions import AccessGroupType, Principal, Role
+from app.utils.permissions import AccessGroupType, PlatformRole, Principal, Role
 from app.utils.user_utils import assert_username_available, sql_add_user_to_access_group
 
 router = APIRouter(tags=["service_accounts"])
@@ -46,6 +46,7 @@ def create_service_account(
             first_name="",
             last_name="",
             is_service_account=True,
+            platform_role=PlatformRole.CONTRIBUTOR.value,
         )
         session.add(user)
         session.flush()  # get user.id

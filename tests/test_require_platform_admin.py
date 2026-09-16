@@ -49,6 +49,10 @@ class TestDenies:
         with pytest.raises(HTTPException):
             require_platform_admin(p)
 
+    def test_service_account_admin_group_does_not_bypass_contributor_ceiling(self):
+        with pytest.raises(HTTPException):
+            require_platform_admin(principal(groups=[ADMIN_GROUP], is_sa=True))
+
     @pytest.mark.parametrize("name", ["admins", "Admin", "ADMIN", "admin2", "read_only"])
     def test_group_named_like_admin_does_not_count(self, name):
         """Exact match only."""
@@ -65,4 +69,5 @@ def test_returns_none_rather_than_a_truthy_value():
 def test_predicate_matches_the_transitional_admin_policy():
     assert has_platform_admin_access(principal(platform_role=PlatformRole.ADMIN))
     assert has_platform_admin_access(principal(groups=[ADMIN_GROUP]))
+    assert not has_platform_admin_access(principal(groups=[ADMIN_GROUP], is_sa=True))
     assert not has_platform_admin_access(principal(groups=[PROJECT_GROUP]))

@@ -91,29 +91,9 @@ Generic resource detail behavior is centralized in `app/services/resource_detail
 
 ## Priority 1: security and authorization consistency
 
-### Remove transitional authorization fallbacks
+### Transitional authorization fallbacks removed
 
-Two pre-migration compatibility paths remain in `app/utils/auth_utils.py`:
-
-- `has_platform_admin_access()` accepts membership in the legacy `admin` access group in addition to `platform_role`.
-- `require_permission()` can accept a legacy project or instrument group when a resource has no ACL rows.
-
-These paths were useful while application deployment and the permission backfill could occur in either order. Production has now completed the permission migration, so they represent parallel authorization systems.
-
-Risks include:
-
-- Unexpected access through stale legacy groups.
-- Different authorization results depending on whether a resource happens to have any ACL rows.
-- More difficult auditing because effective authority has multiple sources.
-
-Before removal, run a read-only audit confirming:
-
-- Every supported project and instrument has the expected ACL representation.
-- Every platform administrator has the correct `platform_role`.
-- No active integration depends on the legacy `admin` group.
-- Ownerless resources that intentionally remain ownerless still have the intended non-owner ACL entries.
-
-After that audit, remove the group-based platform bypass and the `legacy_group` permission fallback.
+Platform-administrator authority now comes only from `platform_role=admin`. Project and instrument authorization requires canonical resource ACLs. Membership in legacy groups no longer supplies platform or resource authority when ACL rows are missing.
 
 ### Authentication cache revocation delay
 

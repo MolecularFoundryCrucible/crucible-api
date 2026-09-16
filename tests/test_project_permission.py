@@ -1,10 +1,4 @@
-"""Project routes check permission against the project resource.
-
-Projects became resources in phase 1, so proj_id is the project's mfid and
-these are ordinary require_permission calls. The fallback exists because
-projects only gained ACL entries in that backfill — without it, deploying this
-before the backfill locks every project route.
-"""
+"""Project routes check permission against the project resource ACL."""
 import pytest
 from fastapi import HTTPException
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -66,23 +60,19 @@ class TestAfterMigration:
         acl_rows = fetch_acl_rows(session, PROJ)
         if allowed:
             require_permission(
-                None, principal, PROJ, permission, legacy_group=PROJ,
-                acl_rows=acl_rows)
+                None, principal, PROJ, permission, acl_rows=acl_rows)
         else:
             with pytest.raises(HTTPException):
                 require_permission(
-                    None, principal, PROJ, permission, legacy_group=PROJ,
-                    acl_rows=acl_rows)
+                    None, principal, PROJ, permission, acl_rows=acl_rows)
 
         capabilities = resource_capabilities(
             None,
             principal,
             PROJ,
-            legacy_edit_group=PROJ,
             manage_access_floor=Role.EDITOR,
             allow_peer_grants=False,
             status_permission=Permission.EDIT,
-            legacy_status_group=PROJ,
             acl_rows=acl_rows,
         )
         expected_max = None
@@ -101,40 +91,37 @@ class TestAfterMigration:
     def test_a_viewer_can_read_but_not_add_members(self, session):
         """The tightening: today any project member can add anyone."""
         migrated(session)
-        require_permission(session, member(Role.VIEWER), PROJ, Permission.READ, legacy_group=PROJ)
+        require_permission(session, member(Role.VIEWER), PROJ, Permission.READ)
         with pytest.raises(HTTPException):
-            require_permission(session, member(Role.VIEWER), PROJ, Permission.EDIT, legacy_group=PROJ)
+            require_permission(session, member(Role.VIEWER), PROJ, Permission.EDIT)
 
     def test_non_member_is_denied(self, session):
         migrated(session)
         outsider = Principal(user_id="0000-0009",
                              groups=(GroupMembership(99, "other", Role.OWNER),))
         with pytest.raises(HTTPException):
-            require_permission(session, outsider, PROJ, Permission.READ, legacy_group=PROJ)
+            require_permission(session, outsider, PROJ, Permission.READ)
 
     def test_platform_admin_always_passes(self, session):
         migrated(session)
         admin = Principal(user_id="a", platform_role=PlatformRole.ADMIN)
-        require_permission(session, admin, PROJ, Permission.TRANSFER, legacy_group=PROJ)
+        require_permission(session, admin, PROJ, Permission.TRANSFER)
 
 
-class TestBeforeMigration:
-    """No ACL rows yet — fall back to the pre-role check rather than locking
-    every project route."""
+class TestMissingAcl:
+    def test_group_member_is_denied(self, session):
+        with pytest.raises(HTTPException):
+            require_permission(session, member(Role.OWNER), PROJ, Permission.READ)
 
-    def test_group_member_still_allowed(self, session):
-        require_permission(session, member(Role.VIEWER), PROJ, Permission.EDIT, legacy_group=PROJ)
-
-    def test_admin_group_still_allowed(self, session):
+    def test_admin_group_member_is_denied(self, session):
         p = Principal(user_id="0000-0001",
                       groups=(GroupMembership(2, "admin", Role.VIEWER),))
-        require_permission(session, p, PROJ, Permission.EDIT, legacy_group=PROJ)
-
-    def test_outsider_still_denied(self, session):
-        outsider = Principal(user_id="0000-0009",
-                             groups=(GroupMembership(99, "other", Role.OWNER),))
         with pytest.raises(HTTPException):
-            require_permission(session, outsider, PROJ, Permission.READ, legacy_group=PROJ)
+            require_permission(session, p, PROJ, Permission.READ)
+
+    def test_platform_admin_is_allowed(self, session):
+        admin = Principal(user_id="a", platform_role=PlatformRole.ADMIN)
+        require_permission(session, admin, PROJ, Permission.READ)
 
 
 def test_new_members_get_contributor_not_null(session):

@@ -11,7 +11,7 @@ from app.models.core_models import AccessGroup, AccessGroupJoinRequest, Instrume
 from app.models.access_groups import AccessGroupCreate, AccessGroupMemberRead, AccessGroupRead
 from app.models.join_requests import JoinRequestCreate, JoinRequestRead, JoinRequestReview
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, has_platform_admin_access, require_platform_admin
+from app.utils.auth_utils import authorize_user, require_platform_admin
 from app.utils.permissions import AccessGroupType, Principal, Role
 from app.utils.project_utils import is_project_member, is_project_owner, sql_add_user_to_project
 
@@ -213,7 +213,7 @@ def list_join_requests(
       requests in one call instead of one request per project.
     '''
     user_unique_id = auth_res.user_id
-    is_admin = has_platform_admin_access(auth_res)
+    is_admin = auth_res.is_platform_admin
     may_act_as_lead = not auth_res.is_service_account or is_admin
 
     with Session(engine) as session:
@@ -275,7 +275,7 @@ def get_join_request(
     request's group, or the user who submitted it.
     '''
     user_unique_id = auth_res.user_id
-    is_admin = has_platform_admin_access(auth_res)
+    is_admin = auth_res.is_platform_admin
     may_act_as_lead = not auth_res.is_service_account or is_admin
 
     with Session(engine) as session:
@@ -310,7 +310,7 @@ def review_join_request(
     project membership and access group.
     '''
     user_unique_id = auth_res.user_id
-    is_admin = has_platform_admin_access(auth_res)
+    is_admin = auth_res.is_platform_admin
     may_act_as_lead = not auth_res.is_service_account or is_admin
 
     with Session(engine) as session:

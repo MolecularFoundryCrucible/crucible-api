@@ -14,7 +14,7 @@ from app.general_utils import is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, Project, Sample, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
 )
-from app.utils.auth_utils import authorize_user, fetch_acl_rows, find_or_add_api_access, has_platform_admin_access, is_instrument_group_member, permission_filter, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
+from app.utils.auth_utils import authorize_user, fetch_acl_rows, find_or_add_api_access, is_instrument_group_member, permission_filter, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
 from app.utils.permissions import AccessGroupType, Permission, effective_role, has_global_permission, Principal, Role
 from app.utils.search_utils import (
     MAX_SEARCH_QUERY_LENGTH,
@@ -76,7 +76,7 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
 
     # Admins see the full directory; non-admins are scoped to users who share
     # an access group with them. Broad collection responses are public-safe.
-    if not exact_lookup and not has_platform_admin_access(auth_res):
+    if not exact_lookup and not auth_res.is_platform_admin:
         ag_ids = [ag.id for ag in ag_list]
         search_cmd = search_cmd.where(
             User.id.in_(
@@ -91,7 +91,7 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
         items = session.exec(
             search_cmd.order_by(User.last_name, User.first_name).offset(offset).limit(limit)
         ).all()
-        is_admin = has_platform_admin_access(auth_res)
+        is_admin = auth_res.is_platform_admin
         items = [
             UserRead.model_validate(user)
             if exact_lookup and (is_admin or user.unique_id == auth_res.user_id)
@@ -214,7 +214,7 @@ def get_user_by_username(username: str, response: Response,
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
         response.headers["Content-Location"] = f"/users/{user.unique_id}"
-        if auth_res.user_id == user.unique_id or has_platform_admin_access(auth_res):
+        if auth_res.user_id == user.unique_id or auth_res.is_platform_admin:
             return UserRead.model_validate(user)
         return UserPublicRead.model_validate(user)
 
@@ -225,7 +225,7 @@ def read_user(user_id: str, response: Response,
     with Session(engine) as session:
         user = resolve_user_by_identifier(session, user_id)
 
-    is_admin = has_platform_admin_access(auth_res)
+    is_admin = auth_res.is_platform_admin
     if user_id != user.unique_id:
         response.headers["Content-Location"] = f"/users/{user.unique_id}"
 

@@ -24,7 +24,6 @@ from app.models.samples import SampleResponse
 from app.models.users import UserPublicRead
 from app.utils.auth_utils import (
     fetch_acl_rows,
-    has_platform_admin_access,
     require_permission,
     resource_capabilities,
 )
@@ -270,7 +269,6 @@ def load_instrument_detail(
         ).one_or_none()
         if instrument is None:
             raise HTTPException(status_code=404, detail="Instrument not found")
-    legacy_group = (instrument.instrument_name or "").lower()
     return InstrumentResponse.model_validate({
         **instrument.model_dump(exclude={"owner"}),
         "owner_orcid": instrument.owner,
@@ -282,8 +280,6 @@ def load_instrument_detail(
             session,
             principal,
             resource_id,
-            legacy_edit_group=legacy_group,
-            legacy_status_group=legacy_group,
         ),
     })
 
@@ -305,7 +301,7 @@ def load_project_detail(
         raise HTTPException(status_code=404, detail="Project not found")
 
     resource = _resource(session, resource_id, resource)
-    is_member = has_platform_admin_access(principal) or principal.role_in(project.unique_id) is not None
+    is_member = principal.is_platform_admin or principal.role_in(project.unique_id) is not None
     lead = _owner(session, project.project_lead_orcid, True)
     return ProjectWithLead(
         **project.model_dump(),
@@ -323,11 +319,9 @@ def load_project_detail(
             session,
             principal,
             resource_id,
-            legacy_edit_group=project.unique_id,
             manage_access_floor=Role.EDITOR,
             allow_peer_grants=False,
             status_permission=Permission.EDIT,
-            legacy_status_group=project.unique_id,
         ),
     )
 

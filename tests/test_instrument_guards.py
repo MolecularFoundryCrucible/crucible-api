@@ -52,14 +52,11 @@ class TestEditingTheRecord:
         granted(session, Role.EDITOR)
         principal = op(session, Role.ADMIN)
         with pytest.raises(HTTPException):
-            require_permission(session, principal, MFID, Permission.EDIT,
-                               legacy_group=NAME)
+            require_permission(session, principal, MFID, Permission.EDIT)
         capabilities = resource_capabilities(
             session,
             principal,
             MFID,
-            legacy_edit_group=NAME,
-            legacy_status_group=NAME,
         )
         assert capabilities.model_dump() == {
             "can_edit": False,
@@ -74,13 +71,12 @@ class TestEditingTheRecord:
         stranger = Principal(user_id="0000-0009",
                              groups=(GroupMembership(99, "other", Role.OWNER),))
         with pytest.raises(HTTPException) as exc:
-            require_permission(session, stranger, MFID, Permission.EDIT, legacy_group=NAME)
+            require_permission(session, stranger, MFID, Permission.EDIT)
         assert exc.value.status_code == 403
 
-    def test_legacy_group_membership_does_not_bypass_the_cap(self, session):
+    def test_group_membership_without_an_acl_does_not_grant_access(self, session):
         with pytest.raises(HTTPException):
-            require_permission(session, op(session, Role.VIEWER), MFID, Permission.EDIT,
-                               legacy_group=NAME)
+            require_permission(session, op(session, Role.VIEWER), MFID, Permission.EDIT)
 
 
 class TestRetiring:
@@ -88,21 +84,17 @@ class TestRetiring:
         """It holds editor on the record, deliberately below the delete bar."""
         granted(session, Role.EDITOR)
         with pytest.raises(HTTPException):
-            require_permission(session, op(session, Role.ADMIN), MFID, Permission.DELETE,
-                               legacy_group=NAME)
+            require_permission(session, op(session, Role.ADMIN), MFID, Permission.DELETE)
 
     def test_service_account_group_admin_is_still_capped(self, session):
         granted(session, Role.ADMIN)
         principal = op(session, Role.ADMIN)
         with pytest.raises(HTTPException):
-            require_permission(session, principal, MFID, Permission.DELETE,
-                               legacy_group=NAME)
+            require_permission(session, principal, MFID, Permission.DELETE)
         capabilities = resource_capabilities(
             session,
             principal,
             MFID,
-            legacy_edit_group=NAME,
-            legacy_status_group=NAME,
         )
         assert capabilities.can_manage_access is False
         assert capabilities.can_change_status is False
@@ -112,7 +104,7 @@ class TestRetiring:
     def test_platform_admin_can(self, session):
         granted(session, Role.EDITOR)
         admin = Principal(user_id="a", platform_role=PlatformRole.ADMIN)
-        require_permission(session, admin, MFID, Permission.DELETE, legacy_group=NAME)
+        require_permission(session, admin, MFID, Permission.DELETE)
 
 
 def test_status_is_not_editable_through_patch():

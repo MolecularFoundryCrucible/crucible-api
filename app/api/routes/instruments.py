@@ -57,13 +57,10 @@ VALID_INSTRUMENT_STATUSES = tuple(status.value for status in InstrumentStatus)
 
 
 def _instrument_capabilities(session, principal, instrument):
-    legacy_group = (instrument.instrument_name or "").lower()
     return resource_capabilities(
         session,
         principal,
         instrument.unique_id,
-        legacy_edit_group=legacy_group,
-        legacy_status_group=legacy_group,
     )
 
 
@@ -390,10 +387,7 @@ def update_instrument(
         if instrument is None:
             raise HTTPException(status_code=404, detail="Instrument not found")
 
-        # Editor on the instrument record. legacy_group covers instruments that
-        # have no ACL rows yet: their group is named after the instrument name.
-        require_permission(session, auth_res, instrument_mfid, Permission.EDIT,
-                           legacy_group=(instrument.instrument_name or "").lower())
+        require_permission(session, auth_res, instrument_mfid, Permission.EDIT)
 
         update_data = instrument_update.model_dump(exclude_unset=True)
         if update_data.get("instrument_id"):
@@ -444,8 +438,7 @@ def set_instrument_status(
 
         # admin, not editor: retiring a machine is not a metadata edit, and the
         # instrument's own service account holds only editor.
-        require_permission(session, auth_res, instrument_mfid, Permission.DELETE,
-                           legacy_group=(instrument.instrument_name or "").lower())
+        require_permission(session, auth_res, instrument_mfid, Permission.DELETE)
 
         instrument.status = status
         session.add(instrument)

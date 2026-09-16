@@ -22,4 +22,4 @@ data:
   db_username: "crucible-api-user"
   db_database: "crucible"
   db_auth: "true"
-  EXPECTED_DB_REVISIONS: "3f2b6a9c1d84"
+  EXPECTED_DB_REVISIONS: "7a1c4e8d2f90"

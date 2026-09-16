@@ -45,3 +45,22 @@ The August 2026 permission rollout is complete. Its ordered procedure is retaine
 Revisions `8c4f2a1d7e60` and `3f2b6a9c1d84` converted API-owned lifecycle timestamps to PostgreSQL `TIMESTAMPTZ` and added database enforcement. Production completed this migration on 2026-09-15. Current behavior is documented in the [resource timestamp policy](../docs/resource_timestamp_policy.md), and the rollout evidence is retained in the [archived migration record](../docs/archive/resource_timestamp_migration_2026-09.md).
 
 `migrations/data/20260908_audit_resource_timestamps.py` remains a read-only diagnostic for databases that have not reached revision `8c4f2a1d7e60`. Do not replay the completed production procedure against a current environment.
+
+## Platform contributor role migration
+
+Revision `7a1c4e8d2f90` adds `contributor` to the PostgreSQL `platform_role` enum. It does not update user rows and can run while the API remains available.
+
+Staging completed this migration on 2026-09-16. Before deploying the corresponding API changes to production, confirm production is at `3f2b6a9c1d84`, apply the revision, and verify the result:
+
+```bash
+DB_CONF_FILE=.env.prod \
+.venv/bin/alembic -x yes-this-is-production=true current
+
+DB_CONF_FILE=.env.prod \
+.venv/bin/alembic -x yes-this-is-production=true upgrade 7a1c4e8d2f90
+
+DB_CONF_FILE=.env.prod \
+.venv/bin/alembic -x yes-this-is-production=true current
+```
+
+The final revision must be `7a1c4e8d2f90`. Verify the enum contains `none`, `contributor`, `support`, and `admin` before deploying application code or changing service-account roles. Existing service accounts remain unchanged until a human platform administrator updates them individually.

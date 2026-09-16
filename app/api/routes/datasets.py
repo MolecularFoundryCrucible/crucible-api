@@ -63,7 +63,8 @@ from app.services.thumbnails import InvalidThumbnailImage, ThumbnailTooLarge, no
 from app.utils.auth_utils import (
     authorize_user, permission_filter, project_scope_filter,
     owner_affiliation_filter, require_permission)
-from app.utils.permissions import AccessGroupType, Permission, Principal, Role
+from app.utils.permissions import (
+    AccessGroupType, Permission, Principal, Role, has_global_permission)
 from app.utils.project_utils import (
     project_standing_by_mfid,
     resolve_project_filter_mfid,
@@ -74,6 +75,7 @@ from app.utils.instrument_utils import (
     resolve_instrument_identifiers,
     resolve_instrument_mfids_to_references,
 )
+from app.utils.link_utils import require_link_create_permissions
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.search_utils import (
     apply_trigram_search,
@@ -237,10 +239,13 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
             owner_orcid = dataset_details['owner_orcid']
             proj_id = project.project_id if project is not None else requested_project_id
             if proj_id:
-                if owner_orcid != user_unique_id and not auth_res.is_service_account:
+                if (
+                    owner_orcid != user_unique_id
+                    and not has_global_permission(auth_res, Permission.CREATE)
+                ):
                     raise HTTPException(
                         status_code=403,
-                        detail="Only service accounts and platform administrators may create a dataset on behalf of another user")
+                        detail="Only platform contributors and administrators may create a dataset on behalf of another user")
                 standing = (
                     project_standing_by_mfid(owner_orcid, project.unique_id, session)
                     if project is not None
@@ -251,7 +256,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                         status_code=403,
                         detail=f"'{owner_orcid}' must be contributor or above in project '{proj_id}' to create there")
             elif owner_orcid != user_unique_id:
-                if not auth_res.is_service_account:
+                if not has_global_permission(auth_res, Permission.CREATE):
                     raise HTTPException(
                         status_code=400,
                         detail="Creating on behalf of another user requires project_id, to verify their standing there")
@@ -930,6 +935,9 @@ def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Ann
     is_part_of means "child is_part_of parent". Omit it to leave the kind
     unspecified; on a link that already exists, omitting it preserves the
     type already stored rather than clearing it.
+    Same-project links require contributor access to the parent and read access
+    to the child. Cross-project links and relationship-type changes require
+    editor access to both datasets.
     '''
 
     with Session(engine) as session:
@@ -940,30 +948,27 @@ def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Ann
         if not child:
             raise HTTPException(status_code=404, detail="Child dataset not found")
 
-        # Both, not either: the pre-role check passed if any one was
+        require_link_create_permissions(session, auth_res, parent, child)
 
-
-        # writable, so a link could be made to a resource you cannot edit.
-
-
-        require_permission(session, auth_res, parent_dataset_id, Permission.EDIT)
-
-
-        require_permission(session, auth_res, child_dataset_id, Permission.EDIT)
-
-        # Only pass relationship_type when the caller supplied one: add_or_update
-        # overwrites every kwarg it is given, so passing None would blank the
-        # stored type on a re-POST that just meant "make sure this link exists".
-        link_fields = {}
-        if relationship_type is not None:
-            link_fields["relationship_type"] = relationship_type
-
-        link = add_or_update(session,
-                     DatasetLink,
-                     where=and_(DatasetLink.parent_dataset_id == parent.id, DatasetLink.child_dataset_id == child.id),
-                     parent_dataset_id=parent.id,
-                     child_dataset_id=child.id,
-                     **link_fields)
+        link = session.exec(
+            select(DatasetLink).where(
+                DatasetLink.parent_dataset_id == parent.id,
+                DatasetLink.child_dataset_id == child.id,
+            )
+        ).one_or_none()
+        if link is not None:
+            if relationship_type is None or link.relationship_type == relationship_type:
+                return link
+            require_permission(session, auth_res, parent_dataset_id, Permission.EDIT)
+            require_permission(session, auth_res, child_dataset_id, Permission.EDIT)
+            link.relationship_type = relationship_type
+        else:
+            link = DatasetLink(
+                parent_dataset_id=parent.id,
+                child_dataset_id=child.id,
+                relationship_type=relationship_type,
+            )
+        session.add(link)
 
         touch_resource_modification_time(session, parent_dataset_id)
         touch_resource_modification_time(session, child_dataset_id)
@@ -1436,20 +1441,31 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
     Adds a file record to a dataset.
     Creates the record if one with the same sha256_hash and dataset does not already exist.
     Use POST /datasets/{dsid}/files/{file_id}/ingest to trigger ingestion.
+    Requires contributor access. A repeated hash returns the existing record unchanged.
     '''
 
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        require_permission(session, auth_res, dsid, Permission.EDIT)
+        require_permission(session, auth_res, dsid, Permission.CREATE)
 
-        af_obj = add_or_update(session,
-                               AssociatedFile,
-                               where=((AssociatedFile.sha256_hash == associated_file.sha256_hash) &
-                                      (AssociatedFile.dataset_id == ds.id)),
-                               **associated_file.model_dump(),
-                               dataset_id=ds.id)
+        af_obj = session.exec(
+            select(AssociatedFile).where(
+                AssociatedFile.sha256_hash == associated_file.sha256_hash,
+                AssociatedFile.dataset_id == ds.id,
+            )
+        ).one_or_none()
+        if af_obj is not None:
+            return AssociatedFileRead.model_validate(
+                af_obj,
+                update={"dataset_mfid": ds.unique_id},
+            )
+
+        af_obj = AssociatedFile(
+            **associated_file.model_dump(),
+            dataset_id=ds.id,
+        )
 
         if af_obj not in ds.associated_files:
             ds.associated_files.append(af_obj)
@@ -1503,10 +1519,11 @@ def add_keyword(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: s
     '''
     Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object.
     Otherwise, the keyword will be created and then added to the dataset.
+    Requires contributor access.
     '''
     ds_cmd = (select(Dataset)
               .where(Dataset.unique_id == dsid)
-              .where(permission_filter(auth_res, Dataset, Permission.EDIT)))
+              .where(permission_filter(auth_res, Dataset, Permission.CREATE)))
 
     with Session(engine) as session:
         kw_obj = add_or_update(session, Keyword, where=(Keyword.keyword == keyword), keyword=keyword)
@@ -1516,7 +1533,8 @@ def add_keyword(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: s
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        if not (kw_obj in ds.keywords):
+        added = kw_obj not in ds.keywords
+        if added:
             ds.keywords.append(kw_obj)
 
         count = session.exec(select(func.count(DatasetKeywordLink.dataset_id))\
@@ -1525,7 +1543,8 @@ def add_keyword(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: s
         kw_obj.num_datasets = count
         session.add(kw_obj)
         session.add(ds)
-        touch_resource_modification_time(session, dsid)
+        if added:
+            touch_resource_modification_time(session, dsid)
         session.commit()
         session.refresh(kw_obj)
         return(kw_obj)
@@ -1533,16 +1552,12 @@ def add_keyword(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: s
 
 @router.post("/datasets/{dsid}/samples/{sample_id}", response_model=DatasetSampleLinkResponse)
 def link_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, sample_id: str):
+    '''Links a dataset to a readable sample in the same project with contributor access.
+
+    Cross-project links retain the editor requirement on both resources.
+    '''
 
     with Session(engine) as session:
-        # Both, not either: the pre-role check passed if any one was
-
-        # writable, so a link could be made to a resource you cannot edit.
-
-        require_permission(session, auth_res, dsid, Permission.EDIT)
-
-        require_permission(session, auth_res, sample_id, Permission.EDIT)
-
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -1550,11 +1565,24 @@ def link_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)],
         if samp is None:
             raise HTTPException(status_code=404, detail="Sample not found")
 
-        add_or_update(session,
-                      DatasetSampleLink,
-                      where=and_(DatasetSampleLink.sample_id == samp.id, DatasetSampleLink.dataset_id == ds.id),
-                      sample_id=samp.id,
-                      dataset_id=ds.id)
+        require_link_create_permissions(session, auth_res, ds, samp)
+
+        link = session.exec(
+            select(DatasetSampleLink).where(
+                DatasetSampleLink.sample_id == samp.id,
+                DatasetSampleLink.dataset_id == ds.id,
+            )
+        ).one_or_none()
+        if link is not None:
+            return DatasetSampleLinkResponse(
+                dataset_id=ds.unique_id,
+                dataset_name=ds.dataset_name,
+                sample_id=samp.unique_id,
+                sample_type=samp.sample_type,
+                sample_name=samp.sample_name,
+            )
+
+        session.add(DatasetSampleLink(sample_id=samp.id, dataset_id=ds.id))
 
         touch_resource_modification_time(session, dsid)
         touch_resource_modification_time(session, sample_id)

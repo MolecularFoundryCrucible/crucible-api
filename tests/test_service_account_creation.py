@@ -27,6 +27,7 @@ def test_creates_personal_group_at_owner_standing(client, db_engine, auth_as):
     with Session(db_engine) as session:
         sa = session.exec(select(User).where(User.unique_id == sa_id)).one()
         assert sa.is_service_account is True
+        assert sa.platform_role == PlatformRole.CONTRIBUTOR.value
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == sa_id)).one()
         link = session.exec(
             select(UserAccessGroupLink).where(UserAccessGroupLink.user_id == sa.id,

@@ -137,6 +137,47 @@ def test_user_selectors_intersect_effective_access(db_engine):
     assert rows == ["ds-both-users"]
 
 
+def test_platform_contributor_can_select_another_user(db_engine):
+    _seed(db_engine)
+    caller = Principal(
+        user_id="uploader",
+        platform_role=PlatformRole.CONTRIBUTOR,
+        is_service_account=True,
+    )
+
+    with Session(db_engine) as session:
+        clause = access_selector_filter(
+            session,
+            caller,
+            Dataset,
+            user_refs=["alice@example.com"],
+        )
+        rows = session.exec(select(Dataset.unique_id).where(clause)).all()
+
+    assert sorted(rows) == [
+        "ds-alice-only",
+        "ds-assigned-project",
+        "ds-both-projects",
+        "ds-both-users",
+    ]
+
+
+def test_service_account_type_alone_cannot_select_another_user(db_engine):
+    _seed(db_engine)
+    caller = Principal(user_id="uploader", is_service_account=True)
+
+    with Session(db_engine) as session:
+        with pytest.raises(HTTPException) as unauthorized:
+            access_selector_filter(
+                session,
+                caller,
+                Dataset,
+                user_refs=["alice@example.com"],
+            )
+
+    assert unauthorized.value.status_code == 403
+
+
 def test_project_selectors_accept_slug_and_mfid_and_intersect(db_engine):
     seeded = _seed(db_engine)
     caller = Principal(

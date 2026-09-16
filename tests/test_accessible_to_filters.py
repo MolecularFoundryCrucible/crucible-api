@@ -148,6 +148,40 @@ def test_platform_admin_can_list_resources_accessible_to_another_user(client, db
     assert [item["unique_id"] for item in samples.json()["items"]] == ["sm_target_access"]
 
 
+def test_service_account_can_list_resources_accessible_to_another_user(client, db_engine, auth_as):
+    _setup(db_engine)
+    auth_as(
+        "service-account",
+        groups=[],
+        platform_role=PlatformRole.CONTRIBUTOR,
+        is_service_account=True,
+    )
+
+    datasets = client.get("/datasets", params={"accessible_to_user": "target-user"})
+    samples = client.get("/samples", params={"accessible_to_user": TARGET_ID})
+
+    assert datasets.status_code == 200, datasets.text
+    assert samples.status_code == 200, samples.text
+    assert [item["unique_id"] for item in datasets.json()["items"]] == ["ds_target_access"]
+    assert [item["unique_id"] for item in samples.json()["items"]] == ["sm_target_access"]
+
+
+def test_service_account_can_list_another_users_projects(client, db_engine, auth_as):
+    _setup(db_engine)
+    project_mfid, _ = _add_project(db_engine, "target-project")
+    auth_as(
+        "service-account",
+        groups=[],
+        platform_role=PlatformRole.CONTRIBUTOR,
+        is_service_account=True,
+    )
+
+    response = client.get("/projects", params={"accessible_to_user": "target@example.com"})
+
+    assert response.status_code == 200, response.text
+    assert [item["unique_id"] for item in response.json()["items"]] == [project_mfid]
+
+
 def test_user_can_explicitly_filter_to_self(client, db_engine, auth_as):
     group_id = _setup(db_engine)
     auth_as(TARGET_ID, groups=[("target-access", group_id, Role.VIEWER)])
@@ -349,6 +383,22 @@ def test_dataset_access_reports_platform_admin_bypass(client, db_engine, auth_as
 
     assert response.status_code == 200, response.text
     assert response.json()["effective_access"] == "platform_admin"
+
+
+def test_dataset_access_reports_service_account_contributor_ceiling(client, db_engine, auth_as):
+    _setup(db_engine)
+    with Session(db_engine) as session:
+        target = session.exec(select(User).where(User.unique_id == TARGET_ID)).one()
+        target.is_service_account = True
+        target.platform_role = PlatformRole.CONTRIBUTOR.value
+        session.add(target)
+        session.commit()
+    auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
+
+    response = client.get("/users/target-user/datasets/ds_target_access")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["effective_access"] == "contributor"
 
 
 def test_dataset_access_returns_404_for_missing_dataset(client, db_engine, auth_as):

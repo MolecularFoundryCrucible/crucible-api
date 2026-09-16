@@ -14,7 +14,7 @@ from app.models.core_models import (
     Dataset, DatasetSampleLink,
 )
 from app.utils.auth_utils import (
-    access_selector_filter, authorize_user, has_platform_admin_access,
+    access_selector_filter, authorize_user,
     load_principal, permission_filter, project_owner_affiliation_filter,
     require_grant, require_permission,
     resource_capabilities)
@@ -22,7 +22,8 @@ from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor,
     validate_cursor)
 from app.utils.permissions import (
-    AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
+    AccessGroupType, Permission, PlatformRole, Principal, Role, can_grant,
+    effective_role, has_global_permission)
 from app.utils.search_utils import (
     apply_trigram_search,
     configure_trigram_search,
@@ -53,16 +54,26 @@ API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 
+def _validate_service_account_project_role(user: User, role: Role) -> None:
+    if (
+        user.is_service_account
+        and user.platform_role != PlatformRole.ADMIN.value
+        and role > Role.CONTRIBUTOR
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Non-admin service accounts cannot hold a project role above contributor",
+        )
+
+
 def _project_capabilities(session, principal, project):
     return resource_capabilities(
         session,
         principal,
         project.unique_id,
-        legacy_edit_group=project.unique_id,
         manage_access_floor=Role.EDITOR,
         allow_peer_grants=False,
         status_permission=Permission.EDIT,
-        legacy_status_group=project.unique_id,
     )
 
 
@@ -191,7 +202,7 @@ def list_projects(
                 base = base.where(Project.project_id == project_id)
         elif project_id is not None:
             base = select(Project).where(Project.project_id == project_id)
-        elif has_platform_admin_access(auth_res):
+        elif has_global_permission(auth_res, Permission.READ):
             base = select(Project)
         else:
             user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
@@ -245,7 +256,7 @@ def list_projects(
         items = []
         for proj in props:
             may_see_private_fields = (
-                has_platform_admin_access(auth_res)
+                has_global_permission(auth_res, Permission.READ)
                 or auth_res.role_in(proj.unique_id) is not None
             )
             lead_user = leads.get(proj.project_lead_orcid)
@@ -373,7 +384,7 @@ def update_project(project_ref: str, auth_res: Annotated[Principal, Depends(auth
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        require_permission(session, auth_res, project.unique_id, Permission.EDIT, legacy_group=project.unique_id)
+        require_permission(session, auth_res, project.unique_id, Permission.EDIT)
 
         update_data = project_update.model_dump(exclude_unset=True)
 
@@ -419,7 +430,7 @@ def read_users_on_project(project_ref: str, auth_res: Annotated[Principal, Depen
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        require_permission(session, auth_res, project.unique_id, Permission.READ, legacy_group=project.unique_id)
+        require_permission(session, auth_res, project.unique_id, Permission.READ)
 
         all_users = _get_project_users(project.project_id, session)
         return PaginatedResponse(total=len(all_users), limit=limit, offset=offset, items=all_users[offset:offset + limit])
@@ -453,8 +464,9 @@ def add_users_to_project(
         if proj is None:
             raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')
 
-        require_permission(session, auth_res, proj.unique_id, Permission.EDIT, legacy_group=proj.unique_id)
+        require_permission(session, auth_res, proj.unique_id, Permission.EDIT)
         user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
+        _validate_service_account_project_role(user, internal_role)
         ag = session.exec(
             select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)
         ).one_or_none()
@@ -521,9 +533,10 @@ def set_project_user_role(
         if proj is None:
             raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')
 
-        require_permission(session, auth_res, proj.unique_id, Permission.EDIT, legacy_group=proj.unique_id)
+        require_permission(session, auth_res, proj.unique_id, Permission.EDIT)
 
         user = resolve_user(session, orcid=orcid)
+        _validate_service_account_project_role(user, internal_role)
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)).one_or_none()
         if ag is None:
             raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')
@@ -571,7 +584,7 @@ def remove_user_from_project(project_ref: str, orcid: str, auth_res: Annotated[P
     Provide ?email= or ?username= to look up the user instead of the orcid path parameter.
     '''
     user_unique_id = auth_res.user_id
-    is_admin = has_platform_admin_access(auth_res)
+    is_admin = auth_res.is_platform_admin
 
     with Session(engine) as session:
         proj = resolve_project_reference(project_ref, session)
@@ -579,7 +592,10 @@ def remove_user_from_project(project_ref: str, orcid: str, auth_res: Annotated[P
             raise HTTPException(status_code=404, detail=f"Project {project_ref} not found")
 
         is_self = user_unique_id == orcid and not email and not username
-        caller_is_owner = is_project_owner(user_unique_id, proj.project_id, session)
+        caller_is_owner = (
+            not auth_res.is_service_account
+            and is_project_owner(user_unique_id, proj.project_id, session)
+        )
         if not is_admin and not caller_is_owner and not is_self:
             raise HTTPException(status_code=403, detail="Only platform admins, the project lead, or the member themselves can remove a member.")
 
@@ -624,7 +640,7 @@ def project_sample_graph(project_ref: str, auth_res: Annotated[Principal, Depend
         proj = resolve_project_reference(project_ref, session)
         if proj is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        require_permission(session, auth_res, proj.unique_id, Permission.READ, legacy_group=proj.unique_id)
+        require_permission(session, auth_res, proj.unique_id, Permission.READ)
 
         samp_cmd = (
             select(Sample)
@@ -695,7 +711,7 @@ def project_entity_graph(project_ref: str, auth_res: Annotated[Principal, Depend
         proj = resolve_project_reference(project_ref, session)
         if proj is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        require_permission(session, auth_res, proj.unique_id, Permission.READ, legacy_group=proj.unique_id)
+        require_permission(session, auth_res, proj.unique_id, Permission.READ)
 
         # Load all samples in the project with parent relationships. Filtered
         # by the project's MFID, not its (renamable) project_id.

@@ -135,7 +135,7 @@ def _validate_and_prepare_upload(
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        require_permission(session, principal, dsid, Permission.EDIT)
+        require_permission(session, principal, dsid, Permission.CREATE)
 
         if body.sha256_hash:
             existing = session.exec(
@@ -188,6 +188,7 @@ def initiate_resumable_upload(
 ):
     '''
     Initiate a GCS resumable upload session for a large file.
+    Requires contributor access to the dataset.
     Returns an upload_id and a resumable_uri the client uses to PUT chunks directly to GCS
     (no API credentials needed for the chunk transfers).
     Call POST /datasets/{dsid}/upload/complete when all chunks are uploaded.
@@ -234,6 +235,7 @@ def initiate_multipart_upload(
 ):
     '''
     Vend a short-lived GCS OAuth2 access token for parallel client-side uploads.
+    Requires contributor access to the dataset.
     The client uses this token with google-cloud-storage transfer_manager.upload_chunks_concurrently().
     Returns upload_id — pass it to POST /datasets/{dsid}/upload/complete after the transfer.
     If existing_file is set, the file already exists; skip the upload entirely.
@@ -270,6 +272,7 @@ def complete_resumable_upload(
 ):
     '''
     Finalise a GCS resumable upload.
+    Requires contributor access to the dataset and ownership of the upload session.
     Verifies the blob landed in GCS, registers it as an AssociatedFile on the dataset,
     and deletes the upload session record.
     '''
@@ -294,7 +297,7 @@ def complete_resumable_upload(
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        require_permission(session, auth_res, dsid, Permission.EDIT)
+        require_permission(session, auth_res, dsid, Permission.CREATE)
 
         try:
             blob = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).blob(us.gcs_path)

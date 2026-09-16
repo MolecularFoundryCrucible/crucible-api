@@ -14,7 +14,7 @@ from app.models.core_models import (
 from app.utils.auth_utils import authorize_user, permission_filter
 from app.utils.project_utils import resolve_project_reference
 from app.utils.sql_utils import deletion_filter_for
-from app.utils.permissions import Permission, Principal, Role
+from app.utils.permissions import Permission, Principal, Role, has_global_permission
 
 router = APIRouter(tags=["entities"])
 engine = get_engine()
@@ -788,7 +788,7 @@ def entity_graph_cte(
 
         rows = session.execute(sql, {
             "seed_id": seed_id,
-            "platform_admin": auth_res.is_platform_admin,
+            "platform_admin": has_global_permission(auth_res, Permission.READ),
             "group_ids": auth_res.group_ids_at_or_above(Role.VIEWER),
         })
         return _parse_graph_rows(rows)

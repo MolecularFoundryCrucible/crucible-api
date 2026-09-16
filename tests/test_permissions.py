@@ -288,10 +288,39 @@ class TestPlatformAdmin:
         support = principal(platform_role=PlatformRole.SUPPORT)
         assert has_permission(support, [], permission) is False
 
-    def test_service_account_flag_grants_nothing(self):
-        sa = principal(member(INSTRUMENT_GID, Role.ADMIN), is_sa=True)
+    @pytest.mark.parametrize("is_sa", [False, True])
+    def test_platform_contributor_is_global_contributor(self, is_sa):
+        contributor = principal(
+            member(INSTRUMENT_GID, Role.ADMIN),
+            platform_role=PlatformRole.CONTRIBUTOR,
+            is_sa=is_sa,
+        )
+        assert has_permission(contributor, [], Permission.READ)
+        assert has_permission(contributor, [], Permission.CREATE)
+        assert has_permission(
+            contributor,
+            [(INSTRUMENT_GID, Role.OWNER)],
+            Permission.CREATE,
+        )
+        assert not has_permission(contributor, [], Permission.EDIT)
+        assert has_permission(
+            contributor,
+            [(INSTRUMENT_GID, Role.OWNER)],
+            Permission.EDIT,
+        ) is (not is_sa)
+        assert not has_permission(contributor, [], Permission.DELETE)
+        assert not has_permission(contributor, [], Permission.MANAGE_ACL)
+        assert not has_permission(contributor, [], Permission.TRANSFER)
+
+    def test_service_account_type_alone_grants_no_global_access(self):
+        sa = principal(is_sa=True)
         assert not has_permission(sa, [], Permission.READ)
-        assert not has_permission(sa, [(PROJECT_GID, Role.OWNER)], Permission.READ)
+        assert not has_permission(sa, [], Permission.CREATE)
+
+    @pytest.mark.parametrize("permission", ALL_PERMISSIONS)
+    def test_platform_admin_service_account_retains_admin_bypass(self, permission):
+        sa = principal(platform_role=PlatformRole.ADMIN, is_sa=True)
+        assert has_permission(sa, [], permission)
 
     def test_is_platform_admin_only_true_for_admin(self):
         assert principal(platform_role=PlatformRole.ADMIN).is_platform_admin
@@ -300,7 +329,7 @@ class TestPlatformAdmin:
 
 
 class TestInstrumentServiceAccount:
-    """Goal 2: an SA creates on behalf without reading the platform."""
+    """Goal 2: an SA creates on behalf with global contributor access."""
 
     def test_reaches_datasets_from_its_own_instrument(self):
         sa = principal(member(INSTRUMENT_GID, Role.ADMIN), is_sa=True)
@@ -314,13 +343,21 @@ class TestInstrumentServiceAccount:
         assert not has_permission(sa, acl, Permission.EDIT)
         assert not has_permission(sa, acl, Permission.DELETE)
 
-    def test_cannot_reach_another_instruments_datasets(self):
-        sa = principal(member(INSTRUMENT_GID, Role.ADMIN), is_sa=True)
-        assert effective_role(sa, [(4242, Role.CONTRIBUTOR)]) is None
+    def test_can_read_another_instruments_datasets(self):
+        sa = principal(
+            member(INSTRUMENT_GID, Role.ADMIN),
+            platform_role=PlatformRole.CONTRIBUTOR,
+            is_sa=True,
+        )
+        assert has_permission(sa, [(4242, Role.CONTRIBUTOR)], Permission.READ)
 
-    def test_cannot_reach_project_data_it_did_not_produce(self):
-        sa = principal(member(INSTRUMENT_GID, Role.ADMIN), is_sa=True)
-        assert effective_role(sa, [(PROJECT_GID, Role.ADMIN)]) is None
+    def test_can_read_project_data_it_did_not_produce(self):
+        sa = principal(
+            member(INSTRUMENT_GID, Role.ADMIN),
+            platform_role=PlatformRole.CONTRIBUTOR,
+            is_sa=True,
+        )
+        assert has_permission(sa, [(PROJECT_GID, Role.ADMIN)], Permission.READ)
 
 
 class TestGroupIdsAtOrAbove:

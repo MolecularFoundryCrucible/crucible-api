@@ -21,9 +21,11 @@ def test_platform_admin_may_act_on_anyone():
         principal(ME, platform_role=PlatformRole.ADMIN), SOMEONE_ELSE)
 
 
-def test_admin_group_still_works_during_the_transition():
-    require_self_or_platform_admin(
-        principal(ME, groups=[GroupMembership(1, "admin", Role.VIEWER)]), SOMEONE_ELSE)
+def test_admin_group_membership_does_not_grant_platform_authority():
+    with pytest.raises(HTTPException) as exc:
+        require_self_or_platform_admin(
+            principal(ME, groups=[GroupMembership(1, "admin", Role.VIEWER)]), SOMEONE_ELSE)
+    assert exc.value.status_code == 403
 
 
 def test_someone_else_is_denied():

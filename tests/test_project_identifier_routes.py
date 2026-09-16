@@ -1,4 +1,4 @@
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.models.core_models import AccessGroup, Dataset, Project, Resource, ResourceACL, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
@@ -182,6 +182,28 @@ def test_project_membership_mutations_accept_canonical_mfid(client, db_engine, a
     removed = client.delete(f"/projects/{project_mfid}/users/{member_id}")
     assert removed.status_code == 200, removed.text
     assert all(item["unique_id"] != member_id for item in removed.json())
+
+
+def test_service_account_cannot_manage_members_through_owner_standing(client, db_engine, auth_as):
+    project_mfid, group_id = _setup(db_engine)
+    member_id = "0000-0002-2222-2222"
+    with Session(db_engine) as session:
+        member = session.exec(select(User).where(User.unique_id == member_id)).one()
+        session.add(UserAccessGroupLink(
+            user_id=member.id,
+            accessgroup_id=group_id,
+            role=Role.CONTRIBUTOR.db_value,
+        ))
+        session.commit()
+    auth_as(
+        "0000-0001-1111-1111",
+        groups=[(project_mfid, group_id, Role.OWNER)],
+        is_service_account=True,
+    )
+
+    response = client.delete(f"/projects/{project_mfid}/users/{member_id}")
+
+    assert response.status_code == 403
 
 
 def test_project_graphs_accept_mfid_and_slug(client, db_engine, auth_as):

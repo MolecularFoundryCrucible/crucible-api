@@ -72,7 +72,7 @@ class TestCreateDataset:
             session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
             session.commit()
 
-        auth_as("sa-instrument-1", groups=[], is_service_account=True)
+        auth_as("sa-instrument-1", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
         resp = client.post("/datasets", json={
             "dataset_name": "d3", "project_id": "proj_z", "owner_orcid": "0000-0003",
         })
@@ -88,7 +88,7 @@ class TestCreateDataset:
             _project_with_group(session, "proj_w", "0000-0004")
             session.commit()
 
-        auth_as("sa-instrument-2", groups=[], is_service_account=True)
+        auth_as("sa-instrument-2", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
         resp = client.post("/datasets", json={
             "dataset_name": "d4", "project_id": "proj_w", "owner_orcid": "0000-0004",
         })
@@ -155,7 +155,7 @@ class TestCreateDataset:
         with Session(db_engine) as session:
             _user(session, "0000-0008")
 
-        auth_as("sa-instrument-5", groups=[], is_service_account=True)
+        auth_as("sa-instrument-5", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
         resp = client.post("/datasets", json={"dataset_name": "d8", "owner_orcid": "0000-0008"})
         assert resp.status_code == 200, resp.text
 
@@ -164,7 +164,7 @@ class TestCreateDataset:
             assert ds.owner_orcid == "0000-0008"
 
     def test_service_account_no_project_and_nonexistent_owner_is_rejected(self, client, db_engine, auth_as):
-        auth_as("sa-instrument-6", groups=[], is_service_account=True)
+        auth_as("sa-instrument-6", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
         resp = client.post("/datasets", json={"dataset_name": "d9", "owner_orcid": "0000-0009"})
         assert resp.status_code == 404
 
@@ -188,7 +188,7 @@ class TestCreateSample:
             session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
             session.commit()
 
-        auth_as("sa-instrument-4", groups=[], is_service_account=True)
+        auth_as("sa-instrument-4", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
         resp = client.post("/samples", json={
             "sample_name": "s2", "project_id": "proj_t", "owner_orcid": "0000-0012",
         })
@@ -278,7 +278,7 @@ class TestCreateSample:
         with Session(db_engine) as session:
             _user(session, "0000-0014")
 
-        auth_as("sa-instrument-8", groups=[], is_service_account=True)
+        auth_as("sa-instrument-8", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
         resp = client.post("/samples", json={"sample_name": "s4", "owner_orcid": "0000-0014"})
         assert resp.status_code == 200, resp.text
 
@@ -287,7 +287,7 @@ class TestCreateSample:
             assert samp.owner_orcid == "0000-0014"
 
     def test_service_account_no_project_and_nonexistent_owner_is_rejected(self, client, db_engine, auth_as):
-        auth_as("sa-instrument-9", groups=[], is_service_account=True)
+        auth_as("sa-instrument-9", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
         resp = client.post("/samples", json={"sample_name": "s5", "owner_orcid": "0000-0015"})
         assert resp.status_code == 404
 
@@ -304,7 +304,7 @@ class TestCreateOnBehalfByIdentifier:
             session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
             session.commit()
 
-        auth_as("sa-instrument-10", groups=[], is_service_account=True)
+        auth_as("sa-instrument-10", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
         resp = client.post("/datasets", json={
             "dataset_name": "d20", "project_id": "proj_id_1", "owner": "0000-0021@x.com",
         })
@@ -335,7 +335,7 @@ class TestCreateOnBehalfByIdentifier:
             session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
             session.commit()
 
-        auth_as("sa-instrument-11", groups=[], is_service_account=True)
+        auth_as("sa-instrument-11", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
         resp = client.post("/datasets", json={
             "dataset_name": "d21", "project_id": "proj_id_2", "owner": "dsowner",
         })
@@ -350,7 +350,7 @@ class TestCreateOnBehalfByIdentifier:
             _project_with_group(session, "proj_id_3", "0000-0023")
             session.commit()
 
-        auth_as("sa-instrument-12", groups=[], is_service_account=True)
+        auth_as("sa-instrument-12", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
         resp = client.post("/datasets", json={
             "dataset_name": "d22", "project_id": "proj_id_3", "owner": "0000-0023@x.com",
         })
@@ -367,7 +367,7 @@ class TestCreateOnBehalfByIdentifier:
         assert resp.status_code == 422
 
     def test_unresolvable_owner_is_404(self, client, db_engine, auth_as):
-        auth_as("sa-instrument-14", groups=[], is_service_account=True)
+        auth_as("sa-instrument-14", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
         resp = client.post("/datasets", json={"dataset_name": "d24", "owner": "nobody@x.com"})
         assert resp.status_code == 404
 
@@ -378,7 +378,7 @@ class TestCreateOnBehalfByIdentifier:
             session.add(UserAccessGroupLink(user_id=researcher.id, accessgroup_id=ag.id, role="contributor"))
             session.commit()
 
-        auth_as("sa-instrument-15", groups=[], is_service_account=True)
+        auth_as("sa-instrument-15", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
         resp = client.post("/samples", json={
             "sample_name": "s20", "project_id": "proj_id_4", "owner": "0000-0025@x.com",
         })

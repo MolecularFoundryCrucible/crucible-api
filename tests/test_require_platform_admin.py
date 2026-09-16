@@ -2,7 +2,7 @@
 import pytest
 from fastapi import HTTPException
 
-from app.utils.auth_utils import has_platform_admin_access, require_platform_admin
+from app.utils.auth_utils import require_platform_admin
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
 
 
@@ -19,12 +19,6 @@ class TestAllows:
     def test_platform_role_admin(self):
         require_platform_admin(principal(platform_role=PlatformRole.ADMIN))
 
-    def test_admin_group_membership(self):
-        """Transitional: on a database where the backfill has not run,
-        platform_role is 'none' for everyone and checking it alone would lock
-        every admin route out with no recovery."""
-        require_platform_admin(principal(groups=[ADMIN_GROUP]))
-
     def test_service_account_with_platform_role(self):
         """The promoted service accounts must keep working."""
         require_platform_admin(principal(platform_role=PlatformRole.ADMIN, is_sa=True))
@@ -36,6 +30,7 @@ class TestDenies:
         (principal(groups=[PROJECT_GROUP]), "a project owner is not a platform admin"),
         (principal(platform_role=PlatformRole.SUPPORT), "support is not admin"),
         (principal(platform_role=PlatformRole.NONE, groups=[PROJECT_GROUP]), "both absent"),
+        (principal(groups=[ADMIN_GROUP]), "admin group membership is not platform authority"),
     ])
     def test_rejects(self, p, why):
         with pytest.raises(HTTPException) as exc:
@@ -49,6 +44,10 @@ class TestDenies:
         with pytest.raises(HTTPException):
             require_platform_admin(p)
 
+    def test_service_account_admin_group_does_not_bypass_contributor_ceiling(self):
+        with pytest.raises(HTTPException):
+            require_platform_admin(principal(groups=[ADMIN_GROUP], is_sa=True))
+
     @pytest.mark.parametrize("name", ["admins", "Admin", "ADMIN", "admin2", "read_only"])
     def test_group_named_like_admin_does_not_count(self, name):
         """Exact match only."""
@@ -60,9 +59,3 @@ def test_returns_none_rather_than_a_truthy_value():
     """It is a guard, not a predicate — `if require_platform_admin(p):` would
     silently never fire."""
     assert require_platform_admin(principal(platform_role=PlatformRole.ADMIN)) is None
-
-
-def test_predicate_matches_the_transitional_admin_policy():
-    assert has_platform_admin_access(principal(platform_role=PlatformRole.ADMIN))
-    assert has_platform_admin_access(principal(groups=[ADMIN_GROUP]))
-    assert not has_platform_admin_access(principal(groups=[PROJECT_GROUP]))

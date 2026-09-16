@@ -1,4 +1,4 @@
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 from pydantic import AliasChoices, ConfigDict, Field, field_validator
 from sqlmodel import SQLModel
 from app.general_utils import is_orcid
@@ -141,6 +141,12 @@ class ServiceAccountCreate(SQLModel):
     @classmethod
     def check_username(cls, v):
         return validate_username_format(str(v))
+
+
+class ServiceAccountPlatformRoleUpdate(SQLModel):
+    model_config = ConfigDict(extra="forbid")
+
+    platform_role: Literal["none", "contributor", "admin"]
 
 
 class ServiceAccountRead(SQLModel):

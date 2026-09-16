@@ -10,9 +10,26 @@ from app.models.core_models import (
     SampleLink,
 )
 from app.models.links import LinkedResource
-from app.utils.auth_utils import permission_filter
+from app.utils.auth_utils import permission_filter, require_permission
 from app.utils.permissions import Permission, Principal
 from app.utils.sql_utils import deletion_filter_for
+
+
+def require_link_create_permissions(
+    session: Session,
+    principal: Principal,
+    source,
+    target,
+) -> None:
+    if (
+        source.project_mfid is not None
+        and source.project_mfid == target.project_mfid
+    ):
+        require_permission(session, principal, source.unique_id, Permission.CREATE)
+        require_permission(session, principal, target.unique_id, Permission.READ)
+        return
+    require_permission(session, principal, source.unique_id, Permission.EDIT)
+    require_permission(session, principal, target.unique_id, Permission.EDIT)
 
 
 def fetch_readable_sample_datasets(

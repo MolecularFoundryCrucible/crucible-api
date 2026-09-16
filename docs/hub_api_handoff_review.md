@@ -111,6 +111,18 @@ Use `owner_id` as the preferred exact human-or-service-account filter on dataset
 
 The implementation converts API-owned resource creation and modification values to nullable PostgreSQL `TIMESTAMPTZ` columns after a read-only audit. New resources receive API-generated UTC values and database defaults, while missing legacy values remain null. Unparseable non-null timestamps block migration, timezone-less legacy values are interpreted in `America/Los_Angeles`, missing modification times use creation times when available, explicitly offset values preserve their instants, and non-null API responses use canonical UTC `Z` formatting. The producer-supplied dataset `timestamp` field is outside this lifecycle policy. The migration requires pausing incompatible API versions. Cursor signing uses an identified key ring so new keys can be activated while old keys remain valid through a rotation window. Production query-plan evidence remains a deployment task, and no speculative index is included.
 
+### Service-account contributor access
+
+Decision: Add `platform_role=contributor` for platform-wide read and create access without platform-administrator authority. New service accounts receive this role by default, while `is_service_account` remains the identity-type discriminator.
+
+Existing service accounts retain their current platform role during deployment. Operators will move administrative service accounts to `contributor` individually after verifying each ingestion workflow.
+
+Platform contributors may read projects and resources, create datasets and samples for registered users, add initial metadata, register associated files, initiate and complete uploads, add keywords, create ingestion requests, and create resource links within one project. A non-admin service account is capped at contributor even when an ACL or group standing would otherwise grant a higher role. It cannot edit existing values, delete resources, manage ACLs, transfer ownership, register instruments, or use platform-administrator routes. Cross-project links and relationship-type changes retain the editor requirement on both resources.
+
+For a project picker or resource picker, pass one MFID, ORCID, username, or email through `accessible_to_user` on `GET /projects`, `GET /samples`, or `GET /datasets`. Use the same reference as `owner` when creating a sample or dataset for that person. Multiple `accessible_to_user` values retain AND semantics.
+
+The Hub source handoff remains pending explicit authorization to modify the Hub repository.
+
 ### 5. Focused OpenAPI contract cleanup
 
 Decision: Implement as one bounded contract-quality change.

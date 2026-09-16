@@ -1,4 +1,6 @@
 from unittest.mock import patch
+import pytest
+from pydantic import ValidationError
 from sqlmodel import Session, select
 from app.utils.permissions import PUBLIC_GROUP_NAME, PlatformRole, Role
 from app.models.core_models import Resource, Dataset, AssociatedFile, AccessGroup, ResourceACL
@@ -92,10 +94,21 @@ def test_associated_file_create_schema_defaults_and_overrides():
 
     remote = AssociatedFileCreate(
         filename="b.txt", size=2, sha256_hash="h2",
-        storage_backend="lawrencium", access_note="ask PI for access",
+        storage_backend="lawrencium",
+        storage_path="/global/cfs/cdirs/project/b.txt",
+        access_note="ask PI for access",
     )
     assert remote.storage_backend == "lawrencium"
+    assert remote.storage_path == "/global/cfs/cdirs/project/b.txt"
     assert remote.access_note == "ask PI for access"
+
+    with pytest.raises(ValidationError, match="storage_path is assigned by the upload API"):
+        AssociatedFileCreate(
+            filename="c.txt",
+            size=3,
+            sha256_hash="h3",
+            storage_path="bucket/forged.txt",
+        )
 
 
 def test_associated_file_read_and_update_schemas_have_new_fields():

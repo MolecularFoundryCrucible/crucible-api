@@ -167,7 +167,7 @@ class TestServiceAccountBinding:
         instrument = client.get(f"/instruments/{mfid}")
         assert instrument.status_code == 200, instrument.text
         assert instrument.json()["capabilities"] == {
-            "can_edit": True,
+            "can_edit": False,
             "can_manage_access": False,
             "can_change_status": False,
             "can_transfer": False,

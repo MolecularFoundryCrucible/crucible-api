@@ -11,7 +11,7 @@ from app.models.core_models import (
     IngestionRequest,
 )
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, has_platform_admin_access, require_permission
+from app.utils.auth_utils import authorize_user, require_permission
 from app.utils.permissions import Permission, Principal
 from app.utils.sql_utils import only_update
 
@@ -47,7 +47,7 @@ def list_ingestion_requests(
     List ingestion requests, paginated. Requires file_id or dataset_id for non-admins.
     Admins may omit both filters to list all ingestion requests.
     '''
-    is_admin = has_platform_admin_access(auth_res)
+    is_admin = auth_res.is_platform_admin
 
     if file_id is None and dataset_id is None and not is_admin:
         raise HTTPException(status_code=400, detail="Either file_id or dataset_id must be provided")

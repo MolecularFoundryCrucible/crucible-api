@@ -167,7 +167,7 @@ Response is now `PaginatedResponse[Union[ProjectWithLead, ProjectMinimalRead]]`,
 
 `GET /datasets`, `GET /samples`, and `GET /projects` accept repeated `accessible_to_user` and `accessible_to_project` query parameters. User references may be MFIDs, ORCIDs, usernames, or emails. Project references may be MFIDs or slugs. The API resolves each reference once, deduplicates canonical principals, and returns resources accessible to every selected principal using AND semantics.
 
-Selectors only narrow resources readable by the caller. Inspecting another user requires platform-admin authority. Inspecting a project requires membership in that project or platform-admin authority. At most 10 selectors may be supplied in one request.
+Selectors only narrow resources readable by the caller. Inspecting another user requires platform-contributor or platform-admin authority. Inspecting a project requires membership in that project, platform-contributor authority, or platform-admin authority. At most 10 selectors may be supplied in one request.
 
 ```http
 GET /datasets?accessible_to_user={user_ref}
@@ -228,7 +228,21 @@ Platform administrators may omit `unique_id` when creating a human user. The API
 
 The route now performs proposal lookup before opening a database transaction, uses a bounded timeout, returns 502 on upstream failure, deduplicates project IDs, fetches projects and their groups in bounded queries, rejects unknown explicitly requested projects, and creates identity and project memberships atomically. ORCID-less users make no external request.
 
-A human caller may create only for themselves. Service accounts and platform administrators may create for another registered identity. For datasets and samples, when `project_id` is supplied, the effective owner must have contributor-or-above standing in that project. The existing deferred instrument-to-project authorization behavior is unchanged.
+An ordinary human caller may create only for themselves. Platform contributors and platform administrators may create for another registered identity. For datasets and samples, when a project is supplied, the effective owner must have contributor-or-above standing in that project. Projectless create-on-behalf remains supported.
+
+`platform_role=contributor` grants platform-wide read and create access. New service accounts receive this role by default and can read projects and resources, create resources and child records, and use `accessible_to_user` for another registered identity. `is_service_account` alone grants no global access. Non-admin service accounts remain capped at contributor even when an ACL or group standing would otherwise grant a higher role. They cannot edit existing values, delete resources, manage ACLs, transfer ownership, register instruments, or use platform-administrator routes.
+
+`GET /account/profile` returns workflow capabilities for the authenticated principal. The flags describe whether the caller can manage service accounts, create projects, register instruments, create samples or datasets, and create for another identity. They are presentation guidance only; every operation remains independently authorized.
+
+Platform administrators can use `GET /service_accounts` for a paginated, searchable directory and `GET /service_accounts/{unique_id}` for administrator-visible details. These responses expose `platform_role` and never expose the API key. The detail response includes non-secret key validity, creation date, and expiration date when a key exists. Project membership routes reject roles above contributor for a non-admin service account.
+
+Responses that contain an API key send `Cache-Control: no-store`. Creation and rotation remain the preferred service-account credential flows; administrative retrieval through `POST /users/{user_id}/apikey` remains available for compatibility.
+
+Revision `7a1c4e8d2f90` adds the PostgreSQL enum value and must run before deploying code that creates service accounts with the new default. It does not change existing users. Existing service accounts with `platform_role=admin` must be moved to `contributor` individually after their ingestion workflow is verified, then removed from the legacy `admin` group.
+
+Contributor-level additive operations include initial metadata creation, associated-file creation, upload initiation and completion, keyword association, ingestion-request creation, and same-project dataset-to-sample and parent-child linking. Metadata overwrite, metadata merge, relationship-type changes, cross-project linking, resource updates, file updates, unlinking, deletion, ACL changes, and ownership transfer retain their existing higher permission requirements.
+
+`POST /datasets/{dataset_mfid}/files` accepts `storage_path` when `storage_backend` is not `gcs`, allowing a complete catalog-only file record to be created without a follow-up editor operation. GCS storage paths remain assigned only by the upload completion route.
 
 The deprecated dataset `source_folder` field has been removed from `DatasetCreate`, `DatasetRead`, and dataset responses. File locations belong to associated-file records. Existing database columns and historical revision records are unchanged, while new dataset revision records omit the field.
 
@@ -240,13 +254,13 @@ New optional `project_lead` field, alongside the existing three explicit `projec
 
 ### `POST /datasets` / `POST /samples`
 
-`project_id` remains accepted on create. Service-account authorization for a target project is not enforced yet and remains deferred until instrument-to-project authorization is implemented. Expect 400, 403, or 404 responses on payloads that previously succeeded without owner or project validation.
+`project_id` and `project_mfid` remain optional on create. When either is supplied, the API validates the project and verifies that the effective owner has contributor-or-above standing. Platform contributors and administrators may create for another registered identity without a primary project.
 
 ## Behavior fixes (no schema change)
 
 ### Consistent platform-administrator checks
 
-Routes that branch between platform administrators and ordinary callers now use the same transitional policy as administrator-only routes: either `platform_role="admin"` or membership in the legacy `admin` group is accepted. This fixes canonical platform administrators being denied full user-directory listing, unfiltered ingestion-request listing, project-member removal, and join-request listing or review when they were not also members of the legacy group. Legacy group compatibility remains temporary and can be removed centrally after migration.
+Routes that branch between platform administrators and ordinary callers use `platform_role="admin"` as the only source of platform-administrator authority. Membership in a group named `admin` does not grant platform authority. Project and instrument permissions require canonical resource ACLs and no longer fall back to group membership when ACL rows are missing.
 
 ### Atomic sample creation
 

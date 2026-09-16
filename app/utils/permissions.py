@@ -36,6 +36,7 @@ class Role(IntEnum):
 
 class PlatformRole(str, Enum):
     NONE = "none"
+    CONTRIBUTOR = "contributor"
     SUPPORT = "support"
     ADMIN = "admin"
 
@@ -160,12 +161,26 @@ def has_permission(
     acl_rows: Iterable[tuple[int, Role]],
     permission: Permission,
 ) -> bool:
-    """Whether the principal may perform `permission`. Platform admins bypass
-    before any ACL is consulted, so they need no rows."""
-    if principal.is_platform_admin:
+    """Whether the principal may perform `permission`."""
+    if has_global_permission(principal, permission):
         return True
     role = effective_role(principal, acl_rows)
+    if (
+        principal.is_service_account
+        and role is not None
+        and role > Role.CONTRIBUTOR
+    ):
+        role = Role.CONTRIBUTOR
     return role is not None and role >= THRESHOLDS[permission]
+
+
+def has_global_permission(principal: Principal, permission: Permission) -> bool:
+    if principal.is_platform_admin:
+        return True
+    return (
+        principal.platform_role is PlatformRole.CONTRIBUTOR
+        and THRESHOLDS[permission] <= Role.CONTRIBUTOR
+    )
 
 
 def can_grant(

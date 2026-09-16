@@ -75,6 +75,8 @@ class TestInitiateMultipartUpload:
         assert data["object_prefix"] == "ds-001/"
         assert data["upload_id"] is not None
         assert data["existing_file"] is None
+        from app.utils.permissions import Permission
+        assert mock_require_permission.call_args.args[3] is Permission.CREATE
 
     @patch('app.api.routes.gcs_storage.require_permission')
     @patch('app.api.routes.gcs_storage.Session')

@@ -145,6 +145,24 @@ def test_non_lead_cannot_review(client, db_engine, auth_as):
     assert resp.status_code == 403
 
 
+def test_service_account_cannot_use_project_lead_standing(client, db_engine, auth_as):
+    ag_id, _ = _setup(db_engine)
+    auth_as("0000-0002", platform_role=PlatformRole.NONE)
+    created = client.post("/access_groups/proj_x/join", json={})
+    request_id = created.json()["id"]
+
+    auth_as(
+        "0000-0001",
+        groups=[("proj_x", ag_id, Role.OWNER)],
+        is_service_account=True,
+    )
+    listed = client.get("/join_requests", params={"group_name": "proj_x"})
+    reviewed = client.patch(f"/join_requests/{request_id}", json={"status": "approved"})
+
+    assert listed.status_code == 403
+    assert reviewed.status_code == 403
+
+
 def test_platform_role_admin_can_list_and_review(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as("0000-0002", platform_role=PlatformRole.NONE)

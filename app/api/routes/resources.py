@@ -219,6 +219,7 @@ def read_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user
 @router.post("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
 def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: str, scientific_md: dict,
                              background_tasks: BackgroundTasks, overwrite: bool = False):
+    '''Creates initial metadata with contributor access. Replacing metadata requires editor access.'''
     user_unique_id = auth_res.user_id
 
     with Session(engine) as session:
@@ -229,7 +230,8 @@ def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
 
-        require_permission(session, auth_res, unique_id, Permission.EDIT)
+        required_permission = Permission.EDIT if overwrite else Permission.CREATE
+        require_permission(session, auth_res, unique_id, required_permission)
 
         if not overwrite:
             existing = session.exec(

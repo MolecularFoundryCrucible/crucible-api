@@ -48,20 +48,18 @@ def granted(session, role):
 
 
 class TestEditingTheRecord:
-    def test_operator_with_editor_may_edit(self, session):
+    def test_service_account_is_capped_below_editor(self, session):
         granted(session, Role.EDITOR)
         principal = op(session, Role.ADMIN)
-        require_permission(session, principal, MFID, Permission.EDIT,
-                           legacy_group=NAME)
+        with pytest.raises(HTTPException):
+            require_permission(session, principal, MFID, Permission.EDIT)
         capabilities = resource_capabilities(
             session,
             principal,
             MFID,
-            legacy_edit_group=NAME,
-            legacy_status_group=NAME,
         )
         assert capabilities.model_dump() == {
-            "can_edit": True,
+            "can_edit": False,
             "can_manage_access": False,
             "can_change_status": False,
             "can_transfer": False,
@@ -73,13 +71,12 @@ class TestEditingTheRecord:
         stranger = Principal(user_id="0000-0009",
                              groups=(GroupMembership(99, "other", Role.OWNER),))
         with pytest.raises(HTTPException) as exc:
-            require_permission(session, stranger, MFID, Permission.EDIT, legacy_group=NAME)
+            require_permission(session, stranger, MFID, Permission.EDIT)
         assert exc.value.status_code == 403
 
-    def test_before_migration_group_membership_still_works(self, session):
-        """No ACL rows yet — instruments only get them at registration."""
-        require_permission(session, op(session, Role.VIEWER), MFID, Permission.EDIT,
-                           legacy_group=NAME)
+    def test_group_membership_without_an_acl_does_not_grant_access(self, session):
+        with pytest.raises(HTTPException):
+            require_permission(session, op(session, Role.VIEWER), MFID, Permission.EDIT)
 
 
 class TestRetiring:
@@ -87,30 +84,27 @@ class TestRetiring:
         """It holds editor on the record, deliberately below the delete bar."""
         granted(session, Role.EDITOR)
         with pytest.raises(HTTPException):
-            require_permission(session, op(session, Role.ADMIN), MFID, Permission.DELETE,
-                               legacy_group=NAME)
+            require_permission(session, op(session, Role.ADMIN), MFID, Permission.DELETE)
 
-    def test_an_admin_can(self, session):
+    def test_service_account_group_admin_is_still_capped(self, session):
         granted(session, Role.ADMIN)
         principal = op(session, Role.ADMIN)
-        require_permission(session, principal, MFID, Permission.DELETE,
-                           legacy_group=NAME)
+        with pytest.raises(HTTPException):
+            require_permission(session, principal, MFID, Permission.DELETE)
         capabilities = resource_capabilities(
             session,
             principal,
             MFID,
-            legacy_edit_group=NAME,
-            legacy_status_group=NAME,
         )
-        assert capabilities.can_manage_access is True
-        assert capabilities.can_change_status is True
+        assert capabilities.can_manage_access is False
+        assert capabilities.can_change_status is False
         assert capabilities.can_transfer is False
-        assert capabilities.max_grant_role == "admin"
+        assert capabilities.max_grant_role is None
 
     def test_platform_admin_can(self, session):
         granted(session, Role.EDITOR)
         admin = Principal(user_id="a", platform_role=PlatformRole.ADMIN)
-        require_permission(session, admin, MFID, Permission.DELETE, legacy_group=NAME)
+        require_permission(session, admin, MFID, Permission.DELETE)
 
 
 def test_status_is_not_editable_through_patch():

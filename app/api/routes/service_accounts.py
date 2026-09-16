@@ -1,23 +1,121 @@
-from typing import Annotated
+from datetime import date, datetime, timedelta, timezone
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import User
-from app.models.users import ServiceAccountCreate, ServiceAccountRead
+from app.models.core_models import ApiToken, User
+from app.models.pagination import PaginatedResponse
+from app.models.users import (
+    ServiceAccountAdminDetail,
+    ServiceAccountAdminRead,
+    ServiceAccountCreate,
+    ServiceAccountKeyStatus,
+    ServiceAccountRead,
+)
 from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin
-from app.utils.permissions import AccessGroupType, Principal, Role
+from app.utils.permissions import AccessGroupType, PlatformRole, Principal, Role
 from app.utils.user_utils import assert_username_available, sql_add_user_to_access_group
 
 router = APIRouter(tags=["service_accounts"])
 engine = get_engine()
 
 
+def _service_account_admin_read(user: User) -> ServiceAccountAdminRead:
+    return ServiceAccountAdminRead.model_validate(user)
+
+
+def _key_status(token: Optional[ApiToken]) -> Optional[ServiceAccountKeyStatus]:
+    if token is None:
+        return None
+    created_at = token.token_created
+    if isinstance(created_at, str):
+        created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    if isinstance(created_at, date) and not isinstance(created_at, datetime):
+        created_at = datetime.combine(created_at, datetime.min.time(), tzinfo=timezone.utc)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    expires_at = created_at + timedelta(days=365)
+    return ServiceAccountKeyStatus(
+        valid=expires_at >= datetime.now(timezone.utc),
+        created_at=created_at.date().isoformat(),
+        expires_at=expires_at.date().isoformat(),
+    )
+
+
+@router.get("/service_accounts", response_model=PaginatedResponse[ServiceAccountAdminRead])
+def list_service_accounts(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    q: Optional[str] = Query(default=None, min_length=3, max_length=200),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    """List service accounts for platform administration."""
+    require_platform_admin(auth_res)
+    query = select(User).where(User.is_service_account == True)
+    if q is not None:
+        normalized = " ".join(q.lower().split())
+        if len(normalized) < 3:
+            raise HTTPException(
+                status_code=422,
+                detail="Search query must contain at least 3 non-whitespace characters",
+            )
+        for token in normalized.split():
+            query = query.where(or_(
+                User.username.icontains(token, autoescape=True),
+                User.first_name.icontains(token, autoescape=True),
+                User.last_name.icontains(token, autoescape=True),
+            ))
+
+    with Session(engine) as session:
+        total = session.exec(select(func.count()).select_from(query.subquery())).one()
+        users = session.exec(
+            query.order_by(func.lower(User.username), User.unique_id)
+            .offset(offset)
+            .limit(limit)
+        ).all()
+    return PaginatedResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
+        items=[_service_account_admin_read(user) for user in users],
+    )
+
+
+@router.get("/service_accounts/{unique_id}", response_model=ServiceAccountAdminDetail)
+def get_service_account(
+    unique_id: str,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+):
+    """Return administrator-visible service-account details without a secret."""
+    require_platform_admin(auth_res)
+    with Session(engine) as session:
+        user = session.exec(
+            select(User).where(
+                User.unique_id == unique_id,
+                User.is_service_account == True,
+            )
+        ).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="Service account not found")
+        token = session.exec(
+            select(ApiToken)
+            .where(ApiToken.user_unique_id == unique_id)
+            .order_by(ApiToken.token_created.desc())
+        ).first()
+        return ServiceAccountAdminDetail.model_validate(
+            user,
+            update={"api_key_status": _key_status(token)},
+        )
+
+
 @router.post("/service_accounts", response_model=ServiceAccountRead)
 def create_service_account(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     body: ServiceAccountCreate,
+    response: Response,
 ):
     '''
     Create a service account and return its API key.
@@ -46,6 +144,7 @@ def create_service_account(
             first_name="",
             last_name="",
             is_service_account=True,
+            platform_role=PlatformRole.CONTRIBUTOR.value,
         )
         session.add(user)
         session.flush()  # get user.id
@@ -64,6 +163,7 @@ def create_service_account(
 
     # Generate API key (outside session — find_or_add_api_access opens its own)
     api_key = find_or_add_api_access(unique_id, engine, regenerate=False)
+    response.headers["Cache-Control"] = "no-store"
 
     return ServiceAccountRead(
         unique_id=unique_id,
@@ -76,6 +176,7 @@ def create_service_account(
 def rotate_service_account_key(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     unique_id: str,
+    response: Response,
 ):
     '''
     Generate a new API key for a service account, invalidating the previous one.
@@ -93,6 +194,7 @@ def rotate_service_account_key(
         username = user.username
 
     api_key = find_or_add_api_access(unique_id, engine, regenerate=True)
+    response.headers["Cache-Control"] = "no-store"
 
     return ServiceAccountRead(
         unique_id=unique_id,

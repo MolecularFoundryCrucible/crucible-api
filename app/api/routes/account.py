@@ -1,7 +1,7 @@
 from datetime import timedelta, datetime
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func
 from sqlmodel import Session, select
 
@@ -11,9 +11,14 @@ from app.models.core_models import AccessGroupJoinRequest, ApiToken, User
 from app.models.join_requests import JoinRequestRead
 from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import AccountInfo, ApiKeyRead, ApiKeyVerify, ProjectSyncResult
-from app.models.users import AccountProfileUpdate, UserRead
+from app.models.users import (
+    AccountCapabilities,
+    AccountProfileRead,
+    AccountProfileUpdate,
+    UserRead,
+)
 from app.utils.auth_utils import authorize_user
-from app.utils.permissions import Principal
+from app.utils.permissions import Permission, Principal, has_global_permission
 from app.utils.user_utils import assert_username_available, assign_projects_to_user, find_mf_user_proposals
 
 router = APIRouter(tags=["account"])
@@ -31,15 +36,29 @@ def get_account_info(auth_res: Annotated[Principal, Depends(authorize_user)]):
     return AccountInfo(user_unique_id=user_unique_id, access_group_ids=ag_ids, user_info=user_info)
 
 
-@router.get("/account/profile", response_model=UserRead)
+def _account_capabilities(principal: Principal) -> AccountCapabilities:
+    return AccountCapabilities(
+        can_manage_service_accounts=principal.is_platform_admin,
+        can_create_project=True,
+        can_register_instrument=not principal.is_service_account,
+        can_create_sample=True,
+        can_create_dataset=True,
+        can_create_for_others=has_global_permission(principal, Permission.CREATE),
+    )
+
+
+@router.get("/account/profile", response_model=AccountProfileRead)
 def get_account_profile(auth_res: Annotated[Principal, Depends(authorize_user)]):
-    """Return the authenticated caller's user profile."""
+    """Return the authenticated caller's profile and presentation capabilities."""
     user_unique_id = auth_res.user_id
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-        return user
+        return AccountProfileRead.model_validate(
+            user,
+            update={"capabilities": _account_capabilities(auth_res)},
+        )
 
 
 @router.patch("/account/profile", response_model=UserRead)
@@ -95,7 +114,10 @@ def get_account_join_requests(
 
 
 @router.get("/account/apikey", response_model=ApiKeyRead)
-def get_account_apikey(auth_res: Annotated[Principal, Depends(authorize_user)]):
+def get_account_apikey(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    response: Response,
+):
     """Return the authenticated caller's current API key."""
     user_unique_id = auth_res.user_id
     with Session(engine) as session:
@@ -105,6 +127,7 @@ def get_account_apikey(auth_res: Annotated[Principal, Depends(authorize_user)]):
         ).first()
         if token is None:
             raise HTTPException(status_code=404, detail="No API key found")
+        response.headers["Cache-Control"] = "no-store"
         return ApiKeyRead(api_key=token.token)
 
 

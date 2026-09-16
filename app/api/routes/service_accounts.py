@@ -13,6 +13,7 @@ from app.models.users import (
     ServiceAccountAdminRead,
     ServiceAccountCreate,
     ServiceAccountKeyStatus,
+    ServiceAccountPlatformRoleUpdate,
     ServiceAccountRead,
 )
 from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin
@@ -42,6 +43,21 @@ def _key_status(token: Optional[ApiToken]) -> Optional[ServiceAccountKeyStatus]:
         valid=expires_at >= datetime.now(timezone.utc),
         created_at=created_at.date().isoformat(),
         expires_at=expires_at.date().isoformat(),
+    )
+
+
+def _service_account_admin_detail(
+    session: Session,
+    user: User,
+) -> ServiceAccountAdminDetail:
+    token = session.exec(
+        select(ApiToken)
+        .where(ApiToken.user_unique_id == user.unique_id)
+        .order_by(ApiToken.token_created.desc())
+    ).first()
+    return ServiceAccountAdminDetail.model_validate(
+        user,
+        update={"api_key_status": _key_status(token)},
     )
 
 
@@ -100,15 +116,38 @@ def get_service_account(
         ).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="Service account not found")
-        token = session.exec(
-            select(ApiToken)
-            .where(ApiToken.user_unique_id == unique_id)
-            .order_by(ApiToken.token_created.desc())
-        ).first()
-        return ServiceAccountAdminDetail.model_validate(
-            user,
-            update={"api_key_status": _key_status(token)},
+        return _service_account_admin_detail(session, user)
+
+
+@router.patch("/service_accounts/{unique_id}", response_model=ServiceAccountAdminDetail)
+def update_service_account_platform_role(
+    unique_id: str,
+    body: ServiceAccountPlatformRoleUpdate,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+):
+    """Update a service account's platform role."""
+    require_platform_admin(auth_res)
+    if auth_res.is_service_account:
+        raise HTTPException(
+            status_code=403,
+            detail="Service accounts cannot manage platform roles",
         )
+
+    with Session(engine) as session:
+        user = session.exec(
+            select(User).where(
+                User.unique_id == unique_id,
+                User.is_service_account == True,
+            )
+        ).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="Service account not found")
+
+        user.platform_role = body.platform_role
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return _service_account_admin_detail(session, user)
 
 
 @router.post("/service_accounts", response_model=ServiceAccountRead)

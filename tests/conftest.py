@@ -13,6 +13,7 @@ from app.models.core_models import (
 from app.utils.auth_utils import authorize_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
 import app.api.routes.access_groups as access_groups_routes
+import app.api.routes.account as account_routes
 import app.api.routes.files as files_routes
 import app.api.routes.datasets as datasets_routes
 import app.api.routes.deletion as deletion_routes
@@ -56,6 +57,7 @@ def db_engine():
         ))
         conn.commit()
     access_groups_routes.engine = engine
+    account_routes.engine = engine
     files_routes.engine = engine
     datasets_routes.engine = engine
     deletion_routes.engine = engine

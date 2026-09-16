@@ -232,6 +232,12 @@ An ordinary human caller may create only for themselves. Platform contributors a
 
 `platform_role=contributor` grants platform-wide read and create access. New service accounts receive this role by default and can read projects and resources, create resources and child records, and use `accessible_to_user` for another registered identity. `is_service_account` alone grants no global access. Non-admin service accounts remain capped at contributor even when an ACL or group standing would otherwise grant a higher role. They cannot edit existing values, delete resources, manage ACLs, transfer ownership, register instruments, or use platform-administrator routes.
 
+`GET /account/profile` returns workflow capabilities for the authenticated principal. The flags describe whether the caller can manage service accounts, create projects, register instruments, create samples or datasets, and create for another identity. They are presentation guidance only; every operation remains independently authorized.
+
+Platform administrators can use `GET /service_accounts` for a paginated, searchable directory and `GET /service_accounts/{unique_id}` for administrator-visible details. These responses expose `platform_role` and never expose the API key. The detail response includes non-secret key validity, creation date, and expiration date when a key exists. Project membership routes reject roles above contributor for a non-admin service account.
+
+Responses that contain an API key send `Cache-Control: no-store`. Creation and rotation remain the preferred service-account credential flows; administrative retrieval through `POST /users/{user_id}/apikey` remains available for compatibility.
+
 Revision `7a1c4e8d2f90` adds the PostgreSQL enum value and must run before deploying code that creates service accounts with the new default. It does not change existing users. Existing service accounts with `platform_role=admin` must be moved to `contributor` individually after their ingestion workflow is verified, then removed from the legacy `admin` group.
 
 Contributor-level additive operations include initial metadata creation, associated-file creation, upload initiation and completion, keyword association, ingestion-request creation, and same-project dataset-to-sample and parent-child linking. Metadata overwrite, metadata merge, relationship-type changes, cross-project linking, resource updates, file updates, unlinking, deletion, ACL changes, and ownership transfer retain their existing higher permission requirements.

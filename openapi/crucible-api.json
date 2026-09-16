@@ -167,6 +167,44 @@
         "title": "AccessPrincipalType",
         "type": "string"
       },
+      "AccountCapabilities": {
+        "properties": {
+          "can_create_dataset": {
+            "title": "Can Create Dataset",
+            "type": "boolean"
+          },
+          "can_create_for_others": {
+            "title": "Can Create For Others",
+            "type": "boolean"
+          },
+          "can_create_project": {
+            "title": "Can Create Project",
+            "type": "boolean"
+          },
+          "can_create_sample": {
+            "title": "Can Create Sample",
+            "type": "boolean"
+          },
+          "can_manage_service_accounts": {
+            "title": "Can Manage Service Accounts",
+            "type": "boolean"
+          },
+          "can_register_instrument": {
+            "title": "Can Register Instrument",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "can_manage_service_accounts",
+          "can_create_project",
+          "can_register_instrument",
+          "can_create_sample",
+          "can_create_dataset",
+          "can_create_for_others"
+        ],
+        "title": "AccountCapabilities",
+        "type": "object"
+      },
       "AccountInfo": {
         "properties": {
           "access_group_ids": {
@@ -196,6 +234,67 @@
           "access_group_ids"
         ],
         "title": "AccountInfo",
+        "type": "object"
+      },
+      "AccountProfileRead": {
+        "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/AccountCapabilities"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "first_name": {
+            "title": "First Name",
+            "type": "string"
+          },
+          "is_service_account": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": false,
+            "title": "Is Service Account"
+          },
+          "last_name": {
+            "title": "Last Name",
+            "type": "string"
+          },
+          "unique_id": {
+            "title": "Unique Id",
+            "type": "string"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "first_name",
+          "last_name",
+          "unique_id",
+          "capabilities"
+        ],
+        "title": "AccountProfileRead",
         "type": "object"
       },
       "AccountProfileUpdate": {
@@ -3566,6 +3665,60 @@
         "title": "PaginatedResponse[SampleResponse]",
         "type": "object"
       },
+      "PaginatedResponse_ServiceAccountAdminRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceAccountAdminRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offset"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "limit",
+          "items"
+        ],
+        "title": "PaginatedResponse[ServiceAccountAdminRead]",
+        "type": "object"
+      },
       "PaginatedResponse_Union_ProjectWithLead__ProjectMinimalRead__": {
         "properties": {
           "items": {
@@ -3687,6 +3840,16 @@
         ],
         "title": "PaginatedResponse[Union[UserRead, UserPublicRead]]",
         "type": "object"
+      },
+      "PlatformRole": {
+        "enum": [
+          "none",
+          "contributor",
+          "support",
+          "admin"
+        ],
+        "title": "PlatformRole",
+        "type": "string"
       },
       "ProjectCreate": {
         "description": "Input schema for creating a project. One of project_lead, project_lead_orcid,\nproject_lead_email, or project_lead_username must be provided.",
@@ -4971,6 +5134,112 @@
         "title": "ScientificMetadataBinaryRead",
         "type": "object"
       },
+      "ServiceAccountAdminDetail": {
+        "properties": {
+          "api_key_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServiceAccountKeyStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "first_name": {
+            "title": "First Name",
+            "type": "string"
+          },
+          "is_service_account": {
+            "default": true,
+            "title": "Is Service Account",
+            "type": "boolean"
+          },
+          "last_name": {
+            "title": "Last Name",
+            "type": "string"
+          },
+          "platform_role": {
+            "$ref": "#/components/schemas/PlatformRole"
+          },
+          "unique_id": {
+            "title": "Unique Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unique_id",
+          "username",
+          "first_name",
+          "last_name",
+          "platform_role"
+        ],
+        "title": "ServiceAccountAdminDetail",
+        "type": "object"
+      },
+      "ServiceAccountAdminRead": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "first_name": {
+            "title": "First Name",
+            "type": "string"
+          },
+          "is_service_account": {
+            "default": true,
+            "title": "Is Service Account",
+            "type": "boolean"
+          },
+          "last_name": {
+            "title": "Last Name",
+            "type": "string"
+          },
+          "platform_role": {
+            "$ref": "#/components/schemas/PlatformRole"
+          },
+          "unique_id": {
+            "title": "Unique Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unique_id",
+          "username",
+          "first_name",
+          "last_name",
+          "platform_role"
+        ],
+        "title": "ServiceAccountAdminRead",
+        "type": "object"
+      },
       "ServiceAccountCreate": {
         "description": "Request body for POST /service_accounts.\nusername is required and must be unique across all users.\nunique_id is optional — if omitted the server generates an mfid.",
         "properties": {
@@ -4994,6 +5263,29 @@
           "username"
         ],
         "title": "ServiceAccountCreate",
+        "type": "object"
+      },
+      "ServiceAccountKeyStatus": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid",
+          "created_at",
+          "expires_at"
+        ],
+        "title": "ServiceAccountKeyStatus",
         "type": "object"
       },
       "ServiceAccountRead": {
@@ -5959,14 +6251,14 @@
     },
     "/account/profile": {
       "get": {
-        "description": "Return the authenticated caller's user profile.",
+        "description": "Return the authenticated caller's profile and presentation capabilities.",
         "operationId": "get_account_profile_account_profile_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserRead"
+                  "$ref": "#/components/schemas/AccountProfileRead"
                 }
               }
             },
@@ -15854,6 +16146,84 @@
       }
     },
     "/service_accounts": {
+      "get": {
+        "description": "List service accounts for platform administration.",
+        "operationId": "list_service_accounts_service_accounts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 3,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_ServiceAccountAdminRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Service Accounts",
+        "tags": [
+          "service_accounts"
+        ]
+      },
       "post": {
         "description": "Create a service account and return its API key.\nThe API key is only returned once.\nunique_id is optional; if omitted the server generates an mfid.\nAdmin only.",
         "operationId": "create_service_account_service_accounts_post",
@@ -15895,6 +16265,54 @@
           }
         ],
         "summary": "Create Service Account",
+        "tags": [
+          "service_accounts"
+        ]
+      }
+    },
+    "/service_accounts/{unique_id}": {
+      "get": {
+        "description": "Return administrator-visible service-account details without a secret.",
+        "operationId": "get_service_account_service_accounts__unique_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "unique_id",
+            "required": true,
+            "schema": {
+              "title": "Unique Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceAccountAdminDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Service Account",
         "tags": [
           "service_accounts"
         ]

@@ -2,6 +2,7 @@ from typing import Any, List, Optional
 from pydantic import AliasChoices, ConfigDict, Field, field_validator
 from sqlmodel import SQLModel
 from app.general_utils import is_orcid
+from app.utils.permissions import PlatformRole
 from app.utils.user_utils import validate_username_format
 
 
@@ -49,6 +50,19 @@ class UserRead(SQLModel):
     unique_id: str
     username: Optional[str] = None
     is_service_account: Optional[bool] = False
+
+
+class AccountCapabilities(SQLModel):
+    can_manage_service_accounts: bool
+    can_create_project: bool
+    can_register_instrument: bool
+    can_create_sample: bool
+    can_create_dataset: bool
+    can_create_for_others: bool
+
+
+class AccountProfileRead(UserRead):
+    capabilities: AccountCapabilities
 
 
 class UserPublicRead(SQLModel):
@@ -137,3 +151,23 @@ class ServiceAccountRead(SQLModel):
     username: str
     is_service_account: bool = True
     api_key: str
+
+
+class ServiceAccountAdminRead(SQLModel):
+    unique_id: str
+    username: str
+    first_name: str
+    last_name: str
+    email: Optional[str] = None
+    is_service_account: bool = True
+    platform_role: PlatformRole
+
+
+class ServiceAccountKeyStatus(SQLModel):
+    valid: bool
+    created_at: str
+    expires_at: str
+
+
+class ServiceAccountAdminDetail(ServiceAccountAdminRead):
+    api_key_status: Optional[ServiceAccountKeyStatus] = None

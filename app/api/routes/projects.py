@@ -22,8 +22,8 @@ from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor,
     validate_cursor)
 from app.utils.permissions import (
-    AccessGroupType, Permission, Principal, Role, can_grant, effective_role,
-    has_global_permission)
+    AccessGroupType, Permission, PlatformRole, Principal, Role, can_grant,
+    effective_role, has_global_permission)
 from app.utils.search_utils import (
     apply_trigram_search,
     configure_trigram_search,
@@ -52,6 +52,18 @@ engine = get_engine()
 
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
+
+
+def _validate_service_account_project_role(user: User, role: Role) -> None:
+    if (
+        user.is_service_account
+        and user.platform_role != PlatformRole.ADMIN.value
+        and role > Role.CONTRIBUTOR
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Non-admin service accounts cannot hold a project role above contributor",
+        )
 
 
 def _project_capabilities(session, principal, project):
@@ -454,6 +466,7 @@ def add_users_to_project(
 
         require_permission(session, auth_res, proj.unique_id, Permission.EDIT)
         user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
+        _validate_service_account_project_role(user, internal_role)
         ag = session.exec(
             select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)
         ).one_or_none()
@@ -523,6 +536,7 @@ def set_project_user_role(
         require_permission(session, auth_res, proj.unique_id, Permission.EDIT)
 
         user = resolve_user(session, orcid=orcid)
+        _validate_service_account_project_role(user, internal_role)
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)).one_or_none()
         if ag is None:
             raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')

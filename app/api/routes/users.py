@@ -235,7 +235,11 @@ def read_user(user_id: str, response: Response,
 
 
 @router.post("/users/{user_id}/apikey", response_model=ApiKeyRead)
-def get_or_provision_user_apikey(user_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+def get_or_provision_user_apikey(
+    user_id: str,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    response: Response,
+):
     '''Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.'''
     require_platform_admin(auth_res)
 
@@ -244,6 +248,7 @@ def get_or_provision_user_apikey(user_id: str, auth_res: Annotated[Principal, De
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
+    response.headers["Cache-Control"] = "no-store"
     return ApiKeyRead(api_key=find_or_add_api_access(user_id, engine, regenerate=False))
 
 

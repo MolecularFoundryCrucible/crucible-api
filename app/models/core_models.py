@@ -13,13 +13,6 @@ def get_mfid_value():
     return(x)
 
 
-# Kinds of parent/child link between two datasets, or between two samples.
-# The value describes the child relative to the parent: a link
-# (parent=A, child=B, "is_part_of") reads "B is_part_of A".
-# NULL means the link predates typing, or the caller did not say.
-RELATIONSHIP_TYPES = ("is_derived_from", "is_part_of")
-
-
 class DatasetKeywordLink(SQLModel, table=True):
     keyword_id: Optional[int] = Field(
         default=None, foreign_key="keyword.id", primary_key=True,
@@ -73,7 +66,7 @@ class DatasetSampleLink(SQLModel, table=True):
         default=None, foreign_key="sample.id", primary_key=True, index=True
     )
     dataset_id: Optional[int] = Field(
-        default=None, foreign_key="dataset.id", primary_key=True
+        default=None, foreign_key="dataset.id", primary_key=True, index=True
     )
 
 
@@ -82,7 +75,7 @@ class SampleLink(SQLModel, table=True):
         default=None, foreign_key="sample.id", primary_key=True, index=True
     )
     parent_sample_id: Optional[int] = Field(
-        default=None, foreign_key="sample.id", primary_key=True
+        default=None, foreign_key="sample.id", primary_key=True, index=True
     )
     relationship_type: Optional[str] = Field(default=None, index=True)
 

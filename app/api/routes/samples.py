@@ -19,7 +19,7 @@ from app.models.core_models import (
 )
 from app.models.datasets import DatasetRead
 from app.models.facets import FacetResponse
-from app.models.links import LinkedResource, LinkRelationshipType
+from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
     ResourceSearchQuery, SampleDetailQuery, SampleFacetQuery, SampleListQuery)
@@ -74,7 +74,7 @@ API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
 @router.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model=SampleLink)
 def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annotated[Principal, Depends(authorize_user)],
-                             relationship_type: Optional[LinkRelationshipType] = Query(default=None)):
+                             relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
     '''
     Link two samples as parent and child.
 
@@ -104,16 +104,16 @@ def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annota
             )
         ).one_or_none()
         if link is not None:
-            if relationship_type is None or link.relationship_type == relationship_type.value:
+            if relationship_type is None or link.relationship_type == relationship_type:
                 return link
             require_permission(session, auth_res, parent_sample_id, Permission.EDIT)
             require_permission(session, auth_res, child_sample_id, Permission.EDIT)
-            link.relationship_type = relationship_type.value
+            link.relationship_type = relationship_type
         else:
             link = SampleLink(
                 parent_sample_id=parent_sample.id,
                 sample_id=child_sample.id,
-                relationship_type=relationship_type.value if relationship_type is not None else None,
+                relationship_type=relationship_type,
             )
         session.add(link)
 
@@ -745,7 +745,7 @@ def list_sample_datasets(
 def list_parent_samples(child_sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                         limit: int = Query(default=100, ge=1, le=1000),
                         offset: int = Query(default=0, ge=0),
-                        relationship_type: Optional[LinkRelationshipType] = Query(default=None)):
+                        relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
     '''
     Returns a paginated list of parent samples for a given child sample.
 
@@ -766,7 +766,7 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[Principal, Dep
             .where(deletion_filter_for(Sample))
         )
         if relationship_type is not None:
-            query = query.where(SampleLink.relationship_type == relationship_type.value)
+            query = query.where(SampleLink.relationship_type == relationship_type)
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
         project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
@@ -782,7 +782,7 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[Principal, Dep
 def list_child_samples(parent_sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                        limit: int = Query(default=100, ge=1, le=1000),
                        offset: int = Query(default=0, ge=0),
-                       relationship_type: Optional[LinkRelationshipType] = Query(default=None)):
+                       relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
     '''
     Returns a paginated list of child samples for a given parent sample.
 
@@ -803,7 +803,7 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[Principal, Dep
             .where(deletion_filter_for(Sample))
         )
         if relationship_type is not None:
-            query = query.where(SampleLink.relationship_type == relationship_type.value)
+            query = query.where(SampleLink.relationship_type == relationship_type)
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
         project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)

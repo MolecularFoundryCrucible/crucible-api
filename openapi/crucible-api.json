@@ -8541,7 +8541,11 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/LinkRelationshipType"
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
                 },
                 {
                   "type": "null"
@@ -10026,7 +10030,11 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/LinkRelationshipType"
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
                 },
                 {
                   "type": "null"
@@ -10149,7 +10157,11 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/LinkRelationshipType"
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
                 },
                 {
                   "type": "null"
@@ -16075,7 +16087,11 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/LinkRelationshipType"
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
                 },
                 {
                   "type": "null"
@@ -16162,7 +16178,11 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/LinkRelationshipType"
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
                 },
                 {
                   "type": "null"
@@ -16285,7 +16305,11 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/LinkRelationshipType"
+                  "enum": [
+                    "is_derived_from",
+                    "is_part_of"
+                  ],
+                  "type": "string"
                 },
                 {
                   "type": "null"
@@ -17997,7 +18021,7 @@
   },
   "servers": [
     {
-      "url": "/testapi"
+      "url": "/api/v3"
     }
   ]
 }

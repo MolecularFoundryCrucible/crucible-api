@@ -28,6 +28,7 @@ def upgrade() -> None:
                 index_name,
                 table_name,
                 [column_name],
+                if_not_exists=True,
                 postgresql_concurrently=True,
             )
 
@@ -38,5 +39,6 @@ def downgrade() -> None:
             op.drop_index(
                 index_name,
                 table_name=table_name,
+                if_exists=True,
                 postgresql_concurrently=True,
             )

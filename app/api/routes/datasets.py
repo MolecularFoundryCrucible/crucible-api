@@ -44,7 +44,7 @@ from app.models.datasets import (
     ThumbnailCreate, ThumbnailPreviewRead, ThumbnailRead, ThumbnailUpdate,
 )
 from app.models.instrument import InstrumentReferenceRead
-from app.models.links import LinkedResource
+from app.models.links import LinkedResource, LinkRelationshipType
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
     DatasetDetailQuery, DatasetFacetQuery, DatasetListQuery, ResourceSearchQuery)
@@ -927,7 +927,7 @@ def read_dataset(
 
 @router.post("/datasets/{parent_dataset_id}/children/{child_dataset_id}", response_model=DatasetLink)
 def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[Principal, Depends(authorize_user)],
-                              relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
+                              relationship_type: Optional[LinkRelationshipType] = Query(default=None)):
     '''
     Link two datasets as parent and child.
 
@@ -957,16 +957,16 @@ def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Ann
             )
         ).one_or_none()
         if link is not None:
-            if relationship_type is None or link.relationship_type == relationship_type:
+            if relationship_type is None or link.relationship_type == relationship_type.value:
                 return link
             require_permission(session, auth_res, parent_dataset_id, Permission.EDIT)
             require_permission(session, auth_res, child_dataset_id, Permission.EDIT)
-            link.relationship_type = relationship_type
+            link.relationship_type = relationship_type.value
         else:
             link = DatasetLink(
                 parent_dataset_id=parent.id,
                 child_dataset_id=child.id,
-                relationship_type=relationship_type,
+                relationship_type=relationship_type.value if relationship_type is not None else None,
             )
         session.add(link)
 
@@ -1019,7 +1019,7 @@ def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, a
 def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                          limit: int = Query(default=100, ge=1, le=1000),
                          offset: int = Query(default=0, ge=0),
-                         relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
+                         relationship_type: Optional[LinkRelationshipType] = Query(default=None)):
     '''
     Returns a paginated list of parent datasets for a given dataset.
 
@@ -1043,7 +1043,7 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[Principal, D
             .where(auth_filter).where(deletion_filter)
         )
         if relationship_type is not None:
-            query = query.where(DatasetLink.relationship_type == relationship_type)
+            query = query.where(DatasetLink.relationship_type == relationship_type.value)
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         parents = session.exec(query.offset(offset).limit(limit)).all()
         instrument_references = resolve_instrument_mfids_to_references((d.instrument_mfid for d in parents), session)
@@ -1062,7 +1062,7 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[Principal, D
 def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                         limit: int = Query(default=100, ge=1, le=1000),
                         offset: int = Query(default=0, ge=0),
-                        relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
+                        relationship_type: Optional[LinkRelationshipType] = Query(default=None)):
     '''
     Returns a paginated list of child datasets for a given parent dataset.
 
@@ -1086,7 +1086,7 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[Principal, D
             .where(auth_filter).where(deletion_filter)
         )
         if relationship_type is not None:
-            query = query.where(DatasetLink.relationship_type == relationship_type)
+            query = query.where(DatasetLink.relationship_type == relationship_type.value)
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         children = session.exec(query.offset(offset).limit(limit)).all()
         instrument_references = resolve_instrument_mfids_to_references((d.instrument_mfid for d in children), session)

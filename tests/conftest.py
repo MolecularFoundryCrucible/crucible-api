@@ -22,6 +22,7 @@ import app.api.routes.instruments as instruments_routes
 import app.api.routes.ingestion_requests as ingestion_requests_routes
 import app.api.routes.projects as projects_routes
 import app.api.routes.resources as resources_routes
+import app.api.routes.resource_graph as resource_graph_routes
 import app.api.routes.samples as samples_routes
 import app.api.routes.service_accounts as service_accounts_routes
 import app.api.routes.users as users_routes
@@ -66,6 +67,7 @@ def db_engine():
     ingestion_requests_routes.engine = engine
     projects_routes.engine = engine
     resources_routes.engine = engine
+    resource_graph_routes.engine = engine
     samples_routes.engine = engine
     service_accounts_routes.engine = engine
     users_routes.engine = engine

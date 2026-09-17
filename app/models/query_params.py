@@ -12,6 +12,11 @@ from pydantic import (
 )
 
 from app.models.projects import ProjectScope
+from app.models.resource_graph import (
+    GraphDirection,
+    GraphRelationshipKind,
+    GraphRelationshipTypeFilter,
+)
 
 
 AFFILIATION_DESCRIPTION = (
@@ -104,6 +109,44 @@ class InstrumentDetailQuery(StrictQueryModel):
 
 class ResourceDetailQuery(SampleDetailQuery):
     pass
+
+
+class ResourceGraphQuery(StrictQueryModel):
+    depth: int = Field(
+        default=1,
+        ge=0,
+        le=3,
+        description="Maximum selected-edge distance from the root resource.",
+    )
+    direction: GraphDirection = Field(
+        default=GraphDirection.BOTH,
+        description="Lineage traversal direction. Associations remain undirected.",
+    )
+    relationship_kind: list[GraphRelationshipKind] = Field(
+        default_factory=lambda: [
+            GraphRelationshipKind.LINEAGE,
+            GraphRelationshipKind.ASSOCIATION,
+        ],
+        min_length=1,
+        description="Repeatable relationship kinds used for traversal and returned edges.",
+    )
+    relationship_type: Optional[list[GraphRelationshipTypeFilter]] = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Repeatable lineage relationship types. Use unspecified for stored null values. "
+            "Associations are unaffected."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_relationship_filters(self):
+        if (
+            self.relationship_type is not None
+            and GraphRelationshipKind.LINEAGE not in self.relationship_kind
+        ):
+            raise ValueError("relationship_type requires relationship_kind=lineage")
+        return self
 
 
 class ResourceCollectionQuery(StrictQueryModel):

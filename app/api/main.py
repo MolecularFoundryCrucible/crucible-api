@@ -7,7 +7,8 @@ from app.api.dependencies import get_api_root_path
 from app.api.routes import (account, auth, files, datasets, gcs_storage, resources,
                             samples, instruments, users, projects,
                             access_groups, entities, misc, deletion,
-                            ingestion_requests, ai, service_accounts)
+                            ingestion_requests, ai, service_accounts,
+                            resource_graph)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,6 +40,7 @@ app.include_router(ingestion_requests.router)
 app.include_router(datasets.router)
 app.include_router(gcs_storage.router)
 app.include_router(resources.router)
+app.include_router(resource_graph.router)
 app.include_router(samples.router)
 app.include_router(instruments.router)
 app.include_router(users.router)

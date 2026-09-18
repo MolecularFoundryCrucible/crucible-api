@@ -24,11 +24,14 @@ Every node includes:
 - nullable `name`
 - shortest `traversal_depth` from the root
 - nullable `has_more_relationships`
+- `expansion_availability` with `upstream_lineage`, `downstream_lineage`, and `associations` booleans
 - nullable compact `project` reference
 
 Sample nodes also include nullable `sample_type`. Dataset nodes also include nullable `measurement`, `data_format`, and compact `instrument` reference.
 
-`has_more_relationships` is evaluated using the request's direction and relationship filters and only considers readable, non-deleted resources. `true` means at least one selected relationship leads outside the returned node set. `false` means the node's selected relationships were fully evaluated and all endpoints are present. `null` means a server limit prevented a definitive per-node result.
+`expansion_availability` evaluates all three expansion channels even when the request selects only one relationship kind or lineage direction. `upstream_lineage` reports additional readable parents, `downstream_lineage` reports additional readable children, and `associations` reports additional readable sample-dataset relationships. A value is `true` when at least one authorized relationship edge in that channel is absent from the response and `false` when every authorized relationship edge in that channel is present. Lineage availability respects the request's relationship-type filter.
+
+`has_more_relationships` remains the aggregate compatibility field scoped to the request's relationship kinds, direction, and relationship-type filters. Its value is derived from the corresponding expansion channels.
 
 ## Edges
 
@@ -64,7 +67,7 @@ The API authorizes the root and every candidate endpoint before traversal. It do
 
 ## Incremental expansion
 
-Clients should normally request `depth=1`. If a boundary node has `has_more_relationships=true`, the client may request that node as a new root and merge nodes and edges by their stable identities. No continuation token is required for this workflow.
+Clients should normally request `depth=1`. A client can offer parent, child, or association expansion directly from the corresponding `expansion_availability` value, reroot at that node with the matching filters, and merge nodes and edges by their stable identities. No continuation token is required for this workflow.
 
 ## Initial contract boundaries
 

@@ -172,6 +172,16 @@ def test_depth_one_returns_only_immediate_readable_neighbors(db_engine):
     assert graph.edges[0].relationship_type == "is_derived_from"
     assert graph.has_more is True
     assert graph.nodes[1].has_more_relationships is True
+    assert graph.nodes[0].expansion_availability.model_dump() == {
+        "upstream_lineage": False,
+        "downstream_lineage": False,
+        "associations": False,
+    }
+    assert graph.nodes[1].expansion_availability.model_dump() == {
+        "upstream_lineage": False,
+        "downstream_lineage": True,
+        "associations": True,
+    }
 
 
 def test_depth_zero_returns_root_and_expandability(db_engine):
@@ -184,6 +194,11 @@ def test_depth_zero_returns_root_and_expandability(db_engine):
     assert graph.returned_depth == 0
     assert graph.has_more is True
     assert graph.nodes[0].has_more_relationships is True
+    assert graph.nodes[0].expansion_availability.model_dump() == {
+        "upstream_lineage": False,
+        "downstream_lineage": True,
+        "associations": False,
+    }
 
 
 def test_depth_two_traverses_associations_and_untyped_lineage(db_engine):
@@ -249,6 +264,12 @@ def test_relationship_type_filter_includes_unspecified(db_engine):
         "sample-grandchild",
     ]
     assert graph.edges[0].relationship_type is None
+    assert graph.nodes[0].expansion_availability.model_dump() == {
+        "upstream_lineage": False,
+        "downstream_lineage": False,
+        "associations": True,
+    }
+    assert graph.has_more is False
 
 
 def test_association_only_graph_is_undirected(db_engine):
@@ -266,6 +287,17 @@ def test_association_only_graph_is_undirected(db_engine):
     assert graph.edges[0].directed is False
     assert graph.edges[0].source_mfid == "sample-child"
     assert graph.edges[0].target_mfid == "dataset-root"
+    assert graph.nodes[0].expansion_availability.model_dump() == {
+        "upstream_lineage": True,
+        "downstream_lineage": True,
+        "associations": False,
+    }
+    assert graph.nodes[1].expansion_availability.model_dump() == {
+        "upstream_lineage": False,
+        "downstream_lineage": True,
+        "associations": False,
+    }
+    assert graph.has_more is False
 
 
 def test_hidden_nodes_are_not_returned_or_traversed(db_engine):
@@ -285,6 +317,12 @@ def test_hidden_nodes_are_not_returned_or_traversed(db_engine):
         "sample-grandchild",
     }
     assert all("hidden" not in edge.id for edge in graph.edges)
+    root = next(node for node in graph.nodes if node.mfid == "sample-root")
+    assert root.expansion_availability.model_dump() == {
+        "upstream_lineage": False,
+        "downstream_lineage": False,
+        "associations": False,
+    }
 
 
 def test_inaccessible_or_unsupported_root_is_not_resolved(db_engine):
@@ -374,7 +412,12 @@ def test_edge_limit_returns_deterministic_partial_graph(db_engine, monkeypatch):
     assert graph.truncated is True
     assert graph.truncation_reasons == ["edge_limit"]
     assert graph.has_more is True
-    assert graph.nodes[0].has_more_relationships is None
+    assert graph.nodes[0].has_more_relationships is True
+    assert graph.nodes[0].expansion_availability.model_dump() == {
+        "upstream_lineage": True,
+        "downstream_lineage": True,
+        "associations": False,
+    }
 
 
 def test_query_rejects_relationship_types_without_lineage():
@@ -413,9 +456,17 @@ def test_openapi_publishes_typed_resource_graph_contract():
         "name",
         "traversal_depth",
         "has_more_relationships",
+        "expansion_availability",
         "project",
         "resource_type",
         "sample_type",
+    }
+    assert set(
+        schema["components"]["schemas"]["GraphExpansionAvailability"]["required"]
+    ) == {
+        "upstream_lineage",
+        "downstream_lineage",
+        "associations",
     }
 
 

@@ -31,11 +31,18 @@ class GraphTruncationReason(str, Enum):
     EDGE_LIMIT = "edge_limit"
 
 
+class GraphExpansionAvailability(SQLModel):
+    upstream_lineage: bool
+    downstream_lineage: bool
+    associations: bool
+
+
 class GraphNodeBase(SQLModel):
     mfid: str
     name: Optional[str]
     traversal_depth: int
     has_more_relationships: Optional[bool]
+    expansion_availability: GraphExpansionAvailability
     project: Optional[ProjectReferenceRead]
 
 

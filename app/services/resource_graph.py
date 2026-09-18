@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from sqlalchemy import String, cast, func, literal, or_, union_all
+from sqlalchemy import String, case, cast, func, literal, or_, union_all
 from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
@@ -12,6 +12,7 @@ from app.models.resource_graph import (
     AssociationGraphEdge,
     DatasetGraphNode,
     GraphDirection,
+    GraphExpansionAvailability,
     GraphRelationshipKind,
     GraphRelationshipTypeFilter,
     GraphTruncationReason,
@@ -28,6 +29,9 @@ from app.utils.sql_utils import deletion_filter_for
 
 GRAPH_NODE_LIMIT = 500
 GRAPH_EDGE_LIMIT = 1000
+UPSTREAM_LINEAGE = "upstream_lineage"
+DOWNSTREAM_LINEAGE = "downstream_lineage"
+ASSOCIATIONS = "associations"
 
 NodeKey = tuple[str, int]
 
@@ -346,6 +350,110 @@ def _candidate_edges(
     return edges, overflow
 
 
+def _relationship_counts(
+    session: Session,
+    principal: Principal,
+    nodes: set[NodeKey],
+    params: ResourceGraphQuery,
+) -> dict[tuple[str, str], int]:
+    availability_params = ResourceGraphQuery(
+        depth=0,
+        direction=GraphDirection.BOTH,
+        relationship_kind=[
+            GraphRelationshipKind.LINEAGE,
+            GraphRelationshipKind.ASSOCIATION,
+        ],
+        relationship_type=params.relationship_type,
+    )
+    branches = _candidate_selects(principal, nodes, availability_params)
+    if not branches:
+        return {}
+
+    candidates = union_all(*branches).subquery()
+    channel = case(
+        (candidates.c.kind == GraphRelationshipKind.ASSOCIATION.value, ASSOCIATIONS),
+        (
+            candidates.c.traversal_source_mfid == candidates.c.edge_source_mfid,
+            DOWNSTREAM_LINEAGE,
+        ),
+        else_=UPSTREAM_LINEAGE,
+    ).label("channel")
+    rows = session.execute(
+        select(
+            candidates.c.traversal_source_mfid,
+            channel,
+            func.count().label("relationship_count"),
+        ).group_by(candidates.c.traversal_source_mfid, channel)
+    ).all()
+    return {(row[0], row[1]): row[2] for row in rows}
+
+
+def _returned_relationship_counts(edges) -> dict[tuple[str, str], int]:
+    counts: dict[tuple[str, str], int] = {}
+
+    def increment(mfid: str, channel: str):
+        key = (mfid, channel)
+        counts[key] = counts.get(key, 0) + 1
+
+    for edge in edges:
+        if edge.kind == GraphRelationshipKind.LINEAGE.value:
+            increment(edge.source_mfid, DOWNSTREAM_LINEAGE)
+            increment(edge.target_mfid, UPSTREAM_LINEAGE)
+        else:
+            increment(edge.source_mfid, ASSOCIATIONS)
+            increment(edge.target_mfid, ASSOCIATIONS)
+    return counts
+
+
+def _expansion_availability(
+    session: Session,
+    principal: Principal,
+    nodes: set[NodeKey],
+    params: ResourceGraphQuery,
+    edges,
+) -> dict[str, GraphExpansionAvailability]:
+    totals = _relationship_counts(session, principal, nodes, params)
+    returned = _returned_relationship_counts(edges)
+    mfids = {mfid for mfid, _ in totals} | {mfid for mfid, _ in returned}
+    return {
+        mfid: GraphExpansionAvailability(
+            upstream_lineage=(
+                totals.get((mfid, UPSTREAM_LINEAGE), 0)
+                > returned.get((mfid, UPSTREAM_LINEAGE), 0)
+            ),
+            downstream_lineage=(
+                totals.get((mfid, DOWNSTREAM_LINEAGE), 0)
+                > returned.get((mfid, DOWNSTREAM_LINEAGE), 0)
+            ),
+            associations=(
+                totals.get((mfid, ASSOCIATIONS), 0)
+                > returned.get((mfid, ASSOCIATIONS), 0)
+            ),
+        )
+        for mfid in mfids
+    }
+
+
+def _aggregate_availability(
+    availability: GraphExpansionAvailability,
+    params: ResourceGraphQuery,
+) -> Optional[bool]:
+    values = []
+    kinds = set(params.relationship_kind)
+    if GraphRelationshipKind.LINEAGE in kinds:
+        if params.direction in (GraphDirection.BOTH, GraphDirection.UPSTREAM):
+            values.append(availability.upstream_lineage)
+        if params.direction in (GraphDirection.BOTH, GraphDirection.DOWNSTREAM):
+            values.append(availability.downstream_lineage)
+    if GraphRelationshipKind.ASSOCIATION in kinds:
+        values.append(availability.associations)
+    if any(value is True for value in values):
+        return True
+    if any(value is None for value in values):
+        return None
+    return False
+
+
 def _find_root(session: Session, principal: Principal, root_mfid: str):
     sample = session.exec(
         select(Sample)
@@ -525,7 +633,8 @@ def _induced_edges(
 def _graph_nodes(
     session: Session,
     depths: dict[NodeKey, int],
-    has_more: dict[NodeKey, Optional[bool]],
+    availability_by_mfid: dict[str, GraphExpansionAvailability],
+    params: ResourceGraphQuery,
 ):
     sample_ids = [node_id for kind, node_id in depths if kind == "sample"]
     dataset_ids = [node_id for kind, node_id in depths if kind == "dataset"]
@@ -548,12 +657,26 @@ def _graph_nodes(
         session,
     )
 
+    def availability_for(mfid: str):
+        return availability_by_mfid.get(
+            mfid,
+            GraphExpansionAvailability(
+                upstream_lineage=False,
+                downstream_lineage=False,
+                associations=False,
+            ),
+        )
+
     nodes = [
         SampleGraphNode(
             mfid=sample.unique_id,
             name=sample.sample_name,
             traversal_depth=depths[("sample", sample.id)],
-            has_more_relationships=has_more[("sample", sample.id)],
+            has_more_relationships=_aggregate_availability(
+                availability_for(sample.unique_id),
+                params,
+            ),
+            expansion_availability=availability_for(sample.unique_id),
             project=project_references.get(sample.project_mfid),
             resource_type="sample",
             sample_type=sample.sample_type,
@@ -565,7 +688,11 @@ def _graph_nodes(
             mfid=dataset.unique_id,
             name=dataset.dataset_name,
             traversal_depth=depths[("dataset", dataset.id)],
-            has_more_relationships=has_more[("dataset", dataset.id)],
+            has_more_relationships=_aggregate_availability(
+                availability_for(dataset.unique_id),
+                params,
+            ),
+            expansion_availability=availability_for(dataset.unique_id),
             project=project_references.get(dataset.project_mfid),
             measurement=dataset.measurement,
             data_format=dataset.data_format,
@@ -589,7 +716,6 @@ def build_resource_graph(
         return None
 
     depths: dict[NodeKey, int] = {root: 0}
-    relationship_status: dict[NodeKey, Optional[bool]] = {root: False}
     discovery_edges: dict[str, TraversalEdge] = {}
     frontier = {root}
     truncation_reasons: set[GraphTruncationReason] = set()
@@ -603,8 +729,6 @@ def build_resource_graph(
         )
         if edge_overflow:
             truncation_reasons.add(GraphTruncationReason.EDGE_LIMIT)
-            for source in frontier:
-                relationship_status[source] = None
 
         candidates_by_neighbor: dict[NodeKey, list[TraversalEdge]] = {}
         for edge in candidates:
@@ -626,40 +750,15 @@ def build_resource_graph(
         omitted_neighbors = set(new_neighbors[remaining:])
         if omitted_neighbors:
             truncation_reasons.add(GraphTruncationReason.NODE_LIMIT)
-            for edge in candidates:
-                if edge.neighbor in omitted_neighbors:
-                    relationship_status[edge.traversal_source] = True
 
         for neighbor in selected_neighbors:
             depths[neighbor] = traversal_depth
-            relationship_status[neighbor] = False
             discovery = candidates_by_neighbor[neighbor][0]
             discovery_edges.setdefault(discovery.edge_id, discovery)
 
         frontier = selected_neighbors
         if edge_overflow or omitted_neighbors or not frontier:
-            if edge_overflow or omitted_neighbors:
-                for node in frontier:
-                    relationship_status[node] = None
             break
-
-    reached_requested_depth = bool(frontier) and max(depths.values()) == params.depth
-    boundary_has_more = False
-    if reached_requested_depth:
-        boundary_edges, boundary_overflow = _candidate_edges(
-            session,
-            principal,
-            frontier,
-            params,
-            excluded=set(depths),
-        )
-        sources_with_more = {edge.traversal_source for edge in boundary_edges}
-        for source in frontier:
-            relationship_status[source] = source in sources_with_more
-        if boundary_overflow:
-            for source in frontier - sources_with_more:
-                relationship_status[source] = None
-        boundary_has_more = bool(boundary_edges) or boundary_overflow
 
     edges, induced_edge_overflow = _induced_edges(
         session,
@@ -670,7 +769,14 @@ def build_resource_graph(
     if induced_edge_overflow:
         truncation_reasons.add(GraphTruncationReason.EDGE_LIMIT)
 
-    nodes = _graph_nodes(session, depths, relationship_status)
+    expansion_availability = _expansion_availability(
+        session,
+        principal,
+        set(depths),
+        params,
+        edges,
+    )
+    nodes = _graph_nodes(session, depths, expansion_availability, params)
     ordered_reasons = sorted(truncation_reasons, key=lambda reason: reason.value)
     return ResourceGraphResponse(
         root_mfid=root_mfid,
@@ -679,9 +785,8 @@ def build_resource_graph(
         requested_depth=params.depth,
         returned_depth=max(depths.values()),
         has_more=(
-            boundary_has_more
-            or bool(truncation_reasons)
-            or any(value is True for value in relationship_status.values())
+            bool(truncation_reasons)
+            or any(node.has_more_relationships is True for node in nodes)
         ),
         truncated=bool(truncation_reasons),
         truncation_reasons=ordered_reasons,

@@ -13,7 +13,8 @@ from app.models.core_models import (
     Resource,
     ResourceACL,
 )
-from app.models.deletion import DeletionRequestScope
+from app.models.deletion import DeletionRequestScope, DeletionRequestSort
+from app.models.query_params import SortDirection
 from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role
 
 
@@ -342,6 +343,149 @@ def test_deletion_request_order_uses_id_as_timestamp_tiebreaker(db_engine):
         "dataset-one",
     ]
 
+    ascending = deletion_routes.list_deletion_requests(
+        Principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
+        scope=DeletionRequestScope.ACCESSIBLE,
+        status=None,
+        sort=DeletionRequestSort.REQUEST_TIME,
+        direction=SortDirection.ASC,
+        limit=100,
+        offset=0,
+    )
+
+    assert [item.resource_id for item in ascending.items] == [
+        "dataset-one",
+        "dataset-two",
+    ]
+
+
+def test_deletion_request_cursor_is_stable_when_earlier_requests_change(db_engine):
+    with Session(db_engine) as session:
+        for index in range(1, 4):
+            resource_id = f"dataset-{index}"
+            session.add_all([
+                Dataset(unique_id=resource_id, dataset_name=resource_id),
+                Resource(mfid=resource_id, resource_type="dataset"),
+                DeletionRequest(
+                    resource_id=resource_id,
+                    requester_id="requester",
+                    status="pending",
+                    request_time=f"2026-09-{index:02d}T12:00:00Z",
+                ),
+            ])
+        session.commit()
+
+    principal = Principal(
+        user_id="platform-admin",
+        platform_role=PlatformRole.ADMIN,
+    )
+    first = deletion_routes.list_deletion_requests(
+        principal,
+        scope=DeletionRequestScope.ACCESSIBLE,
+        status=None,
+        limit=2,
+        offset=0,
+    )
+
+    assert [item.resource_id for item in first.items] == ["dataset-3", "dataset-2"]
+    assert first.next_cursor is not None
+
+    with Session(db_engine) as session:
+        removed = session.exec(
+            select(DeletionRequest).where(
+                DeletionRequest.resource_id == "dataset-3"
+            )
+        ).one()
+        session.delete(removed)
+        session.add_all([
+            Dataset(unique_id="dataset-4", dataset_name="dataset-4"),
+            Resource(mfid="dataset-4", resource_type="dataset"),
+            DeletionRequest(
+                resource_id="dataset-4",
+                requester_id="requester",
+                status="pending",
+                request_time="2026-09-04T12:00:00Z",
+            ),
+        ])
+        session.commit()
+
+    second = deletion_routes.list_deletion_requests(
+        principal,
+        scope=DeletionRequestScope.ACCESSIBLE,
+        status=None,
+        limit=2,
+        cursor=first.next_cursor,
+        offset=100,
+    )
+
+    assert [item.resource_id for item in second.items] == ["dataset-1"]
+    assert second.offset is None
+    assert second.total == 3
+    assert second.next_cursor is None
+
+
+def test_deletion_request_cursor_is_bound_to_query_and_principal(db_engine):
+    with Session(db_engine) as session:
+        for index in range(1, 3):
+            resource_id = f"dataset-{index}"
+            session.add_all([
+                Dataset(unique_id=resource_id, dataset_name=resource_id),
+                Resource(mfid=resource_id, resource_type="dataset"),
+                DeletionRequest(
+                    resource_id=resource_id,
+                    requester_id="requester",
+                    status="pending",
+                    request_time=f"2026-09-{index:02d}T12:00:00Z",
+                ),
+            ])
+        session.commit()
+
+    principal = Principal(
+        user_id="platform-admin",
+        platform_role=PlatformRole.ADMIN,
+    )
+    first = deletion_routes.list_deletion_requests(
+        principal,
+        scope=DeletionRequestScope.ACCESSIBLE,
+        status=None,
+        limit=1,
+        offset=0,
+    )
+
+    with pytest.raises(HTTPException) as changed_direction:
+        deletion_routes.list_deletion_requests(
+            principal,
+            scope=DeletionRequestScope.ACCESSIBLE,
+            status=None,
+            direction=SortDirection.ASC,
+            limit=1,
+            cursor=first.next_cursor,
+            offset=0,
+        )
+    assert changed_direction.value.status_code == 422
+
+    with pytest.raises(HTTPException) as changed_principal:
+        deletion_routes.list_deletion_requests(
+            Principal(user_id="another-admin", platform_role=PlatformRole.ADMIN),
+            scope=DeletionRequestScope.ACCESSIBLE,
+            status=None,
+            limit=1,
+            cursor=first.next_cursor,
+            offset=0,
+        )
+    assert changed_principal.value.status_code == 422
+
+    with pytest.raises(HTTPException) as changed_privilege_mode:
+        deletion_routes.list_deletion_requests(
+            Principal(user_id="platform-admin"),
+            scope=DeletionRequestScope.ACCESSIBLE,
+            status=None,
+            limit=1,
+            cursor=first.next_cursor,
+            offset=0,
+        )
+    assert changed_privilege_mode.value.status_code == 422
+
 
 def test_deletion_request_openapi_publishes_scope_and_capabilities():
     app.openapi_schema = None
@@ -353,6 +497,7 @@ def test_deletion_request_openapi_publishes_scope_and_capabilities():
     capability_schema = schema["components"]["schemas"]["DeletionRequestCapabilities"]
     status_schema = schema["components"]["schemas"]["DeletionRequestStatus"]
     decision_schema = schema["components"]["schemas"]["DeletionReviewDecision"]
+    sort_schema = schema["components"]["schemas"]["DeletionRequestSort"]
     review_parameters = schema["paths"]["/deletion_requests/{request_id}"]["patch"]["parameters"]
     review_status = next(
         parameter for parameter in review_parameters if parameter["name"] == "status"
@@ -365,5 +510,8 @@ def test_deletion_request_openapi_publishes_scope_and_capabilities():
     assert "project_mfid" in request_schema["properties"]
     assert status_schema["enum"] == ["pending", "approved", "rejected"]
     assert decision_schema["enum"] == ["approved", "rejected"]
+    assert sort_schema["enum"] == ["request_time"]
     assert review_status["schema"]["$ref"] == "#/components/schemas/DeletionReviewDecision"
     assert any(parameter["name"] == "project_mfid" for parameter in parameters)
+    assert any(parameter["name"] == "direction" for parameter in parameters)
+    assert any(parameter["name"] == "cursor" for parameter in parameters)

@@ -15,6 +15,10 @@ class DeletionRequestScope(str, Enum):
 
 class DeletionRequestSort(str, Enum):
     REQUEST_TIME = "request_time"
+    RESOURCE_NAME = "resource_name"
+    PROJECT_ID = "project_id"
+    REQUESTER_NAME = "requester_name"
+    STATUS = "status"
 
 
 class DeletionRequestStatus(str, Enum):

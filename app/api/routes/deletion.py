@@ -1,10 +1,11 @@
+import json
 import logging
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 logger = logging.getLogger(__name__)
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, case, false, func, or_
 from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
@@ -98,8 +99,60 @@ def _review_authority_filter(principal: Principal):
     )
 
 
+def _deletion_sort_expressions(
+    sort: DeletionRequestSort,
+    project_id_column,
+    requester_user,
+):
+    if sort is DeletionRequestSort.RESOURCE_NAME:
+        return (func.lower(DeletionRequest.resource_name),)
+    if sort is DeletionRequestSort.PROJECT_ID:
+        return (func.lower(project_id_column),)
+    if sort is DeletionRequestSort.REQUESTER_NAME:
+        return (
+            func.lower(requester_user.last_name),
+            func.lower(requester_user.first_name),
+            func.lower(requester_user.username),
+            func.lower(DeletionRequest.requester_id),
+        )
+    if sort is DeletionRequestSort.STATUS:
+        return (
+            case(
+                (DeletionRequest.status == DeletionRequestStatus.PENDING.value, 0),
+                (DeletionRequest.status == DeletionRequestStatus.APPROVED.value, 1),
+                (DeletionRequest.status == DeletionRequestStatus.REJECTED.value, 2),
+                else_=3,
+            ),
+        )
+    return (DeletionRequest.request_time,)
+
+
+def _decode_deletion_cursor_position(
+    primary: Optional[str],
+    sort: DeletionRequestSort,
+) -> tuple[object, ...]:
+    expected_length = 4 if sort is DeletionRequestSort.REQUESTER_NAME else 1
+    if sort is DeletionRequestSort.REQUEST_TIME:
+        return (primary,)
+    try:
+        position = json.loads(primary) if primary is not None else [None]
+    except json.JSONDecodeError as exc:
+        raise CursorError("Invalid cursor sort position") from exc
+    if not isinstance(position, list) or len(position) != expected_length:
+        raise CursorError("Invalid cursor sort position")
+    if any(value is not None and not isinstance(value, (str, int)) for value in position):
+        raise CursorError("Invalid cursor sort position")
+    if sort is DeletionRequestSort.STATUS:
+        if not isinstance(position[0], int) or not 0 <= position[0] <= 3:
+            raise CursorError("Invalid cursor sort position")
+    elif any(value is not None and not isinstance(value, str) for value in position):
+        raise CursorError("Invalid cursor sort position")
+    return tuple(position)
+
+
 def _deletion_cursor_predicate(
-    request_time: Optional[str],
+    sort_expressions,
+    position: tuple[object, ...],
     request_id: int,
     direction: SortDirection,
 ):
@@ -108,18 +161,43 @@ def _deletion_cursor_predicate(
         if direction is SortDirection.ASC
         else DeletionRequest.id < request_id
     )
-    if request_time is None:
-        return and_(DeletionRequest.request_time.is_(None), id_comparison)
-    time_comparison = (
-        DeletionRequest.request_time > request_time
-        if direction is SortDirection.ASC
-        else DeletionRequest.request_time < request_time
+    predicates = []
+    equal_prefix = []
+    for expression, value in zip(sort_expressions, position):
+        if value is None:
+            strict_comparison = false()
+            equality = expression.is_(None)
+        else:
+            value_comparison = (
+                expression > value
+                if direction is SortDirection.ASC
+                else expression < value
+            )
+            strict_comparison = or_(value_comparison, expression.is_(None))
+            equality = expression == value
+        predicates.append(and_(*equal_prefix, strict_comparison))
+        equal_prefix.append(equality)
+    predicates.append(and_(*equal_prefix, id_comparison))
+    return or_(*predicates)
+
+
+def _deletion_order_by(sort_expressions, direction: SortDirection):
+    if direction is SortDirection.ASC:
+        return tuple(expression.asc().nulls_last() for expression in sort_expressions) + (
+            DeletionRequest.id.asc(),
+        )
+    return tuple(expression.desc().nulls_last() for expression in sort_expressions) + (
+        DeletionRequest.id.desc(),
     )
-    return or_(
-        time_comparison,
-        and_(DeletionRequest.request_time == request_time, id_comparison),
-        DeletionRequest.request_time.is_(None),
-    )
+
+
+def _deletion_cursor_primary(
+    sort: DeletionRequestSort,
+    position: tuple[object, ...],
+):
+    if sort is DeletionRequestSort.REQUEST_TIME:
+        return position[0]
+    return json.dumps(position, ensure_ascii=False, separators=(",", ":"))
 
 
 @router.get("/deletion_requests", response_model=PaginatedResponse[DeletionRequestRead])
@@ -145,7 +223,14 @@ def list_deletion_requests(
     ] = None,
     sort: Annotated[
         DeletionRequestSort,
-        Query(description="Field used to order deletion requests."),
+        Query(
+            description=(
+                "Field used to order deletion requests. String fields are ordered "
+                "case-insensitively, nulls are last, and request ID is the final "
+                "tie-breaker. requester_name orders by last name, first name, "
+                "username, and unique ID. Status order is pending, approved, rejected."
+            )
+        ),
     ] = DeletionRequestSort.REQUEST_TIME,
     direction: Annotated[
         SortDirection,
@@ -175,7 +260,7 @@ def list_deletion_requests(
             "platform_admin": auth_res.is_platform_admin,
         })
         decoded_cursor = None
-        decoded_request_time = None
+        decoded_position = None
         decoded_request_id = None
         if cursor is not None:
             try:
@@ -189,7 +274,10 @@ def list_deletion_requests(
                 )
                 if decoded_cursor is None:
                     raise CursorError("Invalid cursor")
-                decoded_request_time = cursor_primary_value(decoded_cursor)
+                decoded_position = _decode_deletion_cursor_position(
+                    cursor_primary_value(decoded_cursor),
+                    sort,
+                )
                 decoded_request_id = int(decoded_cursor.unique_id)
             except (CursorError, ValueError) as exc:
                 raise HTTPException(status_code=422, detail="Invalid cursor") from exc
@@ -203,18 +291,25 @@ def list_deletion_requests(
             Dataset.project_mfid,
             Sample.project_mfid,
         )
+        project_id_column = func.coalesce(Dataset.project_id, Sample.project_id)
         requester_user = aliased(User)
         reviewer_user = aliased(User)
+        sort_expressions = _deletion_sort_expressions(
+            sort,
+            project_id_column,
+            requester_user,
+        )
         count_query = select(func.count(DeletionRequest.id))
         data_query = (
             select(
                 DeletionRequest,
                 Resource.resource_type,
-                func.coalesce(Dataset.project_id, Sample.project_id).label("project_id"),
+                project_id_column.label("project_id"),
                 project_mfid_column.label("project_mfid"),
                 can_review.label("can_review"),
                 requester_user,
                 reviewer_user,
+                *sort_expressions,
             )
             .outerjoin(Resource, Resource.mfid == DeletionRequest.resource_id)
             .outerjoin(Dataset, Dataset.unique_id == DeletionRequest.resource_id)
@@ -251,7 +346,8 @@ def list_deletion_requests(
         if decoded_cursor is not None:
             data_query = data_query.where(
                 _deletion_cursor_predicate(
-                    decoded_request_time,
+                    sort_expressions,
+                    decoded_position,
                     decoded_request_id,
                     direction,
                 )
@@ -260,50 +356,43 @@ def list_deletion_requests(
             data_query = data_query.offset(offset)
 
         total = session.exec(count_query).one()
-        order_by = (
-            (
-                DeletionRequest.request_time.asc().nulls_last(),
-                DeletionRequest.id.asc(),
-            )
-            if direction is SortDirection.ASC
-            else (
-                DeletionRequest.request_time.desc().nulls_last(),
-                DeletionRequest.id.desc(),
-            )
-        )
+        order_by = _deletion_order_by(sort_expressions, direction)
         rows = session.exec(
             data_query.order_by(*order_by).limit(limit + 1)
         ).all()
         has_more = len(rows) > limit
         rows = rows[:limit]
-        items = [
-            _to_read(
+        items = []
+        for row in rows:
+            (
                 req,
                 resource_type,
                 project_id,
                 item_project_mfid,
+                row_can_review,
                 requester,
                 reviewer,
-                row_can_review,
+            ) = row[:7]
+            items.append(
+                _to_read(
+                    req,
+                    resource_type,
+                    project_id,
+                    item_project_mfid,
+                    requester,
+                    reviewer,
+                    row_can_review,
+                )
             )
-            for (
-                req,
-                resource_type,
-                project_id,
-                item_project_mfid,
-                row_can_review,
-                requester,
-                reviewer,
-            ) in rows
-        ]
         next_cursor = None
         if has_more:
             last_request = rows[-1][0]
+            position = tuple(rows[-1][7:])
             next_cursor = new_cursor(
                 kind="deletion_request",
                 sort=sort.value,
                 direction=direction.value,
-                primary=last_request.request_time,
+                primary=_deletion_cursor_primary(sort, position),
                 unique_id=str(last_request.id),
                 filters=filters_digest,
                 user_id=auth_res.user_id,

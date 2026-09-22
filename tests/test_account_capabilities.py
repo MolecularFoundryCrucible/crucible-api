@@ -1,7 +1,7 @@
 import pytest
 from sqlmodel import Session
 
-from app.api.routes.account import _account_capabilities, get_account_profile
+from app.api.routes.account import _account_capabilities
 from app.models.core_models import User
 from app.utils.permissions import PlatformRole, Principal
 
@@ -56,7 +56,7 @@ def test_account_capabilities_match_route_policy(principal, expected):
     assert _account_capabilities(principal).model_dump() == expected
 
 
-def test_account_profile_returns_capabilities(db_engine):
+def test_account_profile_returns_capabilities(client, db_engine, auth_as):
     with Session(db_engine) as session:
         session.add(User(
             first_name="Upload",
@@ -68,15 +68,24 @@ def test_account_profile_returns_capabilities(db_engine):
             platform_role=PlatformRole.CONTRIBUTOR.value,
         ))
         session.commit()
-    principal = Principal(
-        user_id="service-account-profile",
+    auth_as(
+        "service-account-profile",
         platform_role=PlatformRole.CONTRIBUTOR,
         is_service_account=True,
     )
 
-    response = get_account_profile(principal)
+    response = client.get(
+        "/account/profile",
+        headers={"Crucible-Privilege-Mode": "normal"},
+    )
 
-    assert response.capabilities.model_dump() == {
+    assert response.status_code == 200, response.text
+    assert response.json()["authorization"] == {
+        "platform_role": "contributor",
+        "effective_privilege_mode": "normal",
+        "can_elevate": False,
+    }
+    assert response.json()["capabilities"] == {
         "can_manage_service_accounts": False,
         "can_create_project": True,
         "can_register_instrument": False,

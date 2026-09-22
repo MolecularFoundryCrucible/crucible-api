@@ -4,16 +4,32 @@ from typing import Annotated, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 logger = logging.getLogger(__name__)
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.models.core_models import (
-    Dataset, DeletionAuditLog, DeletionRequest, Resource, ResourceACL, Sample)
-from app.models.deletion import DeletionAuditLogRead, DeletionRequestRead
+    Dataset,
+    DeletionAuditLog,
+    DeletionRequest,
+    Resource,
+    Sample,
+)
+from app.models.deletion import (
+    DeletionAuditLogRead,
+    DeletionRequestCapabilities,
+    DeletionRequestRead,
+    DeletionRequestScope,
+)
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, require_permission, require_platform_admin
-from app.utils.permissions import Permission, Principal, Role, THRESHOLDS
+from app.utils.auth_utils import (
+    authorize_user,
+    fetch_acl_rows,
+    permission_filter,
+    require_permission,
+    require_platform_admin,
+)
+from app.utils.permissions import Permission, Principal, has_permission
 from app.utils.sql_utils import touch_resource_modification_time
 from app.general_utils import get_utc_isoformat
 
@@ -35,11 +51,22 @@ def _to_read(
     req: DeletionRequest,
     resource_type: Optional[str],
     project_id: Optional[str],
+    can_review: bool = False,
 ) -> DeletionRequestRead:
     return DeletionRequestRead(
         **req.model_dump(),
         resource_type=resource_type,
         project_id=project_id,
+        capabilities=DeletionRequestCapabilities(can_review=can_review),
+    )
+
+
+def _review_authority_filter(principal: Principal):
+    return permission_filter(
+        principal,
+        DeletionRequest,
+        Permission.DELETE,
+        resource_id_column=DeletionRequest.resource_id,
     )
 
 
@@ -50,17 +77,29 @@ def _to_read(
 @router.get("/deletion_requests", response_model=PaginatedResponse[DeletionRequestRead])
 def list_deletion_requests(
     auth_res: Annotated[Principal, Depends(authorize_user)],
+    scope: Annotated[
+        DeletionRequestScope,
+        Query(
+            description=(
+                "Select accessible, caller-submitted, or currently reviewable requests."
+            )
+        ),
+    ] = DeletionRequestScope.ACCESSIBLE,
     status: Optional[str] = None,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ):
+    """List deletion requests visible to or actionable by the caller."""
     with Session(engine) as session:
+        review_authority = _review_authority_filter(auth_res)
+        can_review = and_(DeletionRequest.status == "pending", review_authority)
         count_query = select(func.count(DeletionRequest.id))
         data_query = (
             select(
                 DeletionRequest,
                 Resource.resource_type,
                 func.coalesce(Dataset.project_id, Sample.project_id).label("project_id"),
+                can_review.label("can_review"),
             )
             .outerjoin(Resource, Resource.mfid == DeletionRequest.resource_id)
             .outerjoin(Dataset, Dataset.unique_id == DeletionRequest.resource_id)
@@ -70,27 +109,29 @@ def list_deletion_requests(
             count_query = count_query.where(DeletionRequest.status == status)
             data_query = data_query.where(DeletionRequest.status == status)
 
-        # Scoped, not admin-only: you see requests you raised, plus any on a
-        # resource you administer. Platform admins see everything.
-        if not auth_res.is_platform_admin:
+        if scope is DeletionRequestScope.SUBMITTED:
+            visible = DeletionRequest.requester_id == auth_res.user_id
+            count_query = count_query.where(visible)
+            data_query = data_query.where(visible)
+        elif scope is DeletionRequestScope.REVIEWABLE:
+            count_query = count_query.where(can_review)
+            data_query = data_query.where(can_review)
+        elif not auth_res.is_platform_admin:
             visible = (
                 (DeletionRequest.requester_id == auth_res.user_id)
-                | DeletionRequest.resource_id.in_(
-                    select(ResourceACL.mfid).where(
-                        ResourceACL.accessgroup_id.in_(
-                            auth_res.group_ids_at_or_above(THRESHOLDS[Permission.DELETE])),
-                        ResourceACL.permission.in_(
-                            [r.db_value for r in Role
-                             if r >= THRESHOLDS[Permission.DELETE]]),
-                    )
-                )
+                | review_authority
             )
             count_query = count_query.where(visible)
             data_query = data_query.where(visible)
         total = session.exec(count_query).one()
-        items = [_to_read(req, resource_type, project_id) for req, resource_type, project_id in session.exec(
-            data_query.order_by(DeletionRequest.request_time.desc()).offset(offset).limit(limit)
-        ).all()]
+        items = [
+            _to_read(req, resource_type, project_id, row_can_review)
+            for req, resource_type, project_id, row_can_review in session.exec(
+                data_query.order_by(DeletionRequest.request_time.desc())
+                .offset(offset)
+                .limit(limit)
+            ).all()
+        ]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
@@ -103,6 +144,7 @@ def get_deletion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     request_id: int,
 ):
+    """Return a request to its submitter or a caller with deletion-review authority."""
     with Session(engine) as session:
         req = session.exec(
             select(DeletionRequest)
@@ -110,8 +152,12 @@ def get_deletion_request(
         ).one_or_none()
         if req is None:
             raise HTTPException(status_code=404, detail="Deletion request not found.")
-        # Reviewing a deletion sits at the same bar as performing one.
-        require_permission(session, auth_res, req.resource_id, Permission.DELETE)
+        acl_rows = fetch_acl_rows(session, req.resource_id)
+        has_review_authority = has_permission(
+            auth_res, acl_rows, Permission.DELETE
+        )
+        if req.requester_id != auth_res.user_id and not has_review_authority:
+            raise HTTPException(status_code=403, detail="Access denied")
         resource = session.exec(
             select(Resource).where(Resource.mfid == req.resource_id)
         ).one_or_none()
@@ -120,6 +166,7 @@ def get_deletion_request(
             req,
             resource_type,
             _resolve_project_id(req.resource_id, resource_type, session),
+            req.status == "pending" and has_review_authority,
         )
 
 

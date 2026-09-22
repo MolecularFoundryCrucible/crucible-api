@@ -1912,9 +1912,24 @@
         "title": "DeletionAuditLogRead",
         "type": "object"
       },
+      "DeletionRequestCapabilities": {
+        "properties": {
+          "can_review": {
+            "default": false,
+            "description": "Whether the caller may approve or reject this pending request.",
+            "title": "Can Review",
+            "type": "boolean"
+          }
+        },
+        "title": "DeletionRequestCapabilities",
+        "type": "object"
+      },
       "DeletionRequestRead": {
         "description": "Response model for DeletionRequest that includes resource_type and project_id.",
         "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/DeletionRequestCapabilities"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -2028,6 +2043,15 @@
         ],
         "title": "DeletionRequestRead",
         "type": "object"
+      },
+      "DeletionRequestScope": {
+        "enum": [
+          "accessible",
+          "submitted",
+          "reviewable"
+        ],
+        "title": "DeletionRequestScope",
+        "type": "string"
       },
       "EffectiveAccess": {
         "enum": [
@@ -12054,8 +12078,20 @@
     },
     "/deletion_requests": {
       "get": {
+        "description": "List deletion requests visible to or actionable by the caller.",
         "operationId": "list_deletion_requests_deletion_requests_get",
         "parameters": [
+          {
+            "description": "Select accessible, caller-submitted, or currently reviewable requests.",
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletionRequestScope",
+              "default": "accessible",
+              "description": "Select accessible, caller-submitted, or currently reviewable requests."
+            }
+          },
           {
             "in": "query",
             "name": "status",
@@ -12163,6 +12199,7 @@
     },
     "/deletion_requests/{request_id}": {
       "get": {
+        "description": "Return a request to its submitter or a caller with deletion-review authority.",
         "operationId": "get_deletion_request_deletion_requests__request_id__get",
         "parameters": [
           {
@@ -17823,7 +17860,7 @@
     },
     "/resources/{resource_id}/delete": {
       "post": {
-        "description": "Request deletion of a resource. Requires contributor access to the resource.\nReturns 409 if an active deletion request already exists for this resource.",
+        "description": "Request deletion of a resource. Requires contributor access to the resource.\nPending requests hide the resource from ordinary discovery until rejected.\nReturns 409 if an active deletion request already exists for this resource.",
         "operationId": "create_deletion_request_resources__resource_id__delete_post",
         "parameters": [
           {
@@ -22831,7 +22868,7 @@
   },
   "servers": [
     {
-      "url": "/api/v3"
+      "url": "/testapi"
     }
   ]
 }

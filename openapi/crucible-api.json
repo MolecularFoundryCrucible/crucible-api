@@ -1915,17 +1915,19 @@
       "DeletionRequestCapabilities": {
         "properties": {
           "can_review": {
-            "default": false,
             "description": "Whether the caller may approve or reject this pending request.",
             "title": "Can Review",
             "type": "boolean"
           }
         },
+        "required": [
+          "can_review"
+        ],
         "title": "DeletionRequestCapabilities",
         "type": "object"
       },
       "DeletionRequestRead": {
-        "description": "Response model for DeletionRequest that includes resource_type and project_id.",
+        "description": "Deletion request with resource, project, and caller capability context.",
         "properties": {
           "capabilities": {
             "$ref": "#/components/schemas/DeletionRequestCapabilities"
@@ -1944,6 +1946,17 @@
               }
             ],
             "title": "Project Id"
+          },
+          "project_mfid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Mfid"
           },
           "reason": {
             "anyOf": [
@@ -2031,15 +2044,15 @@
             "title": "Reviewer Notes"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/DeletionRequestStatus"
           }
         },
         "required": [
           "id",
           "resource_id",
           "requester_id",
-          "status"
+          "status",
+          "capabilities"
         ],
         "title": "DeletionRequestRead",
         "type": "object"
@@ -2051,6 +2064,23 @@
           "reviewable"
         ],
         "title": "DeletionRequestScope",
+        "type": "string"
+      },
+      "DeletionRequestStatus": {
+        "enum": [
+          "pending",
+          "approved",
+          "rejected"
+        ],
+        "title": "DeletionRequestStatus",
+        "type": "string"
+      },
+      "DeletionReviewDecision": {
+        "enum": [
+          "approved",
+          "rejected"
+        ],
+        "title": "DeletionReviewDecision",
         "type": "string"
       },
       "EffectiveAccess": {
@@ -12082,19 +12112,36 @@
         "operationId": "list_deletion_requests_deletion_requests_get",
         "parameters": [
           {
-            "description": "Select accessible, caller-submitted, or currently reviewable requests.",
+            "description": "Select accessible, caller-submitted, or currently reviewable requests. Service accounts without platform-administrator authority cannot review.",
             "in": "query",
             "name": "scope",
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/DeletionRequestScope",
               "default": "accessible",
-              "description": "Select accessible, caller-submitted, or currently reviewable requests."
+              "description": "Select accessible, caller-submitted, or currently reviewable requests. Service accounts without platform-administrator authority cannot review."
             }
           },
           {
             "in": "query",
             "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/DeletionRequestStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "description": "Limit requests to resources assigned to this canonical project MFID.",
+            "in": "query",
+            "name": "project_mfid",
             "required": false,
             "schema": {
               "anyOf": [
@@ -12105,7 +12152,8 @@
                   "type": "null"
                 }
               ],
-              "title": "Status"
+              "description": "Limit requests to resources assigned to this canonical project MFID.",
+              "title": "Project Mfid"
             }
           },
           {
@@ -12277,6 +12325,7 @@
         ]
       },
       "patch": {
+        "description": "Review a pending request with effective Admin or Owner access.\n\nNon-administrator service accounts cannot review deletion requests.",
         "operationId": "review_deletion_request_deletion_requests__request_id__patch",
         "parameters": [
           {
@@ -12293,8 +12342,7 @@
             "name": "status",
             "required": true,
             "schema": {
-              "title": "Status",
-              "type": "string"
+              "$ref": "#/components/schemas/DeletionReviewDecision"
             }
           },
           {

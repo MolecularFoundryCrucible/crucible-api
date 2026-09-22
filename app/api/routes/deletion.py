@@ -4,7 +4,7 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 logger = logging.getLogger(__name__)
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -20,10 +20,12 @@ from app.models.deletion import (
     DeletionRequestCapabilities,
     DeletionRequestRead,
     DeletionRequestScope,
+    DeletionRequestSort,
     DeletionRequestStatus,
     DeletionReviewDecision,
 )
 from app.models.pagination import PaginatedResponse
+from app.models.query_params import SortDirection
 from app.utils.auth_utils import (
     authorize_user,
     fetch_acl_rows,
@@ -32,6 +34,13 @@ from app.utils.auth_utils import (
     require_platform_admin,
 )
 from app.utils.permissions import Permission, Principal, has_permission
+from app.utils.cursor_utils import (
+    CursorError,
+    cursor_primary_value,
+    filter_fingerprint,
+    new_cursor,
+    validate_cursor,
+)
 from app.utils.sql_utils import touch_resource_modification_time
 from app.general_utils import get_utc_isoformat
 
@@ -82,6 +91,30 @@ def _review_authority_filter(principal: Principal):
     )
 
 
+def _deletion_cursor_predicate(
+    request_time: Optional[str],
+    request_id: int,
+    direction: SortDirection,
+):
+    id_comparison = (
+        DeletionRequest.id > request_id
+        if direction is SortDirection.ASC
+        else DeletionRequest.id < request_id
+    )
+    if request_time is None:
+        return and_(DeletionRequest.request_time.is_(None), id_comparison)
+    time_comparison = (
+        DeletionRequest.request_time > request_time
+        if direction is SortDirection.ASC
+        else DeletionRequest.request_time < request_time
+    )
+    return or_(
+        time_comparison,
+        and_(DeletionRequest.request_time == request_time, id_comparison),
+        DeletionRequest.request_time.is_(None),
+    )
+
+
 @router.get("/deletion_requests", response_model=PaginatedResponse[DeletionRequestRead])
 def list_deletion_requests(
     auth_res: Annotated[Principal, Depends(authorize_user)],
@@ -103,11 +136,57 @@ def list_deletion_requests(
             )
         ),
     ] = None,
+    sort: Annotated[
+        DeletionRequestSort,
+        Query(description="Field used to order deletion requests."),
+    ] = DeletionRequestSort.REQUEST_TIME,
+    direction: Annotated[
+        SortDirection,
+        Query(description="Sort direction for deletion requests."),
+    ] = SortDirection.DESC,
     limit: int = Query(default=100, ge=1, le=1000),
-    offset: int = Query(default=0, ge=0),
+    cursor: Annotated[
+        Optional[str],
+        Query(
+            min_length=1,
+            max_length=4096,
+            description="Opaque continuation cursor returned by a previous page.",
+        ),
+    ] = None,
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Compatibility offset. A supplied cursor takes precedence.",
+    ),
 ):
     """List deletion requests visible to or actionable by the caller."""
     with Session(engine) as session:
+        filters_digest = filter_fingerprint({
+            "scope": scope.value,
+            "status": status.value if status is not None else None,
+            "project_mfid": project_mfid,
+            "platform_admin": auth_res.is_platform_admin,
+        })
+        decoded_cursor = None
+        decoded_request_time = None
+        decoded_request_id = None
+        if cursor is not None:
+            try:
+                decoded_cursor = validate_cursor(
+                    cursor,
+                    kind="deletion_request",
+                    sort=sort.value,
+                    direction=direction.value,
+                    filters=filters_digest,
+                    user_id=auth_res.user_id,
+                )
+                if decoded_cursor is None:
+                    raise CursorError("Invalid cursor")
+                decoded_request_time = cursor_primary_value(decoded_cursor)
+                decoded_request_id = int(decoded_cursor.unique_id)
+            except (CursorError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Invalid cursor") from exc
+
         review_authority = _review_authority_filter(auth_res)
         can_review = and_(
             DeletionRequest.status == DeletionRequestStatus.PENDING.value,
@@ -156,7 +235,34 @@ def list_deletion_requests(
             )
             count_query = count_query.where(visible)
             data_query = data_query.where(visible)
+        if decoded_cursor is not None:
+            data_query = data_query.where(
+                _deletion_cursor_predicate(
+                    decoded_request_time,
+                    decoded_request_id,
+                    direction,
+                )
+            )
+        elif offset:
+            data_query = data_query.offset(offset)
+
         total = session.exec(count_query).one()
+        order_by = (
+            (
+                DeletionRequest.request_time.asc().nulls_last(),
+                DeletionRequest.id.asc(),
+            )
+            if direction is SortDirection.ASC
+            else (
+                DeletionRequest.request_time.desc().nulls_last(),
+                DeletionRequest.id.desc(),
+            )
+        )
+        rows = session.exec(
+            data_query.order_by(*order_by).limit(limit + 1)
+        ).all()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
         items = [
             _to_read(
                 req,
@@ -171,17 +277,27 @@ def list_deletion_requests(
                 project_id,
                 item_project_mfid,
                 row_can_review,
-            ) in session.exec(
-                data_query
-                .order_by(
-                    DeletionRequest.request_time.desc(),
-                    DeletionRequest.id.desc(),
-                )
-                .offset(offset)
-                .limit(limit)
-            ).all()
+            ) in rows
         ]
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+        next_cursor = None
+        if has_more:
+            last_request = rows[-1][0]
+            next_cursor = new_cursor(
+                kind="deletion_request",
+                sort=sort.value,
+                direction=direction.value,
+                primary=last_request.request_time,
+                unique_id=str(last_request.id),
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+        return PaginatedResponse(
+            total=total,
+            limit=limit,
+            offset=None if cursor is not None else offset,
+            items=items,
+            next_cursor=next_cursor,
+        )
 
 
 @router.get("/deletion_requests/{request_id}", response_model=DeletionRequestRead)

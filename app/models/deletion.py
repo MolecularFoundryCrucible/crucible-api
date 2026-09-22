@@ -11,6 +11,10 @@ class DeletionRequestScope(str, Enum):
     REVIEWABLE = "reviewable"
 
 
+class DeletionRequestSort(str, Enum):
+    REQUEST_TIME = "request_time"
+
+
 class DeletionRequestStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"

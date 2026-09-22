@@ -4,6 +4,8 @@ from typing import Optional
 from pydantic import Field
 from sqlmodel import SQLModel
 
+from app.models.users import UserPublicRead
+
 
 class DeletionRequestScope(str, Enum):
     ACCESSIBLE = "accessible"
@@ -41,11 +43,13 @@ class DeletionRequestRead(SQLModel):
     project_id: Optional[str] = None
     project_mfid: Optional[str] = None
     requester_id: str
+    requester: Optional[UserPublicRead]
     reason: Optional[str] = None
     status: DeletionRequestStatus
     request_time: Optional[str] = None
     review_time: Optional[str] = None
     reviewer_id: Optional[str] = None
+    reviewer: Optional[UserPublicRead]
     reviewer_notes: Optional[str] = None
     capabilities: DeletionRequestCapabilities
 

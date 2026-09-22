@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 logger = logging.getLogger(__name__)
 from sqlalchemy import and_, func, or_
+from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -14,6 +15,7 @@ from app.models.core_models import (
     DeletionRequest,
     Resource,
     Sample,
+    User,
 )
 from app.models.deletion import (
     DeletionAuditLogRead,
@@ -26,6 +28,7 @@ from app.models.deletion import (
 )
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import SortDirection
+from app.models.users import UserPublicRead
 from app.utils.auth_utils import (
     authorize_user,
     fetch_acl_rows,
@@ -71,6 +74,8 @@ def _to_read(
     resource_type: Optional[str],
     project_id: Optional[str],
     project_mfid: Optional[str],
+    requester: Optional[User],
+    reviewer: Optional[User],
     can_review: bool = False,
 ) -> DeletionRequestRead:
     return DeletionRequestRead(
@@ -78,6 +83,8 @@ def _to_read(
         resource_type=resource_type,
         project_id=project_id,
         project_mfid=project_mfid,
+        requester=UserPublicRead.model_validate(requester) if requester else None,
+        reviewer=UserPublicRead.model_validate(reviewer) if reviewer else None,
         capabilities=DeletionRequestCapabilities(can_review=can_review),
     )
 
@@ -196,6 +203,8 @@ def list_deletion_requests(
             Dataset.project_mfid,
             Sample.project_mfid,
         )
+        requester_user = aliased(User)
+        reviewer_user = aliased(User)
         count_query = select(func.count(DeletionRequest.id))
         data_query = (
             select(
@@ -204,10 +213,14 @@ def list_deletion_requests(
                 func.coalesce(Dataset.project_id, Sample.project_id).label("project_id"),
                 project_mfid_column.label("project_mfid"),
                 can_review.label("can_review"),
+                requester_user,
+                reviewer_user,
             )
             .outerjoin(Resource, Resource.mfid == DeletionRequest.resource_id)
             .outerjoin(Dataset, Dataset.unique_id == DeletionRequest.resource_id)
             .outerjoin(Sample, Sample.unique_id == DeletionRequest.resource_id)
+            .outerjoin(requester_user, requester_user.unique_id == DeletionRequest.requester_id)
+            .outerjoin(reviewer_user, reviewer_user.unique_id == DeletionRequest.reviewer_id)
         )
         if status is not None:
             count_query = count_query.where(DeletionRequest.status == status.value)
@@ -269,6 +282,8 @@ def list_deletion_requests(
                 resource_type,
                 project_id,
                 item_project_mfid,
+                requester,
+                reviewer,
                 row_can_review,
             )
             for (
@@ -277,6 +292,8 @@ def list_deletion_requests(
                 project_id,
                 item_project_mfid,
                 row_can_review,
+                requester,
+                reviewer,
             ) in rows
         ]
         next_cursor = None
@@ -307,12 +324,17 @@ def get_deletion_request(
 ):
     """Return a request to its submitter or a caller with deletion-review authority."""
     with Session(engine) as session:
-        req = session.exec(
-            select(DeletionRequest)
+        requester_user = aliased(User)
+        reviewer_user = aliased(User)
+        row = session.exec(
+            select(DeletionRequest, requester_user, reviewer_user)
+            .outerjoin(requester_user, requester_user.unique_id == DeletionRequest.requester_id)
+            .outerjoin(reviewer_user, reviewer_user.unique_id == DeletionRequest.reviewer_id)
             .where(DeletionRequest.id == request_id)
         ).one_or_none()
-        if req is None:
+        if row is None:
             raise HTTPException(status_code=404, detail="Deletion request not found.")
+        req, requester, reviewer = row
         acl_rows = fetch_acl_rows(session, req.resource_id)
         has_review_authority = has_permission(
             auth_res, acl_rows, Permission.DELETE
@@ -333,6 +355,8 @@ def get_deletion_request(
             resource_type,
             project_id,
             project_mfid,
+            requester,
+            reviewer,
             req.status == DeletionRequestStatus.PENDING.value and has_review_authority,
         )
 
@@ -403,8 +427,11 @@ def review_deletion_request(
             resource_type,
             session,
         )
+        users = session.exec(
+            select(User).where(User.unique_id.in_({req.requester_id, user_unique_id}))
+        ).all()
+        users_by_id = {user.unique_id: user for user in users}
 
-        # Snapshot fields before hard delete removes the rows
         snapshot = DeletionRequestRead(
             id=req.id,
             resource_id=req.resource_id,
@@ -413,11 +440,21 @@ def review_deletion_request(
             project_id=project_id,
             project_mfid=project_mfid,
             requester_id=req.requester_id,
+            requester=(
+                UserPublicRead.model_validate(users_by_id[req.requester_id])
+                if req.requester_id in users_by_id
+                else None
+            ),
             reason=req.reason,
             status=req.status,
             request_time=req.request_time,
             review_time=req.review_time,
             reviewer_id=req.reviewer_id,
+            reviewer=(
+                UserPublicRead.model_validate(users_by_id[user_unique_id])
+                if user_unique_id in users_by_id
+                else None
+            ),
             reviewer_notes=req.reviewer_notes,
             capabilities=DeletionRequestCapabilities(can_review=False),
         )

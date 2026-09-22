@@ -12,6 +12,7 @@ from app.models.core_models import (
     DeletionRequest,
     Resource,
     ResourceACL,
+    User,
 )
 from app.models.deletion import DeletionRequestScope, DeletionRequestSort
 from app.models.query_params import SortDirection
@@ -201,6 +202,80 @@ def test_submitted_scope_returns_only_callers_requests(db_engine):
     assert response.total == 1
     assert response.items[0].requester_id == "requester"
     assert response.items[0].capabilities.can_review is False
+
+
+def test_deletion_request_responses_embed_public_actor_summaries(db_engine):
+    group_id = _create_resource(db_engine, Role.ADMIN)
+    with Session(db_engine) as session:
+        session.add_all([
+            User(
+                unique_id="requester",
+                username="requester-user",
+                first_name="Request",
+                last_name="User",
+                email="requester@example.org",
+                is_service_account=False,
+            ),
+            User(
+                unique_id="reviewer",
+                username="review-service",
+                first_name="Review",
+                last_name="Service",
+                email="reviewer@example.org",
+                is_service_account=True,
+            ),
+        ])
+        request = DeletionRequest(
+            resource_id="dataset-to-delete",
+            requester_id="requester",
+            reviewer_id="reviewer",
+            status="rejected",
+        )
+        session.add(request)
+        session.commit()
+        session.refresh(request)
+        request_id = request.id
+
+    response = deletion_routes.list_deletion_requests(
+        _principal(group_id),
+        scope=DeletionRequestScope.ACCESSIBLE,
+        status=None,
+        limit=100,
+        offset=0,
+    )
+    detail = deletion_routes.get_deletion_request(
+        auth_res=_principal(group_id),
+        request_id=request_id,
+    )
+
+    for item in (response.items[0], detail):
+        assert item.requester.unique_id == "requester"
+        assert item.requester.username == "requester-user"
+        assert item.requester.model_dump().get("email") is None
+        assert item.reviewer.unique_id == "reviewer"
+        assert item.reviewer.is_service_account is True
+
+
+def test_deletion_request_actor_summaries_are_null_when_unresolved(db_engine):
+    group_id = _create_resource(db_engine, Role.CONTRIBUTOR)
+    with Session(db_engine) as session:
+        session.add(DeletionRequest(
+            resource_id="dataset-to-delete",
+            requester_id="requester",
+            status="pending",
+        ))
+        session.commit()
+
+    response = deletion_routes.list_deletion_requests(
+        _principal(group_id),
+        scope=DeletionRequestScope.ACCESSIBLE,
+        status=None,
+        limit=100,
+        offset=0,
+    )
+
+    assert response.items[0].requester is None
+    assert response.items[0].reviewer is None
 
 
 def test_service_account_cannot_review_with_admin_acl(db_engine):
@@ -508,6 +583,8 @@ def test_deletion_request_openapi_publishes_scope_and_capabilities():
     assert "capabilities" in request_schema["required"]
     assert "can_review" in capability_schema["required"]
     assert "project_mfid" in request_schema["properties"]
+    assert "requester" in request_schema["required"]
+    assert "reviewer" in request_schema["required"]
     assert status_schema["enum"] == ["pending", "approved", "rejected"]
     assert decision_schema["enum"] == ["approved", "rejected"]
     assert sort_schema["enum"] == ["request_time"]

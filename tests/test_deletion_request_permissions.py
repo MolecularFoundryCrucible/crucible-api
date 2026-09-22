@@ -539,6 +539,18 @@ def test_deletion_request_cursor_is_bound_to_query_and_principal(db_engine):
         )
     assert changed_direction.value.status_code == 422
 
+    with pytest.raises(HTTPException) as changed_sort:
+        deletion_routes.list_deletion_requests(
+            principal,
+            scope=DeletionRequestScope.ACCESSIBLE,
+            status=None,
+            sort=DeletionRequestSort.RESOURCE_NAME,
+            limit=1,
+            cursor=first.next_cursor,
+            offset=0,
+        )
+    assert changed_sort.value.status_code == 422
+
     with pytest.raises(HTTPException) as changed_principal:
         deletion_routes.list_deletion_requests(
             Principal(user_id="another-admin", platform_role=PlatformRole.ADMIN),
@@ -560,6 +572,153 @@ def test_deletion_request_cursor_is_bound_to_query_and_principal(db_engine):
             offset=0,
         )
     assert changed_privilege_mode.value.status_code == 422
+
+
+def test_deletion_request_sort_modes_and_cursors(db_engine):
+    users = [
+        User(
+            unique_id="requester-smith",
+            first_name="Amy",
+            last_name="Smith",
+            username="smith",
+            email=None,
+        ),
+        User(
+            unique_id="requester-adams-bob",
+            first_name="Bob",
+            last_name="adams",
+            username="bob",
+            email=None,
+        ),
+        User(
+            unique_id="requester-adams-z",
+            first_name="Alice",
+            last_name="Adams",
+            username="zeta",
+            email=None,
+        ),
+        User(
+            unique_id="requester-adams-a",
+            first_name="Alice",
+            last_name="Adams",
+            username="alpha",
+            email=None,
+        ),
+    ]
+    requests = [
+        ("dataset-one", "alpha", "beta", "requester-smith", "rejected"),
+        ("dataset-two", "Beta", "Alpha", "requester-adams-bob", "pending"),
+        ("dataset-three", None, None, "requester-missing", "approved"),
+        ("dataset-four", "charlie", "gamma", "requester-adams-z", "pending"),
+        ("dataset-five", "delta", "delta", "requester-adams-a", "approved"),
+        ("dataset-six", None, None, "requester-missing-two", "pending"),
+    ]
+    with Session(db_engine) as session:
+        session.add_all(users)
+        for resource_id, resource_name, project_id, requester_id, status in requests:
+            session.add_all([
+                Resource(mfid=resource_id, resource_type="dataset"),
+                Dataset(
+                    unique_id=resource_id,
+                    dataset_name=resource_id,
+                    project_id=project_id,
+                ),
+                DeletionRequest(
+                    resource_id=resource_id,
+                    resource_name=resource_name,
+                    requester_id=requester_id,
+                    status=status,
+                ),
+            ])
+        session.commit()
+
+    expected = {
+        (DeletionRequestSort.RESOURCE_NAME, SortDirection.ASC): [
+            "dataset-one",
+            "dataset-two",
+            "dataset-four",
+            "dataset-five",
+            "dataset-three",
+            "dataset-six",
+        ],
+        (DeletionRequestSort.RESOURCE_NAME, SortDirection.DESC): [
+            "dataset-five",
+            "dataset-four",
+            "dataset-two",
+            "dataset-one",
+            "dataset-six",
+            "dataset-three",
+        ],
+        (DeletionRequestSort.PROJECT_ID, SortDirection.ASC): [
+            "dataset-two",
+            "dataset-one",
+            "dataset-five",
+            "dataset-four",
+            "dataset-three",
+            "dataset-six",
+        ],
+        (DeletionRequestSort.PROJECT_ID, SortDirection.DESC): [
+            "dataset-four",
+            "dataset-five",
+            "dataset-one",
+            "dataset-two",
+            "dataset-six",
+            "dataset-three",
+        ],
+        (DeletionRequestSort.REQUESTER_NAME, SortDirection.ASC): [
+            "dataset-five",
+            "dataset-four",
+            "dataset-two",
+            "dataset-one",
+            "dataset-three",
+            "dataset-six",
+        ],
+        (DeletionRequestSort.REQUESTER_NAME, SortDirection.DESC): [
+            "dataset-one",
+            "dataset-two",
+            "dataset-four",
+            "dataset-five",
+            "dataset-six",
+            "dataset-three",
+        ],
+        (DeletionRequestSort.STATUS, SortDirection.ASC): [
+            "dataset-two",
+            "dataset-four",
+            "dataset-six",
+            "dataset-three",
+            "dataset-five",
+            "dataset-one",
+        ],
+        (DeletionRequestSort.STATUS, SortDirection.DESC): [
+            "dataset-one",
+            "dataset-five",
+            "dataset-three",
+            "dataset-six",
+            "dataset-four",
+            "dataset-two",
+        ],
+    }
+    principal = Principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN)
+
+    for (sort, direction), expected_ids in expected.items():
+        actual_ids = []
+        cursor = None
+        while True:
+            response = deletion_routes.list_deletion_requests(
+                principal,
+                scope=DeletionRequestScope.ACCESSIBLE,
+                status=None,
+                sort=sort,
+                direction=direction,
+                limit=1,
+                cursor=cursor,
+                offset=0,
+            )
+            actual_ids.extend(item.resource_id for item in response.items)
+            cursor = response.next_cursor
+            if cursor is None:
+                break
+        assert actual_ids == expected_ids
 
 
 def test_deletion_request_openapi_publishes_scope_and_capabilities():
@@ -587,7 +746,13 @@ def test_deletion_request_openapi_publishes_scope_and_capabilities():
     assert "reviewer" in request_schema["required"]
     assert status_schema["enum"] == ["pending", "approved", "rejected"]
     assert decision_schema["enum"] == ["approved", "rejected"]
-    assert sort_schema["enum"] == ["request_time"]
+    assert sort_schema["enum"] == [
+        "request_time",
+        "resource_name",
+        "project_id",
+        "requester_name",
+        "status",
+    ]
     assert review_status["schema"]["$ref"] == "#/components/schemas/DeletionReviewDecision"
     assert any(parameter["name"] == "project_mfid" for parameter in parameters)
     assert any(parameter["name"] == "direction" for parameter in parameters)

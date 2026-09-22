@@ -1,5 +1,21 @@
+from enum import Enum
 from typing import Optional
+
+from pydantic import Field
 from sqlmodel import SQLModel
+
+
+class DeletionRequestScope(str, Enum):
+    ACCESSIBLE = "accessible"
+    SUBMITTED = "submitted"
+    REVIEWABLE = "reviewable"
+
+
+class DeletionRequestCapabilities(SQLModel):
+    can_review: bool = Field(
+        default=False,
+        description="Whether the caller may approve or reject this pending request.",
+    )
 
 
 class DeletionRequestRead(SQLModel):
@@ -16,6 +32,9 @@ class DeletionRequestRead(SQLModel):
     review_time: Optional[str] = None
     reviewer_id: Optional[str] = None
     reviewer_notes: Optional[str] = None
+    capabilities: DeletionRequestCapabilities = Field(
+        default_factory=DeletionRequestCapabilities
+    )
 
 
 class DeletionAuditLogRead(SQLModel):

@@ -415,7 +415,8 @@ def require_grant(session, principal: Principal, mfid: str, target: Role,
 
 
 def permission_filter(principal: Principal, resource_model,
-                      permission: Permission = Permission.READ):
+                      permission: Permission = Permission.READ,
+                      resource_id_column=None):
     """SQL filter restricting a list query to resources the caller may reach.
 
     Relies on min(a,b) >= r being equivalent to a >= r and b >= r: the standing
@@ -437,6 +438,8 @@ def permission_filter(principal: Principal, resource_model,
     group_ids = principal.group_ids_at_or_above(threshold)
     if not group_ids:
         return false()
+    if resource_id_column is None:
+        resource_id_column = resource_model.unique_id
 
     # Set membership, not `role >= threshold`. The column is declared str so
     # SQLite can create the table, and there `>=` compares alphabetically —
@@ -451,7 +454,7 @@ def permission_filter(principal: Principal, resource_model,
     return (
         exists()
         .where(
-            ResourceACL.mfid == resource_model.unique_id,
+            ResourceACL.mfid == resource_id_column,
             ResourceACL.accessgroup_id.in_(group_ids),
             ResourceACL.permission.in_(allowed),
         )

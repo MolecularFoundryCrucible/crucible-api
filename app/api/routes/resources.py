@@ -20,7 +20,7 @@ from app.models.core_models import (
 from app.models.access import AccessGrantRead, AccessGrantWrite
 from app.models.access_groups import AccessGroupRead
 from app.models.datasets import DatasetResponse, ScientificMetadataBinaryRead
-from app.models.deletion import DeletionRequestRead
+from app.models.deletion import DeletionRequestCapabilities, DeletionRequestRead
 from app.models.instrument import InstrumentResponse
 from app.models.links import LinkedResource
 from app.models.projects import ProjectWithLead
@@ -33,10 +33,23 @@ from app.models.pagination import PaginatedResponse
 from app.models.query_params import ResourceDetailQuery
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
 from app.utils.auth_utils import (
-    authorize_user, permission_filter, require_grant, require_permission,
-    require_platform_admin)
+    authorize_user,
+    fetch_acl_rows,
+    permission_filter,
+    require_grant,
+    require_permission,
+    require_platform_admin,
+)
 from app.utils.permissions import (
-    PUBLIC_GROUP_NAME, AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
+    PUBLIC_GROUP_NAME,
+    AccessGroupType,
+    Permission,
+    Principal,
+    Role,
+    can_grant,
+    effective_role,
+    has_permission,
+)
 from app.utils.sql_utils import add_or_update, set_public, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
 from app.utils.link_utils import fetch_readable_links
@@ -303,6 +316,7 @@ def create_deletion_request(
 ):
     '''
     Request deletion of a resource. Requires contributor access to the resource.
+    Pending requests hide the resource from ordinary discovery until rejected.
     Returns 409 if an active deletion request already exists for this resource.
     '''
     requester_id = auth_res.user_id
@@ -319,7 +333,14 @@ def create_deletion_request(
                 detail=f"Deletion requests are not supported for resource type '{resource.resource_type}'."
             )
 
-        require_permission(session, auth_res, resource_id, Permission.CREATE)
+        acl_rows = fetch_acl_rows(session, resource_id)
+        require_permission(
+            session,
+            auth_res,
+            resource_id,
+            Permission.CREATE,
+            acl_rows=acl_rows,
+        )
 
         existing = session.exec(
             select(DeletionRequest)
@@ -368,6 +389,11 @@ def create_deletion_request(
         return DeletionRequestRead(
             **deletion_req.model_dump(),
             resource_type=deletion_req.resource.resource_type if deletion_req.resource else None,
+            capabilities=DeletionRequestCapabilities(
+                can_review=has_permission(
+                    auth_res, acl_rows, Permission.DELETE
+                )
+            ),
         )
 
 

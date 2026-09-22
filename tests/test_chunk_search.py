@@ -1,6 +1,6 @@
 from sqlalchemy.dialects import postgresql
 
-from app.api.routes.ai import search_chunks
+from app.api.routes.resources import search_chunks
 from app.models.ai import ChunkHit, ChunkSearchRequest
 from app.models.core_models import ResourceEmbedding
 from app.utils.permissions import GroupMembership, Principal, Role
@@ -93,11 +93,11 @@ def test_chunk_search_request_requires_exact_vector_dimensions():
 
 
 def test_chunk_search_endpoint_returns_similarity(client, auth_as, monkeypatch):
-    from app.api.routes import ai
+    from app.api.routes import resources
 
     auth_as("user-1")
     monkeypatch.setattr(
-        ai,
+        resources,
         "search_chunks",
         lambda *args, **kwargs: [
             ChunkHit(

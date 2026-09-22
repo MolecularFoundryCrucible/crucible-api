@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Added a `resource_embedding` table with IVFFlat cosine indexing for storing 768-dimensional, model-labeled text chunks linked to canonical resource MFIDs, plus authenticated `POST /resources/embeddings/search` nearest-neighbor search with resource access filtering.
 - Added case-insensitive `resource_name`, `project_id`, `requester_name`, and semantic `status` sorting to deletion-request collections with nulls-last keyset pagination.
 - Added nullable public requester and reviewer identity summaries to deletion-request responses while retaining their stable ID fields.
 - Added request-time direction and opaque continuation cursors to deletion-request collections while retaining offset pagination and newest-first defaults.

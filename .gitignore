@@ -1,3 +1,4 @@
+previous_sql/*
 .DS_Store
 # Claude memory notes belong in ~/.claude/projects/.../memory/, never here —
 # a stray local memory/ got swept into a commit by `git add -A` once already.

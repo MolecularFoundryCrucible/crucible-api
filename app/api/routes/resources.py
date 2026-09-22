@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Annotated, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -14,9 +15,10 @@ from app.models.core_models import (
     Dataset,
     DeletionRequest,
     Instrument, Project, Resource,
-    ResourceACL, Sample,
+    ResourceACL, ResourceEmbedding, Sample,
     ScientificMetadataBinary, User, UserAccessGroupLink,
 )
+from app.models.ai import ChunkHit, ChunkSearchRequest
 from app.models.access import AccessGrantRead, AccessGrantWrite
 from app.models.access_groups import AccessGroupRead
 from app.models.datasets import DatasetResponse, ScientificMetadataBinaryRead
@@ -59,6 +61,76 @@ from app.utils.user_utils import resolve_user_by_identifier
 
 router = APIRouter(tags=["resources"])
 engine = get_engine()
+
+
+def search_chunks(
+    session: Session,
+    principal: Principal,
+    query_vector: Sequence[float],
+    k: int = 20,
+    probes: int = 10,
+    model_name: Optional[str] = None,
+    resource_mfids: Optional[Sequence[str]] = None,
+) -> list[ChunkHit]:
+    """Return the nearest readable chunks by cosine distance."""
+    session.execute(
+        text("SELECT set_config('ivfflat.probes', :probes, true)"),
+        {"probes": str(probes)},
+    )
+
+    embedding_column = ResourceEmbedding.__table__.c.embedding
+    distance = embedding_column.cosine_distance(query_vector).label("distance")
+    statement = (
+        select(ResourceEmbedding, distance)
+        .where(
+            permission_filter(
+                principal,
+                ResourceEmbedding,
+                Permission.READ,
+                resource_id_column=ResourceEmbedding.resource_mfid,
+            )
+        )
+        .order_by(
+            distance,
+            ResourceEmbedding.resource_mfid,
+            ResourceEmbedding.chunk_index,
+            ResourceEmbedding.id,
+        )
+        .limit(k)
+    )
+
+    if model_name is not None:
+        statement = statement.where(ResourceEmbedding.model_name == model_name)
+    if resource_mfids is not None:
+        statement = statement.where(ResourceEmbedding.resource_mfid.in_(resource_mfids))
+
+    return [
+        ChunkHit(
+            resource_mfid=row.resource_mfid,
+            chunk_index=row.chunk_index,
+            chunk_text=row.chunk_text,
+            distance=float(distance_value),
+        )
+        for row, distance_value in session.execute(statement).all()
+    ]
+
+
+@router.post("/resources/embeddings/search", response_model=list[ChunkHit])
+def search_resource_chunks(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    body: ChunkSearchRequest,
+):
+    """Search 768-dimensional resource text chunks visible to the caller."""
+    with Session(engine) as session:
+        return search_chunks(
+            session=session,
+            principal=auth_res,
+            query_vector=body.query_vector,
+            k=body.k,
+            probes=body.probes,
+            model_name=body.model_name,
+            resource_mfids=body.resource_mfids,
+        )
 
 
 @router.get("/resources/metadata/search", response_model=PaginatedResponse[ResourceSearchResult])

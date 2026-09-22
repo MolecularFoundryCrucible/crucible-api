@@ -6,7 +6,7 @@ exhaustively. The fetch-and-raise layer lives in auth_utils.
 
 Design reference: docs/permission_system_plan.md
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum, IntEnum
 from types import MappingProxyType
 from typing import Iterable, Mapping, Optional
@@ -39,6 +39,17 @@ class PlatformRole(str, Enum):
     CONTRIBUTOR = "contributor"
     SUPPORT = "support"
     ADMIN = "admin"
+
+
+class PrivilegeMode(str, Enum):
+    NORMAL = "normal"
+    ELEVATED = "elevated"
+
+
+class PrivilegeModeSource(str, Enum):
+    DEFAULT = "default"
+    EXPLICIT = "explicit"
+    COMPATIBILITY_DEFAULT = "compatibility_default"
 
 
 class AccessGroupType(str, Enum):
@@ -116,6 +127,62 @@ class Principal:
         """Group names excluding the virtual public group, which is injected into
         every principal and is not a real membership."""
         return [m.group_name for m in self.groups if m.group_name != PUBLIC_GROUP_NAME]
+
+
+@dataclass(frozen=True)
+class AuthorizationContext:
+    actor: Principal
+    principal: Principal
+    privilege_mode: PrivilegeMode
+    mode_source: PrivilegeModeSource
+
+    @property
+    def can_elevate(self) -> bool:
+        return self.actor.is_platform_admin and not self.actor.is_service_account
+
+
+def resolve_authorization_context(
+    actor: Principal,
+    requested_mode: Optional[PrivilegeMode],
+) -> AuthorizationContext:
+    can_elevate = actor.is_platform_admin and not actor.is_service_account
+    if requested_mode is PrivilegeMode.ELEVATED and not can_elevate:
+        raise PermissionError("Caller is not eligible for elevated mode")
+
+    if requested_mode is None:
+        if actor.is_platform_admin:
+            return AuthorizationContext(
+                actor=actor,
+                principal=actor,
+                privilege_mode=PrivilegeMode.ELEVATED,
+                mode_source=PrivilegeModeSource.COMPATIBILITY_DEFAULT,
+            )
+        return AuthorizationContext(
+            actor=actor,
+            principal=actor,
+            privilege_mode=PrivilegeMode.NORMAL,
+            mode_source=PrivilegeModeSource.DEFAULT,
+        )
+
+    if requested_mode is PrivilegeMode.NORMAL:
+        principal = (
+            replace(actor, platform_role=PlatformRole.NONE)
+            if actor.is_platform_admin
+            else actor
+        )
+        return AuthorizationContext(
+            actor=actor,
+            principal=principal,
+            privilege_mode=PrivilegeMode.NORMAL,
+            mode_source=PrivilegeModeSource.EXPLICIT,
+        )
+
+    return AuthorizationContext(
+        actor=actor,
+        principal=actor,
+        privilege_mode=PrivilegeMode.ELEVATED,
+        mode_source=PrivilegeModeSource.EXPLICIT,
+    )
 
 
 def effective_role(

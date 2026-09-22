@@ -1,7 +1,7 @@
 from datetime import timedelta, datetime
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func
 from sqlmodel import Session, select
 
@@ -12,13 +12,19 @@ from app.models.join_requests import JoinRequestRead
 from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import AccountInfo, ApiKeyRead, ApiKeyVerify, ProjectSyncResult
 from app.models.users import (
+    AccountAuthorizationRead,
     AccountCapabilities,
     AccountProfileRead,
     AccountProfileUpdate,
     UserRead,
 )
 from app.utils.auth_utils import authorize_user
-from app.utils.permissions import Permission, Principal, has_global_permission
+from app.utils.permissions import (
+    Permission,
+    Principal,
+    has_global_permission,
+    resolve_authorization_context,
+)
 from app.utils.user_utils import assert_username_available, assign_projects_to_user, find_mf_user_proposals
 
 router = APIRouter(tags=["account"])
@@ -48,16 +54,29 @@ def _account_capabilities(principal: Principal) -> AccountCapabilities:
 
 
 @router.get("/account/profile", response_model=AccountProfileRead)
-def get_account_profile(auth_res: Annotated[Principal, Depends(authorize_user)]):
+def get_account_profile(
+    request: Request,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+):
     """Return the authenticated caller's profile and presentation capabilities."""
     user_unique_id = auth_res.user_id
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
+        context = getattr(request.state, "authorization_context", None)
+        if context is None:
+            context = resolve_authorization_context(auth_res, None)
         return AccountProfileRead.model_validate(
             user,
-            update={"capabilities": _account_capabilities(auth_res)},
+            update={
+                "authorization": AccountAuthorizationRead(
+                    platform_role=context.actor.platform_role,
+                    effective_privilege_mode=context.privilege_mode,
+                    can_elevate=context.can_elevate,
+                ),
+                "capabilities": _account_capabilities(auth_res),
+            },
         )
 
 

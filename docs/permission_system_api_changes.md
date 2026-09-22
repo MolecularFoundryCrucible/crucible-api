@@ -234,6 +234,12 @@ An ordinary human caller may create only for themselves. Platform contributors a
 
 `GET /account/profile` returns workflow capabilities for the authenticated principal. The flags describe whether the caller can manage service accounts, create projects, register instruments, create samples or datasets, and create for another identity. They are presentation guidance only; every operation remains independently authorized.
 
+Authenticated routes accept optional `Crucible-Privilege-Mode: normal|elevated`. Omission preserves existing behavior. Explicit normal mode removes the platform-administrator bypass for that request while retaining the caller's ACL-derived permissions. Explicit elevated mode is limited to human platform administrators. Service accounts cannot explicitly elevate.
+
+Authenticated responses return the applied `Crucible-Privilege-Mode` and an `X-Request-ID`. Normal responses use private caching unless a stricter directive already exists, while elevated responses use `Cache-Control: private, no-store`. Elevated use and rejected elevation attempts produce structured operational audit logs.
+
+`GET /account/profile` now includes `authorization.platform_role`, `authorization.effective_privilege_mode`, and `authorization.can_elevate`. Its existing `capabilities` describe permissions effective in the applied request mode.
+
 Platform administrators can use `GET /service_accounts` for a paginated, searchable directory and `GET /service_accounts/{unique_id}` for administrator-visible details. These responses expose `platform_role` and never expose the API key. The detail response includes non-secret key validity, creation date, and expiration date when a key exists. Project membership routes reject roles above contributor for a non-admin service account.
 
 Human platform administrators can use `PATCH /service_accounts/{unique_id}` with `platform_role` set to `none`, `contributor`, or `admin`. Service accounts cannot call this route even when they currently hold `platform_role=admin`. The response returns the updated administrator-visible detail without an API key. Existing authenticated requests may retain the previous authority until the per-process principal cache expires; `AUTH_CACHE_TTL` defaults to 60 seconds.

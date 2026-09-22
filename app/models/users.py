@@ -2,7 +2,7 @@ from typing import Any, List, Literal, Optional
 from pydantic import AliasChoices, ConfigDict, Field, field_validator
 from sqlmodel import SQLModel
 from app.general_utils import is_orcid
-from app.utils.permissions import PlatformRole
+from app.utils.permissions import PlatformRole, PrivilegeMode
 from app.utils.user_utils import validate_username_format
 
 
@@ -61,7 +61,14 @@ class AccountCapabilities(SQLModel):
     can_create_for_others: bool
 
 
+class AccountAuthorizationRead(SQLModel):
+    platform_role: PlatformRole
+    effective_privilege_mode: PrivilegeMode
+    can_elevate: bool
+
+
 class AccountProfileRead(UserRead):
+    authorization: AccountAuthorizationRead
     capabilities: AccountCapabilities
 
 

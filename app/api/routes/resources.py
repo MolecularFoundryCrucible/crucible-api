@@ -394,11 +394,16 @@ def create_deletion_request(
                 )
             raise
         session.refresh(deletion_req)
+        requester = session.exec(
+            select(User).where(User.unique_id == requester_id)
+        ).one_or_none()
         return DeletionRequestRead(
             **deletion_req.model_dump(),
             resource_type=deletion_req.resource.resource_type if deletion_req.resource else None,
             project_id=project_id,
             project_mfid=project_mfid,
+            requester=UserPublicRead.model_validate(requester) if requester else None,
+            reviewer=None,
             capabilities=DeletionRequestCapabilities(
                 can_review=has_permission(
                     auth_res, acl_rows, Permission.DELETE

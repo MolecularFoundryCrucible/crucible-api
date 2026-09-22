@@ -6,7 +6,13 @@ from sqlmodel import Session, select
 import app.api.routes.deletion as deletion_routes
 import app.api.routes.resources as resources_routes
 from app.api.main import app
-from app.models.core_models import AccessGroup, DeletionRequest, Resource, ResourceACL
+from app.models.core_models import (
+    AccessGroup,
+    Dataset,
+    DeletionRequest,
+    Resource,
+    ResourceACL,
+)
 from app.models.deletion import DeletionRequestScope
 from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role
 
@@ -271,13 +277,93 @@ def test_non_requester_without_admin_cannot_read_deletion_request_detail(db_engi
     assert exc.value.status_code == 403
 
 
+def test_project_filter_returns_canonical_project_reference(db_engine):
+    with Session(db_engine) as session:
+        for suffix in ("one", "two"):
+            resource_id = f"dataset-{suffix}"
+            session.add_all([
+                Dataset(
+                    unique_id=resource_id,
+                    dataset_name=suffix,
+                    project_id=f"project-{suffix}",
+                    project_mfid=f"project-mfid-{suffix}",
+                ),
+                Resource(mfid=resource_id, resource_type="dataset"),
+                DeletionRequest(
+                    resource_id=resource_id,
+                    requester_id="requester",
+                    status="pending",
+                ),
+            ])
+        session.commit()
+
+    response = deletion_routes.list_deletion_requests(
+        Principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
+        scope=DeletionRequestScope.ACCESSIBLE,
+        status=None,
+        project_mfid="project-mfid-two",
+        limit=100,
+        offset=0,
+    )
+
+    assert response.total == 1
+    assert response.items[0].resource_id == "dataset-two"
+    assert response.items[0].project_id == "project-two"
+    assert response.items[0].project_mfid == "project-mfid-two"
+
+
+def test_deletion_request_order_uses_id_as_timestamp_tiebreaker(db_engine):
+    request_time = "2026-09-22T12:00:00Z"
+    with Session(db_engine) as session:
+        for suffix in ("one", "two"):
+            resource_id = f"dataset-{suffix}"
+            session.add_all([
+                Dataset(unique_id=resource_id, dataset_name=suffix),
+                Resource(mfid=resource_id, resource_type="dataset"),
+                DeletionRequest(
+                    resource_id=resource_id,
+                    requester_id="requester",
+                    status="pending",
+                    request_time=request_time,
+                ),
+            ])
+        session.commit()
+
+    response = deletion_routes.list_deletion_requests(
+        Principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
+        scope=DeletionRequestScope.ACCESSIBLE,
+        status=None,
+        limit=100,
+        offset=0,
+    )
+
+    assert [item.resource_id for item in response.items] == [
+        "dataset-two",
+        "dataset-one",
+    ]
+
+
 def test_deletion_request_openapi_publishes_scope_and_capabilities():
     app.openapi_schema = None
     schema = app.openapi()
     parameters = schema["paths"]["/deletion_requests"]["get"]["parameters"]
     scope = next(parameter for parameter in parameters if parameter["name"] == "scope")
     scope_schema = schema["components"]["schemas"]["DeletionRequestScope"]
+    request_schema = schema["components"]["schemas"]["DeletionRequestRead"]
+    capability_schema = schema["components"]["schemas"]["DeletionRequestCapabilities"]
+    status_schema = schema["components"]["schemas"]["DeletionRequestStatus"]
+    decision_schema = schema["components"]["schemas"]["DeletionReviewDecision"]
+    review_parameters = schema["paths"]["/deletion_requests/{request_id}"]["patch"]["parameters"]
+    review_status = next(
+        parameter for parameter in review_parameters if parameter["name"] == "status"
+    )
 
     assert scope["schema"]["$ref"] == "#/components/schemas/DeletionRequestScope"
     assert scope_schema["enum"] == ["accessible", "submitted", "reviewable"]
-    assert "capabilities" in schema["components"]["schemas"]["DeletionRequestRead"]["properties"]
+    assert "capabilities" in request_schema["required"]
+    assert "can_review" in capability_schema["required"]
+    assert "project_mfid" in request_schema["properties"]
+    assert status_schema["enum"] == ["pending", "approved", "rejected"]
+    assert decision_schema["enum"] == ["approved", "rejected"]
+    assert review_status["schema"]["$ref"] == "#/components/schemas/DeletionReviewDecision"
+    assert any(parameter["name"] == "project_mfid" for parameter in parameters)

@@ -354,12 +354,20 @@ def create_deletion_request(
             )
 
         resource_name = None
+        project_id = None
+        project_mfid = None
         if resource.resource_type == "dataset":
             ds = session.exec(select(Dataset).where(Dataset.unique_id == resource_id)).one_or_none()
-            resource_name = ds.dataset_name if ds else None
+            if ds is not None:
+                resource_name = ds.dataset_name
+                project_id = ds.project_id
+                project_mfid = ds.project_mfid
         elif resource.resource_type == "sample":
             samp = session.exec(select(Sample).where(Sample.unique_id == resource_id)).one_or_none()
-            resource_name = samp.sample_name if samp else None
+            if samp is not None:
+                resource_name = samp.sample_name
+                project_id = samp.project_id
+                project_mfid = samp.project_mfid
 
         deletion_req = DeletionRequest(
             resource_id=resource_id,
@@ -389,6 +397,8 @@ def create_deletion_request(
         return DeletionRequestRead(
             **deletion_req.model_dump(),
             resource_type=deletion_req.resource.resource_type if deletion_req.resource else None,
+            project_id=project_id,
+            project_mfid=project_mfid,
             capabilities=DeletionRequestCapabilities(
                 can_review=has_permission(
                     auth_res, acl_rows, Permission.DELETE

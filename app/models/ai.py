@@ -36,6 +36,15 @@ class ChunkSearchRequest(BaseModel):
     )
 
 
+class ResourceEmbeddingRead(BaseModel):
+    id: int
+    resource_mfid: str
+    chunk_index: int
+    chunk_text: str
+    embedding: Optional[list[float]]
+    model_name: str
+
+
 class ChunkHit(BaseModel):
     resource_mfid: str
     chunk_index: int

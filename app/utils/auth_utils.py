@@ -13,7 +13,7 @@ from jose import jwt, JWTError
 
 logger = logging.getLogger(__name__)
 
-from fastapi import Depends,  HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -23,8 +23,9 @@ from app.models.core_models import ApiToken
 from app.models.resource import ResourceCapabilities
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, THRESHOLDS, GroupMembership, Permission, PlatformRole,
-    Principal, Role, can_grant, effective_role, has_global_permission,
-    has_permission)
+    Principal, PrivilegeMode, PrivilegeModeSource, Role, can_grant,
+    effective_role, has_global_permission, has_permission,
+    resolve_authorization_context)
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
 from sqlalchemy import join
@@ -34,6 +35,7 @@ from datetime import date, timedelta
 SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "crucible_secret_key/versions/1")
 ALGORITHM = "HS256"
 security = HTTPBearer()
+PRIVILEGE_MODE_HEADER = "Crucible-Privilege-Mode"
 
 engine = get_engine()
 api_path = get_api_path()
@@ -193,11 +195,39 @@ def find_key(credentials, engine):
     return(api_acct)
 
 
-def authorize_user(
+def authenticate_user(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
 ) -> Principal:
     """Resolve the caller to a Principal. Raises 401 if the key is invalid."""
     return _authorize_user(credentials)
+
+
+def authorize_user(
+    request: Request,
+    principal: Annotated[Principal, Depends(authenticate_user)],
+    privilege_mode: Annotated[
+        Optional[PrivilegeMode],
+        Header(
+            alias=PRIVILEGE_MODE_HEADER,
+            description=(
+                "Select normal ACL-derived authorization or explicit "
+                "platform-administrator elevation. Omission preserves legacy behavior."
+            ),
+        ),
+    ] = None,
+) -> Principal:
+    request.state.authenticated_actor = principal
+    request.state.requested_privilege_mode = privilege_mode
+    try:
+        context = resolve_authorization_context(principal, privilege_mode)
+    except PermissionError:
+        request.state.privilege_mode_source = PrivilegeModeSource.EXPLICIT
+        raise HTTPException(
+            status_code=403,
+            detail="Caller is not eligible for elevated privilege mode",
+        )
+    request.state.authorization_context = context
+    return context.principal
 
 
 def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
@@ -385,7 +415,8 @@ def require_grant(session, principal: Principal, mfid: str, target: Role,
 
 
 def permission_filter(principal: Principal, resource_model,
-                      permission: Permission = Permission.READ):
+                      permission: Permission = Permission.READ,
+                      resource_id_column=None):
     """SQL filter restricting a list query to resources the caller may reach.
 
     Relies on min(a,b) >= r being equivalent to a >= r and b >= r: the standing
@@ -407,6 +438,8 @@ def permission_filter(principal: Principal, resource_model,
     group_ids = principal.group_ids_at_or_above(threshold)
     if not group_ids:
         return false()
+    if resource_id_column is None:
+        resource_id_column = resource_model.unique_id
 
     # Set membership, not `role >= threshold`. The column is declared str so
     # SQLite can create the table, and there `>=` compares alphabetically —
@@ -421,7 +454,7 @@ def permission_filter(principal: Principal, resource_model,
     return (
         exists()
         .where(
-            ResourceACL.mfid == resource_model.unique_id,
+            ResourceACL.mfid == resource_id_column,
             ResourceACL.accessgroup_id.in_(group_ids),
             ResourceACL.permission.in_(allowed),
         )

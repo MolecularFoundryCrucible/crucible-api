@@ -10,7 +10,7 @@ from app.models.core_models import (
     DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
     DatasetLink, ApiToken, UploadSession, DeletionAuditLog, DatasetKeywordLink, Thumbnail,
 )
-from app.utils.auth_utils import authorize_user
+from app.utils.auth_utils import authenticate_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
 import app.api.routes.access_groups as access_groups_routes
 import app.api.routes.account as account_routes
@@ -106,7 +106,7 @@ def auth_as():
             is_service_account=is_service_account,
             groups=memberships,
         )
-        app.dependency_overrides[authorize_user] = lambda: principal
+        app.dependency_overrides[authenticate_user] = lambda: principal
 
     yield _set
-    app.dependency_overrides.pop(authorize_user, None)
+    app.dependency_overrides.pop(authenticate_user, None)

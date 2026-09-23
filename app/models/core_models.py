@@ -1,9 +1,10 @@
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, Optional, List
 from pydantic import ConfigDict
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, Column, BigInteger, DateTime, func, Index, text, Text, String
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Field, SQLModel,Relationship, Column
+from sqlmodel import Field, SQLModel, Relationship
 from mfid import mfid
 from app.general_utils import get_utc_datetime, get_utc_isoformat
 
@@ -320,6 +321,26 @@ class Resource(SQLModel, table=True):
         sa_relationship_kwargs={"foreign_keys": "[DeletionRequest.resource_id]"}
     )
     model_config = ConfigDict(populate_by_name=True)
+
+
+class ResourceEmbedding(SQLModel, table=True):
+    __tablename__ = "resource_embedding"
+    __table_args__ = (
+        Index(
+            "ix_resource_embedding_embedding_cosine",
+            "embedding",
+            postgresql_using="ivfflat",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_with={"lists": 100},
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    resource_mfid: str = Field(foreign_key="idtype.mfid", index=True)
+    chunk_index: int
+    chunk_text: str
+    embedding: Any = Field(sa_column=Column(Vector(768)))
+    model_name: str
 
 
 class DeletionRequest(SQLModel, table=True):

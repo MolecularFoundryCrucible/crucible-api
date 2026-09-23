@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Annotated, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -14,13 +15,14 @@ from app.models.core_models import (
     Dataset,
     DeletionRequest,
     Instrument, Project, Resource,
-    ResourceACL, Sample,
+    ResourceACL, ResourceEmbedding, Sample,
     ScientificMetadataBinary, User, UserAccessGroupLink,
 )
+from app.models.ai import ChunkHit, ChunkSearchRequest
 from app.models.access import AccessGrantRead, AccessGrantWrite
 from app.models.access_groups import AccessGroupRead
 from app.models.datasets import DatasetResponse, ScientificMetadataBinaryRead
-from app.models.deletion import DeletionRequestRead
+from app.models.deletion import DeletionRequestCapabilities, DeletionRequestRead
 from app.models.instrument import InstrumentResponse
 from app.models.links import LinkedResource
 from app.models.projects import ProjectWithLead
@@ -33,10 +35,23 @@ from app.models.pagination import PaginatedResponse
 from app.models.query_params import ResourceDetailQuery
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
 from app.utils.auth_utils import (
-    authorize_user, permission_filter, require_grant, require_permission,
-    require_platform_admin)
+    authorize_user,
+    fetch_acl_rows,
+    permission_filter,
+    require_grant,
+    require_permission,
+    require_platform_admin,
+)
 from app.utils.permissions import (
-    PUBLIC_GROUP_NAME, AccessGroupType, Permission, Principal, Role, can_grant, effective_role)
+    PUBLIC_GROUP_NAME,
+    AccessGroupType,
+    Permission,
+    Principal,
+    Role,
+    can_grant,
+    effective_role,
+    has_permission,
+)
 from app.utils.sql_utils import add_or_update, set_public, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
 from app.utils.link_utils import fetch_readable_links
@@ -46,6 +61,76 @@ from app.utils.user_utils import resolve_user_by_identifier
 
 router = APIRouter(tags=["resources"])
 engine = get_engine()
+
+
+def search_chunks(
+    session: Session,
+    principal: Principal,
+    query_vector: Sequence[float],
+    k: int = 20,
+    probes: int = 10,
+    model_name: Optional[str] = None,
+    resource_mfids: Optional[Sequence[str]] = None,
+) -> list[ChunkHit]:
+    """Return the nearest readable chunks by cosine distance."""
+    session.execute(
+        text("SELECT set_config('ivfflat.probes', :probes, true)"),
+        {"probes": str(probes)},
+    )
+
+    embedding_column = ResourceEmbedding.__table__.c.embedding
+    distance = embedding_column.cosine_distance(query_vector).label("distance")
+    statement = (
+        select(ResourceEmbedding, distance)
+        .where(
+            permission_filter(
+                principal,
+                ResourceEmbedding,
+                Permission.READ,
+                resource_id_column=ResourceEmbedding.resource_mfid,
+            )
+        )
+        .order_by(
+            distance,
+            ResourceEmbedding.resource_mfid,
+            ResourceEmbedding.chunk_index,
+            ResourceEmbedding.id,
+        )
+        .limit(k)
+    )
+
+    if model_name is not None:
+        statement = statement.where(ResourceEmbedding.model_name == model_name)
+    if resource_mfids is not None:
+        statement = statement.where(ResourceEmbedding.resource_mfid.in_(resource_mfids))
+
+    return [
+        ChunkHit(
+            resource_mfid=row.resource_mfid,
+            chunk_index=row.chunk_index,
+            chunk_text=row.chunk_text,
+            distance=float(distance_value),
+        )
+        for row, distance_value in session.execute(statement).all()
+    ]
+
+
+@router.post("/resources/embeddings/search", response_model=list[ChunkHit])
+def search_resource_chunks(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    body: ChunkSearchRequest,
+):
+    """Search 768-dimensional resource text chunks visible to the caller."""
+    with Session(engine) as session:
+        return search_chunks(
+            session=session,
+            principal=auth_res,
+            query_vector=body.query_vector,
+            k=body.k,
+            probes=body.probes,
+            model_name=body.model_name,
+            resource_mfids=body.resource_mfids,
+        )
 
 
 @router.get("/resources/metadata/search", response_model=PaginatedResponse[ResourceSearchResult])
@@ -303,6 +388,7 @@ def create_deletion_request(
 ):
     '''
     Request deletion of a resource. Requires contributor access to the resource.
+    Pending requests hide the resource from ordinary discovery until rejected.
     Returns 409 if an active deletion request already exists for this resource.
     '''
     requester_id = auth_res.user_id
@@ -319,7 +405,14 @@ def create_deletion_request(
                 detail=f"Deletion requests are not supported for resource type '{resource.resource_type}'."
             )
 
-        require_permission(session, auth_res, resource_id, Permission.CREATE)
+        acl_rows = fetch_acl_rows(session, resource_id)
+        require_permission(
+            session,
+            auth_res,
+            resource_id,
+            Permission.CREATE,
+            acl_rows=acl_rows,
+        )
 
         existing = session.exec(
             select(DeletionRequest)
@@ -333,12 +426,20 @@ def create_deletion_request(
             )
 
         resource_name = None
+        project_id = None
+        project_mfid = None
         if resource.resource_type == "dataset":
             ds = session.exec(select(Dataset).where(Dataset.unique_id == resource_id)).one_or_none()
-            resource_name = ds.dataset_name if ds else None
+            if ds is not None:
+                resource_name = ds.dataset_name
+                project_id = ds.project_id
+                project_mfid = ds.project_mfid
         elif resource.resource_type == "sample":
             samp = session.exec(select(Sample).where(Sample.unique_id == resource_id)).one_or_none()
-            resource_name = samp.sample_name if samp else None
+            if samp is not None:
+                resource_name = samp.sample_name
+                project_id = samp.project_id
+                project_mfid = samp.project_mfid
 
         deletion_req = DeletionRequest(
             resource_id=resource_id,
@@ -365,9 +466,21 @@ def create_deletion_request(
                 )
             raise
         session.refresh(deletion_req)
+        requester = session.exec(
+            select(User).where(User.unique_id == requester_id)
+        ).one_or_none()
         return DeletionRequestRead(
             **deletion_req.model_dump(),
             resource_type=deletion_req.resource.resource_type if deletion_req.resource else None,
+            project_id=project_id,
+            project_mfid=project_mfid,
+            requester=UserPublicRead.model_validate(requester) if requester else None,
+            reviewer=None,
+            capabilities=DeletionRequestCapabilities(
+                can_review=has_permission(
+                    auth_res, acl_rows, Permission.DELETE
+                )
+            ),
         )
 
 

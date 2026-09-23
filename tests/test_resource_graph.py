@@ -438,6 +438,7 @@ def test_openapi_publishes_typed_resource_graph_contract():
     parameters = {parameter["name"]: parameter for parameter in operation["parameters"]}
 
     assert set(parameters) == {
+        "Crucible-Privilege-Mode",
         "resource_mfid",
         "depth",
         "direction",

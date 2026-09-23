@@ -1,19 +1,50 @@
+import json
 import logging
-from typing import Annotated, List, Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 logger = logging.getLogger(__name__)
-from sqlalchemy import func
+from sqlalchemy import and_, case, false, func, or_
+from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.models.core_models import (
-    Dataset, DeletionAuditLog, DeletionRequest, Resource, ResourceACL, Sample)
-from app.models.deletion import DeletionAuditLogRead, DeletionRequestRead
+    Dataset,
+    DeletionAuditLog,
+    DeletionRequest,
+    Resource,
+    Sample,
+    User,
+)
+from app.models.deletion import (
+    DeletionAuditLogRead,
+    DeletionRequestCapabilities,
+    DeletionRequestRead,
+    DeletionRequestScope,
+    DeletionRequestSort,
+    DeletionRequestStatus,
+    DeletionReviewDecision,
+)
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, require_permission, require_platform_admin
-from app.utils.permissions import Permission, Principal, Role, THRESHOLDS
+from app.models.query_params import SortDirection
+from app.models.users import UserPublicRead
+from app.utils.auth_utils import (
+    authorize_user,
+    fetch_acl_rows,
+    permission_filter,
+    require_permission,
+    require_platform_admin,
+)
+from app.utils.permissions import Permission, Principal, has_permission
+from app.utils.cursor_utils import (
+    CursorError,
+    cursor_primary_value,
+    filter_fingerprint,
+    new_cursor,
+    validate_cursor,
+)
 from app.utils.sql_utils import touch_resource_modification_time
 from app.general_utils import get_utc_isoformat
 
@@ -21,122 +52,423 @@ router = APIRouter(tags=["deletion"])
 engine = get_engine()
 
 
-def _resolve_project_id(resource_id: str, resource_type: Optional[str], session: Session) -> Optional[str]:
+def _resolve_project_refs(
+    resource_id: str,
+    resource_type: Optional[str],
+    session: Session,
+) -> tuple[Optional[str], Optional[str]]:
     if resource_type == "dataset":
-        ds = session.exec(select(Dataset).where(Dataset.unique_id == resource_id)).one_or_none()
-        return ds.project_id if ds else None
-    elif resource_type == "sample":
-        samp = session.exec(select(Sample).where(Sample.unique_id == resource_id)).one_or_none()
-        return samp.project_id if samp else None
-    return None
+        ds = session.exec(
+            select(Dataset).where(Dataset.unique_id == resource_id)
+        ).one_or_none()
+        return (ds.project_id, ds.project_mfid) if ds else (None, None)
+    if resource_type == "sample":
+        samp = session.exec(
+            select(Sample).where(Sample.unique_id == resource_id)
+        ).one_or_none()
+        return (samp.project_id, samp.project_mfid) if samp else (None, None)
+    return None, None
 
 
 def _to_read(
     req: DeletionRequest,
     resource_type: Optional[str],
     project_id: Optional[str],
+    project_mfid: Optional[str],
+    requester: Optional[User],
+    reviewer: Optional[User],
+    can_review: bool = False,
 ) -> DeletionRequestRead:
     return DeletionRequestRead(
         **req.model_dump(),
         resource_type=resource_type,
         project_id=project_id,
+        project_mfid=project_mfid,
+        requester=UserPublicRead.model_validate(requester) if requester else None,
+        reviewer=UserPublicRead.model_validate(reviewer) if reviewer else None,
+        capabilities=DeletionRequestCapabilities(can_review=can_review),
     )
 
 
-# ---------------------------------------------------------------------------
-# GET /deletion_requests
-# Admin-only. Returns all requests, optionally filtered by status.
-# ---------------------------------------------------------------------------
+def _review_authority_filter(principal: Principal):
+    return permission_filter(
+        principal,
+        DeletionRequest,
+        Permission.DELETE,
+        resource_id_column=DeletionRequest.resource_id,
+    )
+
+
+def _deletion_sort_expressions(
+    sort: DeletionRequestSort,
+    project_id_column,
+    requester_user,
+):
+    if sort is DeletionRequestSort.RESOURCE_NAME:
+        return (func.lower(DeletionRequest.resource_name),)
+    if sort is DeletionRequestSort.PROJECT_ID:
+        return (func.lower(project_id_column),)
+    if sort is DeletionRequestSort.REQUESTER_NAME:
+        return (
+            func.lower(requester_user.last_name),
+            func.lower(requester_user.first_name),
+            func.lower(requester_user.username),
+            func.lower(DeletionRequest.requester_id),
+        )
+    if sort is DeletionRequestSort.STATUS:
+        return (
+            case(
+                (DeletionRequest.status == DeletionRequestStatus.PENDING.value, 0),
+                (DeletionRequest.status == DeletionRequestStatus.APPROVED.value, 1),
+                (DeletionRequest.status == DeletionRequestStatus.REJECTED.value, 2),
+                else_=3,
+            ),
+        )
+    return (DeletionRequest.request_time,)
+
+
+def _decode_deletion_cursor_position(
+    primary: Optional[str],
+    sort: DeletionRequestSort,
+) -> tuple[object, ...]:
+    expected_length = 4 if sort is DeletionRequestSort.REQUESTER_NAME else 1
+    if sort is DeletionRequestSort.REQUEST_TIME:
+        return (primary,)
+    try:
+        position = json.loads(primary) if primary is not None else [None]
+    except json.JSONDecodeError as exc:
+        raise CursorError("Invalid cursor sort position") from exc
+    if not isinstance(position, list) or len(position) != expected_length:
+        raise CursorError("Invalid cursor sort position")
+    if any(value is not None and not isinstance(value, (str, int)) for value in position):
+        raise CursorError("Invalid cursor sort position")
+    if sort is DeletionRequestSort.STATUS:
+        if not isinstance(position[0], int) or not 0 <= position[0] <= 3:
+            raise CursorError("Invalid cursor sort position")
+    elif any(value is not None and not isinstance(value, str) for value in position):
+        raise CursorError("Invalid cursor sort position")
+    return tuple(position)
+
+
+def _deletion_cursor_predicate(
+    sort_expressions,
+    position: tuple[object, ...],
+    request_id: int,
+    direction: SortDirection,
+):
+    id_comparison = (
+        DeletionRequest.id > request_id
+        if direction is SortDirection.ASC
+        else DeletionRequest.id < request_id
+    )
+    predicates = []
+    equal_prefix = []
+    for expression, value in zip(sort_expressions, position):
+        if value is None:
+            strict_comparison = false()
+            equality = expression.is_(None)
+        else:
+            value_comparison = (
+                expression > value
+                if direction is SortDirection.ASC
+                else expression < value
+            )
+            strict_comparison = or_(value_comparison, expression.is_(None))
+            equality = expression == value
+        predicates.append(and_(*equal_prefix, strict_comparison))
+        equal_prefix.append(equality)
+    predicates.append(and_(*equal_prefix, id_comparison))
+    return or_(*predicates)
+
+
+def _deletion_order_by(sort_expressions, direction: SortDirection):
+    if direction is SortDirection.ASC:
+        return tuple(expression.asc().nulls_last() for expression in sort_expressions) + (
+            DeletionRequest.id.asc(),
+        )
+    return tuple(expression.desc().nulls_last() for expression in sort_expressions) + (
+        DeletionRequest.id.desc(),
+    )
+
+
+def _deletion_cursor_primary(
+    sort: DeletionRequestSort,
+    position: tuple[object, ...],
+):
+    if sort is DeletionRequestSort.REQUEST_TIME:
+        return position[0]
+    return json.dumps(position, ensure_ascii=False, separators=(",", ":"))
+
+
 @router.get("/deletion_requests", response_model=PaginatedResponse[DeletionRequestRead])
 def list_deletion_requests(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    status: Optional[str] = None,
+    scope: Annotated[
+        DeletionRequestScope,
+        Query(
+            description=(
+                "Select accessible, caller-submitted, or currently reviewable requests. "
+                "Service accounts without platform-administrator authority cannot review."
+            )
+        ),
+    ] = DeletionRequestScope.ACCESSIBLE,
+    status: Optional[DeletionRequestStatus] = None,
+    project_mfid: Annotated[
+        Optional[str],
+        Query(
+            description=(
+                "Limit requests to resources assigned to this canonical project MFID."
+            )
+        ),
+    ] = None,
+    sort: Annotated[
+        DeletionRequestSort,
+        Query(
+            description=(
+                "Field used to order deletion requests. String fields are ordered "
+                "case-insensitively, nulls are last, and request ID is the final "
+                "tie-breaker. requester_name orders by last name, first name, "
+                "username, and unique ID. Status order is pending, approved, rejected."
+            )
+        ),
+    ] = DeletionRequestSort.REQUEST_TIME,
+    direction: Annotated[
+        SortDirection,
+        Query(description="Sort direction for deletion requests."),
+    ] = SortDirection.DESC,
     limit: int = Query(default=100, ge=1, le=1000),
-    offset: int = Query(default=0, ge=0),
+    cursor: Annotated[
+        Optional[str],
+        Query(
+            min_length=1,
+            max_length=4096,
+            description="Opaque continuation cursor returned by a previous page.",
+        ),
+    ] = None,
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Compatibility offset. A supplied cursor takes precedence.",
+    ),
 ):
+    """List deletion requests visible to or actionable by the caller."""
     with Session(engine) as session:
+        filters_digest = filter_fingerprint({
+            "scope": scope.value,
+            "status": status.value if status is not None else None,
+            "project_mfid": project_mfid,
+            "platform_admin": auth_res.is_platform_admin,
+        })
+        decoded_cursor = None
+        decoded_position = None
+        decoded_request_id = None
+        if cursor is not None:
+            try:
+                decoded_cursor = validate_cursor(
+                    cursor,
+                    kind="deletion_request",
+                    sort=sort.value,
+                    direction=direction.value,
+                    filters=filters_digest,
+                    user_id=auth_res.user_id,
+                )
+                if decoded_cursor is None:
+                    raise CursorError("Invalid cursor")
+                decoded_position = _decode_deletion_cursor_position(
+                    cursor_primary_value(decoded_cursor),
+                    sort,
+                )
+                decoded_request_id = int(decoded_cursor.unique_id)
+            except (CursorError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Invalid cursor") from exc
+
+        review_authority = _review_authority_filter(auth_res)
+        can_review = and_(
+            DeletionRequest.status == DeletionRequestStatus.PENDING.value,
+            review_authority,
+        )
+        project_mfid_column = func.coalesce(
+            Dataset.project_mfid,
+            Sample.project_mfid,
+        )
+        project_id_column = func.coalesce(Dataset.project_id, Sample.project_id)
+        requester_user = aliased(User)
+        reviewer_user = aliased(User)
+        sort_expressions = _deletion_sort_expressions(
+            sort,
+            project_id_column,
+            requester_user,
+        )
         count_query = select(func.count(DeletionRequest.id))
         data_query = (
             select(
                 DeletionRequest,
                 Resource.resource_type,
-                func.coalesce(Dataset.project_id, Sample.project_id).label("project_id"),
+                project_id_column.label("project_id"),
+                project_mfid_column.label("project_mfid"),
+                can_review.label("can_review"),
+                requester_user,
+                reviewer_user,
+                *sort_expressions,
             )
             .outerjoin(Resource, Resource.mfid == DeletionRequest.resource_id)
             .outerjoin(Dataset, Dataset.unique_id == DeletionRequest.resource_id)
             .outerjoin(Sample, Sample.unique_id == DeletionRequest.resource_id)
+            .outerjoin(requester_user, requester_user.unique_id == DeletionRequest.requester_id)
+            .outerjoin(reviewer_user, reviewer_user.unique_id == DeletionRequest.reviewer_id)
         )
         if status is not None:
-            count_query = count_query.where(DeletionRequest.status == status)
-            data_query = data_query.where(DeletionRequest.status == status)
+            count_query = count_query.where(DeletionRequest.status == status.value)
+            data_query = data_query.where(DeletionRequest.status == status.value)
+        if project_mfid is not None:
+            count_query = (
+                count_query
+                .outerjoin(Dataset, Dataset.unique_id == DeletionRequest.resource_id)
+                .outerjoin(Sample, Sample.unique_id == DeletionRequest.resource_id)
+                .where(project_mfid_column == project_mfid)
+            )
+            data_query = data_query.where(project_mfid_column == project_mfid)
 
-        # Scoped, not admin-only: you see requests you raised, plus any on a
-        # resource you administer. Platform admins see everything.
-        if not auth_res.is_platform_admin:
+        if scope is DeletionRequestScope.SUBMITTED:
+            visible = DeletionRequest.requester_id == auth_res.user_id
+            count_query = count_query.where(visible)
+            data_query = data_query.where(visible)
+        elif scope is DeletionRequestScope.REVIEWABLE:
+            count_query = count_query.where(can_review)
+            data_query = data_query.where(can_review)
+        elif not auth_res.is_platform_admin:
             visible = (
                 (DeletionRequest.requester_id == auth_res.user_id)
-                | DeletionRequest.resource_id.in_(
-                    select(ResourceACL.mfid).where(
-                        ResourceACL.accessgroup_id.in_(
-                            auth_res.group_ids_at_or_above(THRESHOLDS[Permission.DELETE])),
-                        ResourceACL.permission.in_(
-                            [r.db_value for r in Role
-                             if r >= THRESHOLDS[Permission.DELETE]]),
-                    )
-                )
+                | review_authority
             )
             count_query = count_query.where(visible)
             data_query = data_query.where(visible)
+        if decoded_cursor is not None:
+            data_query = data_query.where(
+                _deletion_cursor_predicate(
+                    sort_expressions,
+                    decoded_position,
+                    decoded_request_id,
+                    direction,
+                )
+            )
+        elif offset:
+            data_query = data_query.offset(offset)
+
         total = session.exec(count_query).one()
-        items = [_to_read(req, resource_type, project_id) for req, resource_type, project_id in session.exec(
-            data_query.order_by(DeletionRequest.request_time.desc()).offset(offset).limit(limit)
-        ).all()]
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+        order_by = _deletion_order_by(sort_expressions, direction)
+        rows = session.exec(
+            data_query.order_by(*order_by).limit(limit + 1)
+        ).all()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        items = []
+        for row in rows:
+            (
+                req,
+                resource_type,
+                project_id,
+                item_project_mfid,
+                row_can_review,
+                requester,
+                reviewer,
+            ) = row[:7]
+            items.append(
+                _to_read(
+                    req,
+                    resource_type,
+                    project_id,
+                    item_project_mfid,
+                    requester,
+                    reviewer,
+                    row_can_review,
+                )
+            )
+        next_cursor = None
+        if has_more:
+            last_request = rows[-1][0]
+            position = tuple(rows[-1][7:])
+            next_cursor = new_cursor(
+                kind="deletion_request",
+                sort=sort.value,
+                direction=direction.value,
+                primary=_deletion_cursor_primary(sort, position),
+                unique_id=str(last_request.id),
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+        return PaginatedResponse(
+            total=total,
+            limit=limit,
+            offset=None if cursor is not None else offset,
+            items=items,
+            next_cursor=next_cursor,
+        )
 
 
-# ---------------------------------------------------------------------------
-# GET /deletion_requests/{request_id}
-# Admin-only. Fetch a single request by its integer ID.
-# ---------------------------------------------------------------------------
 @router.get("/deletion_requests/{request_id}", response_model=DeletionRequestRead)
 def get_deletion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     request_id: int,
 ):
+    """Return a request to its submitter or a caller with deletion-review authority."""
     with Session(engine) as session:
-        req = session.exec(
-            select(DeletionRequest)
+        requester_user = aliased(User)
+        reviewer_user = aliased(User)
+        row = session.exec(
+            select(DeletionRequest, requester_user, reviewer_user)
+            .outerjoin(requester_user, requester_user.unique_id == DeletionRequest.requester_id)
+            .outerjoin(reviewer_user, reviewer_user.unique_id == DeletionRequest.reviewer_id)
             .where(DeletionRequest.id == request_id)
         ).one_or_none()
-        if req is None:
+        if row is None:
             raise HTTPException(status_code=404, detail="Deletion request not found.")
-        # Reviewing a deletion sits at the same bar as performing one.
-        require_permission(session, auth_res, req.resource_id, Permission.DELETE)
+        req, requester, reviewer = row
+        acl_rows = fetch_acl_rows(session, req.resource_id)
+        has_review_authority = has_permission(
+            auth_res, acl_rows, Permission.DELETE
+        )
+        if req.requester_id != auth_res.user_id and not has_review_authority:
+            raise HTTPException(status_code=403, detail="Access denied")
         resource = session.exec(
             select(Resource).where(Resource.mfid == req.resource_id)
         ).one_or_none()
         resource_type = resource.resource_type if resource else None
+        project_id, project_mfid = _resolve_project_refs(
+            req.resource_id,
+            resource_type,
+            session,
+        )
         return _to_read(
             req,
             resource_type,
-            _resolve_project_id(req.resource_id, resource_type, session),
+            project_id,
+            project_mfid,
+            requester,
+            reviewer,
+            req.status == DeletionRequestStatus.PENDING.value and has_review_authority,
         )
 
 
-# ---------------------------------------------------------------------------
-# PATCH /deletion_requests/{request_id}
-# Admin-only. Approve or reject a pending request.
-# ---------------------------------------------------------------------------
 @router.patch("/deletion_requests/{request_id}", response_model=DeletionRequestRead)
 def review_deletion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     request_id: int,
-    status: str,                          # must be "approved" or "rejected"
+    status: DeletionReviewDecision,
     reviewer_notes: Optional[str] = None,
 ):
+    """Review a pending request with effective Admin or Owner access.
+
+    Non-administrator service accounts cannot review deletion requests.
+    """
     user_unique_id = auth_res.user_id
-    if status not in ("approved", "rejected"):
-        raise HTTPException(status_code=422, detail="status must be 'approved' or 'rejected'.")
+    try:
+        decision = DeletionReviewDecision(status)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail="status must be 'approved' or 'rejected'.",
+        )
 
     with Session(engine) as session:
         req = session.exec(
@@ -149,12 +481,15 @@ def review_deletion_request(
         resource = session.exec(
             select(Resource).where(Resource.mfid == req.resource_id).with_for_update()
         ).one_or_none()
-        if req.status == "rejected":
+        if req.status == DeletionRequestStatus.REJECTED.value:
             raise HTTPException(
                 status_code=409,
                 detail="Request has already been rejected and cannot be reviewed again.",
             )
-        if req.status == "approved" and status == "approved":
+        if (
+            req.status == DeletionRequestStatus.APPROVED.value
+            and decision is DeletionReviewDecision.APPROVED
+        ):
             raise HTTPException(
                 status_code=409,
                 detail="Request is already approved.",
@@ -171,30 +506,49 @@ def review_deletion_request(
         require_permission(session, auth_res, req.resource_id, Permission.DELETE)
 
         # Update the request record.
-        req.status = status
+        req.status = decision.value
         req.reviewer_id = user_unique_id
         req.reviewer_notes = reviewer_notes
         req.review_time = get_utc_isoformat()
         session.add(req)
-        project_id = _resolve_project_id(req.resource_id, resource_type, session)
+        project_id, project_mfid = _resolve_project_refs(
+            req.resource_id,
+            resource_type,
+            session,
+        )
+        users = session.exec(
+            select(User).where(User.unique_id.in_({req.requester_id, user_unique_id}))
+        ).all()
+        users_by_id = {user.unique_id: user for user in users}
 
-        # Snapshot fields before hard delete removes the rows
         snapshot = DeletionRequestRead(
             id=req.id,
             resource_id=req.resource_id,
             resource_type=resource_type,
             resource_name=req.resource_name,
             project_id=project_id,
+            project_mfid=project_mfid,
             requester_id=req.requester_id,
+            requester=(
+                UserPublicRead.model_validate(users_by_id[req.requester_id])
+                if req.requester_id in users_by_id
+                else None
+            ),
             reason=req.reason,
             status=req.status,
             request_time=req.request_time,
             review_time=req.review_time,
             reviewer_id=req.reviewer_id,
+            reviewer=(
+                UserPublicRead.model_validate(users_by_id[user_unique_id])
+                if user_unique_id in users_by_id
+                else None
+            ),
             reviewer_notes=req.reviewer_notes,
+            capabilities=DeletionRequestCapabilities(can_review=False),
         )
 
-        if status == "approved":
+        if decision is DeletionReviewDecision.APPROVED:
             audit = DeletionAuditLog(
                 resource_id=req.resource_id,
                 resource_type=resource_type,
@@ -268,11 +622,16 @@ def hard_delete_resource_route(
             samp = session.exec(select(Sample).where(Sample.unique_id == resource_id)).one_or_none()
             resource_name = samp.sample_name if samp else None
 
+        project_id, _ = _resolve_project_refs(
+            resource_id,
+            resource.resource_type,
+            session,
+        )
         audit = DeletionAuditLog(
             resource_id=resource_id,
             resource_type=resource.resource_type,
             resource_name=resource_name,
-            project_id=_resolve_project_id(resource_id, resource.resource_type, session),
+            project_id=project_id,
             requester_id=user_unique_id,
             reason="direct forced deletion",
             request_time=None,

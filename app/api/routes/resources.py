@@ -18,7 +18,7 @@ from app.models.core_models import (
     ResourceACL, ResourceEmbedding, Sample,
     ScientificMetadataBinary, User, UserAccessGroupLink,
 )
-from app.models.ai import ChunkHit, ChunkSearchRequest
+from app.models.ai import ChunkHit, ChunkSearchRequest, ResourceEmbeddingRead
 from app.models.access import AccessGrantRead, AccessGrantWrite
 from app.models.access_groups import AccessGroupRead
 from app.models.datasets import DatasetResponse, ScientificMetadataBinaryRead
@@ -32,7 +32,7 @@ from app.models.samples import SampleResponse
 from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
-from app.models.query_params import ResourceDetailQuery
+from app.models.query_params import ResourceDetailQuery, ResourceEmbeddingListQuery
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
 from app.utils.auth_utils import (
     authorize_user,
@@ -61,6 +61,60 @@ from app.utils.user_utils import resolve_user_by_identifier
 
 router = APIRouter(tags=["resources"])
 engine = get_engine()
+
+
+@router.get(
+    "/embeddings",
+    response_model=PaginatedResponse[ResourceEmbeddingRead],
+)
+def list_resource_embeddings(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    params: Annotated[ResourceEmbeddingListQuery, Query()],
+):
+    """Return a paginated, filtered list of resource embeddings visible to the caller."""
+    statement = select(ResourceEmbedding).where(
+        permission_filter(
+            auth_res,
+            ResourceEmbedding,
+            Permission.READ,
+            resource_id_column=ResourceEmbedding.resource_mfid,
+        )
+    )
+
+    if params.id is not None:
+        statement = statement.where(ResourceEmbedding.id == params.id)
+    if params.resource_mfid is not None:
+        statement = statement.where(ResourceEmbedding.resource_mfid == params.resource_mfid)
+    if params.chunk_index is not None:
+        statement = statement.where(ResourceEmbedding.chunk_index == params.chunk_index)
+    if params.model_name is not None:
+        statement = statement.where(ResourceEmbedding.model_name == params.model_name)
+
+    with Session(engine) as session:
+        total = session.exec(
+            select(func.count()).select_from(statement.subquery())
+        ).one()
+        rows = session.exec(
+            statement.order_by(ResourceEmbedding.id).offset(params.offset).limit(params.limit)
+        ).all()
+
+    items = [
+        ResourceEmbeddingRead(
+            id=row.id,
+            resource_mfid=row.resource_mfid,
+            chunk_index=row.chunk_index,
+            chunk_text=row.chunk_text,
+            embedding=list(row.embedding) if row.embedding is not None else None,
+            model_name=row.model_name,
+        )
+        for row in rows
+    ]
+    return PaginatedResponse(
+        total=total,
+        limit=params.limit,
+        offset=params.offset,
+        items=items,
+    )
 
 
 def search_chunks(
@@ -115,7 +169,7 @@ def search_chunks(
     ]
 
 
-@router.post("/resources/embeddings/search", response_model=list[ChunkHit])
+@router.post("/embeddings/search", response_model=list[ChunkHit])
 def search_resource_chunks(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     body: ChunkSearchRequest,

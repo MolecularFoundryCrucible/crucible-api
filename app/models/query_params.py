@@ -111,6 +111,24 @@ class ResourceDetailQuery(SampleDetailQuery):
     pass
 
 
+class ResourceEmbeddingListQuery(StrictQueryModel):
+    id: Optional[int] = Field(default=None, ge=1, description="Exact embedding row ID.")
+    resource_mfid: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Exact resource MFID.",
+    )
+    chunk_index: Optional[int] = Field(default=None, ge=0, description="Exact chunk index.")
+    model_name: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description="Exact embedding model name.",
+    )
+    limit: int = Field(default=100, ge=1, le=1000)
+    offset: int = Field(default=0, ge=0)
+
+
 class ResourceGraphQuery(StrictQueryModel):
     depth: int = Field(
         default=1,

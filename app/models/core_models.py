@@ -410,6 +410,7 @@ class DeletionAuditLog(SQLModel, table=True):
     review_time: Optional[str] = Field(default=None)
     deleted_at: str = Field(index=True)        # set by the API at deletion time
     project_id: Optional[str] = Field(default=None, index=True)
+    project_mfid: Optional[str] = Field(default=None, index=True)
 
 
 # --- Instrument ---

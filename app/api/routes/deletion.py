@@ -19,7 +19,9 @@ from app.models.core_models import (
     User,
 )
 from app.models.deletion import (
+    DeletionAuditScope,
     DeletionAuditLogRead,
+    DeletableResourceType,
     DeletionRequestCapabilities,
     DeletionRequestRead,
     DeletionRequestScope,
@@ -87,6 +89,18 @@ def _to_read(
         requester=UserPublicRead.model_validate(requester) if requester else None,
         reviewer=UserPublicRead.model_validate(reviewer) if reviewer else None,
         capabilities=DeletionRequestCapabilities(can_review=can_review),
+    )
+
+
+def _audit_to_read(
+    audit: DeletionAuditLog,
+    requester: Optional[User],
+    reviewer: Optional[User],
+) -> DeletionAuditLogRead:
+    return DeletionAuditLogRead(
+        **audit.model_dump(),
+        requester=UserPublicRead.model_validate(requester) if requester else None,
+        reviewer=UserPublicRead.model_validate(reviewer) if reviewer else None,
     )
 
 
@@ -554,6 +568,7 @@ def review_deletion_request(
                 resource_type=resource_type,
                 resource_name=req.resource_name,
                 project_id=project_id,
+                project_mfid=project_mfid,
                 requester_id=req.requester_id,
                 reason=req.reason,
                 request_time=req.request_time,
@@ -622,7 +637,7 @@ def hard_delete_resource_route(
             samp = session.exec(select(Sample).where(Sample.unique_id == resource_id)).one_or_none()
             resource_name = samp.sample_name if samp else None
 
-        project_id, _ = _resolve_project_refs(
+        project_id, project_mfid = _resolve_project_refs(
             resource_id,
             resource.resource_type,
             session,
@@ -632,6 +647,7 @@ def hard_delete_resource_route(
             resource_type=resource.resource_type,
             resource_name=resource_name,
             project_id=project_id,
+            project_mfid=project_mfid,
             requester_id=user_unique_id,
             reason="direct forced deletion",
             request_time=None,
@@ -656,30 +672,189 @@ def hard_delete_resource_route(
 @router.get("/deletion_audit", response_model=PaginatedResponse[DeletionAuditLogRead])
 def list_deletion_audit(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    resource_id: Optional[str] = None,
-    requester_id: Optional[str] = None,
-    reviewer_id: Optional[str] = None,
+    scope: Annotated[
+        DeletionAuditScope,
+        Query(
+            description=(
+                "Select the platform-wide administrator audit or deletion history "
+                "submitted by the authenticated human user."
+            )
+        ),
+    ] = DeletionAuditScope.ALL,
+    resource_id: Annotated[
+        Optional[str],
+        Query(description="Exact MFID of the deleted resource."),
+    ] = None,
+    resource_type: Annotated[
+        Optional[DeletableResourceType],
+        Query(description="Type of deleted resource."),
+    ] = None,
+    project_id: Annotated[
+        Optional[str],
+        Query(description="Exact project slug captured when the resource was deleted."),
+    ] = None,
+    project_mfid: Annotated[
+        Optional[str],
+        Query(
+            description=(
+                "Exact canonical project MFID captured when the resource was deleted. "
+                "Entries created before project MFID snapshots were introduced do not match."
+            )
+        ),
+    ] = None,
+    requester_id: Annotated[
+        Optional[str],
+        Query(description="Exact stable requester user ID."),
+    ] = None,
+    reviewer_id: Annotated[
+        Optional[str],
+        Query(description="Exact stable reviewer user ID."),
+    ] = None,
+    direction: Annotated[
+        SortDirection,
+        Query(
+            description=(
+                "Sort direction for deletion time. Audit ID is the deterministic "
+                "final tie-breaker."
+            )
+        ),
+    ] = SortDirection.DESC,
     limit: int = Query(default=100, ge=1, le=1000),
-    offset: int = Query(default=0, ge=0),
+    cursor: Annotated[
+        Optional[str],
+        Query(
+            min_length=1,
+            max_length=4096,
+            description="Opaque continuation cursor returned by a previous page.",
+        ),
+    ] = None,
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Compatibility offset. A supplied cursor takes precedence.",
+    ),
 ):
-    require_platform_admin(auth_res)
+    """List permanent deletion records visible to the authenticated human user."""
+    if auth_res.is_service_account:
+        raise HTTPException(status_code=403, detail="Deletion audit is available only to human users")
+    if scope is DeletionAuditScope.ALL:
+        require_platform_admin(auth_res)
+    elif requester_id is not None and requester_id != auth_res.user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     with Session(engine) as session:
+        effective_requester_id = (
+            auth_res.user_id
+            if scope is DeletionAuditScope.SUBMITTED
+            else requester_id
+        )
+        filters_digest = filter_fingerprint({
+            "scope": scope.value,
+            "resource_id": resource_id,
+            "resource_type": resource_type.value if resource_type is not None else None,
+            "project_id": project_id,
+            "project_mfid": project_mfid,
+            "requester_id": effective_requester_id,
+            "reviewer_id": reviewer_id,
+            "platform_admin": auth_res.is_platform_admin,
+        })
+        cursor_deleted_at = None
+        cursor_audit_id = None
+        if cursor is not None:
+            try:
+                decoded_cursor = validate_cursor(
+                    cursor,
+                    kind="deletion_audit",
+                    sort="deleted_at",
+                    direction=direction.value,
+                    filters=filters_digest,
+                    user_id=auth_res.user_id,
+                )
+                if decoded_cursor is None:
+                    raise CursorError("Invalid cursor")
+                cursor_deleted_at = cursor_primary_value(decoded_cursor)
+                if cursor_deleted_at is None:
+                    raise CursorError("Invalid cursor position")
+                cursor_audit_id = int(decoded_cursor.unique_id)
+            except (CursorError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Invalid cursor") from exc
+
+        requester_user = aliased(User)
+        reviewer_user = aliased(User)
         count_query = select(func.count(DeletionAuditLog.id))
-        data_query = select(DeletionAuditLog)
+        data_query = (
+            select(DeletionAuditLog, requester_user, reviewer_user)
+            .outerjoin(requester_user, requester_user.unique_id == DeletionAuditLog.requester_id)
+            .outerjoin(reviewer_user, reviewer_user.unique_id == DeletionAuditLog.reviewer_id)
+        )
         if resource_id is not None:
             count_query = count_query.where(DeletionAuditLog.resource_id == resource_id)
             data_query = data_query.where(DeletionAuditLog.resource_id == resource_id)
-        if requester_id is not None:
-            count_query = count_query.where(DeletionAuditLog.requester_id == requester_id)
-            data_query = data_query.where(DeletionAuditLog.requester_id == requester_id)
+        if resource_type is not None:
+            count_query = count_query.where(DeletionAuditLog.resource_type == resource_type.value)
+            data_query = data_query.where(DeletionAuditLog.resource_type == resource_type.value)
+        if project_id is not None:
+            count_query = count_query.where(DeletionAuditLog.project_id == project_id)
+            data_query = data_query.where(DeletionAuditLog.project_id == project_id)
+        if project_mfid is not None:
+            count_query = count_query.where(DeletionAuditLog.project_mfid == project_mfid)
+            data_query = data_query.where(DeletionAuditLog.project_mfid == project_mfid)
+        if effective_requester_id is not None:
+            count_query = count_query.where(
+                DeletionAuditLog.requester_id == effective_requester_id
+            )
+            data_query = data_query.where(
+                DeletionAuditLog.requester_id == effective_requester_id
+            )
         if reviewer_id is not None:
             count_query = count_query.where(DeletionAuditLog.reviewer_id == reviewer_id)
             data_query = data_query.where(DeletionAuditLog.reviewer_id == reviewer_id)
+        if cursor_deleted_at is not None:
+            if direction is SortDirection.ASC:
+                data_query = data_query.where(or_(
+                    DeletionAuditLog.deleted_at > cursor_deleted_at,
+                    and_(
+                        DeletionAuditLog.deleted_at == cursor_deleted_at,
+                        DeletionAuditLog.id > cursor_audit_id,
+                    ),
+                ))
+            else:
+                data_query = data_query.where(or_(
+                    DeletionAuditLog.deleted_at < cursor_deleted_at,
+                    and_(
+                        DeletionAuditLog.deleted_at == cursor_deleted_at,
+                        DeletionAuditLog.id < cursor_audit_id,
+                    ),
+                ))
+        elif offset:
+            data_query = data_query.offset(offset)
         total = session.exec(count_query).one()
-        items = session.exec(
-            data_query.order_by(DeletionAuditLog.deleted_at.desc()).offset(offset).limit(limit)
-        ).all()
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+        if direction is SortDirection.ASC:
+            order_by = (DeletionAuditLog.deleted_at.asc(), DeletionAuditLog.id.asc())
+        else:
+            order_by = (DeletionAuditLog.deleted_at.desc(), DeletionAuditLog.id.desc())
+        rows = session.exec(data_query.order_by(*order_by).limit(limit + 1)).all()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        items = [_audit_to_read(audit, requester, reviewer) for audit, requester, reviewer in rows]
+        next_cursor = None
+        if has_more:
+            last_audit = rows[-1][0]
+            next_cursor = new_cursor(
+                kind="deletion_audit",
+                sort="deleted_at",
+                direction=direction.value,
+                primary=last_audit.deleted_at,
+                unique_id=str(last_audit.id),
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+        return PaginatedResponse(
+            total=total,
+            limit=limit,
+            offset=None if cursor is not None else offset,
+            items=items,
+            next_cursor=next_cursor,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -691,11 +866,19 @@ def get_deletion_audit(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     audit_id: int,
 ):
-    require_platform_admin(auth_res)
+    if auth_res.is_service_account:
+        raise HTTPException(status_code=403, detail="Deletion audit is available only to human users")
     with Session(engine) as session:
-        entry = session.exec(
-            select(DeletionAuditLog).where(DeletionAuditLog.id == audit_id)
+        requester_user = aliased(User)
+        reviewer_user = aliased(User)
+        row = session.exec(
+            select(DeletionAuditLog, requester_user, reviewer_user)
+            .outerjoin(requester_user, requester_user.unique_id == DeletionAuditLog.requester_id)
+            .outerjoin(reviewer_user, reviewer_user.unique_id == DeletionAuditLog.reviewer_id)
+            .where(DeletionAuditLog.id == audit_id)
         ).one_or_none()
-        if entry is None:
+        if row is None:
             raise HTTPException(status_code=404, detail="Audit log entry not found.")
-        return entry
+        if row[0].requester_id != auth_res.user_id:
+            require_platform_admin(auth_res)
+        return _audit_to_read(*row)

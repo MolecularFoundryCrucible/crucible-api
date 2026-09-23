@@ -5,7 +5,7 @@ from sqlmodel import Session
 import app.api.routes.deletion as deletion_routes
 from app.api.main import app
 from app.models.core_models import DeletionAuditLog, User
-from app.models.deletion import DeletableResourceType
+from app.models.deletion import DeletableResourceType, DeletionAuditScope
 from app.models.query_params import SortDirection
 from app.utils.permissions import PlatformRole, Principal
 
@@ -46,6 +46,7 @@ def _admin():
 
 def _list_audit(auth_res, **overrides):
     params = {
+        "scope": DeletionAuditScope.ALL,
         "resource_id": None,
         "resource_type": None,
         "project_id": None,
@@ -140,6 +141,48 @@ def test_deletion_audit_remains_platform_admin_only(db_engine):
     assert exc.value.status_code == 403
 
 
+def test_human_requester_can_list_and_read_submitted_deletion_history(db_engine):
+    _seed_audit_entries(db_engine)
+    requester = Principal(user_id="requester")
+
+    result = _list_audit(requester, scope=DeletionAuditScope.SUBMITTED)
+    detail = deletion_routes.get_deletion_audit(auth_res=requester, audit_id=1)
+
+    assert result.total == 3
+    assert all(item.requester_id == "requester" for item in result.items)
+    assert detail.requester_id == "requester"
+
+
+def test_submitted_scope_rejects_another_requester_filter(db_engine):
+    _seed_audit_entries(db_engine)
+
+    with pytest.raises(HTTPException) as exc:
+        _list_audit(
+            Principal(user_id="requester"),
+            scope=DeletionAuditScope.SUBMITTED,
+            requester_id="another-user",
+        )
+
+    assert exc.value.status_code == 403
+
+
+def test_service_account_cannot_read_deletion_audit(db_engine):
+    _seed_audit_entries(db_engine)
+    service_admin = Principal(
+        user_id="service-admin",
+        platform_role=PlatformRole.ADMIN,
+        is_service_account=True,
+    )
+
+    with pytest.raises(HTTPException) as collection_exc:
+        _list_audit(service_admin)
+    with pytest.raises(HTTPException) as detail_exc:
+        deletion_routes.get_deletion_audit(auth_res=service_admin, audit_id=1)
+
+    assert collection_exc.value.status_code == 403
+    assert detail_exc.value.status_code == 403
+
+
 def test_deletion_audit_openapi_publishes_additive_contract():
     schema = app.openapi()
     parameters = {
@@ -150,6 +193,7 @@ def test_deletion_audit_openapi_publishes_additive_contract():
 
     assert {
         "resource_type",
+        "scope",
         "project_id",
         "project_mfid",
         "direction",

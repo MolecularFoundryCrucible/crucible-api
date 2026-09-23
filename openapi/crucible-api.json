@@ -2051,6 +2051,14 @@
         "title": "DeletionAuditLogRead",
         "type": "object"
       },
+      "DeletionAuditScope": {
+        "enum": [
+          "all",
+          "submitted"
+        ],
+        "title": "DeletionAuditScope",
+        "type": "string"
+      },
       "DeletionRequestCapabilities": {
         "properties": {
           "can_review": {
@@ -12060,9 +12068,20 @@
     },
     "/deletion_audit": {
       "get": {
-        "description": "List permanent deletion records for a platform administrator.",
+        "description": "List permanent deletion records visible to the authenticated human user.",
         "operationId": "list_deletion_audit_deletion_audit_get",
         "parameters": [
+          {
+            "description": "Select the platform-wide administrator audit or deletion history submitted by the authenticated human user.",
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletionAuditScope",
+              "default": "all",
+              "description": "Select the platform-wide administrator audit or deletion history submitted by the authenticated human user."
+            }
+          },
           {
             "description": "Exact MFID of the deleted resource.",
             "in": "query",

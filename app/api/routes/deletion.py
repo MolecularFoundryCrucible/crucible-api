@@ -19,6 +19,7 @@ from app.models.core_models import (
     User,
 )
 from app.models.deletion import (
+    DeletionAuditScope,
     DeletionAuditLogRead,
     DeletableResourceType,
     DeletionRequestCapabilities,
@@ -671,6 +672,15 @@ def hard_delete_resource_route(
 @router.get("/deletion_audit", response_model=PaginatedResponse[DeletionAuditLogRead])
 def list_deletion_audit(
     auth_res: Annotated[Principal, Depends(authorize_user)],
+    scope: Annotated[
+        DeletionAuditScope,
+        Query(
+            description=(
+                "Select the platform-wide administrator audit or deletion history "
+                "submitted by the authenticated human user."
+            )
+        ),
+    ] = DeletionAuditScope.ALL,
     resource_id: Annotated[
         Optional[str],
         Query(description="Exact MFID of the deleted resource."),
@@ -724,15 +734,26 @@ def list_deletion_audit(
         description="Compatibility offset. A supplied cursor takes precedence.",
     ),
 ):
-    """List permanent deletion records for a platform administrator."""
-    require_platform_admin(auth_res)
+    """List permanent deletion records visible to the authenticated human user."""
+    if auth_res.is_service_account:
+        raise HTTPException(status_code=403, detail="Deletion audit is available only to human users")
+    if scope is DeletionAuditScope.ALL:
+        require_platform_admin(auth_res)
+    elif requester_id is not None and requester_id != auth_res.user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     with Session(engine) as session:
+        effective_requester_id = (
+            auth_res.user_id
+            if scope is DeletionAuditScope.SUBMITTED
+            else requester_id
+        )
         filters_digest = filter_fingerprint({
+            "scope": scope.value,
             "resource_id": resource_id,
             "resource_type": resource_type.value if resource_type is not None else None,
             "project_id": project_id,
             "project_mfid": project_mfid,
-            "requester_id": requester_id,
+            "requester_id": effective_requester_id,
             "reviewer_id": reviewer_id,
             "platform_admin": auth_res.is_platform_admin,
         })
@@ -777,9 +798,13 @@ def list_deletion_audit(
         if project_mfid is not None:
             count_query = count_query.where(DeletionAuditLog.project_mfid == project_mfid)
             data_query = data_query.where(DeletionAuditLog.project_mfid == project_mfid)
-        if requester_id is not None:
-            count_query = count_query.where(DeletionAuditLog.requester_id == requester_id)
-            data_query = data_query.where(DeletionAuditLog.requester_id == requester_id)
+        if effective_requester_id is not None:
+            count_query = count_query.where(
+                DeletionAuditLog.requester_id == effective_requester_id
+            )
+            data_query = data_query.where(
+                DeletionAuditLog.requester_id == effective_requester_id
+            )
         if reviewer_id is not None:
             count_query = count_query.where(DeletionAuditLog.reviewer_id == reviewer_id)
             data_query = data_query.where(DeletionAuditLog.reviewer_id == reviewer_id)
@@ -841,7 +866,8 @@ def get_deletion_audit(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     audit_id: int,
 ):
-    require_platform_admin(auth_res)
+    if auth_res.is_service_account:
+        raise HTTPException(status_code=403, detail="Deletion audit is available only to human users")
     with Session(engine) as session:
         requester_user = aliased(User)
         reviewer_user = aliased(User)
@@ -853,4 +879,6 @@ def get_deletion_audit(
         ).one_or_none()
         if row is None:
             raise HTTPException(status_code=404, detail="Audit log entry not found.")
+        if row[0].requester_id != auth_res.user_id:
+            require_platform_admin(auth_res)
         return _audit_to_read(*row)

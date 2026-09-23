@@ -13,6 +13,11 @@ class DeletionRequestScope(str, Enum):
     REVIEWABLE = "reviewable"
 
 
+class DeletionAuditScope(str, Enum):
+    ALL = "all"
+    SUBMITTED = "submitted"
+
+
 class DeletionRequestSort(str, Enum):
     REQUEST_TIME = "request_time"
     RESOURCE_NAME = "resource_name"

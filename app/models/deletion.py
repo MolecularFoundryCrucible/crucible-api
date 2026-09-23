@@ -13,6 +13,11 @@ class DeletionRequestScope(str, Enum):
     REVIEWABLE = "reviewable"
 
 
+class DeletionAuditScope(str, Enum):
+    ALL = "all"
+    SUBMITTED = "submitted"
+
+
 class DeletionRequestSort(str, Enum):
     REQUEST_TIME = "request_time"
     RESOURCE_NAME = "resource_name"
@@ -30,6 +35,11 @@ class DeletionRequestStatus(str, Enum):
 class DeletionReviewDecision(str, Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
+
+
+class DeletableResourceType(str, Enum):
+    DATASET = "dataset"
+    SAMPLE = "sample"
 
 
 class DeletionRequestCapabilities(SQLModel):
@@ -62,13 +72,28 @@ class DeletionAuditLogRead(SQLModel):
     """Response model for DeletionAuditLog."""
     id: int
     resource_id: str
-    resource_type: Optional[str] = None
+    resource_type: Optional[DeletableResourceType] = None
     resource_name: Optional[str] = None
     project_id: Optional[str] = None
+    project_mfid: Optional[str] = Field(
+        default=None,
+        description=(
+            "Canonical project MFID captured when the resource was deleted. "
+            "Entries created before this field was introduced may be null."
+        ),
+    )
     requester_id: str
+    requester: Optional[UserPublicRead] = Field(
+        default=None,
+        description="Current public-safe requester identity when the account still exists.",
+    )
     reason: Optional[str] = None
     request_time: Optional[str] = None
     reviewer_id: str
+    reviewer: Optional[UserPublicRead] = Field(
+        default=None,
+        description="Current public-safe reviewer identity when the account still exists.",
+    )
     reviewer_notes: Optional[str] = None
     review_time: Optional[str] = None
     deleted_at: str

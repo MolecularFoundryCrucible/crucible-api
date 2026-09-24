@@ -14082,7 +14082,7 @@
     },
     "/ingestion_requests": {
       "get": {
-        "description": "List ingestion requests, paginated. Requires file_id or dataset_id for non-admins.\nAdmins may omit both filters to list all ingestion requests.",
+        "description": "List ingestion requests for datasets the caller is authorized to view.",
         "operationId": "list_ingestion_requests_ingestion_requests_get",
         "parameters": [
           {

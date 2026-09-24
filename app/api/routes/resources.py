@@ -57,6 +57,12 @@ from app.utils.gcs_record_utils import write_metadata
 from app.utils.link_utils import fetch_readable_links
 from app.utils.project_utils import is_project_group
 from app.utils.user_utils import resolve_user_by_identifier
+from app.utils.cursor_utils import (
+    CursorError,
+    filter_fingerprint,
+    new_cursor,
+    validate_cursor,
+)
 
 
 router = APIRouter(tags=["resources"])
@@ -71,7 +77,13 @@ def list_resource_embeddings(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     params: Annotated[ResourceEmbeddingListQuery, Query()],
 ):
-    """Return a paginated, filtered list of resource embeddings visible to the caller."""
+    """Return a cursor-paginated, filtered list of visible resource embeddings.
+
+    Results are ordered by embedding row ID ascending. Pass the returned
+    next_cursor to retrieve the next stable keyset page. Offset pagination
+    remains available for compatibility; cursor takes precedence when both
+    are supplied.
+    """
     statement = select(ResourceEmbedding).where(
         permission_filter(
             auth_res,
@@ -90,13 +102,66 @@ def list_resource_embeddings(
     if params.model_name is not None:
         statement = statement.where(ResourceEmbedding.model_name == params.model_name)
 
+    filters_digest = filter_fingerprint({
+        "id": params.id,
+        "resource_mfid": params.resource_mfid,
+        "chunk_index": params.chunk_index,
+        "model_name": params.model_name,
+    })
+    decoded_embedding_id = None
+    if params.cursor is not None:
+        try:
+            decoded_cursor = validate_cursor(
+                params.cursor,
+                kind="resource_embedding",
+                sort="id",
+                direction="asc",
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+            if decoded_cursor is None:
+                raise CursorError("Invalid cursor")
+            decoded_embedding_id = int(decoded_cursor.unique_id)
+            if decoded_embedding_id < 1:
+                raise CursorError("Invalid cursor")
+        except (CursorError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Invalid cursor") from exc
+
+    include_total = params.include_total is True or (
+        params.include_total is None
+        and params.cursor is None
+        and params.offset == 0
+    )
+
     with Session(engine) as session:
-        total = session.exec(
-            select(func.count()).select_from(statement.subquery())
-        ).one()
+        total = None
+        if include_total:
+            total = session.exec(
+                select(func.count()).select_from(statement.subquery())
+            ).one()
+        page_statement = statement
+        if decoded_embedding_id is not None:
+            page_statement = page_statement.where(
+                ResourceEmbedding.id > decoded_embedding_id)
+        elif params.offset:
+            page_statement = page_statement.offset(params.offset)
         rows = session.exec(
-            statement.order_by(ResourceEmbedding.id).offset(params.offset).limit(params.limit)
+            page_statement.order_by(ResourceEmbedding.id).limit(params.limit + 1)
         ).all()
+
+    has_more = len(rows) > params.limit
+    rows = rows[:params.limit]
+    next_cursor = None
+    if has_more:
+        next_cursor = new_cursor(
+            kind="resource_embedding",
+            sort="id",
+            direction="asc",
+            primary=None,
+            unique_id=str(rows[-1].id),
+            filters=filters_digest,
+            user_id=auth_res.user_id,
+        )
 
     items = [
         ResourceEmbeddingRead(
@@ -112,8 +177,9 @@ def list_resource_embeddings(
     return PaginatedResponse(
         total=total,
         limit=params.limit,
-        offset=params.offset,
+        offset=None if params.cursor is not None else params.offset,
         items=items,
+        next_cursor=next_cursor,
     )
 
 

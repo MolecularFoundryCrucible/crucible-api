@@ -125,8 +125,26 @@ class ResourceEmbeddingListQuery(StrictQueryModel):
         max_length=255,
         description="Exact embedding model name.",
     )
+    include_total: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Exact authorization-filtered total. It is included on the first "
+            "page by default, may be requested on every page with true, and "
+            "suppressed with false."
+        ),
+    )
     limit: int = Field(default=100, ge=1, le=1000)
-    offset: int = Field(default=0, ge=0)
+    cursor: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=4096,
+        description="Opaque continuation cursor returned by a previous page.",
+    )
+    offset: int = Field(
+        default=0,
+        ge=0,
+        description="Compatibility offset. A supplied cursor takes precedence.",
+    )
 
 
 class ResourceGraphQuery(StrictQueryModel):

@@ -11,7 +11,7 @@ from app.models.core_models import (
     IngestionRequest,
 )
 from app.models.pagination import PaginatedResponse
-from app.utils.auth_utils import authorize_user, require_permission
+from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Permission, Principal
 from app.utils.sql_utils import only_update
 
@@ -43,16 +43,14 @@ def list_ingestion_requests(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ):
-    '''
-    List ingestion requests, paginated. Requires file_id or dataset_id for non-admins.
-    Admins may omit both filters to list all ingestion requests.
-    '''
-    is_admin = auth_res.is_platform_admin
-
-    if file_id is None and dataset_id is None and not is_admin:
-        raise HTTPException(status_code=400, detail="Either file_id or dataset_id must be provided")
-
+    '''List ingestion requests for datasets the caller is authorized to view.'''
     with Session(engine) as session:
+        query = (
+            select(IngestionRequest)
+            .join(Dataset, Dataset.unique_id == IngestionRequest.dataset_mfid)
+            .where(permission_filter(auth_res, Dataset, Permission.READ))
+        )
+
         if file_id is not None:
             af = session.exec(
                 select(AssociatedFile).where(AssociatedFile.mfid == file_id)
@@ -65,7 +63,7 @@ def list_ingestion_requests(
                 raise HTTPException(status_code=404, detail="Dataset not found")
             require_permission(session, auth_res, ds.unique_id, Permission.READ)
 
-            query = select(IngestionRequest).where(IngestionRequest.file_mfid == af.mfid)
+            query = query.where(IngestionRequest.file_mfid == af.mfid)
 
         elif dataset_id is not None:
             ds = session.exec(select(Dataset).where(Dataset.unique_id == dataset_id)).one_or_none()
@@ -73,10 +71,7 @@ def list_ingestion_requests(
                 raise HTTPException(status_code=404, detail="Dataset not found")
             require_permission(session, auth_res, ds.unique_id, Permission.READ)
 
-            query = select(IngestionRequest).where(IngestionRequest.dataset_mfid == ds.unique_id)
-
-        else:
-            query = select(IngestionRequest)
+            query = query.where(IngestionRequest.dataset_mfid == ds.unique_id)
 
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         items = session.exec(

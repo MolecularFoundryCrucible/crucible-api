@@ -44,7 +44,7 @@ def _delete_gcs_blobs_for_dataset(dataset_unique_id: str, associated_files: list
 
 
 def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Resource) -> None:
-    dataset = session.exec(select(Dataset).where(Dataset.unique_id == dataset_unique_id)).one_or_none()
+    dataset = session.exec(select(Dataset).where(Dataset.unique_id == dataset_unique_id).with_for_update()).one_or_none()
     if dataset is None:
         raise RuntimeError(f"Dataset row missing for resource {dataset_unique_id}")
 
@@ -60,7 +60,7 @@ def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Res
         UploadSession.dataset_mfid == dataset_unique_id,
         UploadSession.protocol.is_not(None),
         UploadSession.cleanup_requested_at.is_(None),
-    ).values(cleanup_requested_at=func.now()))
+    ).values(cleanup_requested_at=func.now(), next_attempt_at=func.now(), cleaned_at=None))
     session.execute(delete(UploadSession).where(
         UploadSession.dataset_mfid == dataset_unique_id,
         UploadSession.protocol.is_(None),

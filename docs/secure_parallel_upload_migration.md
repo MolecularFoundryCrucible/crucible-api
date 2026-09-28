@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Design review updated 2026-09-28. The [stage 1 provider experiment](parallel_upload_stage1.md) passed with signed part URLs, including a real Firefox upload and legacy-credential isolation checks. The API implementation remains proposed, not a deployed contract. Introduce a separate multipart route family, preserve existing request and response schemas for legacy clients, and migrate clients in measured cohorts before retiring unrestricted token issuance. This supersedes the previous proposal to change the protocol behind the existing initiation route.
+Design review updated 2026-09-28. The [stage 1 provider experiment](parallel_upload_stage1.md) passed with signed part URLs, including a real Firefox upload and legacy-credential isolation checks. The foundation and API/worker implementation are now available on the isolated feature branch; they are not deployed. See the [implemented HTTP contract and operator guide](multipart_upload_api.md). Introduce a separate multipart route family, preserve existing request and response schemas for legacy clients, and migrate clients in measured cohorts before retiring unrestricted token issuance. This supersedes the previous proposal to change the protocol behind the existing initiation route.
 
 The review covers API contracts, client behavior, GCS authorization, object identity, integrity, database consistency, retries, cleanup, operational isolation, and rollout. Stage 1 created disposable experiment infrastructure and confirmed the locally installed Nano upload path. Production IAM, deployed client versions, large-file performance, and the remaining browser matrix still require validation. Application behavior and public schemas remain unchanged.
 
@@ -12,7 +12,7 @@ Add a separate multipart upload API backed by the existing `UploadSession` and `
 
 The initial implementation adds no session, part, or provenance tables and does not replace ORCID authentication. Upload routes consume the shared authenticated principal and dataset permission checks. The server uses a dedicated storage identity whose credentials are never returned to clients.
 
-Stage 1 is complete. The next review unit is the additive schema and protocol-dispatch foundation, followed by the new API and worker, then client adoption. The detailed contract and release gates below are the proposed implementation baseline.
+Stages 1 and 2 are complete. The API and worker implementation is ready for local review and validation, followed by client adoption and a separately authorized staging pilot. The detailed contract and release gates below are the proposed implementation baseline.
 
 ## Compatibility commitment
 

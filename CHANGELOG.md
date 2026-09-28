@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Added a separate signed XML multipart upload API with asynchronous initiation/completion, bounded part authorization, resumable status, idempotent cancellation, and a durable processing worker. New initiation defaults to disabled; legacy upload contracts remain supported. The worker verifies SHA-256 before publication and retains generation-aware cleanup intent. Dedicated-bucket downloads and ingestion require server-recorded generations; file identity edits invalidate trusted checksum metadata. Added a resumable reference client and operator guide.
+
 - Added nullable multipart session and file verification metadata to existing tables, a legacy completion protocol guard, and retained cleanup intent on dataset deletion. Dedicated storage configuration defaults to disabled; the new multipart endpoints are not yet available.
 
 - Added human-requester deletion history, deterministic cursor pagination, direction and project/resource filters, canonical project MFID snapshots, and public-safe requester and reviewer summaries to deletion audit reads while retaining administrator-wide history, offset pagination, and stable ID fields. Service accounts cannot read deletion audit history.

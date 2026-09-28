@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.openapi.utils import get_openapi
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from app.api.routes import multipart
 from app.build_info import api_version
 from app.utils.multipart_config import MultipartStorageConfig
 from app.api.dependencies import get_api_root_path
@@ -153,6 +154,7 @@ app.include_router(files.router)
 app.include_router(ingestion_requests.router)
 app.include_router(datasets.router)
 app.include_router(gcs_storage.router)
+app.include_router(multipart.router)
 app.include_router(resources.router)
 app.include_router(resource_graph.router)
 app.include_router(samples.router)
@@ -238,3 +240,11 @@ def custom_openapi():
 
 
 app.openapi = custom_openapi
+
+
+@app.middleware("http")
+async def multipart_no_store(request: Request, call_next):
+    response = await call_next(request)
+    if "/upload/multipart/" in request.url.path:
+        response.headers["Cache-Control"] = "no-store"
+    return response

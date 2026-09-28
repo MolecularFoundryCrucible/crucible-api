@@ -16,6 +16,9 @@ def test_multipart_migration_roundtrip():
     spec = importlib.util.spec_from_file_location("multipart_migration", path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
+    processing_spec = importlib.util.spec_from_file_location("multipart_processing", path.with_name("20260928_c83a7d014b29_multipart_processing.py"))
+    processing = importlib.util.module_from_spec(processing_spec)
+    processing_spec.loader.exec_module(processing)
     engine = create_engine(os.environ["CRUCIBLE_TEST_PG_URL"])
     schema = "test_multipart_" + uuid4().hex
     with engine.connect() as connection:
@@ -40,10 +43,15 @@ def test_multipart_migration_roundtrip():
                 with pytest.raises(IntegrityError):
                     with connection.begin_nested():
                         connection.execute(text("INSERT INTO upload_sessions (protocol) VALUES ('gcs_xml_v1')"))
+                processing.upgrade()
+                connection.execute(text("UPDATE upload_sessions SET next_attempt_at = now(), claimed_crc32c = 'AAAAAA==' WHERE protocol IS NOT NULL"))
+                assert "ix_upload_sessions_work" in {index["name"] for index in inspect(connection).get_indexes("upload_sessions", schema=schema)}
+                processing.downgrade()
                 migration.downgrade()
                 assert {c["name"] for c in inspect(connection).get_columns("upload_sessions", schema=schema)} == {"id", "owner_user_id", "dataset_mfid", "expires_at"}
                 assert connection.execute(text("SELECT sha256_hash FROM associatedfile")).scalar() == "legacy-unverified"
                 migration.upgrade()
+                processing.upgrade()
         finally:
             transaction.rollback()
     engine.dispose()

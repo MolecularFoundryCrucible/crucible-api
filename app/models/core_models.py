@@ -454,6 +454,7 @@ class IngestionRequest(SQLModel, table=True):
 class UploadSession(SQLModel, table=True):
     __tablename__ = "upload_sessions"
     __table_args__ = (
+        Index("ix_upload_sessions_work", "protocol", "next_attempt_at"),
         UniqueConstraint("owner_user_id", "dataset_mfid", "protocol", "idempotency_key", name="uq_upload_session_idempotency"),
         CheckConstraint("protocol IS NULL OR (protocol = 'gcs_xml_v1' AND state IS NOT NULL AND state IN ('initiating', 'uploading', 'finalizing', 'verifying', 'completed', 'aborting', 'aborted', 'expired', 'failed'))", name="ck_upload_session_protocol_state"),
         CheckConstraint("part_size IS NULL OR part_size > 0", name="ck_upload_session_part_size"),
@@ -486,3 +487,8 @@ class UploadSession(SQLModel, table=True):
     updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     lease_expires_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     cleanup_requested_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    claimed_crc32c: Optional[str] = None
+    next_attempt_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    cleaned_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    part_signing_after: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    attempts: Optional[int] = None

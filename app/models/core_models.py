@@ -257,6 +257,55 @@ class ApiToken(SQLModel, table = True):
     token_created: str = Field(default_factory=get_utc_isoformat)
 
 
+class HubTokenFamily(SQLModel, table=True):
+    id: str = Field(primary_key=True, max_length=36)
+    user_unique_id: str = Field(foreign_key="user.orcid", index=True)
+    client_id: str = Field(index=True)
+    created_at: datetime = Field(sa_type=DateTime(timezone=True))
+    expires_at: datetime = Field(sa_type=DateTime(timezone=True))
+    last_refreshed_at: datetime = Field(sa_type=DateTime(timezone=True))
+    revoked_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+
+
+class HubRefreshToken(SQLModel, table=True):
+    token_hash: str = Field(primary_key=True, max_length=64)
+    family_id: str = Field(foreign_key="hubtokenfamily.id", index=True)
+    generation: int
+    issued_at: datetime = Field(sa_type=DateTime(timezone=True))
+    spent_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+
+
+class HubAccessToken(SQLModel, table=True):
+    token_hash: str = Field(primary_key=True, max_length=64)
+    family_id: str = Field(foreign_key="hubtokenfamily.id", index=True)
+    issued_at: datetime = Field(sa_type=DateTime(timezone=True))
+    expires_at: datetime = Field(sa_type=DateTime(timezone=True))
+
+
+class HubLoginTransaction(SQLModel, table=True):
+    state_hash: str = Field(primary_key=True, max_length=64)
+    browser_secret_hash: str = Field(max_length=64)
+    client_id: str
+    callback_uri: str
+    hub_state: str
+    code_challenge: str = Field(max_length=43)
+    nonce: str
+    created_at: datetime = Field(sa_type=DateTime(timezone=True))
+    expires_at: datetime = Field(sa_type=DateTime(timezone=True))
+    consumed_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+
+
+class HubLoginCode(SQLModel, table=True):
+    code_hash: str = Field(primary_key=True, max_length=64)
+    user_unique_id: str = Field(foreign_key="user.orcid", index=True)
+    client_id: str
+    callback_uri: str
+    code_challenge: str = Field(max_length=43)
+    created_at: datetime = Field(sa_type=DateTime(timezone=True))
+    expires_at: datetime = Field(sa_type=DateTime(timezone=True))
+    consumed_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+
+
 class Project(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     unique_id: Optional[str] = Field(default_factory=get_mfid_value, index=True, unique=True)

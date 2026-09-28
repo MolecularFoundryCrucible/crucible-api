@@ -42,7 +42,7 @@ Empty map keys leave unrelated API routes unthrottled by these zones. Limits sha
 
 ## Expired-record cleanup
 
-Suspended staging and main CronJob manifests and their approval-gated rollout are documented in [Kubernetes deployment notes](../k8s-conf/README.md#hub-authentication-cleanup). They are not automatically applied or enabled by the build pipeline.
+Staging and main CronJobs and their approval-gated activation are documented in [Kubernetes deployment notes](../k8s-conf/README.md#hub-authentication-cleanup). Cloud Build deploys them with the API image SHA, initially suspended, and preserves their activation state on subsequent releases.
 
 Run `scripts/cleanup_hub_auth.py` from a scheduled maintenance job using the API deployment credentials. It defaults to a read-only preview and emits counts only. It deletes expired login transactions, handoff codes, and access tokens in bounded batches. It deletes refresh records and families only after absolute family expiry, including revoked families, retaining spent-token history for replay detection. It never revokes a live session.
 

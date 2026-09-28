@@ -59,4 +59,13 @@ steps:
     - CLOUDSDK_COMPUTE_REGION=us-central1
     - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
 
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: deploy-hub-auth-cleanup
+    entrypoint: bash
+    args:
+    - -ceu
+    - |
+      gcloud container clusters get-credentials crucible-cluster --region us-central1 --project '${PROJECT_ID}'
+      bash scripts/deploy_hub_auth_cleanup.sh '${BRANCH_NAME}' '${_IMAGE_PATH}:${SHORT_SHA}'
+
 timeout: 600s

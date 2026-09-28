@@ -258,6 +258,8 @@ class ApiToken(SQLModel, table = True):
 
 
 class HubTokenFamily(SQLModel, table=True):
+    __table_args__ = (Index("ix_hubtokenfamily_expiry", "expires_at", "id"),)
+
     id: str = Field(primary_key=True, max_length=36)
     user_unique_id: str = Field(foreign_key="user.orcid", index=True)
     client_id: str = Field(index=True)
@@ -276,6 +278,8 @@ class HubRefreshToken(SQLModel, table=True):
 
 
 class HubAccessToken(SQLModel, table=True):
+    __table_args__ = (Index("ix_hubaccesstoken_expiry", "expires_at", "token_hash"),)
+
     token_hash: str = Field(primary_key=True, max_length=64)
     family_id: str = Field(foreign_key="hubtokenfamily.id", index=True)
     issued_at: datetime = Field(sa_type=DateTime(timezone=True))
@@ -283,6 +287,8 @@ class HubAccessToken(SQLModel, table=True):
 
 
 class HubLoginTransaction(SQLModel, table=True):
+    __table_args__ = (Index("ix_hublogintransaction_expiry", "expires_at", "state_hash"),)
+
     state_hash: str = Field(primary_key=True, max_length=64)
     browser_secret_hash: str = Field(max_length=64)
     client_id: str
@@ -296,6 +302,8 @@ class HubLoginTransaction(SQLModel, table=True):
 
 
 class HubLoginCode(SQLModel, table=True):
+    __table_args__ = (Index("ix_hublogincode_expiry", "expires_at", "code_hash"),)
+
     code_hash: str = Field(primary_key=True, max_length=64)
     user_unique_id: str = Field(foreign_key="user.orcid", index=True)
     client_id: str

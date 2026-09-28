@@ -49,7 +49,9 @@ DB_CONF_FILE=.env .venv/bin/python scripts/cleanup_hub_auth.py
 DB_CONF_FILE=.env .venv/bin/python scripts/cleanup_hub_auth.py --commit --batch-size 1000 --batches 10
 ```
 
-Schedule the commit command hourly, prevent overlapping jobs, and monitor counts and execution time. No staging or production cleanup has been scheduled or run as part of this change. The current schema has no expiry indexes; evaluate query plans and add an Alembic index revision before retention volumes make these scans expensive. Batch limits bound selected rows; removing one expired family also removes all of its remaining credentials.
+Schedule the commit command hourly, prevent overlapping jobs, and monitor counts and execution time. No staging or production cleanup has been scheduled or run as part of this change. Revision `e92a6b1c730f` adds composite `(expires_at, primary_key)` indexes matching cleanup filtering and batch ordering on login transactions, handoff codes, access tokens, and token families. Refresh records use their existing family index. Batch limits bound selected rows; removing one expired family also removes all of its remaining credentials.
+
+The expiry migration creates and drops indexes concurrently so ordinary reads and writes can continue. It adds no tables, changes no token lifetimes, and deletes no records. Concurrent builds run outside a transaction and may wait for existing transactions; a failed migration can leave completed or invalid indexes. Before retrying, inspect the four `ix_hub*_expiry` indexes and remove only those created by this revision with `DROP INDEX CONCURRENTLY`, then rerun the revision. Do not stamp the revision or skip an existing index without verifying its definition and validity. Applying this revision to staging or production requires deployment approval.
 
 ## Verification and remaining deployment gates
 

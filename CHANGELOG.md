@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Updated the staging Hub client and both ORCID credential pins to Secret Manager version 2.
 - Added pinned Google Secret Manager references for Hub client and ORCID credentials, environment-specific deployment settings, and a disabled-by-default deployment activation flag.
 - Redacted Hub authentication validation failures and unexpected-error logs, and added no-store headers to all Hub authentication responses.
 - Cloud Build now deploys the matching Hub cleanup CronJob with the API image SHA, initially suspended, and preserves its activation state on later builds.

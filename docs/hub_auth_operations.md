@@ -16,14 +16,16 @@ The API accesses Google Secret Manager directly with the existing Google client 
 
 Set `HUB_AUTH_CLIENT_SECRET_VERSION` and `HUB_AUTH_ORCID_CLIENT_SECRET_VERSION` to full `projects/.../secrets/.../versions/N` names with numeric versions. A reference takes precedence over its corresponding inline environment secret; access failure never falls back to inline or legacy credentials. Successful reads are cached per worker and version; failed reads are not cached. Lookups have a five-second RPC timeout without SDK retries. Values must be nonempty ASCII without line breaks. Local development may keep `HUB_AUTH_CLIENT_SECRET` and `HUB_AUTH_ORCID_CLIENT_SECRET` when no references are configured.
 
-The following secrets were provisioned under project `776258882599` with enabled version `1` on 2026-09-28. Their values were verified without logging them. Existing secrets and IAM grants were not changed.
+The following secrets were provisioned under project `776258882599` on 2026-09-28. Main's Hub client credential remains pinned to version `1`; staging's Hub client credential and both ORCID credentials were rotated to version `2`. Their values were verified without logging them. Existing unrelated secrets and IAM grants were not changed.
+
+After successful local sign-in and logout testing, superseded version `1` of the staging Hub client secret and both ORCID secrets was disabled with user approval. Main's shared Hub credential remains enabled at version `1`. Disabled versions were not destroyed; do not re-enable exposed credentials for rollback.
 
 | Environment | Hub client credential | ORCID client credential |
 | --- | --- | --- |
 | Main | `crucible-hub-main-client-secret` | `crucible-hub-main-orcid-client-secret` |
 | Staging | `crucible-hub-staging-client-secret` | `crucible-hub-staging-orcid-client-secret` |
 
-Main has a newly generated Hub client secret; staging retains the local Hub's existing shared credential. The API and corresponding Hub server must use the same value for their environment. Both ORCID secrets contain the rotated local credential for configured client `APP-YDW1MRE405389PP0`. The Hub never needs the ORCID client secret. Only main gets a deployed Hub. Staging is tested from a local Hub with an explicitly configured callback.
+Main has a separately generated Hub client secret; staging matches the rotated local Hub/API shared credential. The API and corresponding Hub server must use the same value for their environment. Both ORCID secrets contain the rotated local credential for configured client `APP-YDW1MRE405389PP0`. The Hub never needs the ORCID client secret. Only main gets a deployed Hub. Staging is tested from a local Hub with an explicitly configured callback.
 
 The user accepted the existing `mf-crucible` project trust boundary for this release. Existing project-wide Secret Accessor principals inherit access to the new secrets. Main and staging also share the `default` Kubernetes identity, which now has secret-level access on these four new secrets. This is not per-environment workload isolation. No existing principals were migrated and no grants were removed. Any future IAM isolation is a separate audited change. A dedicated Hub runtime grant must be checked when its Cloud Run identity is selected.
 

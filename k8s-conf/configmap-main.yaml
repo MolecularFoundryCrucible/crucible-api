@@ -13,7 +13,7 @@ data:
   HUB_AUTH_ORCID_ISSUER: "https://orcid.org"
   HUB_AUTH_ORCID_CLIENT_ID: "APP-YDW1MRE405389PP0"
   HUB_AUTH_CLIENT_SECRET_VERSION: "projects/776258882599/secrets/crucible-hub-main-client-secret/versions/1"
-  HUB_AUTH_ORCID_CLIENT_SECRET_VERSION: "projects/776258882599/secrets/crucible-hub-main-orcid-client-secret/versions/1"
+  HUB_AUTH_ORCID_CLIENT_SECRET_VERSION: "projects/776258882599/secrets/crucible-hub-main-orcid-client-secret/versions/2"
 
   # api
   API_CONF_FILE: "app/conf/api_conf.yaml"

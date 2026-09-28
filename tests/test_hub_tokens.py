@@ -4,6 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -77,6 +78,34 @@ def test_issue_refresh_and_access_expiry(engine):
     assert second.refresh_expires_at == first.refresh_expires_at
     assert access_user(engine, first.access_token, now=NOW + timedelta(minutes=14)) == first.user_unique_id
     assert access_user(engine, second.access_token, now=NOW + timedelta(minutes=15)) == first.user_unique_id
+
+
+def test_issue_and_refresh_with_foreign_keys_enforced():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(connection, _):
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    SQLModel.metadata.create_all(
+        engine,
+        tables=[User.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__],
+    )
+    try:
+        with Session(engine) as session:
+            session.add(User(first_name="Test", last_name="Human", unique_id="0000-0000-0000-0001"))
+            session.commit()
+        first = issue_hub_tokens(engine, "0000-0000-0000-0001", "hub", now=NOW)
+        second = refresh_hub_tokens(engine, first.refresh_token, "hub", now=NOW + timedelta(minutes=1))
+        assert access_user(engine, second.access_token, now=NOW + timedelta(minutes=1)) == first.user_unique_id
+    finally:
+        engine.dispose()
 
 
 def test_spent_refresh_revokes_family(engine):
@@ -274,6 +303,7 @@ def test_orcid_id_token_verification_rejects_wrong_identity_context(monkeypatch)
     from app.utils.hub_orcid import verify_orcid_id_token
 
     monkeypatch.setattr("app.utils.hub_orcid.get_orcid_client_id", lambda: "test-orcid-client")
+    monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_ID", "test-orcid-client")
     config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", "https://orcid.org")
     key = RSAKey.generate_key(auto_kid=True)
     jwks = {"keys": [key.as_dict()]}

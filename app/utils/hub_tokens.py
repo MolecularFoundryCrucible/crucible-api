@@ -74,6 +74,7 @@ def issue_hub_tokens(engine, user_unique_id: str, client_id: str, *, now: dateti
             last_refreshed_at=current,
         )
         session.add(family)
+        session.flush()
         refresh_token = _token(REFRESH_PREFIX)
         session.add(
             HubRefreshToken(

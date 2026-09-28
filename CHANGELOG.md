@@ -81,6 +81,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Hub sign-in now persists the token family before issuing related access and refresh tokens, avoiding a foreign-key error during code exchange.
 - Deletion-request submitters can now read their own request detail without receiving deletion-review authority.
 - Regenerated the checked-in OpenAPI artifact with dataset and sample facet operations and matching null filters.
 - Identical thumbnail images uploaded to different datasets now remain independently owned instead of moving an existing thumbnail between datasets.

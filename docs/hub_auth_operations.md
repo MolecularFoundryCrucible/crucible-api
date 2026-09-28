@@ -16,14 +16,16 @@ The API accesses Google Secret Manager directly with the existing Google client 
 
 Set `HUB_AUTH_CLIENT_SECRET_VERSION` and `HUB_AUTH_ORCID_CLIENT_SECRET_VERSION` to full `projects/.../secrets/.../versions/N` names with numeric versions. A reference takes precedence over its corresponding inline environment secret; access failure never falls back to inline or legacy credentials. Successful reads are cached per worker and version; failed reads are not cached. Lookups have a five-second RPC timeout without SDK retries. Values must be nonempty ASCII without line breaks. Local development may keep `HUB_AUTH_CLIENT_SECRET` and `HUB_AUTH_ORCID_CLIENT_SECRET` when no references are configured.
 
-The checked-in deployment settings reserve these secret names under project `776258882599`; version `1` is a proposed initial reference, not evidence that the secret exists:
+The following secrets were provisioned under project `776258882599` with enabled version `1` on 2026-09-28. Their values were verified without logging them. Existing secrets and IAM grants were not changed.
 
 | Environment | Hub client credential | ORCID client credential |
 | --- | --- | --- |
 | Main | `crucible-hub-main-client-secret` | `crucible-hub-main-orcid-client-secret` |
 | Staging | `crucible-hub-staging-client-secret` | `crucible-hub-staging-orcid-client-secret` |
 
-Provision distinct Hub client secret values for main and staging. The API and corresponding Hub server must use the same value for their environment. The Hub never needs the ORCID client secret. The configured ORCID client ID is `APP-YDW1MRE405389PP0`; its Secret Manager value must be the current rotated credential for that client. Only main gets a deployed Hub. Staging is tested from a local Hub with an explicitly configured callback.
+Main has a newly generated Hub client secret; staging retains the local Hub's existing shared credential. The API and corresponding Hub server must use the same value for their environment. Both ORCID secrets contain the rotated local credential for configured client `APP-YDW1MRE405389PP0`. The Hub never needs the ORCID client secret. Only main gets a deployed Hub. Staging is tested from a local Hub with an explicitly configured callback.
+
+The user accepted the existing `mf-crucible` project trust boundary for this release. Existing project-wide Secret Accessor principals inherit access to the new secrets. Main and staging also share the `default` Kubernetes identity, which now has secret-level access on these four new secrets. This is not per-environment workload isolation. No existing principals were migrated and no grants were removed. Any future IAM isolation is a separate audited change. A dedicated Hub runtime grant must be checked when its Cloud Run identity is selected.
 
 Both API ConfigMaps ship with `HUB_AUTH_ENABLED=false`. This disables new login and client-authenticated exchange/refresh/revoke operations without fetching secrets. Callback attempts return the generic sign-in failure. It does not invalidate existing access tokens or legacy API keys and is not an account-suspension switch. If the flag is absent, existing local configuration remains compatible. Secret unavailability returns a generic 503 at login and client-authenticated endpoints, or the generic callback failure.
 
@@ -31,8 +33,8 @@ Production reserves `https://crucible.lbl.gov/hub/auth/callback` as the Hub call
 
 Before activation:
 
-1. Obtain approval to create the secrets/versions and grant the API workload identity `roles/secretmanager.secretAccessor` on the required secrets. Grant the Hub runtime access only to its environment's shared client secret. The current manifests reuse the existing `default` Kubernetes service account; secret-level grants do not isolate workloads sharing that identity. Review identity sharing before production and do not add project-wide access grants.
-2. Confirm the planned secret names and numeric versions, provision through an approved secret-safe mechanism, and update references. Do not put secret values in shell arguments, git, or chat. Secret creation and IAM grants have not been performed by this change.
+1. The four secrets and API secret-level grants are provisioned. When deploying the Hub, confirm its runtime identity can access only the main shared client secret unless it already inherits broader project access. Do not add new project-wide grants.
+2. Confirm the pinned numeric references remain enabled. Do not put secret values in shell arguments, git, or chat. Future rotations require a separate approved version update; do not recreate or overwrite the provisioned credentials.
 3. Coordinate the approved schema migration and deployment. `EXPECTED_DB_REVISIONS` still reflects the pre-Hub deployed revision in the checked-in ConfigMaps; update it to the verified target `e92a6b1c730f` as part of that coordinated rollout, not as an unrelated configuration push. The readiness check uses an exact revision match, so migrating while old pods still expect the previous revision can make them unready. Plan the transition explicitly before running Alembic.
 4. Verify ingress protections and backend bypass policy, configure the exact callback, and enable `HUB_AUTH_ENABLED=true` only for the environment under test. Roll the API pods to load the ConfigMap changes. The Hub's production activation remains independently controlled.
 5. Test sign-in, refresh, logout, secret unavailability, and non-Hub clients. Run the cleanup preview and approved first cleanup before enabling its schedule.

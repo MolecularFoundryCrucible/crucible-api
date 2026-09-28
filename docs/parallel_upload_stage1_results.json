@@ -1,0 +1,227 @@
+{
+  "recorded_at": "2026-09-28T09:52:12.705603+00:00",
+  "bucket": "mf-crucible-mpu-stage1-20260928-a",
+  "other_bucket": "mf-crucible-mpu-stage1-20260928-b",
+  "signer": "mpu-stage1-20260928@mf-crucible.iam.gserviceaccount.com",
+  "prefix": "mpu-stage1/20260928T095159Z-880084ee9ca0/",
+  "passed": true,
+  "checks": [
+    {
+      "check": "provider_initiate",
+      "passed": true,
+      "http_status": 200,
+      "provider_code": null
+    },
+    {
+      "check": "parallel_signed_upload",
+      "passed": true,
+      "http_statuses": [
+        200,
+        200
+      ],
+      "bytes": 6291456,
+      "elapsed_seconds": 0.629
+    },
+    {
+      "check": "retry_same_part",
+      "passed": true,
+      "http_status": 200
+    },
+    {
+      "check": "renew_signed_part",
+      "passed": true,
+      "http_status": 200
+    },
+    {
+      "check": "changed_part_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "SignatureDoesNotMatch"
+    },
+    {
+      "check": "changed_upload_id_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "SignatureDoesNotMatch"
+    },
+    {
+      "check": "changed_object_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "SignatureDoesNotMatch"
+    },
+    {
+      "check": "changed_bucket_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "SignatureDoesNotMatch"
+    },
+    {
+      "check": "changed_method_post_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "SignatureDoesNotMatch"
+    },
+    {
+      "check": "changed_method_delete_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "SignatureDoesNotMatch"
+    },
+    {
+      "check": "changed_method_get_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "SignatureDoesNotMatch"
+    },
+    {
+      "check": "changed_checksum_header_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "SignatureDoesNotMatch"
+    },
+    {
+      "check": "changed_length_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "SignatureDoesNotMatch"
+    },
+    {
+      "check": "corrupt_part_rejected",
+      "passed": true,
+      "http_status": 400,
+      "provider_code": "BadDigest"
+    },
+    {
+      "check": "expired_url_denied",
+      "passed": true,
+      "http_status": 400,
+      "provider_code": "ExpiredToken"
+    },
+    {
+      "check": "provider_list_parts",
+      "passed": true,
+      "http_status": 200
+    },
+    {
+      "check": "provider_list_parts",
+      "passed": true,
+      "http_status": 200
+    },
+    {
+      "check": "paginated_part_listing",
+      "passed": true,
+      "pages": 2,
+      "parts": 2
+    },
+    {
+      "check": "part_sizes_match",
+      "passed": true
+    },
+    {
+      "check": "provider_complete",
+      "passed": true,
+      "http_status": 200,
+      "provider_code": null
+    },
+    {
+      "check": "final_size_crc32c",
+      "passed": true,
+      "bytes": 6291456,
+      "generation": "1790589129207551"
+    },
+    {
+      "check": "generation_pinned_sha256",
+      "passed": true,
+      "bytes": 6291456,
+      "elapsed_seconds": 0.316
+    },
+    {
+      "check": "completed_upload_rejects_part",
+      "passed": true,
+      "http_status": 404,
+      "provider_code": "NoSuchUpload"
+    },
+    {
+      "check": "legacy_identity_loaded",
+      "passed": true,
+      "service_account": "cloud-sql@mf-crucible.iam.gserviceaccount.com"
+    },
+    {
+      "check": "legacy_list_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "AccessDenied"
+    },
+    {
+      "check": "legacy_read_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "AccessDenied"
+    },
+    {
+      "check": "legacy_create_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "AccessDenied"
+    },
+    {
+      "check": "legacy_overwrite_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "AccessDenied"
+    },
+    {
+      "check": "legacy_delete_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "AccessDenied"
+    },
+    {
+      "check": "legacy_multipart_initiate_denied",
+      "passed": true,
+      "http_status": 403,
+      "provider_code": "AccessDenied"
+    },
+    {
+      "check": "provider_initiate",
+      "passed": true,
+      "http_status": 200,
+      "provider_code": null
+    },
+    {
+      "check": "abort_probe_uploaded",
+      "passed": true,
+      "http_status": 200
+    },
+    {
+      "check": "provider_abort",
+      "passed": true,
+      "http_status": 204
+    },
+    {
+      "check": "aborted_upload_rejects_part",
+      "passed": true,
+      "http_status": 404,
+      "provider_code": "NoSuchUpload"
+    },
+    {
+      "check": "cleanup_provider_upload",
+      "passed": true,
+      "http_status": 204
+    },
+    {
+      "check": "cleanup_provider_upload",
+      "passed": true,
+      "http_status": 204
+    },
+    {
+      "check": "cleanup_probe_object",
+      "passed": true
+    },
+    {
+      "check": "cleanup_probe_object",
+      "passed": true
+    }
+  ]
+}

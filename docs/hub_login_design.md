@@ -1,6 +1,8 @@
 # Hub login design
 
-Status: API implementation in progress on `feat/hub-login-design`; not deployed or integrated with the Hub.
+Status: API implementation on `feat/hub-login-design`, integrated with the local Hub; not deployed to production.
+
+Local integration is now working through Tailscale. The API public base URL is `https://leviathan.rooster-chimaera.ts.net/testapi` and the Hub callback is `https://leviathan.rooster-chimaera.ts.net/hub/auth/callback`. The ORCID redirect is the API base URL plus `/auth/hub/callback`. These override the earlier loopback reservation below. Production deployment remains gated by [authentication operations](hub_auth_operations.md).
 
 This document records the API-side design for production Hub login. Before changing the Hub contract, coordinate the decision and update `crucible-hub/docs/authentication-transition.md`, its authentication decision, API integration documentation, pinned OpenAPI artifact, generated client, and tests. Do not change the Hub repository as part of this API branch without explicit authorization.
 

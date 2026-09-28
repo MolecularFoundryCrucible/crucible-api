@@ -10,7 +10,7 @@ from urllib.parse import urlencode, urlparse
 from sqlmodel import Session, select
 
 from app.models.core_models import HubLoginCode, HubLoginTransaction, User
-from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens
+from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens_in_session
 from app.utils.permissions import AccessGroupType, Role
 from app.utils.user_utils import sql_add_user_to_access_group
 
@@ -163,5 +163,4 @@ def exchange_handoff_code(engine, code: str, verifier: str, client_id: str, call
         if grant.client_id != client_id or grant.callback_uri != callback_uri or not secrets.compare_digest(grant.code_challenge, challenge):
             raise InvalidHubGrant
         grant.consumed_at = current
-        user_unique_id = grant.user_unique_id
-    return issue_hub_tokens(engine, user_unique_id, client_id, now=current)
+        return issue_hub_tokens_in_session(session, grant.user_unique_id, client_id, now=current)

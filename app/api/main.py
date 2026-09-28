@@ -23,6 +23,8 @@ logging.basicConfig(
     format="%(levelname)s:%(name)s:%(message)s",
 )
 logger = logging.getLogger(__name__)
+# Uvicorn's raw query strings include OAuth callback codes; log_requests records safe request metadata.
+logging.getLogger("uvicorn.access").disabled = True
 
 api_root_path = get_api_root_path()
 app = FastAPI(

@@ -81,6 +81,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Hub code exchange now commits token issuance and code consumption together, and concurrent refresh reuse revokes the token family.
+- Disabled raw Uvicorn access logs while retaining API request logs without query strings.
+- Added a dry-run-by-default command for cleaning expired Hub authentication records.
 - Hub sign-in now persists the token family before issuing related access and refresh tokens, avoiding a foreign-key error during code exchange.
 - Deletion-request submitters can now read their own request detail without receiving deletion-review authority.
 - Regenerated the checked-in OpenAPI artifact with dataset and sample facet operations and matching null filters.

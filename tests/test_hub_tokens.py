@@ -38,6 +38,25 @@ from app.utils.hub_login import (
 NOW = datetime(2026, 9, 28, 12, tzinfo=timezone.utc)
 
 
+def test_cleanup_preserves_refresh_replay_history_and_defaults_to_dry_run(engine):
+    from app.utils.hub_auth_maintenance import cleanup_hub_auth
+
+    first = issue_hub_tokens(engine, "0000-0000-0000-0001", "hub", now=NOW)
+    refresh_hub_tokens(engine, first.refresh_token, "hub", now=NOW + timedelta(minutes=1))
+    preview = cleanup_hub_auth(engine, now=NOW + timedelta(days=31))
+    assert preview["hubtokenfamily"] == 1
+    with Session(engine) as session:
+        assert len(session.exec(select(HubRefreshToken)).all()) == 2
+    cleanup_hub_auth(engine, commit=True, now=NOW + timedelta(days=1))
+    with Session(engine) as session:
+        assert session.exec(select(HubAccessToken)).all() == []
+        assert len(session.exec(select(HubRefreshToken)).all()) == 2
+    cleanup_hub_auth(engine, commit=True, now=NOW + timedelta(days=31))
+    with Session(engine) as session:
+        assert session.exec(select(HubTokenFamily)).all() == []
+        assert session.exec(select(HubRefreshToken)).all() == []
+
+
 def access_user(engine, token, *, now):
     with Session(engine) as session:
         return hub_access_user(session, token, now=now)

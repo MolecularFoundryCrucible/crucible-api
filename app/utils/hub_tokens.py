@@ -60,39 +60,42 @@ def _issue_access(session: Session, family: HubTokenFamily, now: datetime) -> tu
 
 
 def issue_hub_tokens(engine, user_unique_id: str, client_id: str, *, now: datetime | None = None) -> HubTokenPair:
-    current = _now(now)
     with Session(engine) as session, session.begin():
-        user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-        if user is None or user.is_service_account:
-            raise InvalidHubGrant
-        family = HubTokenFamily(
-            id=str(uuid.uuid4()),
-            user_unique_id=user_unique_id,
-            client_id=client_id,
-            created_at=current,
-            expires_at=current + REFRESH_ABSOLUTE_LIFETIME,
-            last_refreshed_at=current,
+        return issue_hub_tokens_in_session(session, user_unique_id, client_id, now=now)
+
+
+def issue_hub_tokens_in_session(session: Session, user_unique_id: str, client_id: str, *, now: datetime | None = None) -> HubTokenPair:
+    current = _now(now)
+    user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
+    if user is None or user.is_service_account:
+        raise InvalidHubGrant
+    family = HubTokenFamily(
+        id=str(uuid.uuid4()),
+        user_unique_id=user_unique_id,
+        client_id=client_id,
+        created_at=current,
+        expires_at=current + REFRESH_ABSOLUTE_LIFETIME,
+        last_refreshed_at=current,
+    )
+    session.add(family)
+    session.flush()
+    refresh_token = _token(REFRESH_PREFIX)
+    session.add(
+        HubRefreshToken(
+            token_hash=_digest(refresh_token),
+            family_id=family.id,
+            generation=0,
+            issued_at=current,
         )
-        session.add(family)
-        session.flush()
-        refresh_token = _token(REFRESH_PREFIX)
-        session.add(
-            HubRefreshToken(
-                token_hash=_digest(refresh_token),
-                family_id=family.id,
-                generation=0,
-                issued_at=current,
-            )
-        )
-        access_token, access_expires_at = _issue_access(session, family, current)
-        result = HubTokenPair(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            access_expires_at=access_expires_at,
-            refresh_expires_at=family.expires_at,
-            user_unique_id=user_unique_id,
-        )
-    return result
+    )
+    access_token, access_expires_at = _issue_access(session, family, current)
+    return HubTokenPair(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        access_expires_at=access_expires_at,
+        refresh_expires_at=family.expires_at,
+        user_unique_id=user_unique_id,
+    )
 
 
 def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datetime | None = None) -> HubTokenPair:
@@ -117,6 +120,7 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
             select(HubRefreshToken)
             .where(HubRefreshToken.token_hash == token_hash)
             .with_for_update()
+            .execution_options(populate_existing=True)
         ).one()
         if token.spent_at is not None:
             family.revoked_at = current

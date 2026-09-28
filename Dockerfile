@@ -24,6 +24,7 @@ RUN curl https://rclone.org/install.sh | bash
 
 # files
 COPY app/ /root/app/
+COPY scripts/cleanup_hub_auth.py /root/scripts/cleanup_hub_auth.py
 COPY pyproject.toml /root/
 COPY uv.lock /root/
 COPY .python-version /root/

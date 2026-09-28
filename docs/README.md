@@ -17,6 +17,11 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 
 ## Operations and accepted data follow-ups
 
+- [Hub authentication overview](hub_auth_overview.md): sign-in, the five API tables, refresh, logout, and cleanup.
+- [Hub login integration](hub_login_design.md): implemented contract and single-instance pilot requirements.
+- [Hub authentication operations](hub_auth_operations.md): secrets, logging, cleanup, and activation gates.
+- [Hub authentication rollout](hub_auth_release_rollout.md): recorded deployment state and remaining migration steps.
+
 - [Database migration guidance](../migrations/README.md): current schema and data migration safeguards.
 - [Production migration data follow-ups](production_migration_data_followups.md): unresolved legacy instrument references and ownership anomalies from the August 2026 migration.
 - [Kubernetes deployment notes](../k8s-conf/README.md): current metrics and PodMonitoring setup.

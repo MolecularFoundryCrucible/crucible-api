@@ -5,7 +5,10 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.build_info import api_version
@@ -16,13 +19,15 @@ from app.api.routes import (account, auth, files, datasets, gcs_storage, resourc
                             samples, instruments, users, projects,
                             access_groups, entities, misc, deletion,
                             ingestion_requests, ai, service_accounts,
-                            resource_graph)
+                            resource_graph, hub_auth)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(levelname)s:%(name)s:%(message)s",
 )
 logger = logging.getLogger(__name__)
+# Uvicorn's raw query strings include OAuth callback codes; log_requests records safe request metadata.
+logging.getLogger("uvicorn.access").disabled = True
 
 api_root_path = get_api_root_path()
 app = FastAPI(
@@ -31,6 +36,37 @@ app = FastAPI(
     servers=[{"url": api_root_path}],
     version=api_version(),
 )
+
+
+HUB_AUTH_HEADERS = {
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+def _is_hub_auth_request(request: Request) -> bool:
+    path = request.scope["path"]
+    root = request.scope.get("root_path", "").rstrip("/")
+    if root and path.startswith(root + "/"):
+        path = path[len(root):]
+    return path == "/auth/hub" or path.startswith("/auth/hub/")
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_request_validation(request: Request, error: RequestValidationError):
+    if not _is_hub_auth_request(request):
+        return await request_validation_exception_handler(request, error)
+    return JSONResponse(
+        status_code=422,
+        content={"detail": [{
+            "loc": ["request"],
+            "msg": "Invalid authentication request",
+            "type": "value_error",
+        }]},
+        headers=HUB_AUTH_HEADERS,
+    )
 
 
 def _append_vary(response, field_name: str) -> None:
@@ -107,7 +143,7 @@ async def log_requests(request: Request, call_next):
     started = time.perf_counter()
     try:
         response = await call_next(request)
-    except Exception:
+    except Exception as error:
         duration_ms = (time.perf_counter() - started) * 1000
         logger.info(
             "%s %s %s %.3fms request_id=%s",
@@ -118,6 +154,16 @@ async def log_requests(request: Request, call_next):
             request.state.request_id,
         )
         _audit_privileged_request(request, 500, duration_ms)
+        if _is_hub_auth_request(request):
+            logger.error(
+                "Hub authentication failure error_type=%s request_id=%s",
+                type(error).__name__, request.state.request_id,
+            )
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Authentication request failed"},
+                headers={**HUB_AUTH_HEADERS, "X-Request-ID": request.state.request_id},
+            )
         raise
 
     context = getattr(request.state, "authorization_context", None)
@@ -130,6 +176,8 @@ async def log_requests(request: Request, call_next):
         elif "cache-control" not in response.headers:
             response.headers["Cache-Control"] = "private"
     response.headers["X-Request-ID"] = request.state.request_id
+    if _is_hub_auth_request(request):
+        response.headers.update(HUB_AUTH_HEADERS)
     duration_ms = (time.perf_counter() - started) * 1000
     logger.info(
         "%s %s %s %.3fms request_id=%s",
@@ -147,6 +195,7 @@ Instrumentator().instrument(app).expose(app)
 
 app.include_router(account.router)
 app.include_router(auth.router)
+app.include_router(hub_auth.router)
 app.include_router(files.router)
 app.include_router(ingestion_requests.router)
 app.include_router(datasets.router)
@@ -203,10 +252,21 @@ def custom_openapi():
         "description": "Cache key dimensions for authenticated responses.",
         "schema": {"type": "string"},
     }
-    for path_item in schema.get("paths", {}).values():
+    for path, path_item in schema.get("paths", {}).items():
         for operation in path_item.values():
             if not isinstance(operation, dict):
                 continue
+            if path.startswith("/auth/hub/"):
+                operation["responses"].setdefault("500", {
+                    "description": "Authentication request failed; response contains no internal error details",
+                })
+                if "422" in operation["responses"]:
+                    operation["responses"]["422"]["description"] = "Invalid authentication request; submitted values and validation context are omitted"
+                for response in operation["responses"].values():
+                    response_headers = response.setdefault("headers", {})
+                    for name, value in HUB_AUTH_HEADERS.items():
+                        response_headers[name] = {"schema": {"type": "string", "const": value}}
+                    response_headers["X-Request-ID"] = {"$ref": "#/components/headers/CrucibleRequestId"}
             security_requirements = operation.get("security", [])
             authenticated = any(
                 "HTTPBearer" in requirement

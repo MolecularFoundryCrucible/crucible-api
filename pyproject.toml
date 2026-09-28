@@ -39,6 +39,7 @@ dependencies = [
     "nano-crucible",
     "alembic>=1.19.1",
     "protobuf>=5.29.6,<6",
+    "authlib>=1.8,<2",
 ]
 
 [tool.uv.sources]

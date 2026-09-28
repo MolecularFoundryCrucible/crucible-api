@@ -1,0 +1,47 @@
+from datetime import datetime, timezone
+
+from sqlalchemy import delete, func
+from sqlmodel import Session, select
+
+from app.models.core_models import (
+    HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily,
+)
+
+
+def cleanup_hub_auth(engine, *, commit: bool = False, batch_size: int = 1000, now: datetime | None = None) -> dict[str, int]:
+    if not 1 <= batch_size <= 10000:
+        raise ValueError("batch_size must be between 1 and 10000")
+    cutoff = now or datetime.now(timezone.utc)
+    counts = {}
+    expired_access_ids = []
+    with Session(engine) as session, session.begin():
+        for model, key in (
+            (HubLoginTransaction, HubLoginTransaction.state_hash),
+            (HubLoginCode, HubLoginCode.code_hash),
+            (HubAccessToken, HubAccessToken.token_hash),
+        ):
+            query = select(key).where(model.expires_at <= cutoff).order_by(model.expires_at, key).limit(batch_size)
+            if commit:
+                query = query.with_for_update(skip_locked=True)
+            ids = session.exec(query).all()
+            if model is HubAccessToken:
+                expired_access_ids = ids
+            counts[model.__tablename__] = len(ids)
+            if commit and ids:
+                session.execute(delete(model).where(key.in_(ids)))
+
+        query = select(HubTokenFamily.id).where(HubTokenFamily.expires_at <= cutoff).order_by(HubTokenFamily.expires_at, HubTokenFamily.id).limit(batch_size)
+        if commit:
+            query = query.with_for_update(skip_locked=True)
+        families = session.exec(query).all()
+        for model in (HubAccessToken, HubRefreshToken):
+            condition = model.family_id.in_(families)
+            if model is HubAccessToken and not commit:
+                condition = condition & model.token_hash.not_in(expired_access_ids)
+            counts[model.__tablename__] = counts.get(model.__tablename__, 0) + session.exec(select(func.count()).select_from(model).where(condition)).one()
+            if commit and families:
+                session.execute(delete(model).where(model.family_id.in_(families)))
+        counts[HubTokenFamily.__tablename__] = len(families)
+        if commit and families:
+            session.execute(delete(HubTokenFamily).where(HubTokenFamily.id.in_(families)))
+    return counts

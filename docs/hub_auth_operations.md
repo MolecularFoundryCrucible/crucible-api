@@ -35,9 +35,11 @@ Production reserves `https://crucible.lbl.gov/hub/auth/callback` as the Hub call
 
 Before activation:
 
+Follow the proposed [schema rollout sequence](hub_auth_release_rollout.md) for the exact-readiness transition. Its recorded staging mismatch must be resolved before merging the release.
+
 1. The four secrets and API secret-level grants are provisioned. When deploying the Hub, confirm its runtime identity can access only the main shared client secret unless it already inherits broader project access. Do not add new project-wide grants.
 2. Confirm the pinned numeric references remain enabled. Do not put secret values in shell arguments, git, or chat. Future rotations require a separate approved version update; do not recreate or overwrite the provisioned credentials.
-3. Coordinate the approved schema migration and deployment. `EXPECTED_DB_REVISIONS` still reflects the pre-Hub deployed revision in the checked-in ConfigMaps; update it to the verified target `e92a6b1c730f` as part of that coordinated rollout, not as an unrelated configuration push. The readiness check uses an exact revision match, so migrating while old pods still expect the previous revision can make them unready. Plan the transition explicitly before running Alembic.
+3. Coordinate the approved schema migration and deployment. `EXPECTED_DB_REVISIONS` is `4a7d2c9e1f60` for main and `d81c3a4f62b0` for staging; update it to the verified target `e92a6b1c730f` as part of that coordinated rollout, not as an unrelated configuration push. The readiness check uses an exact revision match, so migrating while old pods still expect the previous revision can make them unready. Plan the transition explicitly before running Alembic.
 4. Verify ingress protections and backend bypass policy, configure the exact callback, and enable `HUB_AUTH_ENABLED=true` only for the environment under test. Roll the API pods to load the ConfigMap changes. The Hub's production activation remains independently controlled.
 5. Test sign-in, refresh, logout, secret unavailability, and non-Hub clients. Run the cleanup preview and approved first cleanup before enabling its schedule.
 

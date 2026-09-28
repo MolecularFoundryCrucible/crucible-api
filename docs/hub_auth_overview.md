@@ -61,3 +61,32 @@ Each login attempt adds a transaction row. Successful login adds a code, family,
 These five tables live in the API database. They are not the Hub's browser-session store. The single-instance pilot uses `HUB_AUTH_SESSION_MODE=single-instance` with process-local Hub sessions. Restarting or replacing that Hub instance can require another sign-in even while API token records remain valid. Shared Hub session storage is deferred until multi-instance operation is needed.
 
 Disabling `HUB_AUTH_ENABLED` stops login, exchange, refresh, and revoke operations; it does not revoke existing access tokens. Cleanup also does not revoke live sessions. Use the appropriate token-family revocation procedure when ending API access is required.
+
+## Extending this to other clients
+
+Yes, the design can be reused, especially by another trusted web application with a backend, including a Python web app. However, the current implementation supports only one configured client ID, shared client secret, and exact callback per API deployment. It is not yet a multi-client login service or a general OAuth authorization server. Changing those settings would replace the Hub's registration, not add another client.
+
+| Client type | Current support and extension path |
+| --- | --- |
+| Another first-party web app with a backend | Can reuse the same flow after adding separate client registrations. Its server keeps credentials and performs exchange, refresh, and revocation. |
+| Python script, CLI, desktop, or mobile app | Existing API keys still work. Interactive login needs a separately designed public-client flow; do not distribute the Hub client secret. |
+| Browser-only application | Cannot safely use the current confidential-client exchange directly. Use a backend like the Hub, or separately design public-client support. |
+| Instrument, scheduled job, or other unattended service | Continue using service-account API keys and existing permissions. Human ORCID login and its expiring session are not a replacement for machine credentials. |
+
+### Smallest extension: another trusted backend
+
+1. Add an operator-managed client registry containing each application's unique client ID, its own secret reference, exact allowed callbacks, and enabled state. A small configuration-backed registry can be sufficient initially; a database registration table is optional, not inherently required.
+2. Resolve the selected registration consistently at login, code exchange, refresh, and revocation. Keep the existing Hub registration and routes working. Never share the Hub credential between applications or accept arbitrary callbacks.
+3. Reuse the existing five tables. `hublogintransaction`, `hublogincode`, and `hubtokenfamily` already store `client_id`; access and refresh rows point to the family. The current schema can represent separate clients without duplicating these tables. Their `hub` names do not require an immediate rename or migration.
+4. Give the new backend its own browser-session handling, state validation, PKCE verifier, secure cookies, CSRF protection, refresh coordination, and logout integration. The API remains the ORCID client, so another application's callback is registered with the API, not used as a replacement for the API's ORCID callback.
+5. Test cross-client isolation: one application's secret must not exchange, refresh, or revoke another application's grants. Define whether disabling a registration also revokes its existing families; rejecting new exchanges alone does not invalidate issued access tokens. Publish the additive contract and run existing Hub and API-key regression tests.
+
+The application receives the signed-in user's effective API permissions, not a reduced application-specific permission set. Current access tokens are bearer credentials, not sender-bound credentials: possession permits API use without the client secret until expiry or revocation. Client binding protects exchange, refresh, and revocation, but is not a substitute for delegated scopes or consent. Supporting untrusted third-party applications would require a separate authorization design and review.
+
+### Interactive Python and native clients
+
+A distributed CLI or desktop app cannot keep a shared client secret confidential. A future interactive client should use the system browser and authorization code with PKCE, with an appropriate registered callback such as a loopback listener. This requires explicit public-client support in the API; merely removing the existing Basic-auth check is not sufficient. See [OAuth for Native Apps, RFC 8252](https://www.rfc-editor.org/rfc/rfc8252).
+
+For a remote terminal without a usable local callback, evaluate the [Device Authorization Grant, RFC 8628](https://www.rfc-editor.org/rfc/rfc8628). Neither public-client nor device authorization is implemented here, and no ORCID device-flow support is assumed. Prefer an established authorization-server implementation if requirements grow to these standard grants, rather than expanding the custom Hub handoff into one.
+
+A future Python client would coordinate refresh, keep refresh credentials in suitable protected local storage, and send access tokens as bearer credentials. Existing API-key support must remain available. These extensions are future work, not prerequisites for the Hub release.

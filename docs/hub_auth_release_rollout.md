@@ -2,6 +2,8 @@
 
 Status: Proposed sequence, live changes require explicit approval.
 
+Staging completed this sequence on 2026-09-28 with user approval. Revision `e92a6b1c730f` was applied through the local SQL proxy in 1.38 seconds after verifying the database name, backup/PITR status, and absence of long transactions. All five Hub tables and four valid expiry indexes were verified. Exact revision checking was restored and the rolling update completed on the existing `c8baeec` image. Public staging readiness returned 200 at the target revision; production remained healthy at `4a7d2c9e1f60`. PR #286 has not been merged and no new API image was deployed. The production migration remains pending separate approval.
+
 ## Verified state on 2026-09-28
 
 | Environment | Image | Actual schema | Expected schema | Pod readiness |

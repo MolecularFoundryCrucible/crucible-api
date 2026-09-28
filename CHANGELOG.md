@@ -10,10 +10,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Added a separate signed XML multipart upload API with asynchronous initiation/completion, bounded part authorization, resumable status, idempotent cancellation, and a durable processing worker. New initiation defaults to disabled; legacy upload contracts remain supported. The worker verifies SHA-256 before publication and retains generation-aware cleanup intent. Dedicated-bucket downloads and ingestion require server-recorded generations; file identity edits invalidate trusted checksum metadata. Added a resumable reference client and operator guide.
 
-- Added nullable multipart session and file verification metadata to existing tables, a legacy completion protocol guard, and retained cleanup intent on dataset deletion. Dedicated storage configuration defaults to disabled; the new multipart endpoints are not yet available.
+- Added nullable multipart session and file verification metadata to existing tables, a legacy completion protocol guard, and retained cleanup intent on dataset deletion. Dedicated storage configuration defaults to disabled; new multipart initiation remains disabled by default.
 
+- Updated the staging Hub client and both ORCID credential pins to Secret Manager version 2.
+- Added pinned Google Secret Manager references for Hub client and ORCID credentials, environment-specific deployment settings, and a disabled-by-default deployment activation flag.
+- Redacted Hub authentication validation failures and unexpected-error logs, and added no-store headers to all Hub authentication responses.
+- Cloud Build now deploys the matching Hub cleanup CronJob with the API image SHA, initially suspended, and preserves its activation state on later builds.
+- Added suspended hourly Hub authentication cleanup CronJobs for staging and main, packaged the cleanup script in the API image, and limited cleanup error logs to exception types.
+- Added concurrent expiry indexes for Hub login transactions, handoff codes, access tokens, and token families.
+- Documented Hub logout revocation, rotated-token support, session isolation, and Hub session cleanup requirements in OpenAPI and the login guide.
+- Added separate ORCID-backed Hub sign-in, one-use code exchange, short-lived Hub access tokens, and authenticated refresh and revoke routes. Existing API keys remain supported.
+- Added authorization-filtered `GET /embeddings` listing with signed cursor pagination, compatible offsets, optional exact totals, and exact ID, resource, chunk-index, and model filters.
+- Added a `resource_embedding` table with IVFFlat cosine indexing for storing 768-dimensional, model-labeled text chunks linked to canonical resource MFIDs, plus authenticated `POST /embeddings/search` nearest-neighbor search with resource access filtering.
 - Added human-requester deletion history, deterministic cursor pagination, direction and project/resource filters, canonical project MFID snapshots, and public-safe requester and reviewer summaries to deletion audit reads while retaining administrator-wide history, offset pagination, and stable ID fields. Service accounts cannot read deletion audit history.
-- Added a `resource_embedding` table with IVFFlat cosine indexing for storing 768-dimensional, model-labeled text chunks linked to canonical resource MFIDs, plus authenticated `POST /resources/embeddings/search` nearest-neighbor search with resource access filtering.
 - Added case-insensitive `resource_name`, `project_id`, `requester_name`, and semantic `status` sorting to deletion-request collections with nulls-last keyset pagination.
 - Added nullable public requester and reviewer identity summaries to deletion-request responses while retaining their stable ID fields.
 - Added request-time direction and opaque continuation cursors to deletion-request collections while retaining offset pagination and newest-first defaults.
@@ -54,6 +63,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Updated production readiness to Hub authentication schema revision `e92a6b1c730f`.
+
+- `GET /ingestion_requests` now returns the authorization-filtered collection for any caller with viewer access to the parent datasets; non-administrators no longer need to supply a dataset or file filter.
 - Deletion-request responses now require caller capabilities, statuses and review decisions use documented enums, and collection ordering uses descending request time and request ID.
 - Authenticated responses now use private caching, and elevated responses use `Cache-Control: private, no-store`. Omitted privilege mode preserves existing platform-administrator behavior.
 - Kubernetes readiness configuration now expects database revision `7a1c4e8d2f90` for the platform contributor role.
@@ -84,6 +96,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Packaged the multipart worker in the API image, preserved newly queued processing requests during worker release and completion-time privilege mode during background processing, and reconciled missing provider uploads into a recoverable failure. Integrated API-key and ORCID/OAuth access-token upload coverage and chained the unapplied multipart migrations after the completed auth migrations.
+
+- Escaped profile values in the legacy API-key page and removed dynamic values from its inline JavaScript.
+- Hub code exchange now commits token issuance and code consumption together, and concurrent refresh reuse revokes the token family.
+- Disabled raw Uvicorn access logs while retaining API request logs without query strings.
+- Added a dry-run-by-default command for cleaning expired Hub authentication records.
+- Hub sign-in now persists the token family before issuing related access and refresh tokens, avoiding a foreign-key error during code exchange.
 - Deletion-request submitters can now read their own request detail without receiving deletion-review authority.
 - Regenerated the checked-in OpenAPI artifact with dataset and sample facet operations and matching null filters.
 - Identical thumbnail images uploaded to different datasets now remain independently owned instead of moving an existing thumbnail between datasets.

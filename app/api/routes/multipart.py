@@ -109,6 +109,9 @@ def complete(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str,
         if upload.state == "uploading":
             if len((upload.part_manifest or {}).get("authorized", {})) != upload.part_count:
                 raise HTTPException(409, "All parts must be authorized before completion")
+            manifest = dict(upload.part_manifest or {})
+            manifest["allow_global_admin"] = auth_res.is_platform_admin
+            upload.part_manifest = manifest
             upload.claimed_sha256 = body.sha256_hash
             upload.claimed_crc32c = body.crc32c
             upload.state = "finalizing"

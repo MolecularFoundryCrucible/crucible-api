@@ -21,6 +21,7 @@ from app.general_utils import  get_secret
 from app.api.dependencies import get_engine, get_api_path, get_api_url
 from app.models.core_models import ApiToken
 from app.models.resource import ResourceCapabilities
+from app.utils.hub_tokens import ACCESS_PREFIX, InvalidHubGrant, hub_access_user
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, THRESHOLDS, GroupMembership, Permission, PlatformRole,
     Principal, PrivilegeMode, PrivilegeModeSource, Role, can_grant,
@@ -232,6 +233,14 @@ def authorize_user(
 
 def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
     apikey = credentials.credentials
+    if apikey.startswith(ACCESS_PREFIX):
+        with Session(engine) as session:
+            try:
+                user_unique_id = hub_access_user(session, apikey)
+            except InvalidHubGrant:
+                raise HTTPException(status_code=401, detail="Invalid or expired API credential.")
+            return load_principal(session, user_unique_id)
+
     cache_key = _auth_cache_key(apikey)
     with _auth_cache_lock:
         cached = _auth_cache.get(cache_key)

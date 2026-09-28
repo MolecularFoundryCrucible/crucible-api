@@ -111,6 +111,42 @@ class ResourceDetailQuery(SampleDetailQuery):
     pass
 
 
+class ResourceEmbeddingListQuery(StrictQueryModel):
+    id: Optional[int] = Field(default=None, ge=1, description="Exact embedding row ID.")
+    resource_mfid: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Exact resource MFID.",
+    )
+    chunk_index: Optional[int] = Field(default=None, ge=0, description="Exact chunk index.")
+    model_name: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description="Exact embedding model name.",
+    )
+    include_total: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Exact authorization-filtered total. It is included on the first "
+            "page by default, may be requested on every page with true, and "
+            "suppressed with false."
+        ),
+    )
+    limit: int = Field(default=100, ge=1, le=1000)
+    cursor: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=4096,
+        description="Opaque continuation cursor returned by a previous page.",
+    )
+    offset: int = Field(
+        default=0,
+        ge=0,
+        description="Compatibility offset. A supplied cursor takes precedence.",
+    )
+
+
 class ResourceGraphQuery(StrictQueryModel):
     depth: int = Field(
         default=1,

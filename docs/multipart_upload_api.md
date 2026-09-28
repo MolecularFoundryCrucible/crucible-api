@@ -4,7 +4,7 @@ Implemented in the multipart feature branch. Deployment and the client rollout r
 
 ## HTTP workflow
 
-All routes use the existing bearer authentication and dataset permission system. Every response in the multipart namespace has `Cache-Control: no-store`. No response contains an OAuth token or service-account credential.
+All routes accept either an existing Crucible API key or a Crucible access token issued by the ORCID/OAuth login flow, using `Authorization: Bearer <credential>` and the shared dataset permission system. ORCID provider tokens and refresh tokens are not API access credentials. A refreshed login token for the same principal can resume an existing upload; revoked or expired login access tokens are rejected. Every response in the multipart namespace has `Cache-Control: no-store`. No response contains an OAuth token or service-account credential.
 
 | Method and path | Request | Success |
 | --- | --- | --- |
@@ -73,8 +73,8 @@ The ingestion message retains `filename` as the full bucket/object path and adds
 
 ## Deployment gates
 
-1. Integrate the reviewed branches and chain the unapplied foundation migration after the actual ORCID migration head. The processing revision follows the foundation. Verify one Alembic head; do not rewrite deployed revisions.
-2. Apply the additive migrations through the separately authorized release workflow before deploying the application. Deploy the legacy completion guard to every instance before enabling initiation.
+1. Auth integration is complete through `origin/main` at `8e4d0ef`. The migration chain is `e92a6b1c730f` (auth) -> `b72f6c903a18` -> `c83a7d014b29` (multipart head). Review both unapplied multipart revisions before release.
+2. Apply the additive migrations through the separately authorized release workflow before deploying the application and its updated `EXPECTED_DB_REVISIONS=c83a7d014b29` configuration. Coordinate readiness pins during the migration window, since existing deployments check exact schema revisions. Deploy the legacy completion guard to every instance before enabling initiation.
 3. Provision the permanent environment-specific bucket, private access controls, CORS, lifecycle policy, signer, and runtime impersonation grants. Test legacy-identity denial and dedicated-identity access in that environment.
 4. Deploy and observe the worker with initiation disabled. Configure edge request/body limits and a verification-worker replica count consistent with the database concurrency budget. Keep clocks synchronized for signed URLs and leases.
 5. Exercise the reference client, target browsers, real download and ingestion consumers, network interruption, pod restart, abort/finalize races, cleanup and retention failures, and representative large files. Measure SHA-256 read cost and throughput before cohort rollout.
@@ -86,4 +86,4 @@ The local tests use a deterministic storage adapter for application lifecycle te
 
 The full local suite passed with 1,253 tests and 63 environment-dependent skips. After the final cleanup, size-limit, and client-resume additions, the focused multipart suite passed all 37 tests, including the PostgreSQL concurrency and two-revision migration round trips. The reference-client test simulates a lost part response, reruns from its local resume record, skips the accepted part, and receives the verified file. Recovery tests cover lost initiation/completion responses, a failed publication transaction, revoked access, lease takeover, abort during verification, expiry, and dataset/file deletion. Provider adapter tests check signature arguments, XML errors inside HTTP 200, pagination, and generation pinning.
 
-The generated OpenAPI uses `/api/v3` and adds five operations across four paths; every existing path and component schema is unchanged. Pyflakes on the new modules and `git diff --check` passed. Alembic reports the single provisional branch head `c83a7d014b29`. Validation used dummy application credentials and an isolated local PostgreSQL container, with dotenv loading disabled; no shared database or cloud storage was written by this implementation phase.
+The generated OpenAPI uses `/api/v3` and adds five operations across four paths; every existing path and component schema is unchanged. Pyflakes on the new modules and `git diff --check` passed. Alembic reports the single branch head `c83a7d014b29`. Validation used dummy application credentials and an isolated local PostgreSQL container, with dotenv loading disabled; no shared database or cloud storage was written by this implementation phase.

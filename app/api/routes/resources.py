@@ -18,7 +18,7 @@ from app.models.core_models import (
     ResourceACL, ResourceEmbedding, Sample,
     ScientificMetadataBinary, User, UserAccessGroupLink,
 )
-from app.models.ai import ChunkHit, ChunkSearchRequest
+from app.models.ai import ChunkHit, ChunkSearchRequest, ResourceEmbeddingRead
 from app.models.access import AccessGrantRead, AccessGrantWrite
 from app.models.access_groups import AccessGroupRead
 from app.models.datasets import DatasetResponse, ScientificMetadataBinaryRead
@@ -32,7 +32,7 @@ from app.models.samples import SampleResponse
 from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
-from app.models.query_params import ResourceDetailQuery
+from app.models.query_params import ResourceDetailQuery, ResourceEmbeddingListQuery
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
 from app.utils.auth_utils import (
     authorize_user,
@@ -57,10 +57,130 @@ from app.utils.gcs_record_utils import write_metadata
 from app.utils.link_utils import fetch_readable_links
 from app.utils.project_utils import is_project_group
 from app.utils.user_utils import resolve_user_by_identifier
+from app.utils.cursor_utils import (
+    CursorError,
+    filter_fingerprint,
+    new_cursor,
+    validate_cursor,
+)
 
 
 router = APIRouter(tags=["resources"])
 engine = get_engine()
+
+
+@router.get(
+    "/embeddings",
+    response_model=PaginatedResponse[ResourceEmbeddingRead],
+)
+def list_resource_embeddings(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    params: Annotated[ResourceEmbeddingListQuery, Query()],
+):
+    """Return a cursor-paginated, filtered list of visible resource embeddings.
+
+    Results are ordered by embedding row ID ascending. Pass the returned
+    next_cursor to retrieve the next stable keyset page. Offset pagination
+    remains available for compatibility; cursor takes precedence when both
+    are supplied.
+    """
+    statement = select(ResourceEmbedding).where(
+        permission_filter(
+            auth_res,
+            ResourceEmbedding,
+            Permission.READ,
+            resource_id_column=ResourceEmbedding.resource_mfid,
+        )
+    )
+
+    if params.id is not None:
+        statement = statement.where(ResourceEmbedding.id == params.id)
+    if params.resource_mfid is not None:
+        statement = statement.where(ResourceEmbedding.resource_mfid == params.resource_mfid)
+    if params.chunk_index is not None:
+        statement = statement.where(ResourceEmbedding.chunk_index == params.chunk_index)
+    if params.model_name is not None:
+        statement = statement.where(ResourceEmbedding.model_name == params.model_name)
+
+    filters_digest = filter_fingerprint({
+        "id": params.id,
+        "resource_mfid": params.resource_mfid,
+        "chunk_index": params.chunk_index,
+        "model_name": params.model_name,
+    })
+    decoded_embedding_id = None
+    if params.cursor is not None:
+        try:
+            decoded_cursor = validate_cursor(
+                params.cursor,
+                kind="resource_embedding",
+                sort="id",
+                direction="asc",
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+            if decoded_cursor is None:
+                raise CursorError("Invalid cursor")
+            decoded_embedding_id = int(decoded_cursor.unique_id)
+            if decoded_embedding_id < 1:
+                raise CursorError("Invalid cursor")
+        except (CursorError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Invalid cursor") from exc
+
+    include_total = params.include_total is True or (
+        params.include_total is None
+        and params.cursor is None
+        and params.offset == 0
+    )
+
+    with Session(engine) as session:
+        total = None
+        if include_total:
+            total = session.exec(
+                select(func.count()).select_from(statement.subquery())
+            ).one()
+        page_statement = statement
+        if decoded_embedding_id is not None:
+            page_statement = page_statement.where(
+                ResourceEmbedding.id > decoded_embedding_id)
+        elif params.offset:
+            page_statement = page_statement.offset(params.offset)
+        rows = session.exec(
+            page_statement.order_by(ResourceEmbedding.id).limit(params.limit + 1)
+        ).all()
+
+    has_more = len(rows) > params.limit
+    rows = rows[:params.limit]
+    next_cursor = None
+    if has_more:
+        next_cursor = new_cursor(
+            kind="resource_embedding",
+            sort="id",
+            direction="asc",
+            primary=None,
+            unique_id=str(rows[-1].id),
+            filters=filters_digest,
+            user_id=auth_res.user_id,
+        )
+
+    items = [
+        ResourceEmbeddingRead(
+            id=row.id,
+            resource_mfid=row.resource_mfid,
+            chunk_index=row.chunk_index,
+            chunk_text=row.chunk_text,
+            embedding=list(row.embedding) if row.embedding is not None else None,
+            model_name=row.model_name,
+        )
+        for row in rows
+    ]
+    return PaginatedResponse(
+        total=total,
+        limit=params.limit,
+        offset=None if params.cursor is not None else params.offset,
+        items=items,
+        next_cursor=next_cursor,
+    )
 
 
 def search_chunks(
@@ -115,7 +235,7 @@ def search_chunks(
     ]
 
 
-@router.post("/resources/embeddings/search", response_model=list[ChunkHit])
+@router.post("/embeddings/search", response_model=list[ChunkHit])
 def search_resource_chunks(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     body: ChunkSearchRequest,

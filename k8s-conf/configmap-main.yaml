@@ -6,6 +6,15 @@ metadata:
   labels:
     app: "crucible-api-main"
 data:
+  HUB_AUTH_ENABLED: "false"
+  HUB_AUTH_CLIENT_ID: "crucible-hub"
+  HUB_AUTH_CALLBACK_URI: "https://crucible.lbl.gov/hub/auth/callback"
+  HUB_AUTH_PUBLIC_API_URL: "https://crucible.lbl.gov/api/v3"
+  HUB_AUTH_ORCID_ISSUER: "https://orcid.org"
+  HUB_AUTH_ORCID_CLIENT_ID: "APP-YDW1MRE405389PP0"
+  HUB_AUTH_CLIENT_SECRET_VERSION: "projects/776258882599/secrets/crucible-hub-main-client-secret/versions/1"
+  HUB_AUTH_ORCID_CLIENT_SECRET_VERSION: "projects/776258882599/secrets/crucible-hub-main-orcid-client-secret/versions/2"
+
   # api
   API_CONF_FILE: "app/conf/api_conf.yaml"
 
@@ -22,4 +31,4 @@ data:
   db_username: "crucible-api-user"
   db_database: "crucible"
   db_auth: "true"
-  EXPECTED_DB_REVISIONS: "4a7d2c9e1f60"
+  EXPECTED_DB_REVISIONS: "c83a7d014b29"

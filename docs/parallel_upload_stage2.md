@@ -12,7 +12,7 @@ Legacy completion rejects non-null protocols after checking ownership, before ex
 
 ## Integration and deployment gates
 
-Revision `b72f6c903a18` currently follows this branch's head, `4a7d2c9e1f60`. Before this unapplied revision is merged or deployed, integrate the ORCID branch and reparent it after the actual migration head (currently expected to be `d81c3a4f62b0`). Confirm exactly one Alembic head. Never rewrite an applied revision. This branch is not ready for a staging migration as it stands.
+Integration update: the completed auth changes from `origin/main` at `8e4d0ef` are included. The unapplied multipart foundation revision `b72f6c903a18` now follows the auth head `e92a6b1c730f`; processing revision `c83a7d014b29` follows the foundation. The combined branch has one Alembic head. No applied auth revision was rewritten and no shared migration was run.
 
 Apply the additive migration before deploying code that selects the new columns. Deploy the protocol guard to every instance before any new initiation is enabled. Existing client request/response schemas are unchanged. Once new sessions exist, do not roll back to binaries lacking the guard or remove the added columns; disable new initiation while retaining processing and cleanup support.
 

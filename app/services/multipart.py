@@ -195,11 +195,13 @@ class MultipartWorker:
             session.expunge(upload)
             return upload
 
-    def release(self, identifier, delay=60):
+    def release(self, identifier, delay=60, expected_schedule=None):
         with Session(self.engine) as session:
             upload = self.locked(session, identifier, True)
             upload.lease_owner = None
             upload.lease_expires_at = None
+            if expected_schedule is not None and utc(upload.next_attempt_at) != utc(expected_schedule):
+                delay = 0
             upload.next_attempt_at = now() + timedelta(seconds=delay)
             save(session, upload)
             session.commit()
@@ -343,7 +345,10 @@ class MultipartWorker:
                     self.begin(upload)
                     delay = 60
                 elif upload.state == "uploading":
-                    for duplicate in self.storage.uploads(upload):
+                    identifiers = self.storage.uploads(upload)
+                    if upload.provider_upload_id not in identifiers:
+                        raise InvalidUpload("provider_upload_missing")
+                    for duplicate in identifiers:
                         if duplicate != upload.provider_upload_id:
                             self.heartbeat(upload.upload_id)
                             self.storage.abort(upload, duplicate)
@@ -377,7 +382,7 @@ class MultipartWorker:
                 delay = min(3600, 5 * 2 ** min(current.attempts, 10))
         finally:
             try:
-                self.release(upload.upload_id, delay)
+                self.release(upload.upload_id, delay, upload.next_attempt_at)
             except LeaseLost:
                 pass
         return True

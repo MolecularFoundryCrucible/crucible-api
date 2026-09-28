@@ -482,3 +482,97 @@ def test_reference_client_resumes_after_lost_part_response(flow, tmp_path, monke
     example.main()
     assert puts == 1
     assert json.loads(capsys.readouterr().out)["sha256_hash"] == SHA
+
+
+@pytest.mark.parametrize("credential_kind", ["api_key", "oauth"])
+def test_real_authentication_supports_both_credentials(flow, monkeypatch, credential_kind):
+    from uuid import uuid4
+    from sqlmodel import SQLModel
+    from app.api.main import app
+    from app.models.core_models import ApiToken, HubTokenFamily, HubRefreshToken, HubAccessToken
+    from app.utils import auth_utils
+    from app.utils.hub_tokens import issue_hub_tokens, refresh_hub_tokens, revoke_hub_tokens
+
+    client, engine, storage, worker = flow
+    app.dependency_overrides.pop(auth_utils.authenticate_user, None)
+    monkeypatch.setattr(auth_utils, "engine", engine)
+    if credential_kind == "api_key":
+        credential = uuid4().hex
+        with Session(engine) as session:
+            session.add(ApiToken(token=credential, user_unique_id="owner", access_group_id="owner-group"))
+            session.commit()
+    else:
+        SQLModel.metadata.create_all(engine, tables=[HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__])
+        pair = issue_hub_tokens(engine, "owner", "hub")
+        credential = pair.access_token
+    headers = {"Authorization": f"Bearer {credential}"}
+    response = client.post(BASE + "/initiate", json={"filename": "auth.bin", "size": len(DATA), "sha256_hash": SHA}, headers=headers)
+    assert response.status_code == 202, response.text
+    identifier = response.json()["upload_id"]
+    worker.run_once()
+    if credential_kind == "oauth":
+        pair = refresh_hub_tokens(engine, pair.refresh_token, "hub")
+        headers = {"Authorization": f"Bearer {pair.access_token}"}
+    assert client.get(BASE + f"/{identifier}", headers=headers).status_code == 200
+    signed = client.post(BASE + f"/{identifier}/parts", json={"parts": [{"part_number": 1, "crc32c": CRC}]}, headers=headers)
+    assert signed.status_code == 200, signed.text
+    storage.put(row(engine, identifier).provider_upload_id, 1)
+    body = {"upload_id": identifier, "sha256_hash": SHA, "crc32c": CRC}
+    assert client.post(BASE + "/complete", json=body, headers=headers).status_code == 202
+    worker.run_once()
+    worker.run_once()
+    assert client.post(BASE + "/complete", json=body, headers=headers).status_code == 200
+    if credential_kind == "oauth":
+        revoke_hub_tokens(engine, pair.refresh_token, "hub")
+        assert client.get(BASE + f"/{identifier}", headers=headers).status_code == 401
+        assert client.delete(BASE + f"/{identifier}", headers=headers).status_code == 401
+
+
+def test_provider_disappearance_becomes_recoverable_failure(flow):
+    _, engine, storage, worker = flow
+    identifier = start(flow)
+    storage.pending.clear()
+    change(engine, identifier, next_attempt_at=service.now())
+    worker.run_once()
+    assert row(engine, identifier).failure_code == "provider_upload_missing"
+    assert row(engine, identifier).state == "failed"
+    worker.run_once()
+    assert row(engine, identifier).cleaned_at is not None
+
+
+def test_worker_release_preserves_newly_queued_cancellation(flow):
+    client, engine, _, worker = flow
+    identifier = start(flow)
+    change(engine, identifier, next_attempt_at=service.now())
+    claimed = worker.claim()
+    assert client.delete(BASE + f"/{identifier}").status_code == 202
+    worker.release(identifier, delay=3600, expected_schedule=claimed.next_attempt_at)
+    assert service.utc(row(engine, identifier).next_attempt_at) <= service.now()
+
+
+
+def test_completion_worker_respects_normal_privilege_mode(flow, auth_as):
+    from app.utils.permissions import PlatformRole
+    client, engine, _, worker = flow
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.unique_id == "owner")).one()
+        user.platform_role = "admin"
+        session.add(user)
+        session.commit()
+        group = session.exec(select(AccessGroup)).one()
+        group_id = group.id
+    auth_as("owner", groups=[("owner-group", group_id, Role.OWNER)], platform_role=PlatformRole.ADMIN)
+    identifier = start(flow)
+    assert row(engine, identifier).part_manifest["allow_global_admin"] is True
+    put(flow, identifier)
+    body = {"upload_id": identifier, "sha256_hash": SHA, "crc32c": CRC}
+    response = client.post(BASE + "/complete", json=body, headers={"Crucible-Privilege-Mode": "normal"})
+    assert response.status_code == 202, response.text
+    assert row(engine, identifier).part_manifest["allow_global_admin"] is False
+    with Session(engine) as session:
+        session.delete(session.exec(select(ResourceACL)).one())
+        session.commit()
+    worker.run_once()
+    assert row(engine, identifier).failure_code == "access_revoked"
+    with Session(engine) as session:
+        assert session.exec(select(AssociatedFile)).all() == []

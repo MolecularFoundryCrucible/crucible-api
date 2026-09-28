@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Added suspended hourly Hub authentication cleanup CronJobs for staging and main, packaged the cleanup script in the API image, and limited cleanup error logs to exception types.
 - Added concurrent expiry indexes for Hub login transactions, handoff codes, access tokens, and token families.
 - Documented Hub logout revocation, rotated-token support, session isolation, and Hub session cleanup requirements in OpenAPI and the login guide.
 - Added separate ORCID-backed Hub sign-in, one-use code exchange, short-lived Hub access tokens, and authenticated refresh and revoke routes. Existing API keys remain supported.

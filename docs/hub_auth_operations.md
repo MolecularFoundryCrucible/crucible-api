@@ -75,6 +75,8 @@ HUB_AUTH_TEST_DATABASE_URL=postgresql://localhost/crucible_hub_auth_test \
   .venv/bin/pytest -q tests/test_hub_auth_postgres.py tests/test_hub_tokens.py
 ```
 
-Before production, the Hub still needs shared protected session storage, coordination of refresh across instances, and verified CSRF defenses. Test browser refresh, logout, two-user isolation, and revocation through the deployed proxy. Hub tokens use current API permissions on every request and do not use the legacy API-key cache.
+The limited production pilot uses `HUB_AUTH_SESSION_MODE=single-instance`, process-local Hub sessions, one minimum and one maximum Cloud Run instance, and best-effort session affinity, with no traffic splitting. Restart, replacement, or misrouting can require a fresh sign-in. Redis and a Hub-owned session database are not pilot prerequisites. Shared-session continuity and multi-replica operation are deferred; the Hub's decision 0033 selects a future Hub-owned Cloud SQL store before scaling.
+
+Before pilot activation, verify CSRF defenses, browser refresh, concurrent refresh within the Hub process, logout, two-user isolation, revocation, and restart sign-out through the deployed proxy. API token tables and their cleanup remain required independently of where Hub browser sessions live. Hub tokens use current API permissions on every request and do not use the legacy API-key cache.
 
 Account suspension remains a separate schema and policy change: the API currently has no disabled-account field. Revoking a Hub family ends that session but does not prevent a new ORCID login or revoke legacy keys. A future account suspension must reject new login, handoff exchange, refresh, and all authenticated requests, including legacy keys, and define cache invalidation before it is enabled. Do not present session revocation as account disablement.

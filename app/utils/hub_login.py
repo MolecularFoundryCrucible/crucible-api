@@ -13,6 +13,7 @@ from app.models.core_models import HubLoginCode, HubLoginTransaction, User
 from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens_in_session
 from app.utils.permissions import AccessGroupType, Role
 from app.utils.user_utils import sql_add_user_to_access_group
+from app.utils.hub_secrets import HubSecretUnavailable, get_hub_secret, hub_auth_enabled
 
 
 LOGIN_LIFETIME = timedelta(minutes=10)
@@ -44,11 +45,17 @@ class HubLoginConfig:
 def load_login_config() -> HubLoginConfig:
     from app.api.dependencies import get_api_url
 
+    if not hub_auth_enabled():
+        raise HubLoginUnavailable
     client_id = os.getenv("HUB_AUTH_CLIENT_ID", "crucible-hub")
     callback_uri = os.getenv("HUB_AUTH_CALLBACK_URI", "")
     public_api_url = os.getenv("HUB_AUTH_PUBLIC_API_URL") or get_api_url()
     issuer = os.getenv("HUB_AUTH_ORCID_ISSUER", "https://orcid.org")
-    if not client_id or not os.getenv("HUB_AUTH_CLIENT_SECRET"):
+    try:
+        client_secret = get_hub_secret("HUB_AUTH_CLIENT_SECRET")
+    except HubSecretUnavailable:
+        raise HubLoginUnavailable from None
+    if not client_id or not client_secret:
         raise HubLoginUnavailable
     if issuer not in {"https://orcid.org", "https://sandbox.orcid.org"}:
         raise HubLoginUnavailable

@@ -7,7 +7,8 @@ from joserfc import jwt
 from joserfc.jwk import KeySet
 
 from app.api.dependencies import get_orcid_client_id, get_orcid_client_secret
-from app.utils.hub_login import HubLoginConfig, InvalidHubLogin
+from app.utils.hub_login import HubLoginConfig, HubLoginUnavailable, InvalidHubLogin
+from app.utils.hub_secrets import HubSecretUnavailable, get_hub_secret
 
 
 def _orcid_client_id() -> str:
@@ -15,7 +16,10 @@ def _orcid_client_id() -> str:
 
 
 def _orcid_client_secret() -> str:
-    return os.getenv("HUB_AUTH_ORCID_CLIENT_SECRET") or get_orcid_client_secret()
+    try:
+        return get_hub_secret("HUB_AUTH_ORCID_CLIENT_SECRET") or get_orcid_client_secret()
+    except HubSecretUnavailable:
+        raise HubLoginUnavailable from None
 
 
 def _client(config: HubLoginConfig) -> OAuth2Session:

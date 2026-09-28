@@ -10,6 +10,35 @@ The application disables Uvicorn access logging because it includes OAuth callba
 
 Store the ORCID client secret and Hub client secret separately in the deployment secret manager. The Hub client secret is shared only with the Hub server. Local environment files should have mode `600`. Rotate any secret previously disclosed in chat; changing a local file does not revoke the old ORCID credential.
 
+## Deployment credentials and activation
+
+The API accesses Google Secret Manager directly with the existing Google client library and Application Default Credentials, using the pod's workload identity. It needs no exported service-account key or new CSI/External Secrets dependency. Secret values stay in worker memory, not ConfigMaps, Kubernetes Secret copies, logs, or files. The existing legacy API credential loader is unchanged. This follows [Google's Secret Manager guidance](https://docs.cloud.google.com/secret-manager/docs/best-practices).
+
+Set `HUB_AUTH_CLIENT_SECRET_VERSION` and `HUB_AUTH_ORCID_CLIENT_SECRET_VERSION` to full `projects/.../secrets/.../versions/N` names with numeric versions. A reference takes precedence over its corresponding inline environment secret; access failure never falls back to inline or legacy credentials. Successful reads are cached per worker and version; failed reads are not cached. Lookups have a five-second RPC timeout without SDK retries. Values must be nonempty ASCII without line breaks. Local development may keep `HUB_AUTH_CLIENT_SECRET` and `HUB_AUTH_ORCID_CLIENT_SECRET` when no references are configured.
+
+The checked-in deployment settings reserve these secret names under project `776258882599`; version `1` is a proposed initial reference, not evidence that the secret exists:
+
+| Environment | Hub client credential | ORCID client credential |
+| --- | --- | --- |
+| Main | `crucible-hub-main-client-secret` | `crucible-hub-main-orcid-client-secret` |
+| Staging | `crucible-hub-staging-client-secret` | `crucible-hub-staging-orcid-client-secret` |
+
+Provision distinct Hub client secret values for main and staging. The API and corresponding Hub server must use the same value for their environment. The Hub never needs the ORCID client secret. The configured ORCID client ID is `APP-YDW1MRE405389PP0`; its Secret Manager value must be the current rotated credential for that client. Only main gets a deployed Hub. Staging is tested from a local Hub with an explicitly configured callback.
+
+Both API ConfigMaps ship with `HUB_AUTH_ENABLED=false`. This disables new login and client-authenticated exchange/refresh/revoke operations without fetching secrets. Callback attempts return the generic sign-in failure. It does not invalidate existing access tokens or legacy API keys and is not an account-suspension switch. If the flag is absent, existing local configuration remains compatible. Secret unavailability returns a generic 503 at login and client-authenticated endpoints, or the generic callback failure.
+
+Production reserves `https://crucible.lbl.gov/hub/auth/callback` as the Hub callback and `https://crucible.lbl.gov/api/v3` as the public API URL. Register `https://crucible.lbl.gov/api/v3/auth/hub/callback` with ORCID. Staging uses `https://crucible.lbl.gov/testapi-staging`, whose ORCID callback is `https://crucible.lbl.gov/testapi-staging/auth/hub/callback`. Its Hub callback remains blank until a local Hub is chosen, for example the previously tested HTTPS Tailscale callback. Set exactly the same callback in the API and local Hub; no wildcard or separate staging Hub deployment is required.
+
+Before activation:
+
+1. Obtain approval to create the secrets/versions and grant the API workload identity `roles/secretmanager.secretAccessor` on the required secrets. Grant the Hub runtime access only to its environment's shared client secret. The current manifests reuse the existing `default` Kubernetes service account; secret-level grants do not isolate workloads sharing that identity. Review identity sharing before production and do not add project-wide access grants.
+2. Confirm the planned secret names and numeric versions, provision through an approved secret-safe mechanism, and update references. Do not put secret values in shell arguments, git, or chat. Secret creation and IAM grants have not been performed by this change.
+3. Coordinate the approved schema migration and deployment. `EXPECTED_DB_REVISIONS` still reflects the pre-Hub deployed revision in the checked-in ConfigMaps; update it to the verified target `e92a6b1c730f` as part of that coordinated rollout, not as an unrelated configuration push. The readiness check uses an exact revision match, so migrating while old pods still expect the previous revision can make them unready. Plan the transition explicitly before running Alembic.
+4. Verify ingress protections and backend bypass policy, configure the exact callback, and enable `HUB_AUTH_ENABLED=true` only for the environment under test. Roll the API pods to load the ConfigMap changes. The Hub's production activation remains independently controlled.
+5. Test sign-in, refresh, logout, secret unavailability, and non-Hub clients. Run the cleanup preview and approved first cleanup before enabling its schedule.
+
+Rotation adds a new secret version, updates the pinned reference, and rolls the consuming processes. Coordinate shared-client-secret rotation with the Hub; only one shared value is accepted at a time, so mixed old/new replicas need a planned transition. Cached values remain in existing workers even if the Secret Manager version is later disabled. Emergency credential revocation therefore also requires process rotation and, where appropriate, separate token-family revocation. Do not confuse Secret Manager version disablement with immediate session logout.
+
 ## Proxy throttling
 
 The implementation and rollout guide now live in the `crucible-nginx` repository: `nginx.conf`, `docs/hub-auth-ingress.md`, and `tests/check_hub_ingress.py`, on branch `feat/hub-auth-ingress`. They cover main and staging Hub authentication paths, separate browser/server rate limits, 8 KiB request bodies, proxy timeouts, and sanitized access logs. Normal upload limits are unchanged. This replaces the earlier illustrative configuration; do not deploy both.

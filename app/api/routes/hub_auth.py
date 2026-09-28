@@ -18,6 +18,7 @@ from app.utils.hub_login import (
 )
 from app.utils.hub_orcid import exchange_orcid_code, orcid_authorization_url
 from app.utils.hub_tokens import InvalidHubGrant, HubTokenPair, refresh_hub_tokens, revoke_hub_tokens
+from app.utils.hub_secrets import HubSecretUnavailable, get_hub_secret, hub_auth_enabled
 
 
 router = APIRouter(prefix="/auth/hub", tags=["auth"])
@@ -49,8 +50,13 @@ class HubTokenResponse(BaseModel):
 
 
 def require_hub_client(credentials: HTTPBasicCredentials | None = Depends(client_security)) -> str:
+    if not hub_auth_enabled():
+        raise HTTPException(status_code=503, detail="Hub authentication is unavailable")
     configured_id = os.getenv("HUB_AUTH_CLIENT_ID", "crucible-hub")
-    configured_secret = os.getenv("HUB_AUTH_CLIENT_SECRET")
+    try:
+        configured_secret = get_hub_secret("HUB_AUTH_CLIENT_SECRET")
+    except HubSecretUnavailable:
+        raise HTTPException(status_code=503, detail="Hub authentication is unavailable") from None
     if not configured_secret:
         raise HTTPException(status_code=503, detail="Hub authentication is unavailable")
     if credentials is None or not (
@@ -120,10 +126,10 @@ def finish_hub_login(
 ) -> Response:
     cookie_path = f"{get_api_root_path()}/auth/hub"
     try:
+        config = load_login_config()
         transaction = consume_login(engine, state or "", request.cookies.get(LOGIN_COOKIE))
         if error is not None or code is None:
             raise InvalidHubLogin
-        config = load_login_config()
         orcid, given_name, family_name = exchange_orcid_code(config, code, transaction.nonce)
         _, destination = create_handoff_code(engine, transaction, orcid, given_name, family_name)
         response = _browser_headers(RedirectResponse(destination, status_code=302))

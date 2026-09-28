@@ -34,6 +34,46 @@ spec:
     spec:
       containers:
       - env:
+        - name: "HUB_AUTH_ENABLED"
+          valueFrom:
+            configMapKeyRef:
+              key: HUB_AUTH_ENABLED
+              name: crucible-api-config-main
+        - name: "HUB_AUTH_CLIENT_ID"
+          valueFrom:
+            configMapKeyRef:
+              key: HUB_AUTH_CLIENT_ID
+              name: crucible-api-config-main
+        - name: "HUB_AUTH_CALLBACK_URI"
+          valueFrom:
+            configMapKeyRef:
+              key: HUB_AUTH_CALLBACK_URI
+              name: crucible-api-config-main
+        - name: "HUB_AUTH_PUBLIC_API_URL"
+          valueFrom:
+            configMapKeyRef:
+              key: HUB_AUTH_PUBLIC_API_URL
+              name: crucible-api-config-main
+        - name: "HUB_AUTH_ORCID_ISSUER"
+          valueFrom:
+            configMapKeyRef:
+              key: HUB_AUTH_ORCID_ISSUER
+              name: crucible-api-config-main
+        - name: "HUB_AUTH_ORCID_CLIENT_ID"
+          valueFrom:
+            configMapKeyRef:
+              key: HUB_AUTH_ORCID_CLIENT_ID
+              name: crucible-api-config-main
+        - name: "HUB_AUTH_CLIENT_SECRET_VERSION"
+          valueFrom:
+            configMapKeyRef:
+              key: HUB_AUTH_CLIENT_SECRET_VERSION
+              name: crucible-api-config-main
+        - name: "HUB_AUTH_ORCID_CLIENT_SECRET_VERSION"
+          valueFrom:
+            configMapKeyRef:
+              key: HUB_AUTH_ORCID_CLIENT_SECRET_VERSION
+              name: crucible-api-config-main
         - name: "PYTHONUNBUFFERED"
           value: "True"
         - name: "API_CONF_FILE"
@@ -172,6 +212,5 @@ spec:
         persistentVolumeClaim:
           claimName: mf-storage-prod-pvc
           readOnly: true
-
 
 

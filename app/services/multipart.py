@@ -233,7 +233,7 @@ class MultipartWorker:
         if metadata:
             with Session(self.engine) as session:
                 current = self.locked(session, upload.upload_id, True)
-                registered = session.exec(select(AssociatedFile.id).where(AssociatedFile.storage_path == f"{upload.bucket}/{upload.gcs_path}")).first()
+                registered = session.exec(select(AssociatedFile.id).where(AssociatedFile.storage_path == f"{upload.bucket}/{upload.gcs_path}", AssociatedFile.storage_generation.is_not(None))).first()
                 if registered is not None:
                     raise InvalidUpload("cleanup_object_still_registered")
                 if current.storage_generation and current.storage_generation != metadata["generation"]:

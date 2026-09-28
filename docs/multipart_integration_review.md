@@ -10,6 +10,7 @@ Integrated `origin/main` at `8e4d0ef` into `feat/secure-multipart-upload`, inclu
 | Medium | A worker finishing a sweep could overwrite a newly requested completion/cancellation schedule with its normal polling delay. | Worker release compares the persisted schedule with the claimed schedule and keeps intervening requests immediately due. Added a cancellation-race regression test. |
 | Medium | A provider upload removed out of band left an application session in `uploading`, with status repeatedly promising reconciliation until expiry. | The sweep now detects a missing primary provider upload, records `provider_upload_missing`, and schedules cleanup so reservations can be released. Added a recovery regression test. |
 | Medium | Background completion retained initiation-time administrator elevation even if the completion request explicitly chose normal privilege mode. | Freeze the completion request's effective privilege mode when queuing finalization. A regression test revokes the ACL after normal-mode completion and verifies that the worker rejects publication. |
+| Medium | An editable catalog path could block orphan cleanup without a trusted registration. | Cleanup protection now requires a server-recorded storage generation; tests cover both untrusted references and protected registrations. |
 | Integration | Auth and multipart migrations otherwise formed separate heads, and the readiness templates still expected the auth-only revision. | Reparented only the unapplied foundation revision after auth head `e92a6b1c730f`; processing head remains `c83a7d014b29`. Updated local readiness templates for the future coordinated release. Applied auth revisions are unchanged. |
 
 ## Authentication and compatibility
@@ -22,7 +23,7 @@ OpenAPI was regenerated from the combined application rather than hand-merged. E
 
 ## Validation
 
-- Combined local suite: 1,360 passed, 69 environment-dependent skips; existing deprecation warnings remain.
+- Final PR review local suite: 1,363 passed, 69 environment-dependent skips; existing deprecation warnings remain.
 - After the completion privilege-mode fix, 50 multipart lifecycle and shared privilege-mode tests passed.
 - Disposable PostgreSQL: 9 auth and multipart migration/concurrency tests passed, including token exchange/refresh behavior, multipart admission/lease races, and multipart upgrade/downgrade round trips.
 - Alembic has one head: `c83a7d014b29`, following `e92a6b1c730f -> b72f6c903a18 -> c83a7d014b29`.

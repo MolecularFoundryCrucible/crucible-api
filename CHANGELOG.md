@@ -96,6 +96,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Prevented unverified catalog paths from blocking multipart orphan cleanup while retaining protection for server-registered file generations.
+
 - Packaged the multipart worker in the API image, preserved newly queued processing requests during worker release and completion-time privilege mode during background processing, and reconciled missing provider uploads into a recoverable failure. Integrated API-key and ORCID/OAuth access-token upload coverage and chained the unapplied multipart migrations after the completed auth migrations.
 
 - Escaped profile values in the legacy API-key page and removed dynamic values from its inline JavaScript.

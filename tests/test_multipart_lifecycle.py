@@ -576,3 +576,26 @@ def test_completion_worker_respects_normal_privilege_mode(flow, auth_as):
     assert row(engine, identifier).failure_code == "access_revoked"
     with Session(engine) as session:
         assert session.exec(select(AssociatedFile)).all() == []
+
+
+@pytest.mark.parametrize("generation", [None, "7"])
+def test_cleanup_protection_requires_server_recorded_generation(flow, generation):
+    client, engine, storage, worker = flow
+    identifier = start(flow)
+    put(flow, identifier)
+    complete(flow, identifier)
+    worker.run_once()
+    upload = row(engine, identifier)
+    with Session(engine) as session:
+        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
+        session.add(AssociatedFile(dataset_id=dataset.id, filename="reference", storage_path=f"{upload.bucket}/{upload.gcs_path}", size=len(DATA), sha256_hash=SHA, storage_generation=generation))
+        session.commit()
+    assert client.delete(BASE + f"/{identifier}").status_code == 202
+    worker.run_once()
+    if generation is None:
+        assert not storage.objects
+        assert row(engine, identifier).cleaned_at is not None
+    else:
+        assert storage.objects
+        assert row(engine, identifier).failure_code == "cleanup_object_still_registered"
+        assert row(engine, identifier).cleaned_at is None

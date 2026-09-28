@@ -1,17 +1,19 @@
 # Hub authentication schema rollout
 
-Status as of 2026-09-28: staging schema migration completed; API PR #286 remains open against staging. Feature-image deployment and production migration remain pending. Live migrations and activation require explicit approval.
+Status as of 2026-09-28: PR #286 merged and staging deployed at `4910cc8`. Production migration to `e92a6b1c730f` completed with user approval in 2.45 seconds. PR #287 promotes staging to main; the production feature image and authentication activation remain pending.
 
-Staging completed this sequence on 2026-09-28 with user approval. Revision `e92a6b1c730f` was applied through the local SQL proxy in 1.38 seconds after verifying the database name, backup/PITR status, and absence of long transactions. All five Hub tables and four valid expiry indexes were verified. Exact revision checking was restored and the rolling update completed on the existing `c8baeec` image. Public staging readiness returned 200 at the target revision; production remained healthy at `4a7d2c9e1f60`. PR #286 has not been merged and no new API image was deployed. The production migration remains pending separate approval.
+Both environments completed the migration sequence with explicit approval. Staging's index-only migration took 1.38 seconds. Production's full two-revision migration took 2.45 seconds through the local SQL proxy after verifying database `crucible`, backup/PITR readiness, and absence of long transactions. All five tables and four valid, ready expiry indexes were verified. Exact revision checking was restored, the existing production image rolled successfully, and public readiness returned 200. Production retains its `351f8ef` image until PR #287 is merged.
 
 ## Verified state on 2026-09-28
 
 | Environment | Image | Actual schema | Expected schema | Pod readiness |
 | --- | --- | --- | --- | --- |
-| Main | `351f8ef` | `4a7d2c9e1f60` | `4a7d2c9e1f60` | 200 |
-| Staging | `c8baeec` | `e92a6b1c730f` | `e92a6b1c730f` | 200 |
+| Main | `351f8ef` | `e92a6b1c730f` | `e92a6b1c730f` | 200 |
+| Staging | `4910cc8` | `e92a6b1c730f` | `e92a6b1c730f` | 200 |
 
-Both deployments have one replica, a rolling update strategy, `maxUnavailable: 0`, and `maxSurge: 25%`. PR #286 pins staging readiness to its migrated revision. Keep production's existing revision until its separately approved migration.
+Both deployments have one replica, a rolling update strategy, `maxUnavailable: 0`, and `maxSurge: 25%`. Both checked-in readiness settings now expect `e92a6b1c730f`. Do not repeat completed migrations or restore the old expected revision.
+
+The user confirmed sign-in, logout, and fresh sign-in using the Tailscale Hub against staging, and reported existing API clients working. Automatic refresh appears to work by user observation; no independent log verification was performed. Staging authentication was temporarily enabled with user approval of the documented ingress limitations. Checked-in configuration keeps it disabled, so subsequent staging builds reset that temporary setting. This acceptance does not extend to production.
 
 ## Completed staging recovery
 

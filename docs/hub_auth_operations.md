@@ -37,11 +37,11 @@ Production reserves `https://crucible.lbl.gov/hub/auth/callback` as the Hub call
 
 Before activation:
 
-Follow the [schema rollout sequence](hub_auth_release_rollout.md) for the exact-readiness transition. Staging's mismatch was resolved and its migration completed on 2026-09-28; the production migration remains pending.
+Both schema migrations completed on 2026-09-28. See the [rollout record](hub_auth_release_rollout.md); do not repeat its completed migration steps.
 
 1. The four secrets and API secret-level grants are provisioned. When deploying the Hub, confirm its runtime identity can access only the main shared client secret unless it already inherits broader project access. Do not add new project-wide grants.
 2. Confirm the pinned numeric references remain enabled. Do not put secret values in shell arguments, git, or chat. Future rotations require a separate approved version update; do not recreate or overwrite the provisioned credentials.
-3. Coordinate the approved schema migration and deployment. Staging was migrated to `e92a6b1c730f` on 2026-09-28, and its expected revision matches. Main still expects `4a7d2c9e1f60`; update it to `e92a6b1c730f` only as part of the approved production migration and rollout. The readiness check uses an exact revision match, so migrating while old pods still expect the previous revision can make them unready. Plan the transition explicitly before running Alembic.
+3. Both databases are at `e92a6b1c730f`, with matching exact readiness configuration. Deploy the reviewed main image through PR #287 without restoring the previous revision. No further migration is required for this release.
 4. Verify ingress protections and backend bypass policy, configure the exact callback, and enable `HUB_AUTH_ENABLED=true` only for the environment under test. Roll the API pods to load the ConfigMap changes. The Hub's production activation remains independently controlled.
 5. Test sign-in, refresh, logout, secret unavailability, and non-Hub clients. Run the cleanup preview and approved first cleanup before enabling its schedule.
 

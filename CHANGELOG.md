@@ -16,8 +16,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Added concurrent expiry indexes for Hub login transactions, handoff codes, access tokens, and token families.
 - Documented Hub logout revocation, rotated-token support, session isolation, and Hub session cleanup requirements in OpenAPI and the login guide.
 - Added separate ORCID-backed Hub sign-in, one-use code exchange, short-lived Hub access tokens, and authenticated refresh and revoke routes. Existing API keys remain supported.
+- Added authorization-filtered `GET /embeddings` listing with signed cursor pagination, compatible offsets, optional exact totals, and exact ID, resource, chunk-index, and model filters.
+- Added a `resource_embedding` table with IVFFlat cosine indexing for storing 768-dimensional, model-labeled text chunks linked to canonical resource MFIDs, plus authenticated `POST /embeddings/search` nearest-neighbor search with resource access filtering.
 - Added human-requester deletion history, deterministic cursor pagination, direction and project/resource filters, canonical project MFID snapshots, and public-safe requester and reviewer summaries to deletion audit reads while retaining administrator-wide history, offset pagination, and stable ID fields. Service accounts cannot read deletion audit history.
-- Added a `resource_embedding` table with IVFFlat cosine indexing for storing 768-dimensional, model-labeled text chunks linked to canonical resource MFIDs, plus authenticated `POST /resources/embeddings/search` nearest-neighbor search with resource access filtering.
 - Added case-insensitive `resource_name`, `project_id`, `requester_name`, and semantic `status` sorting to deletion-request collections with nulls-last keyset pagination.
 - Added nullable public requester and reviewer identity summaries to deletion-request responses while retaining their stable ID fields.
 - Added request-time direction and opaque continuation cursors to deletion-request collections while retaining offset pagination and newest-first defaults.
@@ -58,6 +59,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `GET /ingestion_requests` now returns the authorization-filtered collection for any caller with viewer access to the parent datasets; non-administrators no longer need to supply a dataset or file filter.
 - Deletion-request responses now require caller capabilities, statuses and review decisions use documented enums, and collection ordering uses descending request time and request ID.
 - Authenticated responses now use private caching, and elevated responses use `Cache-Control: private, no-store`. Omitted privilege mode preserves existing platform-administrator behavior.
 - Kubernetes readiness configuration now expects database revision `7a1c4e8d2f90` for the platform contributor role.

@@ -4,9 +4,13 @@ from app.models.core_models import AccessGroup, Dataset, IngestionRequest, Resou
 from app.utils.permissions import PlatformRole, Role
 
 
-def _setup_ingestion_request(db_engine, *, public=False, permission=None):
+def _setup_ingestion_request(db_engine, *, public=False, permission=None, suffix=""):
     with Session(db_engine) as session:
-        dataset = Dataset(unique_id="ds_ingestion_access", dataset_name="test", public=public)
+        dataset = Dataset(
+            unique_id=f"ds_ingestion_access{suffix}",
+            dataset_name="test",
+            public=public,
+        )
         session.add_all([
             Resource(mfid=dataset.unique_id, resource_type="dataset", public=public),
             dataset,
@@ -15,7 +19,7 @@ def _setup_ingestion_request(db_engine, *, public=False, permission=None):
 
         group_id = None
         if permission is not None:
-            group = AccessGroup(group_name="ingestion-readers")
+            group = AccessGroup(group_name=f"ingestion-readers{suffix}")
             session.add(group)
             session.commit()
             session.refresh(group)
@@ -63,6 +67,25 @@ def test_acl_viewer_can_read_and_list_ingestion_requests(client, db_engine, auth
     assert read_response.status_code == 200, read_response.text
     assert list_response.status_code == 200, list_response.text
     assert [item["id"] for item in list_response.json()["items"]] == [request_id]
+
+
+def test_acl_viewer_unfiltered_list_only_includes_accessible_ingestion_requests(
+    client, db_engine, auth_as
+):
+    accessible_id, _, group_id = _setup_ingestion_request(
+        db_engine, permission=Role.VIEWER, suffix="_accessible"
+    )
+    _setup_ingestion_request(db_engine, permission=Role.VIEWER, suffix="_inaccessible")
+    auth_as(
+        "ordinary-user",
+        groups=[("ingestion-readers_accessible", group_id, Role.VIEWER)],
+    )
+
+    response = client.get("/ingestion_requests")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["total"] == 1
+    assert [item["id"] for item in response.json()["items"]] == [accessible_id]
 
 
 def test_legacy_public_boolean_does_not_authorize_ingestion_list(client, db_engine, auth_as):

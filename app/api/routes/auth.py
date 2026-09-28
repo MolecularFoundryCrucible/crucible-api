@@ -1,6 +1,8 @@
 import datetime
 import logging
+from html import escape
 from typing import Annotated
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +148,11 @@ def get_apikey(request: Request):
 
 
 def _email_prompt_html(api_path: str, orcid: str, crucible_token: str, first_name: str = '', last_name: str = '') -> str:
+    update_url = escape(f"/{quote(api_path, safe='/')}/users/{quote(orcid, safe='')}", quote=True)
+    first_name = escape(first_name, quote=True)
+    last_name = escape(last_name, quote=True)
+    orcid = escape(orcid, quote=True)
+    crucible_token = escape(crucible_token, quote=True)
     return f"""<!DOCTYPE html>
 <html data-bs-theme="light" lang="en">
 <head>
@@ -173,7 +180,7 @@ def _email_prompt_html(api_path: str, orcid: str, crucible_token: str, first_nam
         <h2 class="text-info">Complete Your Profile</h2>
         <p class="text-muted">Add your email to your Crucible profile:</p>
       </div>
-      <div id="form-view" style="max-width: 520px;">
+      <div id="form-view" style="max-width: 520px;" data-update-url="{update_url}" data-api-key="{crucible_token}">
         <div class="mb-3">
           <label class="form-label" for="first_name">First name</label>
           <input class="form-control" type="text" id="first_name" value="{first_name}" readonly disabled>
@@ -206,6 +213,7 @@ def _email_prompt_html(api_path: str, orcid: str, crucible_token: str, first_nam
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 async function submitEmail() {{
+  var form = document.getElementById('form-view');
   var email = document.getElementById('email').value.trim();
   var btn = document.getElementById('submit-btn');
   var errorEl = document.getElementById('error');
@@ -213,17 +221,17 @@ async function submitEmail() {{
   btn.disabled = true;
   btn.textContent = 'Saving...';
   try {{
-    var response = await fetch('/{api_path}/users/{orcid}', {{
+    var response = await fetch(form.dataset.updateUrl, {{
       method: 'PATCH',
       headers: {{
-        'Authorization': 'Bearer {crucible_token}',
+        'Authorization': 'Bearer ' + form.dataset.apiKey,
         'Content-Type': 'application/json'
       }},
       body: JSON.stringify({{email: email}})
     }});
     if (response.ok) {{
       document.getElementById('form-view').style.display = 'none';
-      document.getElementById('apikey-box').textContent = '{crucible_token}';
+      document.getElementById('apikey-box').textContent = form.dataset.apiKey;
       document.getElementById('result-view').style.display = 'block';
     }} else {{
       var err = await response.json();

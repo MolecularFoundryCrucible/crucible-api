@@ -90,6 +90,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Escaped profile values in the legacy API-key page and removed dynamic values from its inline JavaScript.
 - Hub code exchange now commits token issuance and code consumption together, and concurrent refresh reuse revokes the token family.
 - Disabled raw Uvicorn access logs while retaining API request logs without query strings.
 - Added a dry-run-by-default command for cleaning expired Hub authentication records.

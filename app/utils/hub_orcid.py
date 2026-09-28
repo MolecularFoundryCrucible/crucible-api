@@ -1,3 +1,5 @@
+import os
+
 import requests
 from authlib.integrations.requests_client import OAuth2Session
 from authlib.oidc.core import CodeIDToken
@@ -8,10 +10,18 @@ from app.api.dependencies import get_orcid_client_id, get_orcid_client_secret
 from app.utils.hub_login import HubLoginConfig, InvalidHubLogin
 
 
+def _orcid_client_id() -> str:
+    return os.getenv("HUB_AUTH_ORCID_CLIENT_ID") or get_orcid_client_id()
+
+
+def _orcid_client_secret() -> str:
+    return os.getenv("HUB_AUTH_ORCID_CLIENT_SECRET") or get_orcid_client_secret()
+
+
 def _client(config: HubLoginConfig) -> OAuth2Session:
     return OAuth2Session(
-        client_id=get_orcid_client_id(),
-        client_secret=get_orcid_client_secret(),
+        client_id=_orcid_client_id(),
+        client_secret=_orcid_client_secret(),
         token_endpoint_auth_method="client_secret_post",
         scope="openid",
         default_timeout=10,
@@ -57,11 +67,11 @@ def verify_orcid_id_token(config: HubLoginConfig, id_token: str, jwks: dict, non
         verified.header,
         options={
             "iss": {"essential": True, "value": config.orcid_issuer},
-            "aud": {"essential": True, "value": get_orcid_client_id()},
+            "aud": {"essential": True, "value": _orcid_client_id()},
         },
         params={
             "nonce": nonce,
-            "client_id": get_orcid_client_id(),
+            "client_id": _orcid_client_id(),
             "access_token": access_token,
         },
     )

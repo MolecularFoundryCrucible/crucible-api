@@ -299,8 +299,8 @@ def test_orcid_authorization_request_has_state_nonce_and_exact_callback(monkeypa
     from urllib.parse import parse_qs, urlparse
     from app.utils.hub_orcid import orcid_authorization_url
 
-    monkeypatch.setattr("app.utils.hub_orcid.get_orcid_client_id", lambda: "test-orcid-client")
-    monkeypatch.setattr("app.utils.hub_orcid.get_orcid_client_secret", lambda: "test-orcid-secret")
+    monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_ID", "sandbox-client")
+    monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_SECRET", "sandbox-secret")
     config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", "https://orcid.org")
     url = orcid_authorization_url(config, "api-state", "api-nonce")
     parsed = urlparse(url)
@@ -310,3 +310,4 @@ def test_orcid_authorization_request_has_state_nonce_and_exact_callback(monkeypa
     assert params["state"] == ["api-state"]
     assert params["nonce"] == ["api-nonce"]
     assert params["scope"] == ["openid"]
+    assert params["client_id"] == ["sandbox-client"]

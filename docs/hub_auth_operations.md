@@ -4,6 +4,8 @@ The Hub authentication routes use exact configured callbacks, OIDC validation, a
 
 ## Logging and secrets
 
+Hub authentication responses, including validation errors, redirects, missing routes, and method errors under `/auth/hub`, carry `Cache-Control: no-store`, `Pragma: no-cache`, and `Referrer-Policy: no-referrer`. Validation failures retain HTTP 422 and the `detail` array shape but use a fixed message without submitted values or validation context. Unexpected authentication failures return a generic HTTP 500; application logs retain only the exception class, status, route, and request ID, not exception text or traceback. Other API routes retain their existing error handling. Proxy-generated errors require the corresponding ingress policy separately.
+
 The application disables Uvicorn access logging because it includes OAuth callback query strings. Its request middleware continues to record method, route, status, duration, and request ID. Do not re-enable raw access logging for these routes. Configure proxy, load-balancer, and tracing logs to omit query strings, authorization headers, cookies, request bodies, and redirect Location headers on both API and Hub authentication routes. Scrub retained logs according to the existing retention policy.
 
 Store the ORCID client secret and Hub client secret separately in the deployment secret manager. The Hub client secret is shared only with the Hub server. Local environment files should have mode `600`. Rotate any secret previously disclosed in chat; changing a local file does not revoke the old ORCID credential.

@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Redacted Hub authentication validation failures and unexpected-error logs, and added no-store headers to all Hub authentication responses.
 - Cloud Build now deploys the matching Hub cleanup CronJob with the API image SHA, initially suspended, and preserves its activation state on later builds.
 - Added suspended hourly Hub authentication cleanup CronJobs for staging and main, packaged the cleanup script in the API image, and limited cleanup error logs to exception types.
 - Added concurrent expiry indexes for Hub login transactions, handoff codes, access tokens, and token families.

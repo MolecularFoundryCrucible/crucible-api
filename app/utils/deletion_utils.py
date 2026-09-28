@@ -1,5 +1,5 @@
 import logging
-from sqlalchemy import delete, or_
+from sqlalchemy import delete, or_, update, func
 from sqlmodel import Session, select
 
 from app.models.core_models import (
@@ -56,7 +56,15 @@ def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Res
             ),
         )
     ))
-    session.execute(delete(UploadSession).where(UploadSession.dataset_mfid == dataset_unique_id))
+    session.execute(update(UploadSession).where(
+        UploadSession.dataset_mfid == dataset_unique_id,
+        UploadSession.protocol.is_not(None),
+        UploadSession.cleanup_requested_at.is_(None),
+    ).values(cleanup_requested_at=func.now()))
+    session.execute(delete(UploadSession).where(
+        UploadSession.dataset_mfid == dataset_unique_id,
+        UploadSession.protocol.is_(None),
+    ))
     session.execute(delete(AssociatedFile).where(AssociatedFile.dataset_id == dataset.id))
     session.execute(delete(DatasetKeywordLink).where(DatasetKeywordLink.dataset_id == dataset.id))
     session.execute(delete(Thumbnail).where(Thumbnail.dataset_id == dataset.id))

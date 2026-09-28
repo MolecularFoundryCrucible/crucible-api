@@ -9,6 +9,7 @@ from fastapi.openapi.utils import get_openapi
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.build_info import api_version
+from app.utils.multipart_config import MultipartStorageConfig
 from app.api.dependencies import get_api_root_path
 from app.utils.auth_utils import PRIVILEGE_MODE_HEADER
 from app.utils.permissions import PrivilegeMode, PrivilegeModeSource
@@ -24,6 +25,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+multipart_storage_config = MultipartStorageConfig.from_env()
 api_root_path = get_api_root_path()
 app = FastAPI(
     root_path=api_root_path,

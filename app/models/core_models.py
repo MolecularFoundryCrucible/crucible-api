@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Optional, List
 from pydantic import ConfigDict
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Column, BigInteger, DateTime, func, Index, text, Text, String
+from sqlalchemy import JSON, Column, CheckConstraint, UniqueConstraint, BigInteger, DateTime, func, Index, text, Text, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel, Relationship
 from mfid import mfid
@@ -47,6 +47,9 @@ class AssociatedFile(SQLModel, table=True):
     access_note: Optional[str] = None    # how to access this file when there's no self-service path (non-gcs backends)
     size: int = Field(sa_column=Column(BigInteger()))
     sha256_hash: str
+    storage_generation: Optional[str] = None
+    storage_crc32c: Optional[str] = None
+    sha256_verified_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     dataset_id: int = Field(foreign_key="dataset.id")
     dataset: "Dataset" = Relationship(back_populates='associated_files')
     ingestion_requests: List["IngestionRequest"] = Relationship(back_populates="associated_file")
@@ -450,6 +453,12 @@ class IngestionRequest(SQLModel, table=True):
 
 class UploadSession(SQLModel, table=True):
     __tablename__ = "upload_sessions"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "dataset_mfid", "protocol", "idempotency_key", name="uq_upload_session_idempotency"),
+        CheckConstraint("protocol IS NULL OR (protocol = 'gcs_xml_v1' AND state IS NOT NULL AND state IN ('initiating', 'uploading', 'finalizing', 'verifying', 'completed', 'aborting', 'aborted', 'expired', 'failed'))", name="ck_upload_session_protocol_state"),
+        CheckConstraint("part_size IS NULL OR part_size > 0", name="ck_upload_session_part_size"),
+        CheckConstraint("part_count IS NULL OR (part_count BETWEEN 1 AND 10000)", name="ck_upload_session_part_count"),
+    )
     id: Optional[int] = Field(default=None, primary_key=True)
     upload_id: str = Field(default_factory=get_mfid_value, index=True, unique=True)
     dataset_mfid: str
@@ -458,3 +467,22 @@ class UploadSession(SQLModel, table=True):
     owner_user_id: str
     expires_at: str         # written as ISO 8601 string; DB returns datetime, handle both
     size: Optional[int] = Field(default=None, sa_column=Column(BigInteger()))
+    protocol: Optional[str] = None
+    bucket: Optional[str] = None
+    provider_upload_id: Optional[str] = None
+    state: Optional[str] = None
+    part_size: Optional[int] = Field(default=None, sa_column=Column(BigInteger()))
+    part_count: Optional[int] = None
+    idempotency_key: Optional[str] = None
+    request_fingerprint: Optional[str] = None
+    claimed_sha256: Optional[str] = None
+    result_file_mfid: Optional[str] = None
+    storage_generation: Optional[str] = None
+    failure_code: Optional[str] = None
+    lease_owner: Optional[str] = None
+    version: Optional[int] = None
+    part_manifest: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON().with_variant(JSONB(), "postgresql")))
+    created_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    lease_expires_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    cleanup_requested_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))

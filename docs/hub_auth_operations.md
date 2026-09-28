@@ -10,35 +10,9 @@ Store the ORCID client secret and Hub client secret separately in the deployment
 
 ## Proxy throttling
 
-Apply throttling at the trusted ingress before enabling public Hub sign-in. These settings are a deployment template, not active protection in the API process or Tailscale Serve. Use the existing proxy routing and upstream addresses. Prevent direct public access to the API backend from bypassing the ingress.
+The implementation and rollout guide now live in the `crucible-nginx` repository: `nginx.conf`, `docs/hub-auth-ingress.md`, and `tests/check_hub_ingress.py`, on branch `feat/hub-auth-ingress`. They cover main and staging Hub authentication paths, separate browser/server rate limits, 8 KiB request bodies, proxy timeouts, and sanitized access logs. Normal upload limits are unchanged. This replaces the earlier illustrative configuration; do not deploy both.
 
-Add these directives to the Nginx `http` context:
-
-```nginx
-map $uri $hub_browser_auth_key {
-    default "";
-    ~^/(api/v3|testapi-staging|testapi)/auth/hub/(login|callback)/?$ $binary_remote_addr;
-}
-map $uri $hub_server_auth_key {
-    default "";
-    ~^/(api/v3|testapi-staging|testapi)/auth/hub/(token|refresh|revoke)/?$ $binary_remote_addr;
-}
-limit_req_zone $hub_browser_auth_key zone=hub_browser_auth:10m rate=30r/m;
-limit_req_zone $hub_server_auth_key zone=hub_server_auth:10m rate=20r/s;
-log_format api_safe escape=json
-    '{"method":"$request_method","path":"$uri","status":$status}';
-```
-
-Add these directives to each relevant API proxy location, retaining its existing proxy settings:
-
-```nginx
-limit_req zone=hub_browser_auth burst=10 nodelay;
-limit_req zone=hub_server_auth burst=100 nodelay;
-limit_req_status 429;
-access_log /var/log/nginx/api-access.log api_safe;
-```
-
-Empty map keys leave unrelated API routes unthrottled by these zones. Limits share state across workers on one Nginx instance, not across independent ingress instances. The token limit allows shared Hub egress; tune it from expected concurrency and measured traffic. Trust forwarded client IPs only from configured proxies. Check error logs too: Nginx error messages can include the original request URI even when access logs use a safe format. Redact them in the log pipeline before export. Validate with `nginx -t` and a staging burst test that verifies 429 responses and sanitized logs before deployment. See the native [Nginx limiter](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html) and [logging](https://nginx.org/en/docs/http/ngx_http_log_module.html) documentation.
+The feature was tested locally against Nginx 1.25.3 with mock upstreams, but has not been deployed. Tailscale Serve does not inherit these controls. Main's public API load balancer remains directly reachable, so proxy-only limits are incomplete until backend access is addressed without breaking existing clients. Cloudflare IP trust, logging before location selection, and the actual source addresses must be checked during the approved staged rollout. No firewall or Kubernetes Service restrictions have been changed.
 
 ## Expired-record cleanup
 

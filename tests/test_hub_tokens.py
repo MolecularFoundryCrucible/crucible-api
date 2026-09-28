@@ -169,6 +169,20 @@ def test_revoke_and_service_accounts(engine):
         refresh_hub_tokens(engine, pair.refresh_token, "hub", now=NOW + timedelta(minutes=2))
 
 
+def test_logout_with_rotated_token_revokes_only_its_family(engine):
+    first = issue_hub_tokens(engine, "0000-0000-0000-0001", "hub", now=NOW)
+    other = issue_hub_tokens(engine, first.user_unique_id, "hub", now=NOW)
+    second = refresh_hub_tokens(engine, first.refresh_token, "hub", now=NOW + timedelta(minutes=1))
+    revoke_hub_tokens(engine, first.refresh_token, "hub", now=NOW + timedelta(minutes=2))
+    for pair in (first, second):
+        with pytest.raises(InvalidHubGrant):
+            access_user(engine, pair.access_token, now=NOW + timedelta(minutes=2))
+        with pytest.raises(InvalidHubGrant):
+            refresh_hub_tokens(engine, pair.refresh_token, "hub", now=NOW + timedelta(minutes=2))
+    assert access_user(engine, other.access_token, now=NOW + timedelta(minutes=2)) == other.user_unique_id
+    refresh_hub_tokens(engine, other.refresh_token, "hub", now=NOW + timedelta(minutes=2))
+
+
 def test_tokens_are_stored_hashed(engine):
     pair = issue_hub_tokens(engine, "0000-0000-0000-0001", "hub", now=NOW)
     with Session(engine) as session:
@@ -187,6 +201,9 @@ def test_refresh_and_revoke_routes(engine, monkeypatch):
     app.dependency_overrides[get_engine] = lambda: engine
     pair = issue_hub_tokens(engine, "0000-0000-0000-0001", "crucible-hub")
     with TestClient(app) as client:
+        for auth in (None, ("crucible-hub", "wrong-secret")):
+            denied_revoke = client.post("/auth/hub/revoke", auth=auth, json={"token": pair.refresh_token})
+            assert denied_revoke.status_code == 401
         denied = client.post("/auth/hub/refresh", json={"refresh_token": pair.refresh_token})
         assert denied.status_code == 401
 
@@ -203,9 +220,15 @@ def test_refresh_and_revoke_routes(engine, monkeypatch):
         revoked = client.post(
             "/auth/hub/revoke",
             auth=("crucible-hub", "test-only-secret"),
-            json={"token": next_pair["refresh_token"]},
+            json={"token": pair.refresh_token},
         )
         assert revoked.status_code == 204
+        assert revoked.content == b""
+        assert revoked.headers["cache-control"] == "no-store"
+        for token in (pair.refresh_token, "chbr_" + "x" * 64):
+            assert client.post(
+                "/auth/hub/revoke", auth=("crucible-hub", "test-only-secret"), json={"token": token},
+            ).status_code == 204
         failed = client.post(
             "/auth/hub/refresh",
             auth=("crucible-hub", "test-only-secret"),
@@ -234,6 +257,10 @@ def test_hub_and_legacy_credentials_both_authorize(engine, monkeypatch):
             HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
         )
         assert principal.user_id == "0000-0000-0000-0001"
+    revoke_hub_tokens(engine, pair.refresh_token, "crucible-hub")
+    assert auth_utils._authorize_user(
+        HTTPAuthorizationCredentials(scheme="Bearer", credentials=legacy_key)
+    ).user_id == "0000-0000-0000-0001"
 
 
 def test_login_handoff_is_bound_and_single_use(engine):

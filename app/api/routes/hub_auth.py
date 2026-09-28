@@ -161,7 +161,12 @@ def refresh_hub_credential(
     return _token_response(pair, response)
 
 
-@router.post("/revoke", status_code=204, responses={401: {"description": "Invalid client"}, 503: {"description": "Hub sign-in unavailable"}})
+@router.post(
+    "/revoke",
+    status_code=204,
+    description="Requires HTTP Basic Hub client authentication and JSON containing token. Revokes the entire login token family, including all access and refresh generations. A previously rotated refresh token can revoke the family. Repeated requests, unknown tokens, and tokens belonging to another client return 204 without disclosing token validity. Subsequent authentication checks reject revoked tokens; already-authorized requests may finish. Other login sessions, legacy API keys, and the ORCID session are unaffected. The Hub must also delete its own session and browser cookie.",
+    responses={204: {"description": "Revocation processed; no-store response"}, 401: {"description": "Invalid client"}, 503: {"description": "Hub sign-in unavailable"}},
+)
 def revoke_hub_credential(
     body: HubRevokeRequest,
     client_id: str = Depends(require_hub_client),

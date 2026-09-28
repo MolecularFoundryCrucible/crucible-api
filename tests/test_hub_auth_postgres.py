@@ -13,7 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models.core_models import HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User
 from app.utils.hub_login import exchange_handoff_code
-from app.utils.hub_tokens import InvalidHubGrant, hub_access_user, issue_hub_tokens, refresh_hub_tokens
+from app.utils.hub_tokens import InvalidHubGrant, hub_access_user, issue_hub_tokens, refresh_hub_tokens, revoke_hub_tokens
 
 
 NOW = datetime(2026, 9, 28, tzinfo=timezone.utc)
@@ -104,6 +104,50 @@ def test_concurrent_refresh_detects_replay_and_revokes_family(pg_engine):
             hub_access_user(session, issued[0].access_token, now=NOW + timedelta(minutes=1))
     with pytest.raises(InvalidHubGrant):
         refresh_hub_tokens(pg_engine, issued[0].refresh_token, "hub", now=NOW + timedelta(minutes=2))
+
+
+@pytest.mark.parametrize("first_operation", ["refresh", "revoke"])
+def test_logout_and_refresh_serialize_without_restoring_session(pg_engine, first_operation):
+    pair = issue_hub_tokens(pg_engine, USER, "hub", now=NOW)
+    both_read = threading.Barrier(2)
+    first_finished = threading.Event()
+    operation = threading.local()
+
+    def after_read(connection, cursor, statement, parameters, context, executemany):
+        if statement.startswith("SELECT") and "FROM hubrefreshtoken" in statement and "FOR UPDATE" not in statement:
+            both_read.wait(timeout=10)
+
+    def before_lock(connection, cursor, statement, parameters, context, executemany):
+        if "FROM hubtokenfamily" in statement and "FOR UPDATE" in statement and operation.name != first_operation:
+            assert first_finished.wait(timeout=10)
+
+    def run(name):
+        operation.name = name
+        try:
+            if name == "revoke":
+                return revoke_hub_tokens(pg_engine, pair.refresh_token, "hub", now=NOW)
+            try:
+                return refresh_hub_tokens(pg_engine, pair.refresh_token, "hub", now=NOW)
+            except InvalidHubGrant:
+                return None
+        finally:
+            if name == first_operation:
+                first_finished.set()
+
+    event.listen(pg_engine, "after_cursor_execute", after_read)
+    event.listen(pg_engine, "before_cursor_execute", before_lock)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            refreshed, _ = list(pool.map(run, ["refresh", "revoke"]))
+    finally:
+        event.remove(pg_engine, "after_cursor_execute", after_read)
+        event.remove(pg_engine, "before_cursor_execute", before_lock)
+    assert (refreshed is not None) == (first_operation == "refresh")
+    for tokens in [pair] + ([refreshed] if refreshed else []):
+        with Session(pg_engine) as session, pytest.raises(InvalidHubGrant):
+            hub_access_user(session, tokens.access_token, now=NOW)
+        with pytest.raises(InvalidHubGrant):
+            refresh_hub_tokens(pg_engine, tokens.refresh_token, "hub", now=NOW)
 
 
 def test_cleanup_respects_foreign_keys_and_preserves_live_family(pg_engine):

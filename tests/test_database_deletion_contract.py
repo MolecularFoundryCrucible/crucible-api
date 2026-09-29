@@ -11,12 +11,19 @@ from app.models.core_models import (
     DeletionRequest,
     Resource,
     ResourceACL,
+    ResourceEmbedding,
     Sample,
 )
 from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role
 
 
-def _setup(db_engine, permission=Role.OWNER, resource_type="dataset", request=False):
+def _setup(
+    db_engine,
+    permission=Role.OWNER,
+    resource_type="dataset",
+    request=False,
+    embedding=False,
+):
     with Session(db_engine) as session:
         group = session.exec(
             select(AccessGroup).where(AccessGroup.group_name == "resource-owner")
@@ -30,6 +37,14 @@ def _setup(db_engine, permission=Role.OWNER, resource_type="dataset", request=Fa
             session.add(Dataset(unique_id=resource.mfid, dataset_name="delete me"))
         elif resource_type == "sample":
             session.add(Sample(unique_id=resource.mfid, sample_name="delete me"))
+        if embedding:
+            session.add(ResourceEmbedding(
+                resource_mfid=resource.mfid,
+                chunk_index=0,
+                chunk_text="embedded text",
+                embedding=[0.0] * 768,
+                model_name="test-model",
+            ))
         session.commit()
         session.refresh(group)
         session.add(ResourceACL(
@@ -172,3 +187,17 @@ def test_forced_deletion_supports_samples(db_engine):
     with Session(db_engine) as session:
         assert session.get(Resource, "resource-to-delete") is None
         assert session.exec(select(Sample).where(Sample.unique_id == "resource-to-delete")).one_or_none() is None
+
+
+@pytest.mark.parametrize("resource_type", ["dataset", "sample"])
+def test_forced_deletion_removes_resource_embeddings(db_engine, resource_type):
+    group_id, _ = _setup(db_engine, resource_type=resource_type, embedding=True)
+
+    deletion_routes.hard_delete_resource_route(
+        resource_id="resource-to-delete",
+        auth_res=_principal(group_id),
+        force=True,
+    )
+
+    with Session(db_engine) as session:
+        assert session.exec(select(ResourceEmbedding)).all() == []

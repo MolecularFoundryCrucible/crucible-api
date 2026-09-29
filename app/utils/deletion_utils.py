@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from app.models.core_models import (
     AssociatedFile, Dataset, DatasetKeywordLink, DatasetLink,
     DatasetSampleLink, DeletionRequest, IngestionRequest, Resource,
-    ResourceACL, Sample, ScientificMetadataBinary,
+    ResourceACL, ResourceEmbedding, Sample, ScientificMetadataBinary,
     SampleLink, Thumbnail, UploadSession,
 )
 
@@ -98,6 +98,9 @@ def hard_delete_resource(resource_id: str, session: Session, resource: Resource 
     resource = resource or session.exec(select(Resource).where(Resource.mfid == resource_id)).one_or_none()
     if resource is None:
         raise RuntimeError(f"Resource {resource_id} not found")
+    session.execute(
+        delete(ResourceEmbedding).where(ResourceEmbedding.resource_mfid == resource_id)
+    )
     if resource.resource_type == "dataset":
         _hard_delete_dataset(resource_id, session, resource)
     elif resource.resource_type == "sample":

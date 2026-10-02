@@ -19,7 +19,7 @@ from app.api.routes import (account, auth, files, datasets, gcs_storage, resourc
                             samples, instruments, users, projects,
                             access_groups, entities, misc, deletion,
                             ingestion_requests, ai, service_accounts,
-                            resource_graph, hub_auth)
+                            resource_graph, hub_auth, print as print_routes)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -212,6 +212,7 @@ app.include_router(misc.router)
 app.include_router(deletion.router)
 app.include_router(ai.router)
 app.include_router(service_accounts.router)
+app.include_router(print_routes.router)
 
 
 def custom_openapi():

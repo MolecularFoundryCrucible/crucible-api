@@ -8,7 +8,7 @@ import paho.mqtt.client as mqtt
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
-from app.general_utils import get_secret
+from app.general_utils import get_secret, is_valid_mfid
 from app.utils.auth_utils import authorize_user
 from app.utils.permissions import Principal
 
@@ -46,6 +46,16 @@ def _validate_printer_id(printer_id: str) -> str:
             detail="printer_id must be 1-64 chars of letters, digits, '_' or '-'",
         )
     return printer_id
+
+
+def _validate_mfid(mfid: str) -> str:
+    # A tray's MFID is printed before its dataset is uploaded and ingested, so
+    # there is no row to look up or an owning resource to check access
+    # against at print time -- this only confirms the caller sent a
+    # well-formed MFID, not that it currently exists in the database.
+    if not is_valid_mfid(mfid):
+        raise HTTPException(status_code=422, detail="mfid is not a valid MFID")
+    return mfid
 
 
 def _publish_barcode_print_job(printer_id: str, mfid: str, name: str) -> dict:
@@ -87,6 +97,7 @@ def print_barcode(
     broker, not that it was received or printed by the target device.
     '''
     printer_id = _validate_printer_id(body.printer_id)
-    payload = _publish_barcode_print_job(printer_id, body.mfid, body.name)
+    mfid = _validate_mfid(body.mfid)
+    payload = _publish_barcode_print_job(printer_id, mfid, body.name)
     response.headers["Cache-Control"] = "no-store"
     return BarcodePrintResponse(printer_id=printer_id, **payload)

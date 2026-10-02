@@ -22,8 +22,8 @@ _PRINTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class BarcodePrintRequest(BaseModel):
-    printer_id: str = Field(description="Target printer identifier, e.g. 'lab3-zebra'.")
-    mfid: str = Field(description="MFID of the sample or tray to print.")
+    printer_id: str = Field(description="Target printer identifier, e.g. 'spinbot'.")
+    mfid: str = Field(description="MFID of the resource to print.")
     name: str = Field(description="Human-readable label text.")
 
 

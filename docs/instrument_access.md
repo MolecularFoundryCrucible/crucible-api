@@ -63,3 +63,17 @@ The operator group holds no grant on the instrument record itself. Instruments c
 ## Display names
 
 `instrument_name` is free-text display, not an identifier. Use `unique_id` or `instrument_id` to refer to an instrument. Dataset responses resolve `instrument_name` from the assigned instrument, so renaming an instrument is reflected immediately. Legacy datasets without a registered instrument keep their stored label. See [dataset instrument assignment](dataset_instrument_assignment.md) for the deprecated name-based lookups.
+
+## Deleting an instrument
+
+An instrument can be permanently deleted only when no datasets are assigned to it. Two paths exist:
+
+```http
+POST   /resources/{instrument_mfid}/delete          # request, admin on the instrument
+PATCH  /deletion_requests/{request_id}?status=approved
+DELETE /resources/{instrument_mfid}?force=true[&confirm=true]
+```
+
+`DELETE` requires owner or platform-admin authority. Without `confirm=true` it returns a preview and deletes nothing; with `confirm=true` it executes, and still returns 409 with the blocking dataset count if datasets were assigned in the meantime. The preview reports what the deletion removes: `service_accounts_unbound` for the operator group's bindings, and `removed_grants` for any access grants the operator group holds on other resources.
+
+Deleting an instrument removes its operator access group, the group's grants, the service-account bindings, and the instrument's own records. The service-account User rows survive. A `DeletionAuditLog` row is written on both paths, and the `instrument_id` slug is free to reuse afterwards. See the [database deletion contract](database_deletion_contract.md) for the full behavior.

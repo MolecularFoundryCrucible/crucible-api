@@ -1904,7 +1904,9 @@
       "DeletableResourceType": {
         "enum": [
           "dataset",
-          "sample"
+          "sample",
+          "project",
+          "instrument"
         ],
         "title": "DeletableResourceType",
         "type": "string"
@@ -2061,6 +2063,87 @@
         "title": "DeletionAuditScope",
         "type": "string"
       },
+      "DeletionGrantRead": {
+        "properties": {
+          "permission": {
+            "title": "Permission",
+            "type": "string"
+          },
+          "resource_mfid": {
+            "title": "Resource Mfid",
+            "type": "string"
+          },
+          "resource_type": {
+            "title": "Resource Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_mfid",
+          "resource_type",
+          "permission"
+        ],
+        "title": "DeletionGrantRead",
+        "type": "object"
+      },
+      "DeletionPreviewRead": {
+        "description": "What deleting a project or instrument removes, or why it is blocked.",
+        "properties": {
+          "blocking": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Assigned datasets and samples that block deletion, keyed by entity type. Empty when the resource is deletable.",
+            "title": "Blocking",
+            "type": "object"
+          },
+          "deleted": {
+            "description": "False for a preview, true when the deletion executed.",
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "join_requests_removed": {
+            "default": 0,
+            "description": "Pending and reviewed join requests removed with a project's access group.",
+            "title": "Join Requests Removed",
+            "type": "integer"
+          },
+          "memberships_removed": {
+            "default": 0,
+            "description": "Project group members unlinked when a project is deleted.",
+            "title": "Memberships Removed",
+            "type": "integer"
+          },
+          "removed_grants": {
+            "description": "Access grants held by the deleted access group on resources other than the deleted resource itself.",
+            "items": {
+              "$ref": "#/components/schemas/DeletionGrantRead"
+            },
+            "title": "Removed Grants",
+            "type": "array"
+          },
+          "resource_id": {
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_type": {
+            "$ref": "#/components/schemas/DeletableResourceType"
+          },
+          "service_accounts_unbound": {
+            "default": 0,
+            "description": "Operator group service accounts unbound when an instrument is deleted.",
+            "title": "Service Accounts Unbound",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "resource_id",
+          "resource_type",
+          "deleted"
+        ],
+        "title": "DeletionPreviewRead",
+        "type": "object"
+      },
       "DeletionRequestCapabilities": {
         "properties": {
           "can_review": {
@@ -2084,6 +2167,17 @@
           "id": {
             "title": "Id",
             "type": "integer"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeletionPreviewRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Project and instrument deletions only: what deleting the resource removes, or why it is blocked. Null for datasets and samples."
           },
           "project_id": {
             "anyOf": [
@@ -2970,6 +3064,18 @@
               }
             ],
             "title": "Creation Time"
+          },
+          "deletion_request": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deletion Request"
           },
           "description": {
             "anyOf": [
@@ -4960,6 +5066,18 @@
             ],
             "title": "Creation Time"
           },
+          "deletion_request": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deletion Request"
+          },
           "lead": {
             "anyOf": [
               {
@@ -5173,6 +5291,11 @@
         "properties": {
           "can_change_status": {
             "title": "Can Change Status",
+            "type": "boolean"
+          },
+          "can_delete": {
+            "default": false,
+            "title": "Can Delete",
             "type": "boolean"
           },
           "can_edit": {
@@ -19595,7 +19718,7 @@
     },
     "/resources/{resource_id}": {
       "delete": {
-        "description": "Permanently delete a dataset or sample from the database without a deletion request.\nRequires force=true and resource owner or platform-admin authority.\nStored GCS objects are not deleted.",
+        "description": "Permanently delete a resource from the database without a deletion request.\nRequires force=true and resource owner or platform-admin authority.\nDatasets and samples delete immediately. Projects and instruments first\nreturn a preview; pass confirm=true to execute the deletion, which still\nrequires them to be empty. Stored GCS objects are not deleted.",
         "operationId": "hard_delete_resource_route_resources__resource_id__delete",
         "parameters": [
           {
@@ -19615,6 +19738,18 @@
             "schema": {
               "description": "Required acknowledgement for direct permanent deletion.",
               "title": "Force",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Required to actually delete a project or instrument. Omitting it returns a preview and deletes nothing.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Required to actually delete a project or instrument. Omitting it returns a preview and deletes nothing.",
+              "title": "Confirm",
               "type": "boolean"
             }
           },
@@ -19818,7 +19953,7 @@
     },
     "/resources/{resource_id}/delete": {
       "post": {
-        "description": "Request deletion of a resource. Requires contributor access to the resource.\nPending requests hide the resource from ordinary discovery until rejected.\nReturns 409 if an active deletion request already exists for this resource.",
+        "description": "Request deletion of a resource. Requires contributor access for datasets and\nsamples, admin for projects and instruments. Pending requests hide the\nresource from ordinary discovery until rejected.\nReturns 409 if an active deletion request already exists for this resource,\nor if a project or instrument still has assigned datasets or samples.",
         "operationId": "create_deletion_request_resources__resource_id__delete_post",
         "parameters": [
           {

@@ -28,6 +28,7 @@ from app.utils.auth_utils import (
     resource_capabilities,
 )
 from app.services.resource_access import load_member_grants, may_view_members
+from app.utils.deletion_utils import deletion_blockers
 from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import Permission, Principal, Role
@@ -268,6 +269,8 @@ def load_instrument_detail(
         ).one_or_none()
         if instrument is None:
             raise HTTPException(status_code=404, detail="Instrument not found")
+    acl_rows = fetch_acl_rows(session, resource_id)
+    deletion_request = get_active_deletion_request(session, resource_id)
     return InstrumentResponse.model_validate({
         **instrument.model_dump(exclude={"owner"}),
         "owner_orcid": instrument.owner,
@@ -279,7 +282,10 @@ def load_instrument_detail(
             session,
             principal,
             resource_id,
+            acl_rows=acl_rows,
+            can_delete=not deletion_blockers(session, "instrument", resource_id),
         ),
+        "deletion_request": deletion_request.model_dump() if deletion_request else None,
         "members": load_member_grants(session, resource_id)
         if options.include_members and may_view_members(session, principal, resource_id) else None,
     })
@@ -304,6 +310,7 @@ def load_project_detail(
     resource = _resource(session, resource_id, resource)
     is_member = principal.is_platform_admin or principal.role_in(project.unique_id) is not None
     lead = _owner(session, project.project_lead_orcid, True)
+    deletion_request = get_active_deletion_request(session, resource_id)
     return ProjectWithLead(
         **project.model_dump(),
         lead=lead,
@@ -323,7 +330,9 @@ def load_project_detail(
             manage_access_floor=Role.EDITOR,
             allow_peer_grants=False,
             status_permission=Permission.EDIT,
+            can_delete=not deletion_blockers(session, "project", resource_id),
         ),
+        deletion_request=deletion_request.model_dump() if deletion_request else None,
     )
 
 

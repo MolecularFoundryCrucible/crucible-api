@@ -23,6 +23,7 @@ from app.models.access import AccessGrantRead, AccessGrantWrite
 from app.models.access_groups import AccessGroupRead
 from app.models.datasets import DatasetResponse, ScientificMetadataBinaryRead
 from app.models.deletion import DeletionRequestCapabilities, DeletionRequestRead
+from app.utils.deletion_utils import deletion_preview_read, deletion_summary
 from app.models.instrument import InstrumentResponse
 from app.models.links import LinkedResource
 from app.models.projects import ProjectWithLead
@@ -508,9 +509,11 @@ def create_deletion_request(
     reason: Optional[str] = None,
 ):
     '''
-    Request deletion of a resource. Requires contributor access to the resource.
-    Pending requests hide the resource from ordinary discovery until rejected.
-    Returns 409 if an active deletion request already exists for this resource.
+    Request deletion of a resource. Requires contributor access for datasets and
+    samples, admin for projects and instruments. Pending requests hide the
+    resource from ordinary discovery until rejected.
+    Returns 409 if an active deletion request already exists for this resource,
+    or if a project or instrument still has assigned datasets or samples.
     '''
     requester_id = auth_res.user_id
     with Session(engine) as session:
@@ -520,20 +523,29 @@ def create_deletion_request(
         if resource is None:
             raise HTTPException(status_code=404, detail=f"Resource {resource_id} not found.")
 
-        if resource.resource_type not in ("dataset", "sample"):
+        if resource.resource_type not in ("dataset", "sample", "project", "instrument"):
             raise HTTPException(
                 status_code=400,
                 detail=f"Deletion requests are not supported for resource type '{resource.resource_type}'."
             )
 
         acl_rows = fetch_acl_rows(session, resource_id)
-        require_permission(
-            session,
-            auth_res,
-            resource_id,
-            Permission.CREATE,
-            acl_rows=acl_rows,
-        )
+        if resource.resource_type in ("project", "instrument"):
+            require_permission(
+                session,
+                auth_res,
+                resource_id,
+                Permission.DELETE,
+                acl_rows=acl_rows,
+            )
+        else:
+            require_permission(
+                session,
+                auth_res,
+                resource_id,
+                Permission.CREATE,
+                acl_rows=acl_rows,
+            )
 
         existing = session.exec(
             select(DeletionRequest)
@@ -545,6 +557,20 @@ def create_deletion_request(
                 status_code=409,
                 detail=f"A deletion request for {resource_id} already exists (status: {existing.status}).",
             )
+
+        if resource.resource_type in ("project", "instrument"):
+            blocking = deletion_summary(session, resource.resource_type, resource_id)["blocking"]
+            if blocking:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "detail": (
+                            f"Cannot delete {resource.resource_type} '{resource_id}': "
+                            f"it still has assigned datasets or samples."
+                        ),
+                        "blocking": blocking,
+                    },
+                )
 
         resource_name = None
         project_id = None
@@ -561,6 +587,16 @@ def create_deletion_request(
                 resource_name = samp.sample_name
                 project_id = samp.project_id
                 project_mfid = samp.project_mfid
+        elif resource.resource_type == "project":
+            project = session.exec(select(Project).where(Project.unique_id == resource_id)).one_or_none()
+            if project is not None:
+                resource_name = project.project_id
+                project_id = project.project_id
+                project_mfid = project.unique_id
+        elif resource.resource_type == "instrument":
+            instrument = session.exec(select(Instrument).where(Instrument.unique_id == resource_id)).one_or_none()
+            if instrument is not None:
+                resource_name = instrument.instrument_name
 
         deletion_req = DeletionRequest(
             resource_id=resource_id,
@@ -590,6 +626,12 @@ def create_deletion_request(
         requester = session.exec(
             select(User).where(User.unique_id == requester_id)
         ).one_or_none()
+        preview = None
+        if resource.resource_type in ("project", "instrument"):
+            summary = deletion_summary(session, resource.resource_type, resource_id)
+            preview = deletion_preview_read(
+                resource_id, resource.resource_type, False, summary
+            )
         return DeletionRequestRead(
             **deletion_req.model_dump(),
             resource_type=deletion_req.resource.resource_type if deletion_req.resource else None,
@@ -602,6 +644,7 @@ def create_deletion_request(
                     auth_res, acl_rows, Permission.DELETE
                 )
             ),
+            preview=preview,
         )
 
 
@@ -1104,6 +1147,8 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
         if new_proj is None:
             raise HTTPException(status_code=404, detail=f"Project '{body.project_id}' not found")
         require_permission(session, auth_res, new_proj.unique_id, Permission.CREATE)
+        from app.utils.deletion_utils import assert_not_pending_deletion
+        assert_not_pending_deletion(session, new_proj.unique_id)
 
         current_grants = _current_project_grants(session, mfid)
         previous_project_id = None

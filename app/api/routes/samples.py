@@ -29,7 +29,7 @@ from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleU
 from app.utils.auth_utils import (
     authorize_user, permission_filter, project_scope_filter,
     owner_affiliation_filter, require_permission)
-from app.utils.instrument_utils import resolve_instrument_mfids_to_references
+from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import require_link_create_permissions
 from app.utils.permissions import Principal, Permission, Role, has_global_permission
 from app.utils.project_utils import (
@@ -509,9 +509,8 @@ def list_samples(
                     )
                     dataset_reads_by_sample.setdefault(sid, []).append(DatasetRead.model_validate({
                         **ds.model_dump(),
-                        "instrument_id": instrument_references[ds.instrument_mfid].instrument_id if ds.instrument_mfid in instrument_references else None,
+                        **dataset_instrument_fields(ds, instrument_references.get(ds.instrument_mfid)),
                         "project_id": ds_project_references[ds.project_mfid].project_id if ds.project_mfid in ds_project_references else ds.project_id,
-                        "instrument": instrument_references.get(ds.instrument_mfid),
                         "project": ds_project_references.get(ds.project_mfid),
                     }))
 

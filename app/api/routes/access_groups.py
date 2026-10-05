@@ -13,7 +13,7 @@ from app.models.join_requests import JoinRequestCreate, JoinRequestRead, JoinReq
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_platform_admin
 from app.utils.permissions import AccessGroupType, Principal, Role
-from app.utils.project_utils import is_project_member, is_project_owner, sql_add_user_to_project
+from app.utils.project_utils import is_project_member, is_project_owner, project_id_matches, sql_add_user_to_project
 
 router = APIRouter(tags=["access_groups"])
 engine = get_engine()
@@ -141,7 +141,7 @@ def request_to_join_access_group(
     '''
     user_unique_id = auth_res.user_id
     with Session(engine) as session:
-        proj = session.exec(select(Project).where(Project.project_id == group_name)).one_or_none()
+        proj = session.exec(select(Project).where(project_id_matches(group_name))).one_or_none()
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Group {group_name} not found")
 
@@ -220,7 +220,7 @@ def list_join_requests(
         filters = []
 
         if group_name:
-            proj = session.exec(select(Project).where(Project.project_id == group_name)).one_or_none()
+            proj = session.exec(select(Project).where(project_id_matches(group_name))).one_or_none()
             ag = session.exec(select(AccessGroup).where(
                 AccessGroup.group_name == proj.unique_id,
                 AccessGroup.group_type == AccessGroupType.PROJECT.value,

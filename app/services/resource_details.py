@@ -27,7 +27,8 @@ from app.utils.auth_utils import (
     require_permission,
     resource_capabilities,
 )
-from app.utils.instrument_utils import resolve_instrument_mfids_to_references
+from app.services.resource_access import load_member_grants, may_view_members
+from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import Permission, Principal, Role
 from app.utils.project_utils import resolve_project_mfids_to_references
@@ -133,9 +134,8 @@ def load_dataset_detail(
 
     return DatasetResponse.model_validate({
         **dataset.model_dump(),
-        "instrument_id": instrument_reference.instrument_id if instrument_reference else None,
+        **dataset_instrument_fields(dataset, instrument_reference),
         "project_id": project_reference.project_id if project_reference else dataset.project_id,
-        "instrument": instrument_reference,
         "project": project_reference,
         "public": resource.public if resource else dataset.public,
         "creation_time": resource.creation_time if resource else None,
@@ -217,9 +217,8 @@ def load_sample_detail(
         "datasets": [
             DatasetRead.model_validate({
                 **dataset.model_dump(),
-                "instrument_id": instrument_references[dataset.instrument_mfid].instrument_id if dataset.instrument_mfid in instrument_references else None,
+                **dataset_instrument_fields(dataset, instrument_references.get(dataset.instrument_mfid)),
                 "project_id": project_references[dataset.project_mfid].project_id if dataset.project_mfid in project_references else dataset.project_id,
-                "instrument": instrument_references.get(dataset.instrument_mfid),
                 "project": project_references.get(dataset.project_mfid),
             })
             for dataset in readable_datasets
@@ -281,6 +280,8 @@ def load_instrument_detail(
             principal,
             resource_id,
         ),
+        "members": load_member_grants(session, resource_id)
+        if options.include_members and may_view_members(session, principal, resource_id) else None,
     })
 
 

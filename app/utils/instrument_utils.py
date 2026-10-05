@@ -1,10 +1,10 @@
 import re
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import and_, exists, func, or_
 from sqlmodel import select
 
-from app.models.core_models import Instrument, Project
+from app.models.core_models import Dataset, Instrument, Project
 from app.models.instrument import InstrumentReferenceRead
 
 _INSTRUMENT_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{2,24}$')
@@ -87,6 +87,28 @@ def resolve_instrument_mfids_to_ids(mfids, session) -> dict:
         select(Instrument.unique_id, Instrument.instrument_id).where(Instrument.unique_id.in_(mfid_set))
     ).all()
     return dict(rows)
+
+
+def dataset_instrument_fields(dataset, reference: "InstrumentReferenceRead | None") -> dict:
+    """Instrument fields for a dataset response, resolved from its instrument_mfid.
+    The stored instrument_name is a fallback for legacy datasets with no registered instrument."""
+    return {
+        "instrument_id": reference.instrument_id if reference else None,
+        "instrument_name": reference.instrument_name if reference else dataset.instrument_name,
+        "instrument": reference,
+    }
+
+
+def dataset_instrument_name_filter(instrument_name: str):
+    """Match the instrument name a dataset response displays: the registered
+    instrument's current name, or the stored label for a legacy dataset."""
+    return or_(
+        exists().where(
+            Instrument.unique_id == Dataset.instrument_mfid,
+            Instrument.instrument_name == instrument_name,
+        ).correlate(Dataset),
+        and_(Dataset.instrument_mfid.is_(None), Dataset.instrument_name == instrument_name),
+    )
 
 
 def resolve_instrument_mfids_to_references(mfids, session) -> dict[str, InstrumentReferenceRead]:

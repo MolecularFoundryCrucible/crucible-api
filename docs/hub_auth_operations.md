@@ -47,6 +47,32 @@ Both schema migrations completed on 2026-09-28. See the [rollout record](hub_aut
 
 Rotation adds a new secret version, updates the pinned reference, and rolls the consuming processes. Coordinate shared-client-secret rotation with the Hub; only one shared value is accepted at a time, so mixed old/new replicas need a planned transition. Cached values remain in existing workers even if the Secret Manager version is later disabled. Emergency credential revocation therefore also requires process rotation and, where appropriate, separate token-family revocation. Do not confuse Secret Manager version disablement with immediate session logout.
 
+## Temporarily disabling ORCID authentication
+
+Set the API's `HUB_AUTH_ENABLED` flag to `false` and roll the pods. The ConfigMap is injected as environment variables, so changing it alone does not update running workers. For production:
+
+```bash
+kubectl --context gke_mf-crucible_us-central1_crucible-cluster -n default patch configmap crucible-api-config-main \
+  --type merge -p '{"data":{"HUB_AUTH_ENABLED":"false"}}'
+kubectl --context gke_mf-crucible_us-central1_crucible-cluster -n default rollout restart deployment/crucible-api-main
+kubectl --context gke_mf-crucible_us-central1_crucible-cluster -n default rollout status deployment/crucible-api-main
+```
+
+For staging, replace `main` with `staging` in the resource names. This blocks new login, exchange, refresh, and revoke operations. Existing access tokens remain valid until expiry or separate revocation; legacy API keys remain supported. No database migration, token deletion, or secret rotation is required.
+
+Also disable the production Hub gate to put the Hub into its unavailable state:
+
+```bash
+gcloud run services update crucible-hub --project mf-crucible --region us-central1 \
+  --update-env-vars HUB_AUTH_PRODUCTION_ENABLED=false --quiet
+```
+
+This creates a new Hub revision while preserving other service settings. Keep all traffic on that revision. The pilot uses process-local sessions, so replacing the instance can discard browser sessions.
+
+An ordinary push to API `main` does not reactivate authentication: `cloudbuild.yaml` applies `k8s-conf/configmap-main.yaml`, which explicitly sets `HUB_AUTH_ENABLED: "false"`, before deploying the new API image. Staging has the same disabled default. An image-only Hub deployment preserves its existing `HUB_AUTH_PRODUCTION_ENABLED=false` environment setting. Re-enabling either gate requires an explicit configuration change; changing the checked-in flag, overriding deployment environment variables, or routing Hub traffic back to an enabled revision can change this behavior. Keep the disabled values until activation is authorized again.
+
+On 2026-09-28, production ORCID authentication was temporarily disabled at the user's request through both gates. Staging's API flag was already `false`. The API `main` ConfigMap on GitHub was verified to contain `false` before disabling the live service.
+
 ## Proxy throttling
 
 Ingress hardening is deferred by user decision on 2026-09-28. Existing API access and performance must remain unchanged. See [the recorded scope and activation restriction](hub_auth_release_rollout.md#deferred-ingress-changes). No bypass or transport mitigation is claimed complete, and deferral does not authorize public authentication activation.

@@ -103,3 +103,23 @@ def test_editor_cannot_rename(client, db_engine, auth_as):
 
     resp = client.patch("/projects/proj_old", json={"project_id": "proj_new"})
     assert resp.status_code == 403
+
+
+def test_rename_to_a_case_variant_of_another_project_409s(client, db_engine, auth_as):
+    ag_id, _ = _setup(db_engine)
+    with Session(db_engine) as session:
+        session.add(Project(project_id="proj_other", organization="LBNL", project_lead_orcid="0000-0001"))
+        session.commit()
+    auth_as("0000-0001", groups=[("proj_old", ag_id, Role.OWNER)])
+
+    resp = client.patch("/projects/proj_old", json={"project_id": "PROJ_OTHER"})
+    assert resp.status_code == 409
+
+
+def test_rename_can_change_only_the_case(client, db_engine, auth_as):
+    ag_id, mfid = _setup(db_engine)
+    auth_as("0000-0001", groups=[("proj_old", ag_id, Role.OWNER)])
+
+    resp = client.patch(f"/projects/{mfid}", json={"project_id": "Proj_Old"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["project_id"] == "Proj_Old"

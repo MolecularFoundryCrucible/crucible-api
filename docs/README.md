@@ -10,6 +10,8 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Resource identifier routes](resource_identifier_routes.md): canonical MFIDs, human-readable lookups, and compatibility aliases.
 - [Database deletion contract](database_deletion_contract.md): reviewed deletion and direct force-delete behavior.
 - [Dataset instrument assignment](dataset_instrument_assignment.md): creation, PATCH compatibility, and atomic reassignment behavior.
+- [Instrument access](instrument_access.md): maintainers on the instrument record, the service-account operator group, and dataset access.
+- [Instrument and project identifier changes, October 2026](instrument_and_slug_changes_2026-10.md): client handoff for live instrument names, instrument maintainers, and case-insensitive project slugs.
 - [Resource timestamp policy](resource_timestamp_policy.md): database-owned creation and modification times and the separate producer timestamp field.
 - [Graph route migration](graph_routes_migration.md): current graph security behavior and deferred route consolidation.
 - [Remote file records](remote_file_records.md): implemented non-GCS file catalog behavior and deferred resource-generic attachment.

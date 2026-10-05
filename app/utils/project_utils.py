@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import and_, func
 from sqlmodel import select
-from app.models.core_models import AccessGroup, Instrument, Project, User, UserAccessGroupLink, UserProjectLink
+from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink, UserProjectLink
 from app.models.projects import ProjectReferenceRead
 from app.general_utils import is_valid_mfid
 from app.utils.permissions import AccessGroupType, Role
@@ -19,6 +19,10 @@ _PROJECT_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{2,24}$')
 # of these would BE that group, because create_project reuses an existing group
 # rather than failing.
 RESERVED_PROJECT_IDS = frozenset({"admin", "read_only", "public"})
+
+
+def project_id_matches(project_id: str):
+    return func.lower(Project.project_id) == project_id.lower()
 
 
 def validate_project_id(project_id: str) -> str:
@@ -42,14 +46,12 @@ def validate_project_id(project_id: str) -> str:
 
 
 def assert_project_id_available(session, project_id: str) -> None:
-    """Raise 409 if project_id collides with an existing access group or
-    instrument name. Case-insensitive.
+    """Raise 409 if project_id collides with an existing access group.
+    Case-insensitive.
 
     Call after the duplicate-project check: the project does not exist by then,
     so any group holding the name belongs to something else — an ORCID group,
-    an instrument, a reserved group, an orphan. Instrument.instrument_name is
-    checked directly, not just AccessGroup, since an instrument with no
-    dataset filed against it yet has no group row.
+    a reserved group, an orphan.
     """
     existing_group = session.exec(
         select(AccessGroup).where(func.lower(AccessGroup.group_name) == project_id.lower())
@@ -58,16 +60,8 @@ def assert_project_id_available(session, project_id: str) -> None:
         raise HTTPException(
             status_code=409,
             detail=(f"project_id '{project_id}' collides with an existing access group. "
-                    f"Access group names are shared with users, instruments and "
-                    f"reserved groups; choose a different project_id."),
-        )
-    existing_instrument = session.exec(
-        select(Instrument).where(func.lower(Instrument.instrument_name) == project_id.lower())
-    ).one_or_none()
-    if existing_instrument is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"project_id '{project_id}' collides with an existing instrument name.",
+                    f"Access group names are shared with users and reserved groups; "
+                    f"choose a different project_id."),
         )
 
 
@@ -77,7 +71,7 @@ def resolve_project_id_to_mfid(proj_id: str, session) -> "str | None":
     yet. Used both for access-group-name resolution and, since it does the
     same lookup, for repointing Dataset/Sample FKs onto the MFID.
     """
-    project = session.exec(select(Project).where(Project.project_id == proj_id)).one_or_none()
+    project = session.exec(select(Project).where(project_id_matches(proj_id))).one_or_none()
     return project.unique_id if project else None
 
 
@@ -95,13 +89,13 @@ def resolve_project_identifiers(
         ).one_or_none()
     else:
         project = session.exec(
-            select(Project).where(Project.project_id == project_id)
+            select(Project).where(project_id_matches(project_id))
         ).one_or_none()
 
     if (
         project is not None
         and project_id is not None
-        and project.project_id != project_id
+        and project.project_id.casefold() != project_id.casefold()
     ):
         raise HTTPException(
             status_code=422,
@@ -119,7 +113,7 @@ def resolve_project_filter_mfid(
         return project_mfid
 
     project = session.exec(
-        select(Project).where(Project.project_id == project_id)
+        select(Project).where(project_id_matches(project_id))
     ).one_or_none()
     if project is None:
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
@@ -135,7 +129,7 @@ def resolve_project_reference(project_ref: str, session, *, options=()) -> "Proj
     if is_valid_mfid(project_ref):
         query = select(Project).where(Project.unique_id == project_ref)
     else:
-        query = select(Project).where(Project.project_id == project_ref)
+        query = select(Project).where(project_id_matches(project_ref))
     if options:
         query = query.options(*options)
     return session.exec(query).one_or_none()

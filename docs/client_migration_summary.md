@@ -178,8 +178,9 @@ The legacy `POST` and `GET /resources/{mfid}/access_groups` routes are deprecate
 - Project membership targets remain canonical ORCIDs or service-account MFIDs. Do not send a username in the `{orcid}` path position.
 - `GET /projects/{project_ref}?include_members=true` returns public-safe member records only to project members and platform administrators. Other callers receive `members: null`.
 - `GET /projects?project_id={slug}&include_members=true` provides the same member expansion for one-request slug resolution. Using `include_members=true` without `project_id` returns 422.
-- Generic `POST` and `DELETE /users/{user_id}/access_groups/{group_name}` routes are deprecated. They reject identity and system groups and direct project membership to project routes.
+- Generic `POST` and `DELETE /users/{user_id}/access_groups/{group_name}` routes are deprecated. They reject identity and system groups, direct project membership to project routes, and reject adding human users to instrument groups.
 - Instrument service-account membership should use `POST` or `DELETE /instruments/{instrument_mfid}/service_accounts/{service_account_mfid}`.
+- Instrument maintainers are grants on the instrument record through `PUT` and `DELETE /resources/{instrument_mfid}/access/users/{user_ref}`. `GET /instruments/{instrument_mfid}?include_members=true` and `GET /instruments?instrument_id={slug}&include_members=true` return them to callers holding a role on the instrument and to platform administrators. `affiliation=maintainer` lists instruments where the caller holds editor or admin. See [instrument access](instrument_access.md).
 
 ## User resource access
 
@@ -234,9 +235,9 @@ Dataset response models now include nullable lightweight references alongside th
 }
 ```
 
-`instrument` uses `InstrumentReferenceRead`, and `project` uses `ProjectReferenceRead`. The API returns current registered identity values when the canonical MFID resolves. An unresolved legacy relationship returns null while preserving the existing flat stored values. The fields are additive across dataset detail, collection, search, lineage, generic resource detail, and datasets embedded in sample responses. Existing clients do not need to change, and `instrument_id`, `instrument_name`, and `project_id` remain part of the API v3 response contract.
+`instrument` uses `InstrumentReferenceRead`, and `project` uses `ProjectReferenceRead`. The API returns current registered identity values when the canonical MFID resolves. An unresolved legacy relationship returns null while preserving the existing flat stored values. The fields are additive across dataset detail, collection, search, lineage, generic resource detail, and datasets embedded in sample responses. Existing clients do not need to change, and `instrument_id`, `instrument_name`, and `project_id` remain part of the API v3 response contract. `instrument_name` is display text resolved from the assigned instrument; datasets without a registered instrument return their stored label.
 
-`POST /datasets` accepts either the registered `instrument_id` slug or canonical `instrument_mfid`. Clients may send both when they identify the same instrument; conflicting pairs return 422. An unknown `instrument_mfid` returns 404. Existing `instrument_id` requests and the legacy `instrument_name` fallback remain supported with their existing 400 response for an unregistered instrument.
+`POST /datasets` accepts either the registered `instrument_id` slug or canonical `instrument_mfid`. Clients may send both when they identify the same instrument; conflicting pairs return 422. An unknown `instrument_mfid` returns 404. Existing `instrument_id` requests remain supported. The `instrument_name` fallback is deprecated: it keeps its 400 response for an unregistered name and returns 409 when the name matches more than one instrument. The `instrument_name` filter on `GET /datasets` is also deprecated in favor of `instrument_mfid`.
 
 `POST /datasets` and `POST /samples` accept either the project slug as `project_id` or the canonical `project_mfid`. Clients may send both when they identify the same project; conflicting pairs return 422. An unknown `project_mfid` returns 404. Existing `project_id` requests retain their previous authorization and error behavior. Successful responses continue returning the flat `project_id` and the structured `project` reference.
 

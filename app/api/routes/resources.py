@@ -33,6 +33,7 @@ from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import ResourceDetailQuery, ResourceEmbeddingListQuery
+from app.services.resource_access import access_grant_read
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
 from app.utils.auth_utils import (
     authorize_user,
@@ -55,7 +56,7 @@ from app.utils.permissions import (
 from app.utils.sql_utils import add_or_update, set_public, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
 from app.utils.link_utils import fetch_readable_links
-from app.utils.project_utils import is_project_group
+from app.utils.project_utils import is_project_group, project_id_matches
 from app.utils.user_utils import resolve_user_by_identifier
 from app.utils.cursor_utils import (
     CursorError,
@@ -706,67 +707,6 @@ def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, aut
 # project id.
 # ---------------------------------------------------------------------------
 
-def _access_grant_read(session, access_group: AccessGroup, permission: str) -> AccessGrantRead:
-    group_name = access_group.group_name
-    group_type = access_group.group_type
-    if group_type == AccessGroupType.SYSTEM.value and group_name == PUBLIC_GROUP_NAME:
-        return AccessGrantRead(
-            principal_id=PUBLIC_GROUP_NAME,
-            principal_type="public",
-            permission=permission,
-            display_name="All authenticated users",
-        )
-    if group_type == AccessGroupType.SYSTEM.value:
-        return AccessGrantRead(
-            principal_id=group_name,
-            principal_type="system",
-            permission=permission,
-            display_name=group_name,
-        )
-    if group_type == AccessGroupType.IDENTITY.value:
-        user = session.exec(select(User).where(User.unique_id == group_name)).one_or_none()
-    else:
-        user = None
-    if user:
-        display_name = f"{user.first_name} {user.last_name}".strip() or None
-        return AccessGrantRead(
-            principal_id=user.unique_id,
-            principal_type="service_account" if user.is_service_account else "user",
-            permission=permission,
-            slug=user.username,
-            display_name=display_name,
-        )
-    if group_type == AccessGroupType.PROJECT.value:
-        project = session.exec(select(Project).where(Project.unique_id == group_name)).one_or_none()
-    else:
-        project = None
-    if project:
-        return AccessGrantRead(
-            principal_id=project.unique_id,
-            principal_type="project",
-            permission=permission,
-            slug=project.project_id,
-            display_name=project.title or project.project_id,
-        )
-    if group_type == AccessGroupType.INSTRUMENT.value:
-        instrument = session.exec(select(Instrument).where(Instrument.unique_id == group_name)).one_or_none()
-    else:
-        instrument = None
-    if instrument:
-        return AccessGrantRead(
-            principal_id=instrument.unique_id,
-            principal_type="instrument",
-            permission=permission,
-            slug=instrument.instrument_id,
-            display_name=instrument.instrument_name,
-        )
-    return AccessGrantRead(
-        principal_id=group_name,
-        principal_type="unknown",
-        permission=permission,
-    )
-
-
 def _resolve_grantee(session, kind: str, principal: str):
     """(AccessGroup, canonical principal) for a typed path segment."""
     if kind == "public":
@@ -786,7 +726,7 @@ def _resolve_grantee(session, kind: str, principal: str):
         group_type = AccessGroupType.IDENTITY.value
     elif kind == "projects":
         proj = session.exec(select(Project).where(
-            Project.project_id == principal)).one_or_none()
+            project_id_matches(principal))).one_or_none()
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project '{principal}' not found")
         group_name = proj.unique_id
@@ -819,7 +759,7 @@ def list_resource_access(mfid: str, auth_res: Annotated[Principal, Depends(autho
             .where(ResourceACL.mfid == mfid)
         ).all()
 
-        return [_access_grant_read(session, ag, acl.permission) for acl, ag in rows]
+        return [access_grant_read(session, ag, acl.permission) for acl, ag in rows]
 
 
 @router.put("/resources/{mfid}/access/{kind}/{principal}", response_model=AccessGrantRead)
@@ -854,7 +794,7 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
         _set_resource_access_grant(session, auth_res, mfid, ag, target)
         session.commit()
 
-        return _access_grant_read(session, ag, target.db_value)
+        return access_grant_read(session, ag, target.db_value)
 
 
 @router.delete("/resources/{mfid}/access/{kind}/{principal}")
@@ -918,7 +858,7 @@ def publish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize
         session.commit()
 
         ag, _ = _resolve_grantee(session, "public", PUBLIC_GROUP_NAME)
-        return _access_grant_read(session, ag, Role.VIEWER.db_value)
+        return access_grant_read(session, ag, Role.VIEWER.db_value)
 
 
 @router.delete("/resources/{mfid}/access/public")
@@ -1160,7 +1100,7 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
 
         require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
 
-        new_proj = session.exec(select(Project).where(Project.project_id == body.project_id)).one_or_none()
+        new_proj = session.exec(select(Project).where(project_id_matches(body.project_id))).one_or_none()
         if new_proj is None:
             raise HTTPException(status_code=404, detail=f"Project '{body.project_id}' not found")
         require_permission(session, auth_res, new_proj.unique_id, Permission.CREATE)

@@ -2,11 +2,19 @@
 
 ## Creation
 
-Set `instrument_mfid` when creating a dataset when the stable identifier is available. `instrument_id` remains supported for slug-based callers, and `instrument_name` remains a compatibility alias. A supplied slug and MFID must resolve to the same instrument.
+Set `instrument_mfid` when creating a dataset when the stable identifier is available. `instrument_id` remains supported for slug-based callers. A supplied slug and MFID must resolve to the same instrument.
+
+`instrument_name` is deprecated as a lookup key because instrument names are free-text display and need not be unique. It is consulted only when both `instrument_id` and `instrument_mfid` are omitted. An unregistered name returns 400, and a name matching more than one instrument returns 409.
+
+## Display name
+
+Dataset responses resolve `instrument_name` from the assigned instrument through `instrument_mfid`, matching `instrument_id` and the nested `instrument` reference. Renaming an instrument is reflected in every dataset response. Datasets without a registered instrument return their stored label.
+
+The `instrument_name` filter on `GET /datasets` is deprecated. It matches the same displayed value. Filter by `instrument_mfid` instead.
 
 ## Generic update
 
-Generic `PATCH /datasets/{dataset_mfid}` no longer changes or clears the assigned instrument. The deprecated `instrument_id` and `instrument_name` fields remain in `DatasetUpdate` temporarily so existing clients may resubmit the current value without failing. A different value or removal returns `409 Conflict`.
+Generic `PATCH /datasets/{dataset_mfid}` no longer changes or clears the assigned instrument. The deprecated `instrument_id` and `instrument_name` fields remain in `DatasetUpdate` temporarily so existing clients may resubmit the current value without failing. For `instrument_name`, both the stored label and the instrument's current name are accepted. A different value or removal returns `409 Conflict`.
 
 Clients should stop presenting instrument assignment as editable dataset metadata and omit both fields from PATCH requests.
 

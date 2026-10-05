@@ -21,6 +21,8 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Hub login integration](hub_login_design.md): implemented contract and single-instance pilot requirements.
 - [Hub authentication operations](hub_auth_operations.md): secrets, logging, cleanup, and activation gates.
 - [Hub authentication rollout](hub_auth_release_rollout.md): recorded deployment state and remaining migration steps.
+- [Hub authentication security review](hub_auth_security_review.md): activation blockers, dispositions, and verified controls.
+- [Dependency security assessment](dependency_security_assessment.md): advisory reachability and staged upgrade batches.
 
 - [Database migration guidance](../migrations/README.md): current schema and data migration safeguards.
 - [Production migration data follow-ups](production_migration_data_followups.md): unresolved legacy instrument references and ownership anomalies from the August 2026 migration.
@@ -28,6 +30,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 
 ## Deferred designs and backlog
 
+- [API-key retrieval and rotation](api_key_lifecycle_followup.md)
 - [Analysis job route migration](analysis_job_routes_migration.md)
 - [`idtype` to `resource` rename](idtype_to_resource_rename.md)
 - [Project archiving](project_archiving.md)

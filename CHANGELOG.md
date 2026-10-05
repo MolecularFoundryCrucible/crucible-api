@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Documented temporary ORCID authentication disablement, both production gates, and how the disabled settings persist across deployments.
+- Added the Hub authentication security review, dependency security assessment, and deferred API-key lifecycle follow-up to the documentation.
 - Updated the staging Hub client and both ORCID credential pins to Secret Manager version 2.
 - Added pinned Google Secret Manager references for Hub client and ORCID credentials, environment-specific deployment settings, and a disabled-by-default deployment activation flag.
 - Redacted Hub authentication validation failures and unexpected-error logs, and added no-store headers to all Hub authentication responses.

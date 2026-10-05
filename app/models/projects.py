@@ -72,12 +72,6 @@ class ProjectWithLead(ProjectRead):
     members: Optional[List[AccessGroupMemberRead]] = None
 
 
-class ProjectMinimalRead(SQLModel):
-    unique_id: str
-    project_id: str
-    title: Optional[str] = None
-
-
 class ProjectReferenceRead(SQLModel):
     unique_id: str
     project_id: str

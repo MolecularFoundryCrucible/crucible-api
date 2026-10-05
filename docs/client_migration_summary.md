@@ -195,6 +195,8 @@ GET /projects?accessible_to_user={user_ref}
 GET /projects?accessible_to_project={project_ref}
 ```
 
+`GET /users/{user_id}/projects` lists only the projects a user is a member of, while `GET /projects?accessible_to_user=` lists every project the user can read, including explicit grants and, for a selected platform contributor or administrator, all projects. Both require the same authority to inspect another user: `platform_role` `contributor` or `admin`. See [`GET /users/{user_id}/projects`](permission_system_api_changes.md#get-usersuser_idprojects).
+
 References are resolved by the API, so users may be identified by MFID, ORCID, username, or email and projects by MFID or slug. Repeat parameters to request an intersection. All selectors use AND semantics, are deduplicated after resolution, and may total at most 10. They only narrow resources readable by the caller. With no selector, dataset and sample collections list resources accessible to the caller and the project collection retains its existing discovery behavior.
 
 Inspecting another user requires platform-admin authority. Inspecting a project requires membership in that project or platform-admin authority. An unknown principal returns 404, an unauthorized inspection returns 403, and more than 10 selectors returns 422.

@@ -64,6 +64,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `GET /users/{user_id}/projects` is now available to callers with `platform_role` `contributor` or `admin`, including unbound service accounts, matching the authority for `accessible_to_user`. Instrument-group membership no longer grants access, and the reduced `ProjectMinimalRead` projection for instrument-group members is removed; every authorized caller receives `ProjectWithLead`.
 - Project slugs are now matched case-insensitively in `GET /projects?project_id=`, the `GET /projects/{project_id}` compatibility alias, project filters, and project references in other routes, matching instrument slugs. Creating or renaming a project to a slug that differs from another only by case returns 409. Migration `b7e2d9c4a1f3` adds case-insensitive unique indexes on `project.project_id` and `instrument.instrument_id`; `migrations/data/20261005_audit_case_insensitive_slugs.py` audits for conflicting slugs first.
 - Dataset responses now resolve `instrument_name` from the assigned instrument through `instrument_mfid`, so instrument renames are reflected immediately. Datasets without a registered instrument keep their stored label. Generic dataset PATCH accepts either the stored label or the current name as the unchanged value.
 - Deprecated the `instrument_name` lookup on `POST /datasets` and the `instrument_name` filter on `GET /datasets`. The filter now matches the displayed name. Use `instrument_id` or `instrument_mfid`.

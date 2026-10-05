@@ -27,6 +27,7 @@ import app.api.routes.resource_graph as resource_graph_routes
 import app.api.routes.samples as samples_routes
 import app.api.routes.service_accounts as service_accounts_routes
 import app.api.routes.users as users_routes
+import app.utils.gcs_record_utils as gcs_record_utils
 from fastapi.testclient import TestClient
 
 TEST_TABLES = [
@@ -74,6 +75,13 @@ def db_engine():
     service_accounts_routes.engine = engine
     users_routes.engine = engine
     yield engine
+
+
+@pytest.fixture(autouse=True)
+def block_record_bucket(monkeypatch):
+    def _refuse():
+        raise RuntimeError("tests must not write to the record bucket")
+    monkeypatch.setattr(gcs_record_utils, "_get_client", _refuse)
 
 
 @pytest.fixture

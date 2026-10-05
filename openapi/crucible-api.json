@@ -994,6 +994,8 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
+            "description": "Deprecated. Display-name lookup used only when instrument_id and instrument_mfid are omitted; returns 409 when the name matches more than one instrument. Use instrument_id or instrument_mfid.",
             "title": "Instrument Name"
           },
           "measurement": {
@@ -2742,6 +2744,14 @@
         "title": "IngestionRequest",
         "type": "object"
       },
+      "InstrumentAffiliation": {
+        "enum": [
+          "owner",
+          "maintainer"
+        ],
+        "title": "InstrumentAffiliation",
+        "type": "string"
+      },
       "InstrumentCreate": {
         "additionalProperties": false,
         "description": "Fields required to register a new instrument.",
@@ -3012,6 +3022,21 @@
               }
             ],
             "title": "Manufacturer"
+          },
+          "members": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AccessGrantRead"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "People and projects holding a role on the instrument record. Null unless requested and visible to the caller.",
+            "title": "Members"
           },
           "model": {
             "anyOf": [
@@ -9452,6 +9477,8 @@
             }
           },
           {
+            "deprecated": true,
+            "description": "Deprecated display-name filter. Matches the registered instrument's current name, or the stored label for datasets without a registered instrument. Use instrument_mfid.",
             "in": "query",
             "name": "instrument_name",
             "required": false,
@@ -9464,6 +9491,8 @@
                   "type": "null"
                 }
               ],
+              "deprecated": true,
+              "description": "Deprecated display-name filter. Matches the registered instrument's current name, or the stored label for datasets without a registered instrument. Use instrument_mfid.",
               "title": "Instrument Name"
             }
           },
@@ -15599,7 +15628,7 @@
             }
           },
           {
-            "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics.",
+            "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics. maintainer matches instruments where the caller holds editor or admin on the instrument record.",
             "in": "query",
             "name": "affiliation",
             "required": false,
@@ -15607,7 +15636,7 @@
               "anyOf": [
                 {
                   "items": {
-                    "$ref": "#/components/schemas/Affiliation"
+                    "$ref": "#/components/schemas/InstrumentAffiliation"
                   },
                   "maxItems": 5,
                   "minItems": 1,
@@ -15617,7 +15646,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics.",
+              "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics. maintainer matches instruments where the caller holds editor or admin on the instrument record.",
               "title": "Affiliation"
             }
           },
@@ -15638,6 +15667,18 @@
             "schema": {
               "default": false,
               "title": "Include Owner",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Include people and projects holding a role on the instrument record. Returned only to callers who hold a role on the instrument and to platform administrators. Requires an exact instrument_id filter.",
+            "in": "query",
+            "name": "include_members",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Include people and projects holding a role on the instrument record. Returned only to callers who hold a role on the instrument and to platform administrators. Requires an exact instrument_id filter.",
+              "title": "Include Members",
               "type": "boolean"
             }
           },
@@ -16051,7 +16092,7 @@
             }
           },
           {
-            "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics.",
+            "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics. maintainer matches instruments where the caller holds editor or admin on the instrument record.",
             "in": "query",
             "name": "affiliation",
             "required": false,
@@ -16059,7 +16100,7 @@
               "anyOf": [
                 {
                   "items": {
-                    "$ref": "#/components/schemas/Affiliation"
+                    "$ref": "#/components/schemas/InstrumentAffiliation"
                   },
                   "maxItems": 5,
                   "minItems": 1,
@@ -16069,7 +16110,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics.",
+              "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics. maintainer matches instruments where the caller holds editor or admin on the instrument record.",
               "title": "Affiliation"
             }
           },
@@ -16229,6 +16270,18 @@
             "schema": {
               "default": true,
               "title": "Include Owner",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Include people and projects holding a role on the instrument record. Returned only to callers who hold a role on the instrument and to platform administrators.",
+            "in": "query",
+            "name": "include_members",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Include people and projects holding a role on the instrument record. Returned only to callers who hold a role on the instrument and to platform administrators.",
+              "title": "Include Members",
               "type": "boolean"
             }
           },

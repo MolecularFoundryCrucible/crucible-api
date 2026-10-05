@@ -41,7 +41,7 @@ AccessGroupMemberRead = {
 }
 ```
 
-Requires admin on the instrument. In practice this is platform-admin only for now because no group otherwise holds admin on an instrument. `DELETE` on a binding that doesn't exist returns 404.
+Requires admin on the instrument: the instrument owner, admin maintainers, and platform administrators. Only service accounts can be bound. `DELETE` on a binding that doesn't exist returns 404. See [instrument access](instrument_access.md).
 
 ### `GET /instruments/{instrument_mfid}/service_accounts`
 
@@ -59,7 +59,7 @@ Instrument display names preserve the casing supplied by the caller. Exact filte
 
 `GET /instruments/search` accepts an optional `status` query with `active`, `maintenance`, or `decommissioned`. Omitting the query preserves the existing behavior and searches across every status.
 
-The response exposes the canonical identity as `owner_orcid`, matching dataset and sample responses despite the legacy field name. Instrument singleton and generic resource reads populate `owner` with a public-safe user object by default; pass `include_owner=false` to omit it. Collection and search expansion remains opt-in with `include_owner=true` and uses one batched user query. The API creates an owner ACL for that identity as well as the separate editor ACL for the instrument operator group. Arbitrary labels such as `"facility"` are no longer valid owner values unless they resolve to a registered username. Instrument PATCH no longer accepts `owner`; use `POST /resources/{instrument_mfid}/transfer_ownership`.
+The response exposes the canonical identity as `owner_orcid`, matching dataset and sample responses despite the legacy field name. Instrument singleton and generic resource reads populate `owner` with a public-safe user object by default; pass `include_owner=false` to omit it. Collection and search expansion remains opt-in with `include_owner=true` and uses one batched user query. The API creates an owner ACL for that identity. The instrument operator group holds no grant on the instrument record. Maintainers are granted through the generic resource access routes, and `include_members=true` returns them to callers with a role on the instrument; see [instrument access](instrument_access.md). Arbitrary labels such as `"facility"` are no longer valid owner values unless they resolve to a registered username. Instrument PATCH no longer accepts `owner`; use `POST /resources/{instrument_mfid}/transfer_ownership`.
 
 Dataset, sample, project, and instrument detail responses now share an optional caller-specific `capabilities` object:
 
@@ -79,7 +79,7 @@ Dataset, sample, project, and instrument detail responses now share an optional 
 
 Body now rejects `project_lead_orcid`, `project_lead_email`, `project_lead_username` with **422** (`extra="forbid"`). Use `POST /resources/{mfid}/transfer_ownership` for leadership changes instead.
 
-`project_id` itself is now an accepted field and **renames the project**. It is validated the same way as at creation (format, reserved names, collision against other projects/access groups/instrument names), with 409 on collision and 422 on malformed input. It is safe to change at any time: every FK that names a project stores its MFID, never `project_id`, and every dataset/sample response resolves `project_id` live rather than from a stored value, so a rename never strands existing data under the old name. Accepted fields are now `project_id`, `organization`, `status`, `title`.
+`project_id` itself is now an accepted field and **renames the project**. It is validated the same way as at creation (format, reserved names, case-insensitive collision against other projects and access groups), with 409 on collision and 422 on malformed input. A rename may change only the casing of the project's own slug. It is safe to change at any time: every FK that names a project stores its MFID, never `project_id`, and every dataset/sample response resolves `project_id` live rather than from a stored value, so a rename never strands existing data under the old name. Accepted fields are now `project_id`, `organization`, `status`, `title`.
 
 ### `GET /resources/{mfid}/access`, `PUT/DELETE /resources/{mfid}/access/{kind}/{principal}`, `PUT/DELETE /resources/{mfid}/access/public`
 

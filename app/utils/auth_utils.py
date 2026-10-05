@@ -491,6 +491,26 @@ def owner_affiliation_filter(principal: Principal, resource_model):
     )
 
 
+def maintainer_affiliation_filter(principal: Principal, resource_model):
+    """Resources where the caller's own identity holds editor or admin."""
+    from sqlalchemy import exists
+    from app.models.core_models import AccessGroup, ResourceACL
+    from app.utils.permissions import AccessGroupType
+
+    return (
+        exists()
+        .where(
+            ResourceACL.mfid == resource_model.unique_id,
+            ResourceACL.permission.in_((Role.EDITOR.db_value, Role.ADMIN.db_value)),
+            ResourceACL.accessgroup_id == AccessGroup.id,
+            AccessGroup.group_type == AccessGroupType.IDENTITY.value,
+            AccessGroup.group_name == principal.user_id,
+        )
+        .select_from(ResourceACL, AccessGroup)
+        .correlate(resource_model)
+    )
+
+
 def project_owner_affiliation_filter(principal: Principal, project_model):
     from sqlalchemy import exists
     from app.models.core_models import AccessGroup, User, UserAccessGroupLink

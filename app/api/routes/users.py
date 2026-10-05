@@ -491,6 +491,11 @@ def add_user_to_access_group(auth_res: Annotated[Principal, Depends(authorize_us
             raise HTTPException(
                 status_code=400,
                 detail=f"'{group_name}' is a project. Use POST /projects/{group_name}/users/{user_id} instead.")
+        if ag.group_type == AccessGroupType.INSTRUMENT.value and not user.is_service_account:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"'{group_name}' is an instrument group, which holds service accounts only. "
+                        f"Grant instrument maintainers access through PUT /resources/{group_name}/access/users/{user_id}."))
         ag = sql_add_user_to_access_group(user_id, group_name, session)
         session.commit()
         session.refresh(ag)

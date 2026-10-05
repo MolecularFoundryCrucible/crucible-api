@@ -146,20 +146,11 @@ class TestCollisionIsCaseInsensitive:
         with pytest.raises(HTTPException):
             assert_project_id_available(session, "XRD-1")
 
-    def test_instrument_name_collision_is_rejected_even_with_no_group_yet(self, session):
-        """An instrument with no dataset filed against it yet has no
-        AccessGroup row — must still be caught by checking Instrument directly."""
+    def test_instrument_name_does_not_block_a_project_id(self, session):
+        """instrument_name is free-text display, not an identifier."""
         session.add(Instrument(instrument_name="xrd-2", owner="lab", location="b30"))
         session.commit()
-        with pytest.raises(HTTPException) as exc:
-            assert_project_id_available(session, "xrd-2")
-        assert exc.value.status_code == 409
-
-    def test_instrument_name_collision_ignores_case(self, session):
-        session.add(Instrument(instrument_name="xrd-3", owner="lab", location="b30"))
-        session.commit()
-        with pytest.raises(HTTPException):
-            assert_project_id_available(session, "XRD-3")
+        assert_project_id_available(session, "XRD-2")
 
 
 def test_grammar_and_collision_are_separate_layers(session):

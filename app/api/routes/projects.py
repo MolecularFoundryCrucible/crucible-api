@@ -33,7 +33,7 @@ from app.utils.search_utils import (
 from app.utils.sql_utils import add_or_update, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import (
-    assert_project_id_available, is_project_owner, sql_add_user_to_project,
+    assert_project_id_available, is_project_owner, project_id_matches, sql_add_user_to_project,
     sql_get_projects_for_user, resolve_project_reference)
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
@@ -92,7 +92,7 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
         raise HTTPException(status_code=400, detail="Provide project_lead or one of project_lead_orcid/_email/_username, not both.")
 
     with Session(engine) as session:
-        existing = session.exec(select(Project).where(Project.project_id == P.project_id)).one_or_none()
+        existing = session.exec(select(Project).where(project_id_matches(P.project_id))).one_or_none()
         if existing is not None:
             raise HTTPException(status_code=409, detail=f"Project '{P.project_id}' already exists. Use PATCH to update it.")
 
@@ -199,9 +199,9 @@ def list_projects(
                 project_refs=accessible_to_project,
             ))
             if project_id is not None:
-                base = base.where(Project.project_id == project_id)
+                base = base.where(project_id_matches(project_id))
         elif project_id is not None:
-            base = select(Project).where(Project.project_id == project_id)
+            base = select(Project).where(project_id_matches(project_id))
         elif has_global_permission(auth_res, Permission.READ):
             base = select(Project)
         else:
@@ -350,7 +350,7 @@ def read_project(
         if prop is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        if prop.project_id == project_ref:
+        if prop.project_id.casefold() == project_ref.casefold():
             response.headers["Content-Location"] = f"/projects/{prop.unique_id}"
 
         return load_project_detail(
@@ -390,7 +390,10 @@ def update_project(project_ref: str, auth_res: Annotated[Principal, Depends(auth
 
         if update_data.get("project_id") and update_data["project_id"] != project.project_id:
             existing = session.exec(
-                select(Project).where(Project.project_id == update_data["project_id"])
+                select(Project).where(
+                    project_id_matches(update_data["project_id"]),
+                    Project.id != project.id,
+                )
             ).one_or_none()
             if existing is not None:
                 raise HTTPException(status_code=409, detail=f"Project '{update_data['project_id']}' already exists.")

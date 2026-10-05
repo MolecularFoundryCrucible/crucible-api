@@ -11,6 +11,7 @@ This document is the API and Python client contract for stable identifiers and h
 - API responses expose either identifier as `unique_id`.
 - Project slugs use `project_id`; instrument slugs use `instrument_id`; usernames identify users for human lookup.
 - New or renamed project and instrument slugs must contain 3 to 25 characters. MFIDs contain exactly 26 characters.
+- Project and instrument slugs are unique and matched case-insensitively. Responses return the slug with its stored casing.
 - Sample and dataset names are not unique identifiers.
 
 ## Canonical GET routes

@@ -22,13 +22,13 @@ Repeated values use OR within one filter family. Different filter families compo
 
 Dataset and sample collections accept `sort=created|updated|name` and `direction=asc|desc`. Omitting `sort` preserves the legacy `unique_id DESC` order. Every order uses `unique_id` as a deterministic tie-breaker, and null primary values sort last.
 
-Projects retain `project_id ASC, unique_id ASC`. Instruments retain `creation_time DESC NULLS LAST, unique_id DESC`.
+Projects retain `project_id ASC, unique_id ASC`. Instruments retain `creation_time DESC NULLS LAST, unique_id DESC`. The user collection accepts `sort=name|username|unique_id|email` with `direction=asc|desc` (default `asc`). All user sorts are case-insensitive, use `unique_id` as tie-breaker, and place nulls last; `name` sorts by last name then first name, and `email` is administrator only. Omitting `sort` is equivalent to `sort=name&direction=asc`.
 
 Mutable sorts are live views. An item can move between pages if its name or modification time changes during traversal. Clients should restart pagination after a mutation or refresh.
 
 ## Pagination
 
-All four collections retain offset pagination and support opaque cursor pagination. Dataset and sample routes also accept legacy raw MFID cursors only with the default order. New responses emit signed versioned cursors.
+All four collections retain offset pagination and support opaque cursor pagination. The user collection also supports both. Dataset and sample routes also accept legacy raw MFID cursors only with the default order. New responses emit signed versioned cursors.
 
 Cursors bind the continuation position to the authenticated principal, resource kind, sort, direction, and normalized result filters. Changing that context returns 422. Page size, representation expansion, and `include_total` may change while following a cursor. Every page reapplies authorization.
 
@@ -74,6 +74,16 @@ Facet pages use bounded opaque cursor pagination. Continuation requests must res
 Dataset and sample list routes expose matching `*_is_null` filters. Omission does not constrain nullability, `true` selects null values, and `false` selects non-null values. Combining `true` with a concrete value for the same field returns 422.
 
 Calendar facets remain deferred. The producer-supplied dataset `timestamp` is unconstrained text and is unsuitable for reliable server-side calendar grouping. A future calendar facet should use API-owned `creation_time` and explicit UTC semantics.
+
+## User collection
+
+`GET /users` uses its own query model. Exact `unique_id`, `username`, and `email` filters return the same authorized representation as the singleton route; broad listings return public-safe profiles scoped to users who share an access group, or the full directory with email and platform roles for platform administrators.
+
+Declared filters are `unique_id`, `username`, `email`, `first_name`, `last_name`, `q`, `search_fields`, `permissive`, `is_service_account`, and `platform_role`. `first_name` and `last_name` are case-insensitive substrings with `permissive=true` (the default) and exact otherwise. `q` is a case-insensitive substring search. By default it matches first name, last name, username, unique ID, and, for platform administrators only, email. Repeatable `search_fields` (`first_name`, `last_name`, `username`, `unique_id`, `email`) restricts `q` to the named fields with OR semantics and requires `q`; naming `email` is administrator only and other callers receive 403. `platform_role` is repeatable and administrator only; other callers receive 403. `include_total`, `limit`, `cursor`, `offset`, `sort`, and `direction` follow the shared collection behavior above.
+
+Any other query parameter is ignored without filtering. The response carries a `Deprecation: @1791244800` header and the ignored parameters are logged. The parameters will be rejected with 422 at a future announced date. No `Sunset` header is sent.
+
+`user_capabilities` is populated for singleton and exact lookups only and remains null on broad listings, `/users/search`, and `/users/resolve`.
 
 ## Singleton GETs
 

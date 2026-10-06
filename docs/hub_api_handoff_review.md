@@ -228,6 +228,8 @@ Decision: Document and type existing behavior first.
 
 Add operation-specific operator capability guidance and explicit 403, 404, and conflict outcomes. Keep exact service-account lookup unless a demonstrated operator workflow requires browsing. A bounded discovery endpoint should be added only with an identity-visibility policy.
 
+Instrument maintainers are implemented as grants on the instrument record. Instrument detail and exact slug lookup accept `include_members=true`, returned to callers holding a role on the instrument, and instrument collections accept `affiliation=maintainer`. Instrument roles never grant access to datasets assigned to the instrument; the operator group holds service accounts only. See `docs/instrument_access.md`.
+
 ### 18. Instrument lifecycle and registration
 
 Decision: Include immediate schema and documentation cleanup; defer additional policy until specified.

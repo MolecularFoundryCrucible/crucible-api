@@ -66,6 +66,7 @@ def test_canonical_get_uses_project_mfid(client, db_engine, auth_as):
         "can_manage_access": False,
         "can_change_status": False,
         "can_transfer": False,
+        "can_delete": False,
         "max_grant_role": None,
     }
     generic_response = client.get(f"/resources/{project_mfid}")
@@ -134,6 +135,7 @@ def test_project_update_accepts_canonical_mfid(client, db_engine, auth_as):
         "can_manage_access": True,
         "can_change_status": True,
         "can_transfer": False,
+        "can_delete": False,
         "max_grant_role": "contributor",
     }
     generic_response = client.get(f"/resources/{project_mfid}")
@@ -264,3 +266,28 @@ def test_platform_admin_dataset_graph_does_not_require_group_membership(client, 
 
     assert response.status_code == 200, response.text
     assert [node["id"] for node in response.json()["nodes"]] == ["ds_private_admin"]
+
+
+def test_slug_lookups_ignore_case(client, db_engine, auth_as):
+    project_mfid, _ = _setup(db_engine)
+    auth_as("0000-0002-2222-2222", groups=[], platform_role=PlatformRole.NONE)
+
+    items = client.get("/projects", params={"project_id": "PROJECT-Slug"}).json()["items"]
+    assert [item["unique_id"] for item in items] == [project_mfid]
+
+    response = client.get("/projects/Project-Slug")
+    assert response.status_code == 200, response.text
+    assert response.json()["project_id"] == "project-slug"
+    assert response.headers["content-location"] == f"/projects/{project_mfid}"
+
+
+def test_create_rejects_a_slug_differing_only_by_case(client, db_engine, auth_as):
+    _setup(db_engine)
+    auth_as("0000-0001-1111-1111", groups=[], platform_role=PlatformRole.ADMIN)
+
+    response = client.post("/projects", json={
+        "project_id": "Project-Slug",
+        "organization": "LBNL",
+        "project_lead": "0000-0001-1111-1111",
+    })
+    assert response.status_code == 409

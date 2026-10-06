@@ -245,7 +245,7 @@ def assign_projects_to_user(session, user_id: str, project_ids: List[str]) -> Di
     already_member = []
     not_found = []
     for project_id in sorted(set(project_id for project_id in project_ids if project_id)):
-        project = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
+        project = session.exec(select(Project).where(func.lower(Project.project_id) == project_id.lower())).one_or_none()
         if project is None:
             logger.warning("No project found for %s", project_id)
             not_found.append(project_id)

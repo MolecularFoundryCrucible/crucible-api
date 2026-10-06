@@ -27,7 +27,9 @@ from app.utils.auth_utils import (
     require_permission,
     resource_capabilities,
 )
-from app.utils.instrument_utils import resolve_instrument_mfids_to_references
+from app.services.resource_access import load_member_grants, may_view_members
+from app.utils.deletion_utils import deletion_blockers
+from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import Permission, Principal, Role
 from app.utils.project_utils import resolve_project_mfids_to_references
@@ -133,9 +135,8 @@ def load_dataset_detail(
 
     return DatasetResponse.model_validate({
         **dataset.model_dump(),
-        "instrument_id": instrument_reference.instrument_id if instrument_reference else None,
+        **dataset_instrument_fields(dataset, instrument_reference),
         "project_id": project_reference.project_id if project_reference else dataset.project_id,
-        "instrument": instrument_reference,
         "project": project_reference,
         "public": resource.public if resource else dataset.public,
         "creation_time": resource.creation_time if resource else None,
@@ -217,9 +218,8 @@ def load_sample_detail(
         "datasets": [
             DatasetRead.model_validate({
                 **dataset.model_dump(),
-                "instrument_id": instrument_references[dataset.instrument_mfid].instrument_id if dataset.instrument_mfid in instrument_references else None,
+                **dataset_instrument_fields(dataset, instrument_references.get(dataset.instrument_mfid)),
                 "project_id": project_references[dataset.project_mfid].project_id if dataset.project_mfid in project_references else dataset.project_id,
-                "instrument": instrument_references.get(dataset.instrument_mfid),
                 "project": project_references.get(dataset.project_mfid),
             })
             for dataset in readable_datasets
@@ -269,6 +269,8 @@ def load_instrument_detail(
         ).one_or_none()
         if instrument is None:
             raise HTTPException(status_code=404, detail="Instrument not found")
+    acl_rows = fetch_acl_rows(session, resource_id)
+    deletion_request = get_active_deletion_request(session, resource_id)
     return InstrumentResponse.model_validate({
         **instrument.model_dump(exclude={"owner"}),
         "owner_orcid": instrument.owner,
@@ -280,7 +282,12 @@ def load_instrument_detail(
             session,
             principal,
             resource_id,
+            acl_rows=acl_rows,
+            can_delete=not deletion_blockers(session, "instrument", resource_id),
         ),
+        "deletion_request": deletion_request.model_dump() if deletion_request else None,
+        "members": load_member_grants(session, resource_id)
+        if options.include_members and may_view_members(session, principal, resource_id) else None,
     })
 
 
@@ -303,6 +310,7 @@ def load_project_detail(
     resource = _resource(session, resource_id, resource)
     is_member = principal.is_platform_admin or principal.role_in(project.unique_id) is not None
     lead = _owner(session, project.project_lead_orcid, True)
+    deletion_request = get_active_deletion_request(session, resource_id)
     return ProjectWithLead(
         **project.model_dump(),
         lead=lead,
@@ -322,7 +330,9 @@ def load_project_detail(
             manage_access_floor=Role.EDITOR,
             allow_peer_grants=False,
             status_permission=Permission.EDIT,
+            can_delete=not deletion_blockers(session, "project", resource_id),
         ),
+        deletion_request=deletion_request.model_dump() if deletion_request else None,
     )
 
 

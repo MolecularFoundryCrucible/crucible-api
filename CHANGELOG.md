@@ -9,6 +9,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 
 - Added authenticated `POST /print/barcode` for publishing MQTT barcode print jobs and waiting briefly for a print result, moving the MQTT broker credential server-side instead of per-lab-machine `.env` files. Responds 200 with a `status` of `ok`, `error`, or `timeout`, and an optional `detail` noting the requested printer's online status from `crucible-label-printer-status` when a job doesn't succeed.
+- Added `user_capabilities` to user responses, populated for singleton and exact lookups with caller-relative `can_view_private`, `can_edit_profile`, `can_manage_api_key`, and `can_change_platform_role` flags.
+- Added the platform-admin directory to broad `GET /users` listings: administrators receive `UserRead` items with email and platform roles across the full directory, while non-administrators keep the group-scoped public-safe listing.
+- Added sorting, filtering, and pagination parity to `GET /users`: `sort=name|username|unique_id|email` (email administrator only) with `direction=asc|desc`, `include_total`, signed opaque cursor pagination with `next_cursor` alongside the existing offset, declared `first_name`/`last_name` filters, a `q` substring search with repeatable `search_fields` to choose the searched fields (email administrator only), and repeatable administrator-only `platform_role` filtering.
+- Added human platform-role management through `PATCH /users/{user_id}/platform_role` with `none`, `contributor`, and `admin` values, guarded against service-account callers, self-changes, service-account targets (409 pointing at the service-account route), and demoting the last human platform administrator (409, checked with every human administrator row locked).
+- Added administrator-only `DELETE /users/{user_id}/apikey`, revoking every API key the user holds and invalidating the revoked keys in the principal cache.
+- Added non-secret `api_key_status` to the singleton and exact platform-admin view of a user, mirroring the service-account detail response.
+- Added the target user's standing `role` in each project's access group to `GET /users/{user_id}/projects` items.
+- Added `can_manage_users` to `GET /account/profile` capabilities, true for platform administrators.
+- Added permanent deletion of empty projects and instruments through both the reviewed request workflow (admin on the resource may request) and the direct forced path (owner or platform admin). A project or instrument with assigned datasets or samples is rejected with 409 and a structured `blocking` count detail, checked at request creation, at approval with the row locked inside the transaction, and at forced deletion.
+- Added a preview-and-confirm flow to `DELETE /resources/{resource_mfid}?force=true` for projects and instruments: without `confirm=true` it returns a `DeletionPreviewRead` describing blockers and what would be removed (group memberships, service-account bindings, join requests, cross-resource grants) and deletes nothing. Datasets and samples keep immediate forced deletion.
+- Added a `preview` field to project and instrument deletion-request responses describing what the deletion removes or why it is blocked.
+- Added `can_delete` to resource capabilities, true for projects and instruments when the caller may request or force deletion and the resource is empty; false for datasets and samples.
+- Project deletion now removes the project access group with its memberships, legacy UserProjectLink rows, join requests, and the group's grants on other resources; instrument deletion removes the operator group with its service-account bindings and grants. Service-account User rows survive.
+- Project and instrument deletions now write a `DeletionAuditLog` row on both approval and forced paths and schedule a final GCS record write with the removed-grants summary.
+- While a project or instrument has a pending or approved deletion request it is hidden from project and instrument list and search endpoints, and new assignments (datasets, samples, instrument binding, project reassignment, member additions) are rejected with 409.
+- Added `deletion_request` fields to project and instrument singleton responses so clients can see an active deletion request, mirroring dataset and sample details.
+- Added `include_members=true` to `GET /instruments/{instrument_mfid}` and the exact `GET /instruments?instrument_id=` lookup, returning the people and projects holding a role on the instrument record to callers with a role on it and to platform administrators.
+- Added `affiliation=maintainer` to `GET /instruments` and `GET /instruments/search` for instruments where the caller holds editor or admin.
+- Instrument audit records now include `instrument_id`, `location`, `description`, `instrument_type`, and `status`, and lifecycle status changes write an audit record.
+- Documented temporary ORCID authentication disablement, both production gates, and how the disabled settings persist across deployments.
+- Added the Hub authentication security review, dependency security assessment, and deferred API-key lifecycle follow-up to the documentation.
 - Updated the staging Hub client and both ORCID credential pins to Secret Manager version 2.
 - Added pinned Google Secret Manager references for Hub client and ORCID credentials, environment-specific deployment settings, and a disabled-by-default deployment activation flag.
 - Redacted Hub authentication validation failures and unexpected-error logs, and added no-store headers to all Hub authentication responses.
@@ -60,6 +81,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `UserRead` now exposes `platform_role` to the user themselves and to platform administrators.
+- `GET /users/{user_id}/projects` is now available to callers with `platform_role` `contributor` or `admin`, including unbound service accounts, matching the authority for `accessible_to_user`. Instrument-group membership no longer grants access, and the reduced `ProjectMinimalRead` projection for instrument-group members is removed; every authorized caller receives `ProjectWithLead`.
+- Project slugs are now matched case-insensitively in `GET /projects?project_id=`, the `GET /projects/{project_id}` compatibility alias, project filters, and project references in other routes, matching instrument slugs. Creating or renaming a project to a slug that differs from another only by case returns 409. Migration `b7e2d9c4a1f3` adds case-insensitive unique indexes on `project.project_id` and `instrument.instrument_id`; `migrations/data/20261005_audit_case_insensitive_slugs.py` audits for conflicting slugs first.
+- Dataset responses now resolve `instrument_name` from the assigned instrument through `instrument_mfid`, so instrument renames are reflected immediately. Datasets without a registered instrument keep their stored label. Generic dataset PATCH accepts either the stored label or the current name as the unchanged value.
+- Deprecated the `instrument_name` lookup on `POST /datasets` and the `instrument_name` filter on `GET /datasets`. The filter now matches the displayed name. Use `instrument_id` or `instrument_mfid`.
+- `project_id` no longer has to differ from instrument display names.
+- Instrument creation no longer grants the instrument operator group `editor` on the instrument record. `migrations/data/20261005_remove_instrument_group_record_grants.py` removes the grant from existing instruments.
+- Deprecated `POST /users/{user_id}/access_groups/{group_name}` now rejects human users for instrument groups with 409. Instrument groups hold service accounts only.
 - Updated production readiness to Hub authentication schema revision `e92a6b1c730f`.
 
 - `GET /ingestion_requests` now returns the authorization-filtered collection for any caller with viewer access to the parent datasets; non-administrators no longer need to supply a dataset or file filter.
@@ -91,8 +120,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Project membership mutation routes now accept named roles (`viewer`, `contributor`, `editor`, `admin`, and `owner`) instead of integer enum values. `owner` remains rejected with 409 and requires the ownership-transfer route.
 - Service accounts may no longer register instruments, including when they hold platform-admin status. Human platform administrators may continue registering an instrument for another identity.
 
+### Deprecated
+
+- Undeclared `GET /users` query parameters are now ignored instead of being applied as user-attribute filters. Affected responses carry `Deprecation: @1791244800` and name the ignored parameters in the server log; the parameters will be rejected with 422 at a future announced date. No `Sunset` header is sent.
+
+### Security
+
+- Non-administrators can no longer filter users by `platform_role`; the filter is administrator-only and other callers receive 403.
+- Removed the generic `GET /users` loop that turned any undeclared query parameter matching a `User` attribute into a filter, which let callers probe arbitrary columns including internal ones.
+
 ### Fixed
 
+- `POST /datasets` with an `instrument_name` shared by more than one instrument now returns 409 instead of a server error.
 - Permanent dataset and sample deletion now removes associated resource embeddings instead of failing with a foreign-key violation.
 
 - Escaped profile values in the legacy API-key page and removed dynamic values from its inline JavaScript.

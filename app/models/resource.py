@@ -12,6 +12,7 @@ class ResourceCapabilities(SQLModel):
     can_manage_access: bool
     can_change_status: bool
     can_transfer: bool
+    can_delete: bool = False
     max_grant_role: Optional[Literal["viewer", "contributor", "editor", "admin"]] = None
 
 

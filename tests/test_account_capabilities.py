@@ -13,6 +13,7 @@ from app.utils.permissions import PlatformRole, Principal
             Principal(user_id="human"),
             {
                 "can_manage_service_accounts": False,
+                "can_manage_users": False,
                 "can_create_project": True,
                 "can_register_instrument": True,
                 "can_create_sample": True,
@@ -28,6 +29,7 @@ from app.utils.permissions import PlatformRole, Principal
             ),
             {
                 "can_manage_service_accounts": False,
+                "can_manage_users": False,
                 "can_create_project": True,
                 "can_register_instrument": False,
                 "can_create_sample": True,
@@ -43,6 +45,7 @@ from app.utils.permissions import PlatformRole, Principal
             ),
             {
                 "can_manage_service_accounts": True,
+                "can_manage_users": True,
                 "can_create_project": True,
                 "can_register_instrument": False,
                 "can_create_sample": True,
@@ -87,6 +90,7 @@ def test_account_profile_returns_capabilities(client, db_engine, auth_as):
     }
     assert response.json()["capabilities"] == {
         "can_manage_service_accounts": False,
+        "can_manage_users": False,
         "can_create_project": True,
         "can_register_instrument": False,
         "can_create_sample": True,

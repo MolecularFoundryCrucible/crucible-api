@@ -36,7 +36,7 @@ INSTRUMENT_UPDATE_ROUTE_REQUIRED = (
 
 
 class TestCreateInstrument:
-    def test_creates_operator_group_with_editor_acl(self, client, db_engine, auth_as):
+    def test_creates_operator_group_without_a_grant_on_the_record(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             owner = _user(session, "admin-1")
             owner_group_id = session.exec(select(AccessGroup.id).where(
@@ -54,6 +54,7 @@ class TestCreateInstrument:
             "can_manage_access": True,
             "can_change_status": True,
             "can_transfer": True,
+            "can_delete": True,
             "max_grant_role": "admin",
         }
         generic_response = client.get(f"/resources/{mfid}")
@@ -62,11 +63,11 @@ class TestCreateInstrument:
 
         with Session(db_engine) as session:
             ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == mfid)).one()
-            operator_acl = session.exec(select(ResourceACL).where(
-                ResourceACL.accessgroup_id == ag.id, ResourceACL.mfid == mfid)).one()
+            assert ag.group_type == AccessGroupType.INSTRUMENT.value
+            assert session.exec(select(ResourceACL).where(
+                ResourceACL.accessgroup_id == ag.id, ResourceACL.mfid == mfid)).one_or_none() is None
             owner_acl = session.exec(select(ResourceACL).where(
                 ResourceACL.accessgroup_id == owner_group_id, ResourceACL.mfid == mfid)).one()
-            assert operator_acl.permission == Role.EDITOR.db_value
             assert owner_acl.permission == Role.OWNER.db_value
 
     def test_rejects_duplicate_instrument_id(self, client, db_engine, auth_as):
@@ -171,6 +172,7 @@ class TestServiceAccountBinding:
             "can_manage_access": False,
             "can_change_status": False,
             "can_transfer": False,
+            "can_delete": False,
             "max_grant_role": None,
         }
 

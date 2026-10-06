@@ -58,7 +58,7 @@ def owner(session):
 
 class TestAccessGrantRead:
     def test_describes_each_principal_type(self, session):
-        from app.api.routes.resources import _access_grant_read
+        from app.services.resource_access import access_grant_read as _access_grant_read
         proj = session.exec(select(Project).where(Project.project_id == PROJ)).one()
         owner_group = session.exec(select(AccessGroup).where(AccessGroup.group_name == OWNER_ORCID)).one()
         project_group = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)).one()
@@ -70,7 +70,7 @@ class TestAccessGrantRead:
         assert _access_grant_read(session, AccessGroup(group_name="nothing-like-this"), "viewer").principal_type == "unknown"
 
     def test_distinguishes_service_accounts(self, session):
-        from app.api.routes.resources import _access_grant_read
+        from app.services.resource_access import access_grant_read as _access_grant_read
         session.add(User(first_name="", last_name="", email=None,
                          unique_id="0tkn2knjast3h0008nyq9zps2c", is_service_account=True))
         service_account_group = AccessGroup(
@@ -82,7 +82,7 @@ class TestAccessGrantRead:
         assert _access_grant_read(session, service_account_group, "contributor").principal_type == "service_account"
 
     def test_instrument_group_uses_the_instrument_mfid(self, session):
-        from app.api.routes.resources import _access_grant_read
+        from app.services.resource_access import access_grant_read as _access_grant_read
         instrument = Instrument(
             unique_id="0inst2knjast3h0008nyq9zps2c",
             instrument_id="beamline-1",

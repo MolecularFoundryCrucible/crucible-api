@@ -134,6 +134,16 @@
             "title": "Unique Id",
             "type": "string"
           },
+          "user_capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "username": {
             "anyOf": [
               {
@@ -241,6 +251,10 @@
             "title": "Can Manage Service Accounts",
             "type": "boolean"
           },
+          "can_manage_users": {
+            "title": "Can Manage Users",
+            "type": "boolean"
+          },
           "can_register_instrument": {
             "title": "Can Register Instrument",
             "type": "boolean"
@@ -248,6 +262,7 @@
         },
         "required": [
           "can_manage_service_accounts",
+          "can_manage_users",
           "can_create_project",
           "can_register_instrument",
           "can_create_sample",
@@ -290,6 +305,16 @@
       },
       "AccountProfileRead": {
         "properties": {
+          "api_key_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServiceAccountKeyStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "authorization": {
             "$ref": "#/components/schemas/AccountAuthorizationRead"
           },
@@ -327,9 +352,29 @@
             "title": "Last Name",
             "type": "string"
           },
+          "platform_role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlatformRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "unique_id": {
             "title": "Unique Id",
             "type": "string"
+          },
+          "user_capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "username": {
             "anyOf": [
@@ -994,6 +1039,8 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
+            "description": "Deprecated. Display-name lookup used only when instrument_id and instrument_mfid are omitted; returns 409 when the name matches more than one instrument. Use instrument_id or instrument_mfid.",
             "title": "Instrument Name"
           },
           "measurement": {
@@ -1902,7 +1949,9 @@
       "DeletableResourceType": {
         "enum": [
           "dataset",
-          "sample"
+          "sample",
+          "project",
+          "instrument"
         ],
         "title": "DeletableResourceType",
         "type": "string"
@@ -2059,6 +2108,87 @@
         "title": "DeletionAuditScope",
         "type": "string"
       },
+      "DeletionGrantRead": {
+        "properties": {
+          "permission": {
+            "title": "Permission",
+            "type": "string"
+          },
+          "resource_mfid": {
+            "title": "Resource Mfid",
+            "type": "string"
+          },
+          "resource_type": {
+            "title": "Resource Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_mfid",
+          "resource_type",
+          "permission"
+        ],
+        "title": "DeletionGrantRead",
+        "type": "object"
+      },
+      "DeletionPreviewRead": {
+        "description": "What deleting a project or instrument removes, or why it is blocked.",
+        "properties": {
+          "blocking": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Assigned datasets and samples that block deletion, keyed by entity type. Empty when the resource is deletable.",
+            "title": "Blocking",
+            "type": "object"
+          },
+          "deleted": {
+            "description": "False for a preview, true when the deletion executed.",
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "join_requests_removed": {
+            "default": 0,
+            "description": "Pending and reviewed join requests removed with a project's access group.",
+            "title": "Join Requests Removed",
+            "type": "integer"
+          },
+          "memberships_removed": {
+            "default": 0,
+            "description": "Project group members unlinked when a project is deleted.",
+            "title": "Memberships Removed",
+            "type": "integer"
+          },
+          "removed_grants": {
+            "description": "Access grants held by the deleted access group on resources other than the deleted resource itself.",
+            "items": {
+              "$ref": "#/components/schemas/DeletionGrantRead"
+            },
+            "title": "Removed Grants",
+            "type": "array"
+          },
+          "resource_id": {
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_type": {
+            "$ref": "#/components/schemas/DeletableResourceType"
+          },
+          "service_accounts_unbound": {
+            "default": 0,
+            "description": "Operator group service accounts unbound when an instrument is deleted.",
+            "title": "Service Accounts Unbound",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "resource_id",
+          "resource_type",
+          "deleted"
+        ],
+        "title": "DeletionPreviewRead",
+        "type": "object"
+      },
       "DeletionRequestCapabilities": {
         "properties": {
           "can_review": {
@@ -2082,6 +2212,17 @@
           "id": {
             "title": "Id",
             "type": "integer"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeletionPreviewRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Project and instrument deletions only: what deleting the resource removes, or why it is blocked. Null for datasets and samples."
           },
           "project_id": {
             "anyOf": [
@@ -2742,6 +2883,14 @@
         "title": "IngestionRequest",
         "type": "object"
       },
+      "InstrumentAffiliation": {
+        "enum": [
+          "owner",
+          "maintainer"
+        ],
+        "title": "InstrumentAffiliation",
+        "type": "string"
+      },
       "InstrumentCreate": {
         "additionalProperties": false,
         "description": "Fields required to register a new instrument.",
@@ -2961,6 +3110,18 @@
             ],
             "title": "Creation Time"
           },
+          "deletion_request": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deletion Request"
+          },
           "description": {
             "anyOf": [
               {
@@ -3012,6 +3173,21 @@
               }
             ],
             "title": "Manufacturer"
+          },
+          "members": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AccessGrantRead"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "People and projects holding a role on the instrument record. Null unless requested and visible to the caller.",
+            "title": "Members"
           },
           "model": {
             "anyOf": [
@@ -4411,67 +4587,6 @@
         "title": "PaginatedResponse[ServiceAccountAdminRead]",
         "type": "object"
       },
-      "PaginatedResponse_Union_ProjectWithLead__ProjectMinimalRead__": {
-        "properties": {
-          "items": {
-            "items": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/ProjectWithLead"
-                },
-                {
-                  "$ref": "#/components/schemas/ProjectMinimalRead"
-                }
-              ]
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "limit": {
-            "title": "Limit",
-            "type": "integer"
-          },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
-          },
-          "offset": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Offset"
-          },
-          "total": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Total"
-          }
-        },
-        "required": [
-          "limit",
-          "items"
-        ],
-        "title": "PaginatedResponse[Union[ProjectWithLead, ProjectMinimalRead]]",
-        "type": "object"
-      },
       "PaginatedResponse_Union_UserRead__UserPublicRead__": {
         "properties": {
           "items": {
@@ -4696,35 +4811,6 @@
         "title": "ProjectMembershipRole",
         "type": "string"
       },
-      "ProjectMinimalRead": {
-        "properties": {
-          "project_id": {
-            "title": "Project Id",
-            "type": "string"
-          },
-          "title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Title"
-          },
-          "unique_id": {
-            "title": "Unique Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "unique_id",
-          "project_id"
-        ],
-        "title": "ProjectMinimalRead",
-        "type": "object"
-      },
       "ProjectRead": {
         "description": "Response model for Project.",
         "properties": {
@@ -4935,6 +5021,18 @@
             ],
             "title": "Creation Time"
           },
+          "deletion_request": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deletion Request"
+          },
           "lead": {
             "anyOf": [
               {
@@ -4989,6 +5087,17 @@
               }
             ],
             "title": "Project Lead Orcid"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
           },
           "scientific_metadata": {
             "anyOf": [
@@ -5148,6 +5257,11 @@
         "properties": {
           "can_change_status": {
             "title": "Can Change Status",
+            "type": "boolean"
+          },
+          "can_delete": {
+            "default": false,
+            "title": "Can Delete",
             "type": "boolean"
           },
           "can_edit": {
@@ -6599,6 +6713,35 @@
         "title": "UploadMultipartInitiateRead",
         "type": "object"
       },
+      "UserCapabilities": {
+        "description": "Caller-relative actions on one user record. Field name is user_capabilities,\nnot capabilities: a downstream client decodes any capabilities key on user\nobjects into a different required-field type.",
+        "properties": {
+          "can_change_platform_role": {
+            "title": "Can Change Platform Role",
+            "type": "boolean"
+          },
+          "can_edit_profile": {
+            "title": "Can Edit Profile",
+            "type": "boolean"
+          },
+          "can_manage_api_key": {
+            "title": "Can Manage Api Key",
+            "type": "boolean"
+          },
+          "can_view_private": {
+            "title": "Can View Private",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "can_view_private",
+          "can_edit_profile",
+          "can_manage_api_key",
+          "can_change_platform_role"
+        ],
+        "title": "UserCapabilities",
+        "type": "object"
+      },
       "UserCreate": {
         "additionalProperties": false,
         "description": "Input schema for creating a user.",
@@ -6647,6 +6790,25 @@
         "title": "UserCreate",
         "type": "object"
       },
+      "UserPlatformRoleUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "platform_role": {
+            "enum": [
+              "none",
+              "contributor",
+              "admin"
+            ],
+            "title": "Platform Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform_role"
+        ],
+        "title": "UserPlatformRoleUpdate",
+        "type": "object"
+      },
       "UserPublicRead": {
         "description": "Public-safe user representation. Never includes email.\nUsed in search results and any context where a user views another user's info.",
         "properties": {
@@ -6666,6 +6828,16 @@
           "unique_id": {
             "title": "Unique Id",
             "type": "string"
+          },
+          "user_capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "username": {
             "anyOf": [
@@ -6689,6 +6861,16 @@
       },
       "UserRead": {
         "properties": {
+          "api_key_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServiceAccountKeyStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "email": {
             "anyOf": [
               {
@@ -6720,9 +6902,29 @@
             "title": "Last Name",
             "type": "string"
           },
+          "platform_role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlatformRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "unique_id": {
             "title": "Unique Id",
             "type": "string"
+          },
+          "user_capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "username": {
             "anyOf": [
@@ -6743,6 +6945,27 @@
         ],
         "title": "UserRead",
         "type": "object"
+      },
+      "UserSearchField": {
+        "enum": [
+          "first_name",
+          "last_name",
+          "username",
+          "unique_id",
+          "email"
+        ],
+        "title": "UserSearchField",
+        "type": "string"
+      },
+      "UserSort": {
+        "enum": [
+          "name",
+          "username",
+          "unique_id",
+          "email"
+        ],
+        "title": "UserSort",
+        "type": "string"
       },
       "UserUpdate": {
         "additionalProperties": false,
@@ -9452,6 +9675,8 @@
             }
           },
           {
+            "deprecated": true,
+            "description": "Deprecated display-name filter. Matches the registered instrument's current name, or the stored label for datasets without a registered instrument. Use instrument_mfid.",
             "in": "query",
             "name": "instrument_name",
             "required": false,
@@ -9464,6 +9689,8 @@
                   "type": "null"
                 }
               ],
+              "deprecated": true,
+              "description": "Deprecated display-name filter. Matches the registered instrument's current name, or the stored label for datasets without a registered instrument. Use instrument_mfid.",
               "title": "Instrument Name"
             }
           },
@@ -15599,7 +15826,7 @@
             }
           },
           {
-            "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics.",
+            "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics. maintainer matches instruments where the caller holds editor or admin on the instrument record.",
             "in": "query",
             "name": "affiliation",
             "required": false,
@@ -15607,7 +15834,7 @@
               "anyOf": [
                 {
                   "items": {
-                    "$ref": "#/components/schemas/Affiliation"
+                    "$ref": "#/components/schemas/InstrumentAffiliation"
                   },
                   "maxItems": 5,
                   "minItems": 1,
@@ -15617,7 +15844,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics.",
+              "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics. maintainer matches instruments where the caller holds editor or admin on the instrument record.",
               "title": "Affiliation"
             }
           },
@@ -15638,6 +15865,18 @@
             "schema": {
               "default": false,
               "title": "Include Owner",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Include people and projects holding a role on the instrument record. Returned only to callers who hold a role on the instrument and to platform administrators. Requires an exact instrument_id filter.",
+            "in": "query",
+            "name": "include_members",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Include people and projects holding a role on the instrument record. Returned only to callers who hold a role on the instrument and to platform administrators. Requires an exact instrument_id filter.",
+              "title": "Include Members",
               "type": "boolean"
             }
           },
@@ -16051,7 +16290,7 @@
             }
           },
           {
-            "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics.",
+            "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics. maintainer matches instruments where the caller holds editor or admin on the instrument record.",
             "in": "query",
             "name": "affiliation",
             "required": false,
@@ -16059,7 +16298,7 @@
               "anyOf": [
                 {
                   "items": {
-                    "$ref": "#/components/schemas/Affiliation"
+                    "$ref": "#/components/schemas/InstrumentAffiliation"
                   },
                   "maxItems": 5,
                   "minItems": 1,
@@ -16069,7 +16308,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics.",
+              "description": "Relationship between the authenticated caller and each result. Repeated values use OR semantics. maintainer matches instruments where the caller holds editor or admin on the instrument record.",
               "title": "Affiliation"
             }
           },
@@ -16229,6 +16468,18 @@
             "schema": {
               "default": true,
               "title": "Include Owner",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Include people and projects holding a role on the instrument record. Returned only to callers who hold a role on the instrument and to platform administrators.",
+            "in": "query",
+            "name": "include_members",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Include people and projects holding a role on the instrument record. Returned only to callers who hold a role on the instrument and to platform administrators.",
+              "title": "Include Members",
               "type": "boolean"
             }
           },
@@ -19542,7 +19793,7 @@
     },
     "/resources/{resource_id}": {
       "delete": {
-        "description": "Permanently delete a dataset or sample from the database without a deletion request.\nRequires force=true and resource owner or platform-admin authority.\nStored GCS objects are not deleted.",
+        "description": "Permanently delete a resource from the database without a deletion request.\nRequires force=true and resource owner or platform-admin authority.\nDatasets and samples delete immediately. Projects and instruments first\nreturn a preview; pass confirm=true to execute the deletion, which still\nrequires them to be empty. Stored GCS objects are not deleted.",
         "operationId": "hard_delete_resource_route_resources__resource_id__delete",
         "parameters": [
           {
@@ -19562,6 +19813,18 @@
             "schema": {
               "description": "Required acknowledgement for direct permanent deletion.",
               "title": "Force",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Required to actually delete a project or instrument. Omitting it returns a preview and deletes nothing.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Required to actually delete a project or instrument. Omitting it returns a preview and deletes nothing.",
+              "title": "Confirm",
               "type": "boolean"
             }
           },
@@ -19765,7 +20028,7 @@
     },
     "/resources/{resource_id}/delete": {
       "post": {
-        "description": "Request deletion of a resource. Requires contributor access to the resource.\nPending requests hide the resource from ordinary discovery until rejected.\nReturns 409 if an active deletion request already exists for this resource.",
+        "description": "Request deletion of a resource. Requires contributor access for datasets and\nsamples, admin for projects and instruments. Pending requests hide the\nresource from ordinary discovery until rejected.\nReturns 409 if an active deletion request already exists for this resource,\nor if a project or instrument still has assigned datasets or samples.",
         "operationId": "create_deletion_request_resources__resource_id__delete_post",
         "parameters": [
           {
@@ -23123,6 +23386,7 @@
     },
     "/users": {
       "get": {
+        "description": "Returns a paginated list of users. Platform administrators receive the full\ndirectory with email and platform roles; other callers receive public-safe\nprofiles scoped to users who share an access group with them.\nExact unique_id, username, and email filters return the same authorized\nrepresentation as GET /users/{user_id}. Any other query parameter is ignored\nand reported through the Deprecation response header.",
         "operationId": "list_users_users_get",
         "parameters": [
           {
@@ -23144,7 +23408,7 @@
             }
           },
           {
-            "description": "Exact username.",
+            "description": "Exact username, matched case-insensitively.",
             "in": "query",
             "name": "username",
             "required": false,
@@ -23157,12 +23421,12 @@
                   "type": "null"
                 }
               ],
-              "description": "Exact username.",
+              "description": "Exact username, matched case-insensitively.",
               "title": "Username"
             }
           },
           {
-            "description": "Exact email address.",
+            "description": "Exact email address, matched case-insensitively.",
             "in": "query",
             "name": "email",
             "required": false,
@@ -23175,21 +23439,24 @@
                   "type": "null"
                 }
               ],
-              "description": "Exact email address.",
+              "description": "Exact email address, matched case-insensitively.",
               "title": "Email"
             }
           },
           {
+            "description": "Matching mode for first_name and last_name. True is a case-insensitive substring match, False an exact match.",
             "in": "query",
             "name": "permissive",
             "required": false,
             "schema": {
               "default": true,
+              "description": "Matching mode for first_name and last_name. True is a case-insensitive substring match, False an exact match.",
               "title": "Permissive",
               "type": "boolean"
             }
           },
           {
+            "description": "Restrict results to service accounts or human users.",
             "in": "query",
             "name": "is_service_account",
             "required": false,
@@ -23202,7 +23469,122 @@
                   "type": "null"
                 }
               ],
+              "description": "Restrict results to service accounts or human users.",
               "title": "Is Service Account"
+            }
+          },
+          {
+            "in": "query",
+            "name": "first_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "First Name"
+            }
+          },
+          {
+            "in": "query",
+            "name": "last_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last Name"
+            }
+          },
+          {
+            "description": "Case-insensitive substring search. Searches the fields named in search_fields, or by default first_name, last_name, username, unique_id, and, for platform administrators, email.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Case-insensitive substring search. Searches the fields named in search_fields, or by default first_name, last_name, username, unique_id, and, for platform administrators, email.",
+              "title": "Q"
+            }
+          },
+          {
+            "description": "Repeatable list of fields searched by q, with OR semantics. Requires q. email is administrator only; other callers receive 403.",
+            "in": "query",
+            "name": "search_fields",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/UserSearchField"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable list of fields searched by q, with OR semantics. Requires q. email is administrator only; other callers receive 403.",
+              "title": "Search Fields"
+            }
+          },
+          {
+            "description": "Repeatable platform-role filter, administrator only. Repeated values use OR semantics. Other callers receive 403.",
+            "in": "query",
+            "name": "platform_role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/PlatformRole"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable platform-role filter, administrator only. Repeated values use OR semantics. Other callers receive 403.",
+              "title": "Platform Role"
+            }
+          },
+          {
+            "description": "Exact authorization-filtered total. Omission preserves the legacy behavior that always returns a total.",
+            "in": "query",
+            "name": "include_total",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact authorization-filtered total. Omission preserves the legacy behavior that always returns a total.",
+              "title": "Include Total"
             }
           },
           {
@@ -23218,14 +23600,65 @@
             }
           },
           {
+            "description": "Opaque continuation cursor returned by a previous page.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque continuation cursor returned by a previous page.",
+              "title": "Cursor"
+            }
+          },
+          {
+            "description": "Compatibility offset. A supplied cursor takes precedence.",
             "in": "query",
             "name": "offset",
             "required": false,
             "schema": {
               "default": 0,
+              "description": "Compatibility offset. A supplied cursor takes precedence.",
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Explicit ordering, case-insensitive, with unique_id as tie-breaker and nulls last. name sorts by last name then first name. email is administrator only. Omission keeps the default last name, first name order.",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/UserSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Explicit ordering, case-insensitive, with unique_id as tie-breaker and nulls last. name sorts by last name then first name. email is administrator only. Omission keeps the default last name, first name order.",
+              "title": "Sort"
+            }
+          },
+          {
+            "description": "Direction for an explicit sort.",
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortDirection",
+              "default": "asc",
+              "description": "Direction for an explicit sort."
             }
           },
           {
@@ -23533,7 +23966,7 @@
       },
       "patch": {
         "deprecated": true,
-        "description": "Deprecated: use PATCH /account/profile.",
+        "description": "Deprecated: use GET /account/profile and PATCH /account/profile.",
         "operationId": "update_current_user_users_me_patch",
         "parameters": [
           {
@@ -24249,6 +24682,77 @@
       }
     },
     "/users/{user_id}/apikey": {
+      "delete": {
+        "description": "Revoke every API key held by the user. Platform administrators only. 204 on success.",
+        "operationId": "delete_user_apikey_users__user_id__apikey_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete User Apikey",
+        "tags": [
+          "users"
+        ]
+      },
       "post": {
         "description": "Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.",
         "operationId": "get_or_provision_user_apikey_users__user_id__apikey_post",
@@ -24582,9 +25086,99 @@
         ]
       }
     },
+    "/users/{user_id}/platform_role": {
+      "patch": {
+        "description": "Change a human user's platform role. Human platform administrators only.",
+        "operationId": "update_user_platform_role_users__user_id__platform_role_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPlatformRoleUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update User Platform Role",
+        "tags": [
+          "users"
+        ]
+      }
+    },
     "/users/{user_id}/projects": {
       "get": {
-        "description": "Returns a paginated list of the projects that this User is associated with.\nSelf or a platform admin gets full details including the resolved lead.\nA caller with standing in any instrument group gets project_id and title\nonly, for rendering a project picker — nothing wider.",
+        "description": "Returns a paginated list of the projects the user is a member of, each with\nthe user's standing role in that project's access group.\nAvailable to the user themselves and to callers with platform_role\ncontributor or admin, the same rule as accessible_to_user on GET /projects.\nMembership only: unlike GET /projects?accessible_to_user=, projects reached\nonly through explicit resource grants are not included.",
         "operationId": "read_projects_for_user_users__user_id__projects_get",
         "parameters": [
           {
@@ -24643,7 +25237,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaginatedResponse_Union_ProjectWithLead__ProjectMinimalRead__"
+                  "$ref": "#/components/schemas/PaginatedResponse_ProjectWithLead_"
                 }
               }
             },

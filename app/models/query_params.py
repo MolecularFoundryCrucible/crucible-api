@@ -17,6 +17,7 @@ from app.models.resource_graph import (
     GraphRelationshipKind,
     GraphRelationshipTypeFilter,
 )
+from app.utils.permissions import PlatformRole
 
 
 AFFILIATION_DESCRIPTION = (
@@ -37,6 +38,21 @@ ACCESSIBLE_TO_PROJECT_DESCRIPTION = (
 
 class Affiliation(str, Enum):
     OWNER = "owner"
+
+
+class InstrumentAffiliation(str, Enum):
+    OWNER = "owner"
+    MAINTAINER = "maintainer"
+
+
+INSTRUMENT_AFFILIATION_DESCRIPTION = (
+    AFFILIATION_DESCRIPTION
+    + " maintainer matches instruments where the caller holds editor or admin on the instrument record."
+)
+INSTRUMENT_MEMBERS_DESCRIPTION = (
+    "Include people and projects holding a role on the instrument record. "
+    "Returned only to callers who hold a role on the instrument and to platform administrators."
+)
 
 
 class ResourceSort(str, Enum):
@@ -60,6 +76,21 @@ class InstrumentStatus(str, Enum):
     ACTIVE = "active"
     MAINTENANCE = "maintenance"
     DECOMMISSIONED = "decommissioned"
+
+
+class UserSearchField(str, Enum):
+    FIRST_NAME = "first_name"
+    LAST_NAME = "last_name"
+    USERNAME = "username"
+    UNIQUE_ID = "unique_id"
+    EMAIL = "email"
+
+
+class UserSort(str, Enum):
+    NAME = "name"
+    USERNAME = "username"
+    UNIQUE_ID = "unique_id"
+    EMAIL = "email"
 
 
 class DatasetFacetField(str, Enum):
@@ -105,6 +136,7 @@ class ProjectDetailQuery(StrictQueryModel):
 class InstrumentDetailQuery(StrictQueryModel):
     include_metadata: bool = False
     include_owner: bool = True
+    include_members: bool = Field(default=False, description=INSTRUMENT_MEMBERS_DESCRIPTION)
 
 
 class ResourceDetailQuery(SampleDetailQuery):
@@ -319,7 +351,13 @@ class DatasetListQuery(ResourceCollectionQuery):
         deprecated=True,
         description="Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
     )] = None
-    instrument_name: Optional[str] = None
+    instrument_name: Annotated[Optional[str], Field(
+        deprecated=True,
+        description=(
+            "Deprecated display-name filter. Matches the registered instrument's current name, "
+            "or the stored label for datasets without a registered instrument. Use instrument_mfid."
+        ),
+    )] = None
     timestamp: Optional[str] = None
     size: Optional[int] = None
     data_format: Optional[str] = None
@@ -596,14 +634,18 @@ class ProjectListQuery(StrictQueryModel):
 
 class InstrumentListQuery(StrictQueryModel):
     instrument_id: Optional[str] = Field(default=None, description="Exact instrument slug.")
-    affiliation: Optional[list[Affiliation]] = Field(
+    affiliation: Optional[list[InstrumentAffiliation]] = Field(
         default=None,
         min_length=1,
         max_length=5,
-        description=AFFILIATION_DESCRIPTION,
+        description=INSTRUMENT_AFFILIATION_DESCRIPTION,
     )
     include_metadata: bool = False
     include_owner: bool = False
+    include_members: bool = Field(
+        default=False,
+        description=INSTRUMENT_MEMBERS_DESCRIPTION + " Requires an exact instrument_id filter.",
+    )
     include_total: Optional[bool] = Field(
         default=None,
         description=(
@@ -648,6 +690,8 @@ class InstrumentListQuery(StrictQueryModel):
             raise ValueError("owner_id and owner must identify the same owner")
         if self.affiliation and (self.owner_id is not None or owner is not None):
             raise ValueError("affiliation cannot be combined with an exact owner filter")
+        if self.include_members and self.instrument_id is None:
+            raise ValueError("include_members requires an exact instrument_id filter")
         return self
 
     def normalized_result_filters(self) -> dict:
@@ -655,13 +699,110 @@ class InstrumentListQuery(StrictQueryModel):
             mode="json",
             exclude={
                 "cursor", "offset", "limit", "include_metadata",
-                "include_owner", "include_total", "owner",
+                "include_owner", "include_members", "include_total", "owner",
             },
         )
         values["owner_id"] = self.owner_id or self.__dict__.get("owner")
         if self.instrument_id is None and self.status is None:
             values["status"] = InstrumentStatus.ACTIVE.value
         return values
+
+
+class UserListQuery(BaseModel):
+    unique_id: Optional[str] = Field(
+        default=None,
+        description="Exact ORCID or service-account MFID.",
+    )
+    username: Optional[str] = Field(
+        default=None,
+        description="Exact username, matched case-insensitively.",
+    )
+    email: Optional[str] = Field(
+        default=None,
+        description="Exact email address, matched case-insensitively.",
+    )
+    permissive: bool = Field(
+        default=True,
+        description=(
+            "Matching mode for first_name and last_name. True is a "
+            "case-insensitive substring match, False an exact match."
+        ),
+    )
+    is_service_account: Optional[bool] = Field(
+        default=None,
+        description="Restrict results to service accounts or human users.",
+    )
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    q: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description=(
+            "Case-insensitive substring search. Searches the fields named in search_fields, "
+            "or by default first_name, last_name, username, unique_id, and, for platform "
+            "administrators, email."
+        ),
+    )
+    search_fields: Optional[list[UserSearchField]] = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Repeatable list of fields searched by q, with OR semantics. Requires q. "
+            "email is administrator only; other callers receive 403."
+        ),
+    )
+    platform_role: Optional[list[PlatformRole]] = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Repeatable platform-role filter, administrator only. "
+            "Repeated values use OR semantics. Other callers receive 403."
+        ),
+    )
+    include_total: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Exact authorization-filtered total. Omission preserves the "
+            "legacy behavior that always returns a total."
+        ),
+    )
+    limit: int = Field(default=100, ge=1, le=1000)
+    cursor: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=4096,
+        description="Opaque continuation cursor returned by a previous page.",
+    )
+    offset: int = Field(
+        default=0,
+        ge=0,
+        description="Compatibility offset. A supplied cursor takes precedence.",
+    )
+    sort: Optional[UserSort] = Field(
+        default=None,
+        description=(
+            "Explicit ordering, case-insensitive, with unique_id as tie-breaker and nulls last. "
+            "name sorts by last name then first name. email is administrator only. "
+            "Omission keeps the default last name, first name order."
+        ),
+    )
+    direction: SortDirection = Field(
+        default=SortDirection.ASC,
+        description="Direction for an explicit sort.",
+    )
+
+    @model_validator(mode="after")
+    def validate_search_fields(self):
+        if self.search_fields and self.q is None:
+            raise ValueError("search_fields requires q")
+        return self
+
+    def cursor_filters(self) -> dict:
+        return self.model_dump(
+            mode="json",
+            exclude={"cursor", "offset", "limit", "sort", "direction", "include_total"},
+        )
 
 
 class SearchQuery(StrictQueryModel):
@@ -716,6 +857,12 @@ class InstrumentSearchQuery(SearchQuery):
     status: Optional[InstrumentStatus] = Field(
         default=None,
         description="Restrict results to one lifecycle status.",
+    )
+    affiliation: Optional[list[InstrumentAffiliation]] = Field(
+        default=None,
+        min_length=1,
+        max_length=5,
+        description=INSTRUMENT_AFFILIATION_DESCRIPTION,
     )
     include_owner: bool = False
 

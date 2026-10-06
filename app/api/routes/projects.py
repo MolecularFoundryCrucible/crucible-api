@@ -31,9 +31,10 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import add_or_update, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
+from app.utils.deletion_utils import assert_not_pending_deletion, deletion_blockers
 from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import (
-    assert_project_id_available, is_project_owner, sql_add_user_to_project,
+    assert_project_id_available, is_project_owner, project_id_matches, sql_add_user_to_project,
     sql_get_projects_for_user, resolve_project_reference)
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
@@ -74,6 +75,7 @@ def _project_capabilities(session, principal, project):
         manage_access_floor=Role.EDITOR,
         allow_peer_grants=False,
         status_permission=Permission.EDIT,
+        can_delete=not deletion_blockers(session, "project", project.unique_id),
     )
 
 
@@ -92,7 +94,7 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
         raise HTTPException(status_code=400, detail="Provide project_lead or one of project_lead_orcid/_email/_username, not both.")
 
     with Session(engine) as session:
-        existing = session.exec(select(Project).where(Project.project_id == P.project_id)).one_or_none()
+        existing = session.exec(select(Project).where(project_id_matches(P.project_id))).one_or_none()
         if existing is not None:
             raise HTTPException(status_code=409, detail=f"Project '{P.project_id}' already exists. Use PATCH to update it.")
 
@@ -199,9 +201,9 @@ def list_projects(
                 project_refs=accessible_to_project,
             ))
             if project_id is not None:
-                base = base.where(Project.project_id == project_id)
+                base = base.where(project_id_matches(project_id))
         elif project_id is not None:
-            base = select(Project).where(Project.project_id == project_id)
+            base = select(Project).where(project_id_matches(project_id))
         elif has_global_permission(auth_res, Permission.READ):
             base = select(Project)
         else:
@@ -224,6 +226,7 @@ def list_projects(
 
         if params.affiliation:
             base = base.where(project_owner_affiliation_filter(auth_res, Project))
+        base = base.where(deletion_filter_for(Project))
 
         total = (
             session.exec(select(func.count()).select_from(base.subquery())).one()
@@ -318,6 +321,7 @@ def search_projects(
             fields=fields,
             prefix_fields=(Project.project_id,),
         )
+        query = query.where(deletion_filter_for(Project))
         if params.affiliation:
             query = query.where(project_owner_affiliation_filter(auth_res, Project))
         query = query.order_by(
@@ -350,7 +354,7 @@ def read_project(
         if prop is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        if prop.project_id == project_ref:
+        if prop.project_id.casefold() == project_ref.casefold():
             response.headers["Content-Location"] = f"/projects/{prop.unique_id}"
 
         return load_project_detail(
@@ -390,7 +394,10 @@ def update_project(project_ref: str, auth_res: Annotated[Principal, Depends(auth
 
         if update_data.get("project_id") and update_data["project_id"] != project.project_id:
             existing = session.exec(
-                select(Project).where(Project.project_id == update_data["project_id"])
+                select(Project).where(
+                    project_id_matches(update_data["project_id"]),
+                    Project.id != project.id,
+                )
             ).one_or_none()
             if existing is not None:
                 raise HTTPException(status_code=409, detail=f"Project '{update_data['project_id']}' already exists.")
@@ -465,6 +472,7 @@ def add_users_to_project(
             raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')
 
         require_permission(session, auth_res, proj.unique_id, Permission.EDIT)
+        assert_not_pending_deletion(session, proj.unique_id)
         user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
         _validate_service_account_project_role(user, internal_role)
         ag = session.exec(

@@ -70,12 +70,8 @@ class ProjectWithLead(ProjectRead):
     creation_time: Optional[UtcDatetime] = None
     modification_time: Optional[UtcDatetime] = None
     members: Optional[List[AccessGroupMemberRead]] = None
-
-
-class ProjectMinimalRead(SQLModel):
-    unique_id: str
-    project_id: str
-    title: Optional[str] = None
+    deletion_request: Optional[dict] = None
+    role: Optional[str] = None
 
 
 class ProjectReferenceRead(SQLModel):

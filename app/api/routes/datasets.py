@@ -72,6 +72,8 @@ from app.utils.project_utils import (
     resolve_project_mfids_to_references,
 )
 from app.utils.instrument_utils import (
+    dataset_instrument_fields,
+    dataset_instrument_name_filter,
     resolve_instrument_identifiers,
     resolve_instrument_mfids_to_references,
 )
@@ -85,6 +87,7 @@ from app.utils.search_utils import (
 )
 from app.utils.user_utils import resolve_create_owner
 from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
+from app.utils.deletion_utils import assert_not_pending_deletion
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
@@ -264,6 +267,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         if requested_project_id is not None or requested_project_mfid is not None:
             if project is None:
                 raise HTTPException(status_code=404, detail=f"Project '{requested_project_id}' not found")
+            assert_not_pending_deletion(session, project.unique_id)
             dataset_details['project_id'] = project.project_id
             dataset_details['project_mfid'] = project.unique_id
 
@@ -277,14 +281,21 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         if instrument is not None:
             dataset_details['instrument_name'] = instrument.instrument_name
         elif dataset_details.get('instrument_name', None):
-            instrument = session.exec(
+            matches = session.exec(
                 select(Instrument).where(func.lower(Instrument.instrument_name) == dataset_details['instrument_name'].lower())
-            ).one_or_none()
-            if instrument is None:
+            ).all()
+            if not matches:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Instrument '{dataset_details['instrument_name']}' is not registered")
+            if len(matches) > 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(f"Instrument name '{dataset_details['instrument_name']}' matches more than one "
+                            "instrument. Use instrument_id or instrument_mfid."))
+            instrument = matches[0]
         if instrument is not None:
+            assert_not_pending_deletion(session, instrument.unique_id)
             dataset_details['instrument_id'] = instrument.id
             dataset_details['instrument_mfid'] = instrument.unique_id
 
@@ -354,8 +365,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         project_references = resolve_project_mfids_to_references([ds.project_mfid], session)
         return DatasetResponse.model_validate({
             **ds.model_dump(),
-            "instrument_id": instrument.instrument_id if instrument else None,
-            "instrument": InstrumentReferenceRead.model_validate(instrument) if instrument else None,
+            **dataset_instrument_fields(ds, InstrumentReferenceRead.model_validate(instrument) if instrument else None),
             "project": project_references.get(ds.project_mfid),
             "public": ri.public,
             "creation_time": ri.creation_time,
@@ -396,18 +406,18 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
                 current_instrument = session.get(Instrument, ds.instrument_id)
 
             current_instrument_id = current_instrument.instrument_id if current_instrument else None
-            current_instrument_name = ds.instrument_name
-            if current_instrument_name is None and current_instrument is not None:
-                current_instrument_name = current_instrument.instrument_name
-            requested_instrument_id = instrument_updates.get("instrument_id", current_instrument_id)
-            requested_instrument_name = instrument_updates.get("instrument_name", current_instrument_name)
-            name_matches = (
-                requested_instrument_name is None and current_instrument_name is None
+            current_instrument_names = {
+                name.casefold()
+                for name in (ds.instrument_name, current_instrument.instrument_name if current_instrument else None)
+                if name is not None
+            }
+            name_matches = "instrument_name" not in instrument_updates or (
+                instrument_updates["instrument_name"] is None and not current_instrument_names
             ) or (
-                isinstance(requested_instrument_name, str)
-                and isinstance(current_instrument_name, str)
-                and requested_instrument_name.casefold() == current_instrument_name.casefold()
+                isinstance(instrument_updates["instrument_name"], str)
+                and instrument_updates["instrument_name"].casefold() in current_instrument_names
             )
+            requested_instrument_id = instrument_updates.get("instrument_id", current_instrument_id)
             id_matches = (
                 requested_instrument_id is None and current_instrument_id is None
             ) or (
@@ -442,9 +452,8 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
         project_reference = project_references.get(upds.project_mfid)
         return DatasetResponse.model_validate({
             **upds.model_dump(),
-            "instrument_id": instrument_reference.instrument_id if instrument_reference else None,
+            **dataset_instrument_fields(upds, instrument_reference),
             "project_id": project_reference.project_id if project_reference else upds.project_id,
-            "instrument": instrument_reference,
             "project": project_reference,
             "public": ri.public if ri else upds.public,
             "creation_time": ri.creation_time if ri else None,
@@ -484,6 +493,7 @@ def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_u
 
         instrument = resolve_instrument_identifiers(
             session, assignment.instrument_id, assignment.instrument_mfid)
+        assert_not_pending_deletion(session, instrument.unique_id)
 
         previous_instrument = None
         if ds.instrument_mfid is not None:
@@ -605,7 +615,7 @@ def list_datasets(
         key: param_values[key]
         for key in (
             "unique_id", "public", "dataset_name",
-            "instrument_name", "timestamp", "size", "data_format",
+            "timestamp", "size", "data_format",
             "data_type", "measurement", "session_name",
         )
         if param_values[key] is not None
@@ -666,6 +676,8 @@ def list_datasets(
                 )
             for key, value in exact_filters.items():
                 q = q.where(getattr(Dataset, key) == value)
+            if param_values["instrument_name"] is not None:
+                q = q.where(dataset_instrument_name_filter(param_values["instrument_name"]))
             for column, value in (
                 (Dataset.session_name, params.session_name_is_null),
                 (Dataset.measurement, params.measurement_is_null),
@@ -789,9 +801,8 @@ def list_datasets(
                 )
             items.append(DatasetResponse.model_validate({
                 **dataset.model_dump(),
-                "instrument_id": instrument_id,
+                **dataset_instrument_fields(dataset, instrument_reference),
                 "project_id": project_id if project_id is not None else dataset.project_id,
-                "instrument": instrument_reference,
                 "project": project_reference,
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
@@ -878,13 +889,12 @@ def search_datasets(
         results = session.exec(query).all()
         items = [DatasetResponse.model_validate({
             **dataset.model_dump(),
-            "instrument_id": instrument_id,
-            "project_id": resolved_project_id if resolved_project_id is not None else dataset.project_id,
-            "instrument": InstrumentReferenceRead(
+            **dataset_instrument_fields(dataset, InstrumentReferenceRead(
                 unique_id=instrument_mfid,
                 instrument_id=instrument_id,
                 instrument_name=instrument_name,
-            ) if instrument_mfid else None,
+            ) if instrument_mfid else None),
+            "project_id": resolved_project_id if resolved_project_id is not None else dataset.project_id,
             "project": ProjectReferenceRead(
                 unique_id=resolved_project_mfid,
                 project_id=resolved_project_id,
@@ -1050,9 +1060,8 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[Principal, D
         project_references = resolve_project_mfids_to_references((d.project_mfid for d in parents), session)
         items = [DatasetRead.model_validate({
             **d.model_dump(),
-            "instrument_id": instrument_references[d.instrument_mfid].instrument_id if d.instrument_mfid in instrument_references else None,
+            **dataset_instrument_fields(d, instrument_references.get(d.instrument_mfid)),
             "project_id": project_references[d.project_mfid].project_id if d.project_mfid in project_references else d.project_id,
-            "instrument": instrument_references.get(d.instrument_mfid),
             "project": project_references.get(d.project_mfid),
         }) for d in parents]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
@@ -1093,9 +1102,8 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[Principal, D
         project_references = resolve_project_mfids_to_references((d.project_mfid for d in children), session)
         items = [DatasetRead.model_validate({
             **d.model_dump(),
-            "instrument_id": instrument_references[d.instrument_mfid].instrument_id if d.instrument_mfid in instrument_references else None,
+            **dataset_instrument_fields(d, instrument_references.get(d.instrument_mfid)),
             "project_id": project_references[d.project_mfid].project_id if d.project_mfid in project_references else d.project_id,
-            "instrument": instrument_references.get(d.instrument_mfid),
             "project": project_references.get(d.project_mfid),
         }) for d in children]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)

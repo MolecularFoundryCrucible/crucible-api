@@ -11,16 +11,18 @@ from app.models.core_models import AccessGroup, Instrument, Resource, Scientific
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
-    InstrumentDetailQuery, InstrumentListQuery, InstrumentSearchQuery,
-    InstrumentStatus)
+    InstrumentAffiliation, InstrumentDetailQuery, InstrumentListQuery,
+    InstrumentSearchQuery, InstrumentStatus)
 from app.models.users import UserPublicRead
+from app.services.resource_access import load_member_grants, may_view_members
 from app.services.resource_details import ResourceDetailOptions, load_instrument_detail
 from app.utils.auth_utils import (
-    authorize_user, owner_affiliation_filter, require_permission,
-    resource_capabilities)
+    authorize_user, maintainer_affiliation_filter, owner_affiliation_filter,
+    require_permission, resource_capabilities)
 from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor,
     validate_cursor)
+from app.utils.deletion_utils import deletion_blockers
 from app.utils.instrument_utils import assert_instrument_id_available
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.search_utils import (
@@ -29,7 +31,7 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import add_or_update, create_standard_acls, sql_create_resource_acl, touch_resource_modification_time
+from app.utils.sql_utils import add_or_update, create_standard_acls, touch_resource_modification_time, deletion_filter_for
 from app.utils.user_utils import resolve_create_owner
 from app.utils.gcs_record_utils import write_record, instrument_record
 
@@ -56,16 +58,25 @@ INSTRUMENT_FILTER_FIELDS = {
 VALID_INSTRUMENT_STATUSES = tuple(status.value for status in InstrumentStatus)
 
 
+def _instrument_affiliation_filter(principal, affiliation):
+    predicates = {
+        InstrumentAffiliation.OWNER: owner_affiliation_filter,
+        InstrumentAffiliation.MAINTAINER: maintainer_affiliation_filter,
+    }
+    return or_(*(predicates[value](principal, Instrument) for value in dict.fromkeys(affiliation)))
+
+
 def _instrument_capabilities(session, principal, instrument):
     return resource_capabilities(
         session,
         principal,
         instrument.unique_id,
+        can_delete=not deletion_blockers(session, "instrument", instrument.unique_id),
     )
 
 
 def _instrument_response(instrument, resource=None, scientific_metadata=None, owner=None,
-                         capabilities=None):
+                         capabilities=None, members=None):
     return InstrumentResponse.model_validate({
         **instrument.model_dump(exclude={"owner"}),
         "owner_orcid": instrument.owner,
@@ -74,7 +85,14 @@ def _instrument_response(instrument, resource=None, scientific_metadata=None, ow
         "modification_time": resource.modification_time if resource else None,
         "scientific_metadata": scientific_metadata,
         "capabilities": capabilities,
+        "members": members,
     })
+
+
+def _instrument_members(session, principal, instrument):
+    if not may_view_members(session, principal, instrument.unique_id):
+        return None
+    return load_member_grants(session, instrument.unique_id)
 
 
 def _instrument_owners(session, instruments):
@@ -141,10 +159,11 @@ def list_instruments(
 
     with Session(engine) as session:
         base = select(Instrument).join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
+        base = base.where(deletion_filter_for(Instrument))
         for f in filters:
             base = base.where(f)
         if params.affiliation:
-            base = base.where(owner_affiliation_filter(auth_res, Instrument))
+            base = base.where(_instrument_affiliation_filter(auth_res, params.affiliation))
 
         total = (
             session.exec(select(func.count()).select_from(base.subquery())).one()
@@ -160,11 +179,12 @@ def list_instruments(
             )
         else:
             statement = select(Instrument, Resource).join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
+        statement = statement.where(deletion_filter_for(Instrument))
 
         for f in filters:
             statement = statement.where(f)
         if params.affiliation:
-            statement = statement.where(owner_affiliation_filter(auth_res, Instrument))
+            statement = statement.where(_instrument_affiliation_filter(auth_res, params.affiliation))
 
         if decoded_cursor is not None:
             id_comparison = Instrument.unique_id < decoded_cursor.unique_id
@@ -189,23 +209,16 @@ def list_instruments(
 
         items = []
         for row in rows:
-            if include_metadata:
-                inst, ri, smb = row
-                items.append(_instrument_response(
-                    inst,
-                    ri,
-                    smb.scientific_metadata if smb else None,
-                    owners.get(inst.owner),
-                    _instrument_capabilities(session, auth_res, inst) if instrument_id is not None else None,
-                ))
-            else:
-                inst, ri = row
-                items.append(_instrument_response(
-                    inst,
-                    ri,
-                    owner=owners.get(inst.owner),
-                    capabilities=_instrument_capabilities(session, auth_res, inst) if instrument_id is not None else None,
-                ))
+            inst, ri = row[0], row[1]
+            smb = row[2] if include_metadata else None
+            items.append(_instrument_response(
+                inst,
+                ri,
+                smb.scientific_metadata if smb else None,
+                owners.get(inst.owner),
+                _instrument_capabilities(session, auth_res, inst) if instrument_id is not None else None,
+                _instrument_members(session, auth_res, inst) if params.include_members else None,
+            ))
         next_cursor = None
         if has_more:
             last_instrument, last_resource = rows[-1][:2]
@@ -244,10 +257,11 @@ def search_instruments(
             select(Instrument, Resource)
             .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
         )
+        base = base.where(deletion_filter_for(Instrument))
         if params.status is not None:
             base = base.where(Instrument.status == params.status)
         if params.affiliation:
-            base = base.where(owner_affiliation_filter(auth_res, Instrument))
+            base = base.where(_instrument_affiliation_filter(auth_res, params.affiliation))
         if params.owner_id is not None:
             base = base.where(Instrument.owner == params.owner_id)
         fields = (
@@ -292,6 +306,7 @@ def read_instrument(
             options=ResourceDetailOptions(
                 include_metadata=params.include_metadata,
                 include_owner=params.include_owner,
+                include_members=params.include_members,
             ),
         )
 
@@ -344,18 +359,16 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
             ri.creation_time = now
         ri.modification_time = now
 
-        ag = add_or_update(session, AccessGroup,
-                           AccessGroup.group_name == db_instrument.unique_id,
-                           group_name=db_instrument.unique_id,
-                           group_type=AccessGroupType.INSTRUMENT.value)
+        add_or_update(session, AccessGroup,
+                      AccessGroup.group_name == db_instrument.unique_id,
+                      group_name=db_instrument.unique_id,
+                      group_type=AccessGroupType.INSTRUMENT.value)
         create_standard_acls(
             session,
             db_instrument.unique_id,
             owner_id=owner_user.unique_id,
             requestor_id=user_unique_id,
         )
-        sql_create_resource_acl(ag, db_instrument.unique_id, read=True, write=True,
-                                session=session, permission=Role.EDITOR)
 
         session.commit()
         session.refresh(db_instrument)
@@ -417,6 +430,7 @@ def set_instrument_status(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     instrument_mfid: str,
     status: str,
+    background_tasks: BackgroundTasks,
 ):
     """Change an instrument's lifecycle status.
 
@@ -448,6 +462,7 @@ def set_instrument_status(
 
         ri = session.exec(select(Resource).where(
             Resource.mfid == instrument_mfid)).one_or_none()
+        background_tasks.add_task(write_record, instrument.unique_id, instrument_record(instrument, ri), auth_res.user_id, "update")
         return _instrument_response(
             instrument,
             ri,

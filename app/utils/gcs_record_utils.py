@@ -84,10 +84,13 @@ def sample_record(samp, ri) -> dict:
 
 def instrument_record(inst, ri) -> dict:
     return {
-        "unique_id": inst.unique_id, "instrument_name": inst.instrument_name,
+        "unique_id": inst.unique_id, "instrument_id": inst.instrument_id,
+        "instrument_name": inst.instrument_name,
         "manufacturer": inst.manufacturer, "model": inst.model,
         "owner": inst.owner, "other_id": inst.other_id,
         "other_id_source": inst.other_id_source,
+        "location": inst.location, "description": inst.description,
+        "instrument_type": inst.instrument_type, "status": inst.status,
         "resource_type": "instrument",
         "creation_time": ri.creation_time if ri else None,
         "modification_time": ri.modification_time if ri else None,

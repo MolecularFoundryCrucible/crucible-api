@@ -29,7 +29,7 @@ from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleU
 from app.utils.auth_utils import (
     authorize_user, permission_filter, project_scope_filter,
     owner_affiliation_filter, require_permission)
-from app.utils.instrument_utils import resolve_instrument_mfids_to_references
+from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import require_link_create_permissions
 from app.utils.permissions import Principal, Permission, Role, has_global_permission
 from app.utils.project_utils import (
@@ -45,6 +45,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public
+from app.utils.deletion_utils import assert_not_pending_deletion
 
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
@@ -265,6 +266,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         sample_details['owner_orcid'] = resolved_owner_orcid
         sample_details['owner_user_id'] = owner_user.id
         if project is not None:
+            assert_not_pending_deletion(session, project.unique_id)
             sample_details['project_id'] = project.project_id
             sample_details['project_mfid'] = project.unique_id
 
@@ -509,9 +511,8 @@ def list_samples(
                     )
                     dataset_reads_by_sample.setdefault(sid, []).append(DatasetRead.model_validate({
                         **ds.model_dump(),
-                        "instrument_id": instrument_references[ds.instrument_mfid].instrument_id if ds.instrument_mfid in instrument_references else None,
+                        **dataset_instrument_fields(ds, instrument_references.get(ds.instrument_mfid)),
                         "project_id": ds_project_references[ds.project_mfid].project_id if ds.project_mfid in ds_project_references else ds.project_id,
-                        "instrument": instrument_references.get(ds.instrument_mfid),
                         "project": ds_project_references.get(ds.project_mfid),
                     }))
 

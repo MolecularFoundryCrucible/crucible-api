@@ -80,6 +80,7 @@ def test_deletion_audit_cursor_is_stable_and_embeds_public_identities(db_engine)
         "first_name": "Request",
         "last_name": "Owner",
         "is_service_account": False,
+        "user_capabilities": None,
     }
     assert first.items[0].reviewer.unique_id == "reviewer"
     assert not hasattr(first.items[0].requester, "email")

@@ -8,6 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Added `user_capabilities` to user responses, populated for singleton and exact lookups with caller-relative `can_view_private`, `can_edit_profile`, `can_manage_api_key`, and `can_change_platform_role` flags.
+- Added the platform-admin directory to broad `GET /users` listings: administrators receive `UserRead` items with email and platform roles across the full directory, while non-administrators keep the group-scoped public-safe listing.
+- Added sorting, filtering, and pagination parity to `GET /users`: `sort=name|username|unique_id|email` (email administrator only) with `direction=asc|desc`, `include_total`, signed opaque cursor pagination with `next_cursor` alongside the existing offset, declared `first_name`/`last_name` filters, a `q` substring search with repeatable `search_fields` to choose the searched fields (email administrator only), and repeatable administrator-only `platform_role` filtering.
+- Added human platform-role management through `PATCH /users/{user_id}/platform_role` with `none`, `contributor`, and `admin` values, guarded against service-account callers, self-changes, service-account targets (409 pointing at the service-account route), and demoting the last human platform administrator (409, checked with every human administrator row locked).
+- Added administrator-only `DELETE /users/{user_id}/apikey`, revoking every API key the user holds and invalidating the revoked keys in the principal cache.
+- Added non-secret `api_key_status` to the singleton and exact platform-admin view of a user, mirroring the service-account detail response.
+- Added the target user's standing `role` in each project's access group to `GET /users/{user_id}/projects` items.
+- Added `can_manage_users` to `GET /account/profile` capabilities, true for platform administrators.
 - Added permanent deletion of empty projects and instruments through both the reviewed request workflow (admin on the resource may request) and the direct forced path (owner or platform admin). A project or instrument with assigned datasets or samples is rejected with 409 and a structured `blocking` count detail, checked at request creation, at approval with the row locked inside the transaction, and at forced deletion.
 - Added a preview-and-confirm flow to `DELETE /resources/{resource_mfid}?force=true` for projects and instruments: without `confirm=true` it returns a `DeletionPreviewRead` describing blockers and what would be removed (group memberships, service-account bindings, join requests, cross-resource grants) and deletes nothing. Datasets and samples keep immediate forced deletion.
 - Added a `preview` field to project and instrument deletion-request responses describing what the deletion removes or why it is blocked.
@@ -72,6 +80,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `UserRead` now exposes `platform_role` to the user themselves and to platform administrators.
 - `GET /users/{user_id}/projects` is now available to callers with `platform_role` `contributor` or `admin`, including unbound service accounts, matching the authority for `accessible_to_user`. Instrument-group membership no longer grants access, and the reduced `ProjectMinimalRead` projection for instrument-group members is removed; every authorized caller receives `ProjectWithLead`.
 - Project slugs are now matched case-insensitively in `GET /projects?project_id=`, the `GET /projects/{project_id}` compatibility alias, project filters, and project references in other routes, matching instrument slugs. Creating or renaming a project to a slug that differs from another only by case returns 409. Migration `b7e2d9c4a1f3` adds case-insensitive unique indexes on `project.project_id` and `instrument.instrument_id`; `migrations/data/20261005_audit_case_insensitive_slugs.py` audits for conflicting slugs first.
 - Dataset responses now resolve `instrument_name` from the assigned instrument through `instrument_mfid`, so instrument renames are reflected immediately. Datasets without a registered instrument keep their stored label. Generic dataset PATCH accepts either the stored label or the current name as the unchanged value.
@@ -109,6 +118,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Instrument search accepts an optional `status` filter with `active`, `maintenance`, and `decommissioned` values. Omitting it preserves the existing all-status search behavior.
 - Project membership mutation routes now accept named roles (`viewer`, `contributor`, `editor`, `admin`, and `owner`) instead of integer enum values. `owner` remains rejected with 409 and requires the ownership-transfer route.
 - Service accounts may no longer register instruments, including when they hold platform-admin status. Human platform administrators may continue registering an instrument for another identity.
+
+### Deprecated
+
+- Undeclared `GET /users` query parameters are now ignored instead of being applied as user-attribute filters. Affected responses carry `Deprecation: @1791244800` and name the ignored parameters in the server log; the parameters will be rejected with 422 at a future announced date. No `Sunset` header is sent.
+
+### Security
+
+- Non-administrators can no longer filter users by `platform_role`; the filter is administrator-only and other callers receive 403.
+- Removed the generic `GET /users` loop that turned any undeclared query parameter matching a `User` attribute into a filter, which let callers probe arbitrary columns including internal ones.
 
 ### Fixed
 

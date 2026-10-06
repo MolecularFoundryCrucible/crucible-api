@@ -43,6 +43,22 @@ class UserCreate(SQLModel):
         return str(v).lower()
 
 
+class UserCapabilities(SQLModel):
+    '''Caller-relative actions on one user record. Field name is user_capabilities,
+    not capabilities: a downstream client decodes any capabilities key on user
+    objects into a different required-field type.'''
+    can_view_private: bool
+    can_edit_profile: bool
+    can_manage_api_key: bool
+    can_change_platform_role: bool
+
+
+class ServiceAccountKeyStatus(SQLModel):
+    valid: bool
+    created_at: str
+    expires_at: str
+
+
 class UserRead(SQLModel):
     first_name: str
     last_name: str
@@ -50,10 +66,14 @@ class UserRead(SQLModel):
     unique_id: str
     username: Optional[str] = None
     is_service_account: Optional[bool] = False
+    platform_role: Optional[PlatformRole] = None
+    user_capabilities: Optional[UserCapabilities] = None
+    api_key_status: Optional[ServiceAccountKeyStatus] = None
 
 
 class AccountCapabilities(SQLModel):
     can_manage_service_accounts: bool
+    can_manage_users: bool
     can_create_project: bool
     can_register_instrument: bool
     can_create_sample: bool
@@ -81,6 +101,7 @@ class UserPublicRead(SQLModel):
     first_name: str
     last_name: str
     is_service_account: bool = False
+    user_capabilities: Optional[UserCapabilities] = None
 
     @field_validator("is_service_account", mode="before")
     @classmethod
@@ -156,6 +177,12 @@ class ServiceAccountPlatformRoleUpdate(SQLModel):
     platform_role: Literal["none", "contributor", "admin"]
 
 
+class UserPlatformRoleUpdate(SQLModel):
+    model_config = ConfigDict(extra="forbid")
+
+    platform_role: Literal["none", "contributor", "admin"]
+
+
 class ServiceAccountRead(SQLModel):
     '''Response from POST /service_accounts and POST /service_accounts/{id}/rotate_key.
     api_key is only returned once — store it securely.
@@ -174,12 +201,6 @@ class ServiceAccountAdminRead(SQLModel):
     email: Optional[str] = None
     is_service_account: bool = True
     platform_role: PlatformRole
-
-
-class ServiceAccountKeyStatus(SQLModel):
-    valid: bool
-    created_at: str
-    expires_at: str
 
 
 class ServiceAccountAdminDetail(ServiceAccountAdminRead):

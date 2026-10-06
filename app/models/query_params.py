@@ -17,6 +17,7 @@ from app.models.resource_graph import (
     GraphRelationshipKind,
     GraphRelationshipTypeFilter,
 )
+from app.utils.permissions import PlatformRole
 
 
 AFFILIATION_DESCRIPTION = (
@@ -75,6 +76,21 @@ class InstrumentStatus(str, Enum):
     ACTIVE = "active"
     MAINTENANCE = "maintenance"
     DECOMMISSIONED = "decommissioned"
+
+
+class UserSearchField(str, Enum):
+    FIRST_NAME = "first_name"
+    LAST_NAME = "last_name"
+    USERNAME = "username"
+    UNIQUE_ID = "unique_id"
+    EMAIL = "email"
+
+
+class UserSort(str, Enum):
+    NAME = "name"
+    USERNAME = "username"
+    UNIQUE_ID = "unique_id"
+    EMAIL = "email"
 
 
 class DatasetFacetField(str, Enum):
@@ -690,6 +706,103 @@ class InstrumentListQuery(StrictQueryModel):
         if self.instrument_id is None and self.status is None:
             values["status"] = InstrumentStatus.ACTIVE.value
         return values
+
+
+class UserListQuery(BaseModel):
+    unique_id: Optional[str] = Field(
+        default=None,
+        description="Exact ORCID or service-account MFID.",
+    )
+    username: Optional[str] = Field(
+        default=None,
+        description="Exact username, matched case-insensitively.",
+    )
+    email: Optional[str] = Field(
+        default=None,
+        description="Exact email address, matched case-insensitively.",
+    )
+    permissive: bool = Field(
+        default=True,
+        description=(
+            "Matching mode for first_name and last_name. True is a "
+            "case-insensitive substring match, False an exact match."
+        ),
+    )
+    is_service_account: Optional[bool] = Field(
+        default=None,
+        description="Restrict results to service accounts or human users.",
+    )
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    q: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description=(
+            "Case-insensitive substring search. Searches the fields named in search_fields, "
+            "or by default first_name, last_name, username, unique_id, and, for platform "
+            "administrators, email."
+        ),
+    )
+    search_fields: Optional[list[UserSearchField]] = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Repeatable list of fields searched by q, with OR semantics. Requires q. "
+            "email is administrator only; other callers receive 403."
+        ),
+    )
+    platform_role: Optional[list[PlatformRole]] = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Repeatable platform-role filter, administrator only. "
+            "Repeated values use OR semantics. Other callers receive 403."
+        ),
+    )
+    include_total: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Exact authorization-filtered total. Omission preserves the "
+            "legacy behavior that always returns a total."
+        ),
+    )
+    limit: int = Field(default=100, ge=1, le=1000)
+    cursor: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=4096,
+        description="Opaque continuation cursor returned by a previous page.",
+    )
+    offset: int = Field(
+        default=0,
+        ge=0,
+        description="Compatibility offset. A supplied cursor takes precedence.",
+    )
+    sort: Optional[UserSort] = Field(
+        default=None,
+        description=(
+            "Explicit ordering, case-insensitive, with unique_id as tie-breaker and nulls last. "
+            "name sorts by last name then first name. email is administrator only. "
+            "Omission keeps the default last name, first name order."
+        ),
+    )
+    direction: SortDirection = Field(
+        default=SortDirection.ASC,
+        description="Direction for an explicit sort.",
+    )
+
+    @model_validator(mode="after")
+    def validate_search_fields(self):
+        if self.search_fields and self.q is None:
+            raise ValueError("search_fields requires q")
+        return self
+
+    def cursor_filters(self) -> dict:
+        return self.model_dump(
+            mode="json",
+            exclude={"cursor", "offset", "limit", "sort", "direction", "include_total"},
+        )
 
 
 class SearchQuery(StrictQueryModel):

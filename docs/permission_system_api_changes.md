@@ -4,6 +4,44 @@ Reference for the API v3 permission contract deployed to production. Verify `GET
 
 ## New routes
 
+### `PATCH /users/{user_id}/platform_role`
+
+Human platform administrators only. Service-account callers receive 403 even when they hold `platform_role=admin`, and non-administrators receive 403.
+
+```
+Request:  { "platform_role": "none" | "contributor" | "admin" }   # extra=forbid; "support" is not accepted
+Response: UserRead with user_capabilities
+```
+
+`{user_id}` resolves with the same resolver as `GET /users/{user_id}`: ORCID, service-account MFID, username, or email. A caller cannot change their own role (403). A service-account target returns 409 pointing at `PATCH /service_accounts/{unique_id}`. Demoting the last human platform administrator returns 409; the check locks every human administrator row inside the transaction, so concurrent demotions cannot remove the last one. An unknown user returns 404. Authority changes propagate through the in-process principal cache within `AUTH_CACHE_TTL` (default 60 seconds).
+
+### `DELETE /users/{user_id}/apikey`
+
+Platform administrators only. Revokes every `ApiToken` row the user holds, invalidating the revoked keys in this worker's principal cache; other workers clear them when the TTL expires. Returns 204. An unknown user returns 404. Works for human users and service accounts.
+
+## Changed routes
+
+### `GET /users`
+
+Platform administrators receive the full directory on broad listings: `UserRead` items with email and `platform_role`, not scoped to shared groups. Non-administrators keep `UserPublicRead` items scoped to users who share an access group with them.
+
+The collection accepts a strict query model: `sort=name|username|unique_id|email` with `direction=asc|desc` (case-insensitive; name sorts by last name then first name; email is administrator only; omitting `sort` keeps the last name, first name order), `unique_id` as tie-breaker, nulls last, `include_total` (omission preserves the legacy behavior that always returns a total), signed opaque `cursor` pagination alongside `offset` with cursor precedence, `next_cursor` on responses, exact `unique_id`/`username`/`email` filters, `first_name`/`last_name` (permissive substring or exact), `q` (case-insensitive substring over first name, last name, username, unique ID, and for administrators email) with optional repeatable `search_fields` to choose the searched fields, `is_service_account`, and repeatable administrator-only `platform_role` (non-admin callers receive 403).
+
+Any other query parameter is ignored without filtering, and the response carries `Deprecation: @1791244800`. The parameters will be rejected with 422 at a future announced date. `?projects=x` and `?id=1` no longer filter or fail.
+
+`user_capabilities` is populated on singleton and exact lookups only and remains null on broad listings, `/users/search`, and `/users/resolve`:
+
+```
+UserCapabilities = {
+  can_view_private: bool,          # self or platform admin
+  can_edit_profile: bool,          # self or platform admin
+  can_manage_api_key: bool,        # platform admin only
+  can_change_platform_role: bool,  # human platform admin, human target, not self
+}
+```
+
+It is the reliable discriminator for what the caller may do to a user; do not infer capability from the presence of `email`. `UserRead` now also exposes `platform_role` to the user themselves and to platform administrators, and the singleton and exact platform-admin views expose non-secret `api_key_status` when a key exists.
+
 ### `POST /resources/{mfid}/transfer_ownership`
 
 `?confirm=true` to execute; omit to preview without writing anything.
@@ -154,8 +192,10 @@ Response is `PaginatedResponse[ProjectWithLead]`:
 
 ```
 { unique_id, project_id, organization, project_lead_orcid, status, title,
-  lead, scientific_metadata, creation_time, modification_time }
+  lead, scientific_metadata, creation_time, modification_time, role }
 ```
+
+`role` is the target user's standing in that project's access group (`owner`, `admin`, `editor`, `contributor`, `viewer`), resolved in the page query.
 
 Available to the user themselves and to callers with `platform_role` `contributor` or `admin`, including service accounts. Anyone else receives 403. This is the same authority required to select another user with `accessible_to_user`. Instrument-group membership no longer grants access, and the former `ProjectMinimalRead` projection for instrument-group members has been removed.
 
@@ -237,7 +277,7 @@ An ordinary human caller may create only for themselves. Platform contributors a
 
 `platform_role=contributor` grants platform-wide read and create access. New service accounts receive this role by default and can read projects and resources, create resources and child records, and use `accessible_to_user` for another registered identity. `is_service_account` alone grants no global access. Non-admin service accounts remain capped at contributor even when an ACL or group standing would otherwise grant a higher role. They cannot edit existing values, delete resources, manage ACLs, transfer ownership, register instruments, or use platform-administrator routes.
 
-`GET /account/profile` returns workflow capabilities for the authenticated principal. The flags describe whether the caller can manage service accounts, create projects, register instruments, create samples or datasets, and create for another identity. They are presentation guidance only; every operation remains independently authorized.
+`GET /account/profile` returns workflow capabilities for the authenticated principal. The flags describe whether the caller can manage service accounts and human users (`can_manage_users`), create projects, register instruments, create samples or datasets, and create for another identity. They are presentation guidance only; every operation remains independently authorized.
 
 Authenticated routes accept optional `Crucible-Privilege-Mode: normal|elevated`. Omission preserves existing behavior. Explicit normal mode removes the platform-administrator bypass for that request while retaining the caller's ACL-derived permissions. Explicit elevated mode is limited to human platform administrators. Service accounts cannot explicitly elevate.
 

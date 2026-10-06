@@ -1,21 +1,24 @@
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Annotated, Dict, List, Optional, Union
 import logging
 
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import and_, func, join
+from sqlalchemy import and_, func, join, or_
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select, col
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.general_utils import is_orcid
 from app.models.core_models import (
-    AccessGroup, Dataset, Project, Sample, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
+    AccessGroup, ApiToken, Dataset, Project, Sample, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
 )
-from app.utils.auth_utils import authorize_user, fetch_acl_rows, find_or_add_api_access, permission_filter, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
-from app.utils.permissions import AccessGroupType, Permission, effective_role, has_global_permission, Principal, Role
+from app.utils.auth_utils import authorize_user, fetch_acl_rows, find_or_add_api_access, permission_filter, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
+from app.utils.cursor_utils import (
+    CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor,
+)
+from app.utils.permissions import AccessGroupType, Permission, effective_role, has_global_permission, PlatformRole, Principal, Role
 from app.utils.search_utils import (
     MAX_SEARCH_QUERY_LENGTH,
     SEARCH_QUERY_LIMIT_DESCRIPTION,
@@ -34,50 +37,207 @@ from app.models.core_models import ApiToken
 from app.models.projects import ProjectWithLead
 from app.models.access_groups import AccessGroupRead
 from app.models.access import EffectiveAccess, EffectiveResourceAccessRead
+from app.models.query_params import SortDirection, UserListQuery, UserSearchField, UserSort
+from app.models.users import (
+    AccountCapabilities,
+    ServiceAccountKeyStatus,
+    UserCapabilities,
+    UserPlatformRoleUpdate,
+    UserPublicRead,
+    UserRead,
+)
 
 router = APIRouter(tags=["users"])
 engine = get_engine()
 
+USER_COLLECTION_DEPRECATION = "@1791244800"
+USER_LIST_DECLARED_PARAMS = {
+    "unique_id", "username", "email", "permissive", "is_service_account",
+    "first_name", "last_name", "q", "search_fields", "platform_role", "include_total",
+    "limit", "cursor", "offset", "sort", "direction",
+}
+
+
+def _key_status(token: Optional[ApiToken]) -> Optional[ServiceAccountKeyStatus]:
+    if token is None:
+        return None
+    created_at = token.token_created
+    if isinstance(created_at, str):
+        created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    if isinstance(created_at, date) and not isinstance(created_at, datetime):
+        created_at = datetime.combine(created_at, datetime.min.time())
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    expires_at = created_at + timedelta(days=365)
+    return ServiceAccountKeyStatus(
+        valid=expires_at >= datetime.now(timezone.utc),
+        created_at=created_at.date().isoformat(),
+        expires_at=expires_at.date().isoformat(),
+    )
+
+
+def _user_capabilities(caller: Principal, user: User) -> UserCapabilities:
+    caller_is_admin = caller.is_platform_admin
+    is_self = caller.user_id == user.unique_id
+    return UserCapabilities(
+        can_view_private=is_self or caller_is_admin,
+        can_edit_profile=is_self or caller_is_admin,
+        can_manage_api_key=caller_is_admin,
+        can_change_platform_role=(
+            caller_is_admin
+            and not caller.is_service_account
+            and not bool(user.is_service_account)
+            and not is_self
+        ),
+    )
+
+
+def _user_read(caller: Principal, user: User, *, key_status: Optional[ServiceAccountKeyStatus] = None,
+               with_capabilities: bool = False) -> UserRead:
+    role = None
+    if user.platform_role is not None:
+        try:
+            role = PlatformRole(user.platform_role)
+        except ValueError:
+            role = None
+    return UserRead.model_validate(
+        user,
+        update={
+            "platform_role": role,
+            "user_capabilities": _user_capabilities(caller, user) if with_capabilities else None,
+            "api_key_status": key_status,
+        },
+    )
+
+
+def _user_public_read(caller: Principal, user: User, *, with_capabilities: bool = False) -> UserPublicRead:
+    return UserPublicRead.model_validate(
+        user,
+        update={"user_capabilities": _user_capabilities(caller, user) if with_capabilities else None},
+    )
+
+
+_USER_SEARCH_COLUMNS = {
+    UserSearchField.FIRST_NAME: User.first_name,
+    UserSearchField.LAST_NAME: User.last_name,
+    UserSearchField.USERNAME: User.username,
+    UserSearchField.UNIQUE_ID: User.unique_id,
+    UserSearchField.EMAIL: User.email,
+}
+
+
+def _user_sort_key(sort: UserSort):
+    if sort is UserSort.NAME:
+        return func.lower(User.last_name) + " " + func.lower(User.first_name)
+    if sort is UserSort.USERNAME:
+        return func.lower(User.username)
+    if sort is UserSort.EMAIL:
+        return func.lower(User.email)
+    return func.lower(User.unique_id)
+
+
+def _user_sort_value(sort: UserSort, user: User):
+    if sort is UserSort.NAME:
+        if user.last_name is None or user.first_name is None:
+            return None
+        return f"{user.last_name.lower()} {user.first_name.lower()}"
+    raw = {
+        UserSort.USERNAME: user.username,
+        UserSort.EMAIL: user.email,
+        UserSort.UNIQUE_ID: user.unique_id,
+    }[sort]
+    return raw.lower() if raw is not None else None
+
 
 @router.get("/users", response_model=PaginatedResponse[Union[UserRead, UserPublicRead]])
 def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request: Request,
-               unique_id: Optional[str] = Query(default=None, description="Exact ORCID or service-account MFID."),
-               username: Optional[str] = Query(default=None, description="Exact username."),
-               email: Optional[str] = Query(default=None, description="Exact email address."),
-               permissive: bool = True,
-               is_service_account: Optional[bool] = None,
-               limit: int = Query(default=100, ge=1, le=1000),
-               offset: int = Query(default=0, ge=0)):
-    ag_list = auth_res.groups
-    params_dict = dict(request.query_params)
-    for k in ('unique_id', 'username', 'email', 'permissive', 'limit', 'offset', 'is_service_account'):
-        params_dict.pop(k, None)
+               response: Response,
+               params: Annotated[UserListQuery, Query()]):
+    '''
+    Returns a paginated list of users. Platform administrators receive the full
+    directory with email and platform roles; other callers receive public-safe
+    profiles scoped to users who share an access group with them.
+    Exact unique_id, username, and email filters return the same authorized
+    representation as GET /users/{user_id}. Any other query parameter is ignored
+    and reported through the Deprecation response header.
+    '''
+    query_params = set(request.query_params.keys())
+    ignored = sorted(query_params - USER_LIST_DECLARED_PARAMS)
+    if ignored:
+        response.headers["Deprecation"] = USER_COLLECTION_DEPRECATION
+        logger.warning("Ignoring undeclared GET /users query parameters: %s", ", ".join(ignored))
+
+    is_admin = auth_res.is_platform_admin
+    if params.platform_role and not is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Only platform administrators may filter users by platform_role",
+        )
+    if not is_admin and (UserSearchField.EMAIL in (params.search_fields or []) or params.sort is UserSort.EMAIL):
+        raise HTTPException(
+            status_code=403,
+            detail="Only platform administrators may filter or sort users by email",
+        )
+    sort = params.sort or UserSort.NAME
+
+    exact_lookup = params.unique_id is not None or params.username is not None or params.email is not None
+    filters_digest = filter_fingerprint(params.cursor_filters())
+    decoded_cursor = None
+    decoded_primary = None
+    if params.cursor is not None:
+        try:
+            decoded_cursor = validate_cursor(
+                params.cursor,
+                kind="user",
+                sort=sort.value,
+                direction=params.direction.value,
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+            if decoded_cursor is not None:
+                decoded_primary = cursor_primary_value(decoded_cursor)
+        except CursorError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     search_cmd = select(User)
-    exact_lookup = unique_id is not None or username is not None or email is not None
-    if unique_id is not None:
-        search_cmd = search_cmd.where(User.unique_id == unique_id)
-    if username is not None:
-        search_cmd = search_cmd.where(func.lower(User.username) == username.lower())
-    if email is not None:
-        search_cmd = search_cmd.where(func.lower(User.email) == email.lower())
+    if params.unique_id is not None:
+        search_cmd = search_cmd.where(User.unique_id == params.unique_id)
+    if params.username is not None:
+        search_cmd = search_cmd.where(func.lower(User.username) == params.username.lower())
+    if params.email is not None:
+        search_cmd = search_cmd.where(func.lower(User.email) == params.email.lower())
 
-    if permissive:
-        for k, v in params_dict.items():
-            if hasattr(User, k):
-                search_cmd = search_cmd.where(getattr(User, k).ilike(f"%{v.lower()}%"))
-    else:
-        for k, v in params_dict.items():
-            if hasattr(User, k):
-                search_cmd = search_cmd.where(getattr(User, k) == v)
+    if params.first_name is not None:
+        if params.permissive:
+            search_cmd = search_cmd.where(User.first_name.ilike(f"%{params.first_name.lower()}%"))
+        else:
+            search_cmd = search_cmd.where(User.first_name == params.first_name)
+    if params.last_name is not None:
+        if params.permissive:
+            search_cmd = search_cmd.where(User.last_name.ilike(f"%{params.last_name.lower()}%"))
+        else:
+            search_cmd = search_cmd.where(User.last_name == params.last_name)
 
-    if is_service_account is not None:
-        search_cmd = search_cmd.where(User.is_service_account == is_service_account)
+    if params.q is not None:
+        needle = f"%{params.q.lower()}%"
+        fields = params.search_fields or [
+            field for field in UserSearchField
+            if is_admin or field is not UserSearchField.EMAIL
+        ]
+        search_cmd = search_cmd.where(or_(*(
+            _USER_SEARCH_COLUMNS[field].ilike(needle) for field in dict.fromkeys(fields)
+        )))
 
-    # Admins see the full directory; non-admins are scoped to users who share
-    # an access group with them. Broad collection responses are public-safe.
-    if not exact_lookup and not auth_res.is_platform_admin:
-        ag_ids = [ag.id for ag in ag_list]
+    if params.is_service_account is not None:
+        search_cmd = search_cmd.where(User.is_service_account == params.is_service_account)
+
+    if params.platform_role:
+        search_cmd = search_cmd.where(User.platform_role.in_(
+            [role.value for role in params.platform_role]
+        ))
+
+    if not exact_lookup and not is_admin:
+        ag_ids = [ag.id for ag in auth_res.groups]
         search_cmd = search_cmd.where(
             User.id.in_(
                 select(UserAccessGroupLink.user_id).where(
@@ -86,19 +246,74 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
             )
         )
 
+    sort_key = _user_sort_key(sort)
+
     with Session(engine) as session:
-        total = session.exec(select(func.count()).select_from(search_cmd.subquery())).one()
-        items = session.exec(
-            search_cmd.order_by(User.last_name, User.first_name).offset(offset).limit(limit)
-        ).all()
-        is_admin = auth_res.is_platform_admin
+        total = (
+            session.exec(select(func.count()).select_from(search_cmd.subquery())).one()
+            if params.include_total is not False
+            else None
+        )
+
+        page_cmd = search_cmd
+        ascending = params.direction is SortDirection.ASC
+        if decoded_cursor is not None:
+            after_id = User.unique_id > decoded_cursor.unique_id if ascending else User.unique_id < decoded_cursor.unique_id
+            if decoded_cursor.is_null:
+                page_cmd = page_cmd.where(sort_key.is_(None), after_id)
+            else:
+                beyond = sort_key > decoded_primary if ascending else sort_key < decoded_primary
+                page_cmd = page_cmd.where(or_(
+                    beyond,
+                    and_(sort_key == decoded_primary, after_id),
+                    sort_key.is_(None),
+                ))
+        if ascending:
+            page_cmd = page_cmd.order_by(sort_key.asc().nulls_last(), User.unique_id.asc())
+        else:
+            page_cmd = page_cmd.order_by(sort_key.desc().nulls_last(), User.unique_id.desc())
+
+        if params.cursor is None and params.offset:
+            page_cmd = page_cmd.offset(params.offset)
+        rows = session.exec(page_cmd.limit(params.limit + 1)).all()
+        has_more = len(rows) > params.limit
+        rows = rows[:params.limit]
+
+        key_status_by_user = {}
+        if is_admin and exact_lookup:
+            private_ids = [user.unique_id for user in rows]
+            for token in session.exec(
+                select(ApiToken).where(ApiToken.user_unique_id.in_(private_ids))
+                .order_by(ApiToken.token_created.desc())
+            ).all() if private_ids else []:
+                if token.user_unique_id not in key_status_by_user:
+                    key_status_by_user[token.user_unique_id] = _key_status(token)
         items = [
-            UserRead.model_validate(user)
-            if exact_lookup and (is_admin or user.unique_id == auth_res.user_id)
-            else UserPublicRead.model_validate(user)
-            for user in items
+            _user_read(auth_res, user, key_status=key_status_by_user.get(user.unique_id),
+                       with_capabilities=exact_lookup)
+            if is_admin or user.unique_id == auth_res.user_id
+            else _user_public_read(auth_res, user, with_capabilities=exact_lookup)
+            for user in rows
         ]
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+        next_cursor = None
+        if has_more:
+            last = rows[-1]
+            next_cursor = new_cursor(
+                kind="user",
+                sort=sort.value,
+                direction=params.direction.value,
+                primary=_user_sort_value(sort, last),
+                unique_id=last.unique_id,
+                filters=filters_digest,
+                user_id=auth_res.user_id,
+            )
+        return PaginatedResponse(
+            total=total,
+            limit=params.limit,
+            offset=params.offset if params.cursor is None else None,
+            items=items,
+            next_cursor=next_cursor,
+        )
 
 
 @router.post("/users/resolve", response_model=Dict[str, UserPublicRead])
@@ -146,12 +361,12 @@ def get_current_user(auth_res: Annotated[Principal, Depends(authorize_user)]):
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-        return user
+        return _user_read(auth_res, user, with_capabilities=True)
 
 
 @router.patch("/users/me", response_model=UserRead, deprecated=True, include_in_schema=True)
 def update_current_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_update: AccountProfileUpdate):
-    '''Deprecated: use PATCH /account/profile.'''
+    '''Deprecated: use GET /account/profile and PATCH /account/profile.'''
     user_unique_id = auth_res.user_id
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
@@ -165,7 +380,7 @@ def update_current_user(auth_res: Annotated[Principal, Depends(authorize_user)],
         session.add(user)
         session.commit()
         session.refresh(user)
-        return user
+        return _user_read(auth_res, user, with_capabilities=True)
 
 
 @router.get("/users/search", response_model=List[UserPublicRead])
@@ -221,8 +436,9 @@ def get_user_by_username(username: str, response: Response,
             raise HTTPException(status_code=404, detail="User not found")
         response.headers["Content-Location"] = f"/users/{user.unique_id}"
         if auth_res.user_id == user.unique_id or auth_res.is_platform_admin:
-            return UserRead.model_validate(user)
-        return UserPublicRead.model_validate(user)
+            key_status = _admin_key_status(session, auth_res, user)
+            return _user_read(auth_res, user, key_status=key_status, with_capabilities=True)
+        return _user_public_read(auth_res, user, with_capabilities=True)
 
 
 @router.get("/users/{user_id}", response_model=Union[UserRead, UserPublicRead])
@@ -230,14 +446,24 @@ def read_user(user_id: str, response: Response,
               auth_res: Annotated[Principal, Depends(authorize_user)]):
     with Session(engine) as session:
         user = resolve_user_by_identifier(session, user_id)
+        is_admin = auth_res.is_platform_admin
+        if user_id != user.unique_id:
+            response.headers["Content-Location"] = f"/users/{user.unique_id}"
+        if auth_res.user_id == user.unique_id or is_admin:
+            key_status = _admin_key_status(session, auth_res, user)
+            return _user_read(auth_res, user, key_status=key_status, with_capabilities=True)
+        return _user_public_read(auth_res, user, with_capabilities=True)
 
-    is_admin = auth_res.is_platform_admin
-    if user_id != user.unique_id:
-        response.headers["Content-Location"] = f"/users/{user.unique_id}"
 
-    if auth_res.user_id == user.unique_id or is_admin:
-        return UserRead.model_validate(user)
-    return UserPublicRead.model_validate(user)
+def _admin_key_status(session, caller: Principal, user: User) -> Optional[ServiceAccountKeyStatus]:
+    if not caller.is_platform_admin:
+        return None
+    token = session.exec(
+        select(ApiToken)
+        .where(ApiToken.user_unique_id == user.unique_id)
+        .order_by(ApiToken.token_created.desc())
+    ).first()
+    return _key_status(token)
 
 
 @router.post("/users/{user_id}/apikey", response_model=ApiKeyRead)
@@ -385,7 +611,7 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
     # Mirror the canonical /auth/apikey flow: provisioning a user also mints
     # their API key (idempotent) so they can authenticate immediately.
     find_or_add_api_access(unique_id, engine, regenerate=False)
-    return user
+    return _user_read(auth_res, user, with_capabilities=True)
 
 
 @router.patch("/users/{user_id}", response_model=UserRead)
@@ -407,7 +633,83 @@ def update_user(user_id: str, auth_res: Annotated[Principal, Depends(authorize_u
         session.add(user)
         session.commit()
         session.refresh(user)
-        return user
+        return _user_read(auth_res, user, with_capabilities=True)
+
+
+@router.patch("/users/{user_id}/platform_role", response_model=UserRead)
+def update_user_platform_role(
+    user_id: str,
+    body: UserPlatformRoleUpdate,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+):
+    '''Change a human user's platform role. Human platform administrators only.'''
+    require_platform_admin(auth_res)
+    if auth_res.is_service_account:
+        raise HTTPException(
+            status_code=403,
+            detail="Service accounts cannot manage platform roles",
+        )
+
+    with Session(engine) as session:
+        user = resolve_user_by_identifier(session, user_id)
+        if user.is_service_account:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"{user.unique_id} is a service account. "
+                        f"Use PATCH /service_accounts/{user.unique_id} instead."),
+            )
+        if user.unique_id == auth_res.user_id:
+            raise HTTPException(status_code=403, detail="Callers cannot change their own platform role")
+
+        if user.platform_role == PlatformRole.ADMIN.value and body.platform_role != "admin":
+            # Lock every human admin row, not just the target, so two concurrent
+            # demotions cannot each count the other as the remaining admin.
+            human_admin_ids = session.exec(
+                select(User.id)
+                .where(
+                    User.platform_role == PlatformRole.ADMIN.value,
+                    User.is_service_account == False,
+                )
+                .order_by(User.id)
+                .with_for_update()
+            ).all()
+            if user.id in human_admin_ids and len(human_admin_ids) <= 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Cannot demote the last human platform administrator",
+                )
+
+        user.platform_role = body.platform_role
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        key_status = _admin_key_status(session, auth_res, user)
+        return _user_read(auth_res, user, key_status=key_status, with_capabilities=True)
+
+
+@router.delete("/users/{user_id}/apikey", status_code=204)
+def delete_user_apikey(
+    user_id: str,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+):
+    '''Revoke every API key held by the user. Platform administrators only. 204 on success.'''
+    require_platform_admin(auth_res)
+
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        tokens = session.exec(
+            select(ApiToken).where(ApiToken.user_unique_id == user_id)
+        ).all()
+        for token in tokens:
+            session.delete(token)
+        session.commit()
+
+    for token in tokens:
+        _invalidate_auth_cache(token.token)
+    return Response(status_code=204)
 
 
 @router.get("/users/{user_id}/datasets", response_model=List[str], deprecated=True)
@@ -565,7 +867,8 @@ def read_projects_for_user(user_id: str, auth_res: Annotated[Principal, Depends(
                            limit: int = Query(default=100, ge=1, le=1000),
                            offset: int = Query(default=0, ge=0)):
     '''
-    Returns a paginated list of the projects the user is a member of.
+    Returns a paginated list of the projects the user is a member of, each with
+    the user's standing role in that project's access group.
     Available to the user themselves and to callers with platform_role
     contributor or admin, the same rule as accessible_to_user on GET /projects.
     Membership only: unlike GET /projects?accessible_to_user=, projects reached
@@ -580,7 +883,7 @@ def read_projects_for_user(user_id: str, auth_res: Annotated[Principal, Depends(
             raise HTTPException(status_code=404, detail="User not found")
 
         base = (
-            select(Project)
+            select(Project, UserAccessGroupLink.role)
             .join(AccessGroup, AccessGroup.group_name == Project.unique_id)
             .join(UserAccessGroupLink, and_(
                 UserAccessGroupLink.accessgroup_id == AccessGroup.id,
@@ -588,12 +891,14 @@ def read_projects_for_user(user_id: str, auth_res: Annotated[Principal, Depends(
             ))
         )
         total = session.exec(select(func.count()).select_from(base.subquery())).one()
-        projects = session.exec(
+        rows = session.exec(
             base.options(selectinload(Project.resource))
             .order_by(col(Project.project_id))
             .offset(offset).limit(limit)
         ).all()
 
+        projects = [row[0] for row in rows]
+        roles = {row[0].project_id: row[1] for row in rows}
         orcids = [p.project_lead_orcid for p in projects if p.project_lead_orcid]
         leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}
         items = [
@@ -602,6 +907,7 @@ def read_projects_for_user(user_id: str, auth_res: Annotated[Principal, Depends(
                 lead=leads.get(proj.project_lead_orcid),
                 creation_time=proj.resource.creation_time if proj.resource else None,
                 modification_time=proj.resource.modification_time if proj.resource else None,
+                role=roles.get(proj.project_id) or "unknown",
             )
             for proj in projects
         ]

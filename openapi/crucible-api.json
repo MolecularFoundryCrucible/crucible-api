@@ -134,6 +134,16 @@
             "title": "Unique Id",
             "type": "string"
           },
+          "user_capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "username": {
             "anyOf": [
               {
@@ -241,6 +251,10 @@
             "title": "Can Manage Service Accounts",
             "type": "boolean"
           },
+          "can_manage_users": {
+            "title": "Can Manage Users",
+            "type": "boolean"
+          },
           "can_register_instrument": {
             "title": "Can Register Instrument",
             "type": "boolean"
@@ -248,6 +262,7 @@
         },
         "required": [
           "can_manage_service_accounts",
+          "can_manage_users",
           "can_create_project",
           "can_register_instrument",
           "can_create_sample",
@@ -290,6 +305,16 @@
       },
       "AccountProfileRead": {
         "properties": {
+          "api_key_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServiceAccountKeyStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "authorization": {
             "$ref": "#/components/schemas/AccountAuthorizationRead"
           },
@@ -327,9 +352,29 @@
             "title": "Last Name",
             "type": "string"
           },
+          "platform_role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlatformRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "unique_id": {
             "title": "Unique Id",
             "type": "string"
+          },
+          "user_capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "username": {
             "anyOf": [
@@ -5043,6 +5088,17 @@
             ],
             "title": "Project Lead Orcid"
           },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
           "scientific_metadata": {
             "anyOf": [
               {
@@ -6657,6 +6713,35 @@
         "title": "UploadMultipartInitiateRead",
         "type": "object"
       },
+      "UserCapabilities": {
+        "description": "Caller-relative actions on one user record. Field name is user_capabilities,\nnot capabilities: a downstream client decodes any capabilities key on user\nobjects into a different required-field type.",
+        "properties": {
+          "can_change_platform_role": {
+            "title": "Can Change Platform Role",
+            "type": "boolean"
+          },
+          "can_edit_profile": {
+            "title": "Can Edit Profile",
+            "type": "boolean"
+          },
+          "can_manage_api_key": {
+            "title": "Can Manage Api Key",
+            "type": "boolean"
+          },
+          "can_view_private": {
+            "title": "Can View Private",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "can_view_private",
+          "can_edit_profile",
+          "can_manage_api_key",
+          "can_change_platform_role"
+        ],
+        "title": "UserCapabilities",
+        "type": "object"
+      },
       "UserCreate": {
         "additionalProperties": false,
         "description": "Input schema for creating a user.",
@@ -6705,6 +6790,25 @@
         "title": "UserCreate",
         "type": "object"
       },
+      "UserPlatformRoleUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "platform_role": {
+            "enum": [
+              "none",
+              "contributor",
+              "admin"
+            ],
+            "title": "Platform Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform_role"
+        ],
+        "title": "UserPlatformRoleUpdate",
+        "type": "object"
+      },
       "UserPublicRead": {
         "description": "Public-safe user representation. Never includes email.\nUsed in search results and any context where a user views another user's info.",
         "properties": {
@@ -6724,6 +6828,16 @@
           "unique_id": {
             "title": "Unique Id",
             "type": "string"
+          },
+          "user_capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "username": {
             "anyOf": [
@@ -6747,6 +6861,16 @@
       },
       "UserRead": {
         "properties": {
+          "api_key_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServiceAccountKeyStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "email": {
             "anyOf": [
               {
@@ -6778,9 +6902,29 @@
             "title": "Last Name",
             "type": "string"
           },
+          "platform_role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlatformRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "unique_id": {
             "title": "Unique Id",
             "type": "string"
+          },
+          "user_capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "username": {
             "anyOf": [
@@ -6801,6 +6945,27 @@
         ],
         "title": "UserRead",
         "type": "object"
+      },
+      "UserSearchField": {
+        "enum": [
+          "first_name",
+          "last_name",
+          "username",
+          "unique_id",
+          "email"
+        ],
+        "title": "UserSearchField",
+        "type": "string"
+      },
+      "UserSort": {
+        "enum": [
+          "name",
+          "username",
+          "unique_id",
+          "email"
+        ],
+        "title": "UserSort",
+        "type": "string"
       },
       "UserUpdate": {
         "additionalProperties": false,
@@ -23221,6 +23386,7 @@
     },
     "/users": {
       "get": {
+        "description": "Returns a paginated list of users. Platform administrators receive the full\ndirectory with email and platform roles; other callers receive public-safe\nprofiles scoped to users who share an access group with them.\nExact unique_id, username, and email filters return the same authorized\nrepresentation as GET /users/{user_id}. Any other query parameter is ignored\nand reported through the Deprecation response header.",
         "operationId": "list_users_users_get",
         "parameters": [
           {
@@ -23242,7 +23408,7 @@
             }
           },
           {
-            "description": "Exact username.",
+            "description": "Exact username, matched case-insensitively.",
             "in": "query",
             "name": "username",
             "required": false,
@@ -23255,12 +23421,12 @@
                   "type": "null"
                 }
               ],
-              "description": "Exact username.",
+              "description": "Exact username, matched case-insensitively.",
               "title": "Username"
             }
           },
           {
-            "description": "Exact email address.",
+            "description": "Exact email address, matched case-insensitively.",
             "in": "query",
             "name": "email",
             "required": false,
@@ -23273,21 +23439,24 @@
                   "type": "null"
                 }
               ],
-              "description": "Exact email address.",
+              "description": "Exact email address, matched case-insensitively.",
               "title": "Email"
             }
           },
           {
+            "description": "Matching mode for first_name and last_name. True is a case-insensitive substring match, False an exact match.",
             "in": "query",
             "name": "permissive",
             "required": false,
             "schema": {
               "default": true,
+              "description": "Matching mode for first_name and last_name. True is a case-insensitive substring match, False an exact match.",
               "title": "Permissive",
               "type": "boolean"
             }
           },
           {
+            "description": "Restrict results to service accounts or human users.",
             "in": "query",
             "name": "is_service_account",
             "required": false,
@@ -23300,7 +23469,122 @@
                   "type": "null"
                 }
               ],
+              "description": "Restrict results to service accounts or human users.",
               "title": "Is Service Account"
+            }
+          },
+          {
+            "in": "query",
+            "name": "first_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "First Name"
+            }
+          },
+          {
+            "in": "query",
+            "name": "last_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last Name"
+            }
+          },
+          {
+            "description": "Case-insensitive substring search. Searches the fields named in search_fields, or by default first_name, last_name, username, unique_id, and, for platform administrators, email.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Case-insensitive substring search. Searches the fields named in search_fields, or by default first_name, last_name, username, unique_id, and, for platform administrators, email.",
+              "title": "Q"
+            }
+          },
+          {
+            "description": "Repeatable list of fields searched by q, with OR semantics. Requires q. email is administrator only; other callers receive 403.",
+            "in": "query",
+            "name": "search_fields",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/UserSearchField"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable list of fields searched by q, with OR semantics. Requires q. email is administrator only; other callers receive 403.",
+              "title": "Search Fields"
+            }
+          },
+          {
+            "description": "Repeatable platform-role filter, administrator only. Repeated values use OR semantics. Other callers receive 403.",
+            "in": "query",
+            "name": "platform_role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/PlatformRole"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable platform-role filter, administrator only. Repeated values use OR semantics. Other callers receive 403.",
+              "title": "Platform Role"
+            }
+          },
+          {
+            "description": "Exact authorization-filtered total. Omission preserves the legacy behavior that always returns a total.",
+            "in": "query",
+            "name": "include_total",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact authorization-filtered total. Omission preserves the legacy behavior that always returns a total.",
+              "title": "Include Total"
             }
           },
           {
@@ -23316,14 +23600,65 @@
             }
           },
           {
+            "description": "Opaque continuation cursor returned by a previous page.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque continuation cursor returned by a previous page.",
+              "title": "Cursor"
+            }
+          },
+          {
+            "description": "Compatibility offset. A supplied cursor takes precedence.",
             "in": "query",
             "name": "offset",
             "required": false,
             "schema": {
               "default": 0,
+              "description": "Compatibility offset. A supplied cursor takes precedence.",
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Explicit ordering, case-insensitive, with unique_id as tie-breaker and nulls last. name sorts by last name then first name. email is administrator only. Omission keeps the default last name, first name order.",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/UserSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Explicit ordering, case-insensitive, with unique_id as tie-breaker and nulls last. name sorts by last name then first name. email is administrator only. Omission keeps the default last name, first name order.",
+              "title": "Sort"
+            }
+          },
+          {
+            "description": "Direction for an explicit sort.",
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortDirection",
+              "default": "asc",
+              "description": "Direction for an explicit sort."
             }
           },
           {
@@ -23631,7 +23966,7 @@
       },
       "patch": {
         "deprecated": true,
-        "description": "Deprecated: use PATCH /account/profile.",
+        "description": "Deprecated: use GET /account/profile and PATCH /account/profile.",
         "operationId": "update_current_user_users_me_patch",
         "parameters": [
           {
@@ -24347,6 +24682,77 @@
       }
     },
     "/users/{user_id}/apikey": {
+      "delete": {
+        "description": "Revoke every API key held by the user. Platform administrators only. 204 on success.",
+        "operationId": "delete_user_apikey_users__user_id__apikey_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete User Apikey",
+        "tags": [
+          "users"
+        ]
+      },
       "post": {
         "description": "Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.",
         "operationId": "get_or_provision_user_apikey_users__user_id__apikey_post",
@@ -24680,9 +25086,99 @@
         ]
       }
     },
+    "/users/{user_id}/platform_role": {
+      "patch": {
+        "description": "Change a human user's platform role. Human platform administrators only.",
+        "operationId": "update_user_platform_role_users__user_id__platform_role_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPlatformRoleUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update User Platform Role",
+        "tags": [
+          "users"
+        ]
+      }
+    },
     "/users/{user_id}/projects": {
       "get": {
-        "description": "Returns a paginated list of the projects the user is a member of.\nAvailable to the user themselves and to callers with platform_role\ncontributor or admin, the same rule as accessible_to_user on GET /projects.\nMembership only: unlike GET /projects?accessible_to_user=, projects reached\nonly through explicit resource grants are not included.",
+        "description": "Returns a paginated list of the projects the user is a member of, each with\nthe user's standing role in that project's access group.\nAvailable to the user themselves and to callers with platform_role\ncontributor or admin, the same rule as accessible_to_user on GET /projects.\nMembership only: unlike GET /projects?accessible_to_user=, projects reached\nonly through explicit resource grants are not included.",
         "operationId": "read_projects_for_user_users__user_id__projects_get",
         "parameters": [
           {

@@ -21,6 +21,7 @@ from app.models.users import (
 from app.utils.auth_utils import authorize_user
 from app.utils.permissions import (
     Permission,
+    PlatformRole,
     Principal,
     has_global_permission,
     resolve_authorization_context,
@@ -31,6 +32,16 @@ router = APIRouter(tags=["account"])
 engine = get_engine()
 
 
+def _self_user_read(user: User) -> UserRead:
+    role = None
+    if user.platform_role is not None:
+        try:
+            role = PlatformRole(user.platform_role)
+        except ValueError:
+            role = None
+    return UserRead.model_validate(user, update={"platform_role": role})
+
+
 @router.get("/account", response_model=AccountInfo)
 def get_account_info(auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Return auth context for the authenticated caller: ORCID, access groups, and profile."""
@@ -38,13 +49,14 @@ def get_account_info(auth_res: Annotated[Principal, Depends(authorize_user)]):
     ag_ids = [ag.id for ag in ag_list]
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-        user_info = UserRead.model_validate(user) if user else None
+        user_info = _self_user_read(user) if user else None
     return AccountInfo(user_unique_id=user_unique_id, access_group_ids=ag_ids, user_info=user_info)
 
 
 def _account_capabilities(principal: Principal) -> AccountCapabilities:
     return AccountCapabilities(
         can_manage_service_accounts=principal.is_platform_admin,
+        can_manage_users=principal.is_platform_admin,
         can_create_project=True,
         can_register_instrument=not principal.is_service_account,
         can_create_sample=True,
@@ -96,7 +108,7 @@ def update_account_profile(auth_res: Annotated[Principal, Depends(authorize_user
         session.add(user)
         session.commit()
         session.refresh(user)
-        return user
+        return _self_user_read(user)
 
 
 @router.post("/account/sync-projects", response_model=ProjectSyncResult)

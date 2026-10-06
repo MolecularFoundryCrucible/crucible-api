@@ -37,6 +37,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [`idtype` to `resource` rename](idtype_to_resource_rename.md)
 - [Project archiving](project_archiving.md)
 - [Secure parallel upload migration](secure_parallel_upload_migration.md)
+- [User deactivation](user_deactivation.md)
 - [Skipped route backlog](skipped_routes.md)
 
 These documents describe proposed or deferred work. They are not evidence that a route or schema exists. Confirm current behavior in OpenAPI and the implementation before building a client against a proposal.

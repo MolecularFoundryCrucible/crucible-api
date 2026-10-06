@@ -71,6 +71,7 @@ class ProjectWithLead(ProjectRead):
     modification_time: Optional[UtcDatetime] = None
     members: Optional[List[AccessGroupMemberRead]] = None
     deletion_request: Optional[dict] = None
+    role: Optional[str] = None
 
 
 class ProjectReferenceRead(SQLModel):

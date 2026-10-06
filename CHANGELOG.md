@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Added authenticated `POST /print/barcode` for publishing MQTT barcode print jobs and waiting briefly for a print result, moving the MQTT broker credential server-side instead of per-lab-machine `.env` files. Responds 200 with a `status` of `ok`, `error`, or `timeout`, and an optional `detail` noting the requested printer's online status from `crucible-label-printer-status` when a job doesn't succeed.
 - Added `user_capabilities` to user responses, populated for singleton and exact lookups with caller-relative `can_view_private`, `can_edit_profile`, `can_manage_api_key`, and `can_change_platform_role` flags.
 - Added the platform-admin directory to broad `GET /users` listings: administrators receive `UserRead` items with email and platform roles across the full directory, while non-administrators keep the group-scoped public-safe listing.
 - Added sorting, filtering, and pagination parity to `GET /users`: `sort=name|username|unique_id|email` (email administrator only) with `direction=asc|desc`, `include_total`, signed opaque cursor pagination with `next_cursor` alongside the existing offset, declared `first_name`/`last_name` filters, a `q` substring search with repeatable `search_fields` to choose the searched fields (email administrator only), and repeatable administrator-only `platform_role` filtering.

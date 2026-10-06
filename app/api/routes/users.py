@@ -14,7 +14,7 @@ from app.general_utils import is_orcid
 from app.models.core_models import (
     AccessGroup, Dataset, Project, Sample, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
 )
-from app.utils.auth_utils import authorize_user, fetch_acl_rows, find_or_add_api_access, is_instrument_group_member, permission_filter, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
+from app.utils.auth_utils import authorize_user, fetch_acl_rows, find_or_add_api_access, permission_filter, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
 from app.utils.permissions import AccessGroupType, Permission, effective_role, has_global_permission, Principal, Role
 from app.utils.search_utils import (
     MAX_SEARCH_QUERY_LENGTH,
@@ -31,7 +31,7 @@ from app.models.pagination import PaginatedResponse
 from app.models.users import AccountProfileUpdate, UserCreate, UserPublicRead, UserRead, UserUpdate
 from app.models.response_schemas import ApiKeyRead, ApiKeyVerify
 from app.models.core_models import ApiToken
-from app.models.projects import ProjectMinimalRead, ProjectWithLead
+from app.models.projects import ProjectWithLead
 from app.models.access_groups import AccessGroupRead
 from app.models.access import EffectiveAccess, EffectiveResourceAccessRead
 
@@ -560,22 +560,20 @@ def remove_user_from_access_group(auth_res: Annotated[Principal, Depends(authori
         return {"detail": f"User {user_id} removed from access group {group_name}"}
 
 
-@router.get("/users/{user_id}/projects", response_model=PaginatedResponse[Union[ProjectWithLead, ProjectMinimalRead]])
+@router.get("/users/{user_id}/projects", response_model=PaginatedResponse[ProjectWithLead])
 def read_projects_for_user(user_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
                            limit: int = Query(default=100, ge=1, le=1000),
                            offset: int = Query(default=0, ge=0)):
     '''
-    Returns a paginated list of the projects that this User is associated with.
-    Self or a platform admin gets full details including the resolved lead.
-    A caller with standing in any instrument group gets project_id and title
-    only, for rendering a project picker — nothing wider.
+    Returns a paginated list of the projects the user is a member of.
+    Available to the user themselves and to callers with platform_role
+    contributor or admin, the same rule as accessible_to_user on GET /projects.
+    Membership only: unlike GET /projects?accessible_to_user=, projects reached
+    only through explicit resource grants are not included.
     '''
     with Session(engine) as session:
-        minimal = False
-        if auth_res.user_id != user_id and not auth_res.is_platform_admin:
-            if not is_instrument_group_member(auth_res, session):
-                raise HTTPException(status_code=403, detail="Not authorized")
-            minimal = True
+        if auth_res.user_id != user_id and not has_global_permission(auth_res, Permission.READ):
+            raise HTTPException(status_code=403, detail="Not authorized")
 
         user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
         if user is None:
@@ -595,13 +593,6 @@ def read_projects_for_user(user_id: str, auth_res: Annotated[Principal, Depends(
             .order_by(col(Project.project_id))
             .offset(offset).limit(limit)
         ).all()
-
-        if minimal:
-            items = [
-                ProjectMinimalRead(unique_id=p.unique_id, project_id=p.project_id, title=p.title)
-                for p in projects
-            ]
-            return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
         orcids = [p.project_lead_orcid for p in projects if p.project_lead_orcid]
         leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}

@@ -1,6 +1,5 @@
-"""GET /users/{orcid}/projects: self and platform admin get full details;
-a caller with standing in any instrument group gets project_id + title only,
-for rendering a project picker — nothing wider (no lead, no metadata).
+"""GET /users/{user_id}/projects: the user themselves and callers with
+platform_role contributor or admin. Instrument-group membership grants nothing.
 """
 from sqlmodel import Session
 
@@ -32,42 +31,45 @@ def _setup(db_engine):
         session.commit()
 
 
-def test_self_gets_full_details(client, db_engine, auth_as):
-    _setup(db_engine)
-    auth_as("0000-0001", groups=[])
-
-    resp = client.get("/users/0000-0001/projects")
+def _assert_full_details(resp):
     assert resp.status_code == 200, resp.text
     item = resp.json()["items"][0]
     assert item["project_id"] == "proj_a"
+    assert item["title"] == "Alpha"
     assert "lead" in item
+
+
+def test_self_gets_full_details(client, db_engine, auth_as):
+    _setup(db_engine)
+    auth_as("0000-0001", groups=[])
+    _assert_full_details(client.get("/users/0000-0001/projects"))
 
 
 def test_platform_admin_gets_full_details(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as("someone-else", groups=[], platform_role=PlatformRole.ADMIN)
-
-    resp = client.get("/users/0000-0001/projects")
-    assert resp.status_code == 200, resp.text
-    assert "lead" in resp.json()["items"][0]
+    _assert_full_details(client.get("/users/0000-0001/projects"))
 
 
-def test_instrument_group_member_gets_minimal_projection(client, db_engine, auth_as):
-    auth_as("sa-instrument-1", groups=[("inst-hip-1", 999, Role.OWNER)])
+def test_platform_contributor_gets_full_details(client, db_engine, auth_as):
     _setup(db_engine)
+    auth_as("0000-0003", groups=[], platform_role=PlatformRole.CONTRIBUTOR)
+    _assert_full_details(client.get("/users/0000-0001/projects"))
 
-    resp = client.get("/users/0000-0001/projects")
-    assert resp.status_code == 200, resp.text
-    item = resp.json()["items"][0]
-    assert item["unique_id"]
-    assert item["project_id"] == "proj_a"
-    assert item["title"] == "Alpha"
-    assert "lead" not in item
+
+def test_unbound_contributor_service_account_gets_full_details(client, db_engine, auth_as):
+    _setup(db_engine)
+    auth_as("0sa0000000000000000000000a", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
+    _assert_full_details(client.get("/users/0000-0001/projects"))
+
+
+def test_instrument_group_membership_alone_is_rejected(client, db_engine, auth_as):
+    _setup(db_engine)
+    auth_as("sa-instrument-1", groups=[("inst-hip-1", 999, Role.OWNER)], is_service_account=True)
+    assert client.get("/users/0000-0001/projects").status_code == 403
 
 
 def test_unrelated_caller_is_rejected(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as("0000-0002", groups=[])
-
-    resp = client.get("/users/0000-0001/projects")
-    assert resp.status_code == 403
+    assert client.get("/users/0000-0001/projects").status_code == 403

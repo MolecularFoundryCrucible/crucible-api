@@ -4436,67 +4436,6 @@
         "title": "PaginatedResponse[ServiceAccountAdminRead]",
         "type": "object"
       },
-      "PaginatedResponse_Union_ProjectWithLead__ProjectMinimalRead__": {
-        "properties": {
-          "items": {
-            "items": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/ProjectWithLead"
-                },
-                {
-                  "$ref": "#/components/schemas/ProjectMinimalRead"
-                }
-              ]
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "limit": {
-            "title": "Limit",
-            "type": "integer"
-          },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
-          },
-          "offset": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Offset"
-          },
-          "total": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Total"
-          }
-        },
-        "required": [
-          "limit",
-          "items"
-        ],
-        "title": "PaginatedResponse[Union[ProjectWithLead, ProjectMinimalRead]]",
-        "type": "object"
-      },
       "PaginatedResponse_Union_UserRead__UserPublicRead__": {
         "properties": {
           "items": {
@@ -4720,35 +4659,6 @@
         ],
         "title": "ProjectMembershipRole",
         "type": "string"
-      },
-      "ProjectMinimalRead": {
-        "properties": {
-          "project_id": {
-            "title": "Project Id",
-            "type": "string"
-          },
-          "title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Title"
-          },
-          "unique_id": {
-            "title": "Unique Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "unique_id",
-          "project_id"
-        ],
-        "title": "ProjectMinimalRead",
-        "type": "object"
       },
       "ProjectRead": {
         "description": "Response model for Project.",
@@ -24637,7 +24547,7 @@
     },
     "/users/{user_id}/projects": {
       "get": {
-        "description": "Returns a paginated list of the projects that this User is associated with.\nSelf or a platform admin gets full details including the resolved lead.\nA caller with standing in any instrument group gets project_id and title\nonly, for rendering a project picker — nothing wider.",
+        "description": "Returns a paginated list of the projects the user is a member of.\nAvailable to the user themselves and to callers with platform_role\ncontributor or admin, the same rule as accessible_to_user on GET /projects.\nMembership only: unlike GET /projects?accessible_to_user=, projects reached\nonly through explicit resource grants are not included.",
         "operationId": "read_projects_for_user_users__user_id__projects_get",
         "parameters": [
           {
@@ -24696,7 +24606,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaginatedResponse_Union_ProjectWithLead__ProjectMinimalRead__"
+                  "$ref": "#/components/schemas/PaginatedResponse_ProjectWithLead_"
                 }
               }
             },

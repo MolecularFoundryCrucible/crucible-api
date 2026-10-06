@@ -31,6 +31,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import add_or_update, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
+from app.utils.deletion_utils import assert_not_pending_deletion, deletion_blockers
 from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import (
     assert_project_id_available, is_project_owner, project_id_matches, sql_add_user_to_project,
@@ -74,6 +75,7 @@ def _project_capabilities(session, principal, project):
         manage_access_floor=Role.EDITOR,
         allow_peer_grants=False,
         status_permission=Permission.EDIT,
+        can_delete=not deletion_blockers(session, "project", project.unique_id),
     )
 
 
@@ -224,6 +226,7 @@ def list_projects(
 
         if params.affiliation:
             base = base.where(project_owner_affiliation_filter(auth_res, Project))
+        base = base.where(deletion_filter_for(Project))
 
         total = (
             session.exec(select(func.count()).select_from(base.subquery())).one()
@@ -318,6 +321,7 @@ def search_projects(
             fields=fields,
             prefix_fields=(Project.project_id,),
         )
+        query = query.where(deletion_filter_for(Project))
         if params.affiliation:
             query = query.where(project_owner_affiliation_filter(auth_res, Project))
         query = query.order_by(
@@ -468,6 +472,7 @@ def add_users_to_project(
             raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')
 
         require_permission(session, auth_res, proj.unique_id, Permission.EDIT)
+        assert_not_pending_deletion(session, proj.unique_id)
         user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
         _validate_service_account_project_role(user, internal_role)
         ag = session.exec(

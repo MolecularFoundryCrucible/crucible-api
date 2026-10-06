@@ -55,6 +55,7 @@ def test_get_resource_resolves_instrument_id_slug(client, db_engine, auth_as):
         "can_manage_access": True,
         "can_change_status": False,
         "can_transfer": True,
+        "can_delete": False,
         "max_grant_role": "admin",
     }
     datasets = body["datasets"]
@@ -80,6 +81,7 @@ def test_get_sample_resolves_instrument_id_slug(client, db_engine, auth_as):
         "can_manage_access": True,
         "can_change_status": False,
         "can_transfer": True,
+        "can_delete": False,
         "max_grant_role": "admin",
     }
     datasets = body["datasets"]

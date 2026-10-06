@@ -340,7 +340,8 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
                           manage_access_floor: Role = THRESHOLDS[Permission.MANAGE_ACL],
                           allow_peer_grants: bool = True,
                           status_permission: Optional[Permission] = Permission.DELETE,
-                          acl_rows: Optional[Sequence[tuple[int, Role]]] = None) -> ResourceCapabilities:
+                          acl_rows: Optional[Sequence[tuple[int, Role]]] = None,
+                          can_delete: bool = False) -> ResourceCapabilities:
     if acl_rows is None:
         acl_rows = fetch_acl_rows(session, mfid)
     actor_role = effective_role(principal, acl_rows)
@@ -359,6 +360,11 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
                 max_grant_role = target.db_value
                 break
 
+    may_delete = can_delete and (
+        _has_resource_permission(principal, acl_rows, Permission.DELETE)
+        or _has_resource_permission(principal, acl_rows, Permission.HARD_DELETE)
+    )
+
     return ResourceCapabilities(
         can_edit=_has_resource_permission(
             principal, acl_rows, Permission.EDIT),
@@ -370,6 +376,7 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
         ),
         can_transfer=_has_resource_permission(
             principal, acl_rows, Permission.TRANSFER),
+        can_delete=may_delete,
         max_grant_role=max_grant_role,
     )
 

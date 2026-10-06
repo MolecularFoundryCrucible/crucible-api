@@ -102,6 +102,7 @@ class InstrumentResponse(InstrumentRead):
     scientific_metadata: Optional[dict] = None
     status: Optional[str] = None
     capabilities: Optional[ResourceCapabilities] = None
+    deletion_request: Optional[dict] = None
     members: Optional[List[AccessGrantRead]] = Field(
         default=None,
         description="People and projects holding a role on the instrument record. Null unless requested and visible to the caller.",

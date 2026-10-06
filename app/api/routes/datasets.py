@@ -87,6 +87,7 @@ from app.utils.search_utils import (
 )
 from app.utils.user_utils import resolve_create_owner
 from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
+from app.utils.deletion_utils import assert_not_pending_deletion
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
 
@@ -266,6 +267,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         if requested_project_id is not None or requested_project_mfid is not None:
             if project is None:
                 raise HTTPException(status_code=404, detail=f"Project '{requested_project_id}' not found")
+            assert_not_pending_deletion(session, project.unique_id)
             dataset_details['project_id'] = project.project_id
             dataset_details['project_mfid'] = project.unique_id
 
@@ -293,6 +295,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                             "instrument. Use instrument_id or instrument_mfid."))
             instrument = matches[0]
         if instrument is not None:
+            assert_not_pending_deletion(session, instrument.unique_id)
             dataset_details['instrument_id'] = instrument.id
             dataset_details['instrument_mfid'] = instrument.unique_id
 
@@ -490,6 +493,7 @@ def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_u
 
         instrument = resolve_instrument_identifiers(
             session, assignment.instrument_id, assignment.instrument_mfid)
+        assert_not_pending_deletion(session, instrument.unique_id)
 
         previous_instrument = None
         if ds.instrument_mfid is not None:

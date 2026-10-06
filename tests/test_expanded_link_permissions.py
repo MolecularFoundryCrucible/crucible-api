@@ -261,6 +261,7 @@ def test_singleton_and_generic_routes_filter_expanded_links(
         "can_manage_access": False,
         "can_change_status": False,
         "can_transfer": False,
+        "can_delete": False,
         "max_grant_role": None,
     }
     assert sample.capabilities == dataset.capabilities

@@ -22,6 +22,7 @@ from app.utils.auth_utils import (
 from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor,
     validate_cursor)
+from app.utils.deletion_utils import deletion_blockers
 from app.utils.instrument_utils import assert_instrument_id_available
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.search_utils import (
@@ -30,7 +31,7 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import add_or_update, create_standard_acls, touch_resource_modification_time
+from app.utils.sql_utils import add_or_update, create_standard_acls, touch_resource_modification_time, deletion_filter_for
 from app.utils.user_utils import resolve_create_owner
 from app.utils.gcs_record_utils import write_record, instrument_record
 
@@ -70,6 +71,7 @@ def _instrument_capabilities(session, principal, instrument):
         session,
         principal,
         instrument.unique_id,
+        can_delete=not deletion_blockers(session, "instrument", instrument.unique_id),
     )
 
 
@@ -157,6 +159,7 @@ def list_instruments(
 
     with Session(engine) as session:
         base = select(Instrument).join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
+        base = base.where(deletion_filter_for(Instrument))
         for f in filters:
             base = base.where(f)
         if params.affiliation:
@@ -176,6 +179,7 @@ def list_instruments(
             )
         else:
             statement = select(Instrument, Resource).join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
+        statement = statement.where(deletion_filter_for(Instrument))
 
         for f in filters:
             statement = statement.where(f)
@@ -253,6 +257,7 @@ def search_instruments(
             select(Instrument, Resource)
             .join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
         )
+        base = base.where(deletion_filter_for(Instrument))
         if params.status is not None:
             base = base.where(Instrument.status == params.status)
         if params.affiliation:

@@ -1,15 +1,18 @@
 import json
 import re
+import threading
 import time
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal, Optional
 
 import paho.mqtt.client as mqtt
+import requests
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from app.general_utils import get_secret, is_valid_mfid
 from app.utils.auth_utils import authorize_user
+from app.utils.constants import label_printer_status_url
 from app.utils.permissions import Principal
 
 router = APIRouter(tags=["print"])
@@ -17,6 +20,13 @@ router = APIRouter(tags=["print"])
 MQTT_BROKER = "mqtt.mfdata.org"
 MQTT_PORT = 8883
 MQTT_USERNAME = "crucible-printers"
+
+# Derived from crucible-label-printer's own retry behavior: the Pi retries a
+# failed ptouch-print up to twice with a 3s gap (it can still be feeding/
+# cutting the previous label), so up to 6s may pass before it reports
+# anything. 8s leaves margin so a success on the last retry isn't reported
+# as a timeout here.
+RESULT_WAIT_TIMEOUT = 8
 
 _PRINTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -33,6 +43,8 @@ class BarcodePrintResponse(BaseModel):
     mfid: str
     name: str
     ts: float
+    status: Literal["ok", "error", "timeout"]
+    detail: Optional[str] = None
 
 
 def _validate_printer_id(printer_id: str) -> str:
@@ -58,46 +70,103 @@ def _validate_mfid(mfid: str) -> str:
     return mfid
 
 
-def _publish_barcode_print_job(printer_id: str, mfid: str, name: str) -> dict:
-    """Publish a print job to crucible-printer/<printer_id>/print. Returns the payload."""
+def _publish_and_await_result(printer_id: str, mfid: str, name: str) -> tuple[dict, Optional[dict]]:
+    """Publish a print job and wait briefly for a matching result.
+
+    Returns (payload, result): result is the {job_id, status} message from
+    crucible-printer/<printer_id>/result if one arrived within
+    RESULT_WAIT_TIMEOUT, else None.
+    """
     mqtt_password = get_secret("MQTT_PASSWORD", "mqtt-crucible-printers-passwd/versions/1")
 
-    payload = {
-        "job_id": str(uuid.uuid4()),
-        "mfid": mfid,
-        "name": name,
-        "ts": time.time(),
-    }
-    topic = f"crucible-printer/{printer_id}/print"
+    job_id = str(uuid.uuid4())
+    payload = {"job_id": job_id, "mfid": mfid, "name": name, "ts": time.time()}
+    print_topic = f"crucible-printer/{printer_id}/print"
+    result_topic = f"crucible-printer/{printer_id}/result"
 
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"crucible-api-{payload['job_id']}")
+    result: dict = {}
+    received = threading.Event()
+
+    def on_message(client, userdata, msg):
+        try:
+            data = json.loads(msg.payload)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return
+        if data.get("job_id") == job_id:
+            result.update(data)
+            received.set()
+
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"crucible-api-{job_id}")
     client.username_pw_set(MQTT_USERNAME, mqtt_password)
     client.tls_set()
+    client.on_message = on_message
     client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
+    # Subscribe before publishing so a fast result can't arrive before we're
+    # listening for it.
+    client.subscribe(result_topic, qos=1)
     client.loop_start()
     try:
-        info = client.publish(topic, json.dumps(payload), qos=1)
+        info = client.publish(print_topic, json.dumps(payload), qos=1)
         info.wait_for_publish(timeout=10)
+        received.wait(timeout=RESULT_WAIT_TIMEOUT)
     finally:
         client.loop_stop()
         client.disconnect()
 
-    return payload
+    return payload, (dict(result) if received.is_set() else None)
 
 
-@router.post("/print/barcode", response_model=BarcodePrintResponse, status_code=202)
+def _printer_online(printer_id: str) -> Optional[bool]:
+    """Best-effort check against crucible-label-printer-status.
+
+    None if the service isn't configured or the check itself fails -- this
+    is a soft dependency that must never block or fail the request.
+    """
+    if not label_printer_status_url:
+        return None
+    try:
+        resp = requests.get(f"{label_printer_status_url}/api/printers", timeout=3)
+        resp.raise_for_status()
+        printers = {p["printer_id"]: p for p in resp.json()}
+    except (requests.RequestException, ValueError, KeyError):
+        return None
+    printer = printers.get(printer_id)
+    if printer is None:
+        return False
+    return printer.get("state") not in (None, "offline")
+
+
+def _offline_detail(printer_id: str) -> Optional[str]:
+    if _printer_online(printer_id) is False:
+        return "Requested printer not currently online. Check spelling and the crucible-printer dashboard."
+    return None
+
+
+@router.post("/print/barcode", response_model=BarcodePrintResponse, status_code=200)
 def print_barcode(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     body: BarcodePrintRequest,
     response: Response,
 ):
-    '''Publishes a barcode print job to the given printer over MQTT.
+    '''Publishes a barcode print job and waits briefly for a print result.
 
-    Fire-and-forget: a 202 response means the job was published to the
-    broker, not that it was received or printed by the target device.
+    Always returns 200; `status` distinguishes confirmed success ("ok") from
+    an explicit printer-reported failure ("error") or no result within the
+    wait window ("timeout"). On "error"/"timeout", `detail` may note whether
+    the requested printer currently appears online, via
+    crucible-label-printer-status, to help diagnose typos vs. offline
+    hardware.
     '''
     printer_id = _validate_printer_id(body.printer_id)
     mfid = _validate_mfid(body.mfid)
-    payload = _publish_barcode_print_job(printer_id, mfid, body.name)
+    payload, result = _publish_and_await_result(printer_id, mfid, body.name)
+
+    if result is None:
+        status, detail = "timeout", _offline_detail(printer_id)
+    elif result.get("status") == "ok":
+        status, detail = "ok", None
+    else:
+        status, detail = "error", _offline_detail(printer_id)
+
     response.headers["Cache-Control"] = "no-store"
-    return BarcodePrintResponse(printer_id=printer_id, **payload)
+    return BarcodePrintResponse(printer_id=printer_id, status=status, detail=detail, **payload)

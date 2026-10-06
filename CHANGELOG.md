@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
-- Added authenticated `POST /print/barcode` for publishing MQTT barcode print jobs, moving the MQTT broker credential server-side instead of per-lab-machine `.env` files.
+- Added authenticated `POST /print/barcode` for publishing MQTT barcode print jobs and waiting briefly for a print result, moving the MQTT broker credential server-side instead of per-lab-machine `.env` files. Responds 200 with a `status` of `ok`, `error`, or `timeout`, and an optional `detail` noting the requested printer's online status from `crucible-label-printer-status` when a job doesn't succeed.
 - Updated the staging Hub client and both ORCID credential pins to Secret Manager version 2.
 - Added pinned Google Secret Manager references for Hub client and ORCID credentials, environment-specific deployment settings, and a disabled-by-default deployment activation flag.
 - Redacted Hub authentication validation failures and unexpected-error logs, and added no-store headers to all Hub authentication responses.

@@ -693,17 +693,3 @@ def access_selector_filter(session, caller: Principal, resource_model,
         filters.append(access_group_permission_filter(group.id, resource_model))
 
     return and_(*filters)
-
-
-def is_instrument_group_member(principal: Principal, session) -> bool:
-    """Whether the caller holds standing in any registered instrument's
-    operator group — named after the instrument's MFID (unique_id).
-    """
-    from app.models.core_models import Instrument
-
-    if not principal.groups:
-        return False
-    group_names = {g.group_name for g in principal.groups}
-    return session.exec(
-        select(Instrument).where(Instrument.unique_id.in_(group_names))
-    ).first() is not None

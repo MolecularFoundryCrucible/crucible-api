@@ -150,18 +150,23 @@ Every member record is public-safe and omits email. `PATCH` requires a `role` qu
 
 ### `GET /users/{user_id}/projects`
 
-Response is now `PaginatedResponse[Union[ProjectWithLead, ProjectMinimalRead]]`, decided server-side per caller:
+Response is `PaginatedResponse[ProjectWithLead]`:
 
-- self or platform admin → `ProjectWithLead`:
-  ```
-  { unique_id, project_id, organization, project_lead_orcid, status, title,
-    lead, scientific_metadata, creation_time, modification_time }
-  ```
-- caller with standing in any instrument group → `ProjectMinimalRead`:
-  ```
-  { unique_id: str, project_id: str, title: str | null }
-  ```
-- anyone else → 403
+```
+{ unique_id, project_id, organization, project_lead_orcid, status, title,
+  lead, scientific_metadata, creation_time, modification_time }
+```
+
+Available to the user themselves and to callers with `platform_role` `contributor` or `admin`, including service accounts. Anyone else receives 403. This is the same authority required to select another user with `accessible_to_user`. Instrument-group membership no longer grants access, and the former `ProjectMinimalRead` projection for instrument-group members has been removed.
+
+The route lists projects the user is a **member** of, through standing in the project's access group. It differs from `GET /projects?accessible_to_user={user_ref}`, which lists projects the user can **read**: membership plus projects reachable through explicit resource grants, and every project when the selected user holds `platform_role` `contributor` or `admin`. Both routes are retained; choose by the question being asked.
+
+| Question | Route |
+|---|---|
+| Which projects is this user a member of? | `GET /users/{user_id}/projects` |
+| Which projects can this user read? | `GET /projects?accessible_to_user={user_ref}` |
+
+The two routes also differ in shape: `GET /users/{user_id}/projects` uses offset pagination only and accepts only a canonical user identifier in the path, while `accessible_to_user` accepts an MFID, ORCID, username, or email and supports the full `GET /projects` query contract.
 
 ### Resource lists for specified users and projects
 

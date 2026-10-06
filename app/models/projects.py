@@ -73,12 +73,6 @@ class ProjectWithLead(ProjectRead):
     deletion_request: Optional[dict] = None
 
 
-class ProjectMinimalRead(SQLModel):
-    unique_id: str
-    project_id: str
-    title: Optional[str] = None
-
-
 class ProjectReferenceRead(SQLModel):
     unique_id: str
     project_id: str

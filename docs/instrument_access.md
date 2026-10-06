@@ -17,7 +17,7 @@ DELETE /resources/{instrument_mfid}/access/users/{user_ref}
 GET    /resources/{instrument_mfid}/access
 ```
 
-`user_ref` accepts an ORCID, service-account MFID, username, or email. Managing grants requires `admin` on the instrument, and a caller cannot grant above their own role. Ownership changes only through `POST /resources/{instrument_mfid}/transfer_ownership`.
+`user_ref` accepts an ORCID, service-account MFID, or username (email still resolves but is deprecated in paths). The same routes take `/access/projects/{project_ref}` with a project MFID or slug. Managing grants requires `admin` on the instrument, and a caller cannot grant above their own role. Ownership changes only through `POST /resources/{instrument_mfid}/transfer_ownership`.
 
 | Role | Edit details | Change status | Bind service accounts | Grant access |
 |---|---|---|---|---|
@@ -29,7 +29,7 @@ No instrument role grants access to datasets assigned to the instrument. Maintai
 
 ## Reading maintainers
 
-`GET /instruments/{instrument_mfid}?include_members=true` and the exact slug lookup `GET /instruments?instrument_id={slug}&include_members=true` return `members`, a list of `AccessGrantRead` entries for the people and projects holding a role on the instrument record, ordered from `owner` down. The operator group, public access, and system groups are excluded.
+`GET /instruments/{instrument_ref}?include_members=true` and the exact slug lookup `GET /instruments?instrument_id={slug}&include_members=true` return `members`, a list of `AccessGrantRead` entries for the people and projects holding a role on the instrument record, ordered from `owner` down. The operator group, public access, and system groups are excluded.
 
 `members` is returned to any caller who holds a role on the instrument record and to platform administrators. Other callers, including bound service accounts and callers who can read the instrument only through public access, receive `members: null`. Using `include_members=true` on `GET /instruments` without `instrument_id` returns 422.
 
@@ -49,14 +49,14 @@ Repeated values combine with OR, so `affiliation=owner&affiliation=maintainer` l
 Each instrument has one operator group named after its MFID. Assigning a dataset to the instrument grants this group `contributor` on the dataset, at creation or through `PUT /datasets/{dataset_mfid}/instrument`.
 
 ```http
-GET    /instruments/{instrument_mfid}/service_accounts
-POST   /instruments/{instrument_mfid}/service_accounts/{service_account_mfid}
-DELETE /instruments/{instrument_mfid}/service_accounts/{service_account_mfid}
+GET    /instruments/{instrument_ref}/service_accounts
+POST   /instruments/{instrument_ref}/service_accounts/{service_account_ref}
+DELETE /instruments/{instrument_ref}/service_accounts/{service_account_ref}
 ```
 
-All three require `admin` on the instrument, so the instrument owner and admin maintainers can manage bindings. Only service accounts can be bound. The deprecated generic `POST /users/{user_id}/access_groups/{group_name}` rejects human users for instrument groups with 409.
+`instrument_ref` accepts the instrument MFID or `instrument_id` slug, and `service_account_ref` the service-account MFID or username. All three require `admin` on the instrument, so the instrument owner and admin maintainers can manage bindings. Only service accounts can be bound. The deprecated generic `POST /users/{user_ref}/access_groups/{group_name}` rejects human users for instrument groups with 409.
 
-A bound service account reaches every dataset assigned to the instrument at `contributor`. If a service account's key is exposed, rotate it through `POST /service_accounts/{unique_id}/rotate_key` (platform administrators only) or unbind it.
+A bound service account reaches every dataset assigned to the instrument at `contributor`. If a service account's key is exposed, rotate it through `POST /service_accounts/{service_account_ref}/rotate_key` (platform administrators only) or unbind it.
 
 The operator group holds no grant on the instrument record itself. Instruments created before this change carried an `editor` grant for their operator group; `migrations/data/20261005_remove_instrument_group_record_grants.py` removes it.
 

@@ -27,6 +27,7 @@ def test_canonical_get_uses_instrument_mfid(client, db_engine, auth_as):
     response = client.get(f"/instruments/{instrument_mfid}")
 
     assert response.status_code == 200, response.text
+    assert "content-location" not in response.headers
     assert response.json()["unique_id"] == instrument_mfid
     assert response.json()["instrument_id"] == "XRD_1"
     assert response.json()["capabilities"] == {
@@ -39,13 +40,22 @@ def test_canonical_get_uses_instrument_mfid(client, db_engine, auth_as):
     }
 
 
-def test_single_instrument_get_does_not_accept_slug(client, db_engine, auth_as):
+def test_single_instrument_get_accepts_slug_case_insensitively(client, db_engine, auth_as):
+    instrument_mfid = _setup(db_engine)
+    auth_as("0000-0001-1111-1111")
+
+    response = client.get("/instruments/xrd_1")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["unique_id"] == instrument_mfid
+    assert response.headers["content-location"] == f"/instruments/{instrument_mfid}"
+
+
+def test_single_instrument_get_unknown_slug_is_404(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as("0000-0001-1111-1111")
 
-    response = client.get("/instruments/XRD_1")
-
-    assert response.status_code == 404
+    assert client.get("/instruments/XRD_2").status_code == 404
 
 
 def test_exact_slug_query_is_case_insensitive(client, db_engine, auth_as):

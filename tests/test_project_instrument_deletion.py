@@ -232,9 +232,9 @@ class TestForcedDeletionInstrument:
         mfid = _instrument(client, db_engine, auth_as)
         operator_group_id = _group_id_session(db_engine, mfid)
         with Session(db_engine) as session:
-            _user(session, "sa-del-1", is_service_account=True)
+            _user(session, "0tp5sade1000000000000000a1", is_service_account=True)
         auth_as("sa-admin-1", groups=[], platform_role=PlatformRole.ADMIN)
-        resp = client.post(f"/instruments/{mfid}/service_accounts/sa-del-1")
+        resp = client.post(f"/instruments/{mfid}/service_accounts/0tp5sade1000000000000000a1")
         assert resp.status_code == 200, resp.text
 
         preview = client.delete(f"/resources/{mfid}", params={"force": "true"})
@@ -260,7 +260,7 @@ class TestForcedDeletionInstrument:
             assert session.exec(select(UserAccessGroupLink).where(
                 UserAccessGroupLink.accessgroup_id == operator_group_id)).all() == []
             sa_user = session.exec(
-                select(User).where(User.unique_id == "sa-del-1")).one()
+                select(User).where(User.unique_id == "0tp5sade1000000000000000a1")).one()
             assert sa_user is not None
             audit = session.exec(select(DeletionAuditLog)).one()
             assert audit.resource_type == "instrument"

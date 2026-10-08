@@ -1,7 +1,7 @@
 from typing import Any, List, Literal, Optional
 from pydantic import AliasChoices, ConfigDict, Field, field_validator
 from sqlmodel import SQLModel
-from app.general_utils import is_orcid
+from app.general_utils import is_orcid, is_valid_mfid
 from app.utils.permissions import PlatformRole, PrivilegeMode
 from app.utils.user_utils import validate_username_format
 
@@ -160,7 +160,7 @@ class UserUpdate(SQLModel):
 class ServiceAccountCreate(SQLModel):
     '''Request body for POST /service_accounts.
     username is required and must be unique across all users.
-    unique_id is optional — if omitted the server generates an mfid.
+    unique_id is optional and must be an MFID; if omitted the server generates one.
     '''
     username: str
     unique_id: Optional[str] = None
@@ -169,6 +169,13 @@ class ServiceAccountCreate(SQLModel):
     @classmethod
     def check_username(cls, v):
         return validate_username_format(str(v))
+
+    @field_validator("unique_id")
+    @classmethod
+    def check_unique_id(cls, v):
+        if v is not None and not is_valid_mfid(v):
+            raise ValueError("unique_id must be a 26-character MFID")
+        return v
 
 
 class ServiceAccountPlatformRoleUpdate(SQLModel):

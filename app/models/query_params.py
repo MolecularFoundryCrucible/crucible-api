@@ -336,7 +336,11 @@ class DatasetListQuery(ResourceCollectionQuery):
     )
     instrument_mfid: Optional[str] = Field(
         default=None,
-        description="Filter datasets assigned to this canonical instrument MFID.",
+        description="Filter datasets assigned to this canonical instrument MFID. May be combined with a matching instrument_id.",
+    )
+    instrument_id: Optional[str] = Field(
+        default=None,
+        description="Filter datasets assigned to this instrument slug (case-insensitive). May be combined with a matching instrument_mfid.",
     )
     keyword: Optional[str] = None
     unique_id: Optional[str] = None
@@ -386,8 +390,8 @@ class DatasetListQuery(ResourceCollectionQuery):
             raise ValueError("data_format_is_null=true cannot be combined with data_format")
         if self.owner_id_is_null is True and (self.owner_id is not None or owner_orcid is not None):
             raise ValueError("owner_id_is_null=true cannot be combined with an exact owner filter")
-        if self.instrument_mfid_is_null is True and self.instrument_mfid is not None:
-            raise ValueError("instrument_mfid_is_null=true cannot be combined with instrument_mfid")
+        if self.instrument_mfid_is_null is True and (self.instrument_mfid is not None or self.instrument_id is not None):
+            raise ValueError("instrument_mfid_is_null=true cannot be combined with an instrument filter")
         if self.project_mfid_is_null is True and (self.project_id is not None or self.project_mfid is not None):
             raise ValueError("project_mfid_is_null=true cannot be combined with a project filter")
         return self
@@ -512,7 +516,8 @@ class ResourceFacetQuery(StrictQueryModel):
 class DatasetFacetQuery(ResourceFacetQuery):
     field: DatasetFacetField = Field(description="Dataset field to group into facet buckets.")
     sample_mfid: Optional[str] = None
-    instrument_mfid: Optional[str] = None
+    instrument_mfid: Optional[str] = Field(default=None, description="Instrument MFID. May be combined with a matching instrument_id.")
+    instrument_id: Optional[str] = Field(default=None, description="Instrument slug (case-insensitive). May be combined with a matching instrument_mfid.")
     session_name: Optional[str] = None
     measurement: Optional[str] = None
     data_format: Optional[str] = None
@@ -536,8 +541,8 @@ class DatasetFacetQuery(ResourceFacetQuery):
             raise ValueError("data_format_is_null=true cannot be combined with data_format")
         if self.owner_id_is_null is True and self.owner_id is not None:
             raise ValueError("owner_id_is_null=true cannot be combined with owner_id")
-        if self.instrument_mfid_is_null is True and self.instrument_mfid is not None:
-            raise ValueError("instrument_mfid_is_null=true cannot be combined with instrument_mfid")
+        if self.instrument_mfid_is_null is True and (self.instrument_mfid is not None or self.instrument_id is not None):
+            raise ValueError("instrument_mfid_is_null=true cannot be combined with an instrument filter")
         if self.project_mfid_is_null is True and (self.project_id is not None or self.project_mfid is not None):
             raise ValueError("project_mfid_is_null=true cannot be combined with a project filter")
         return self

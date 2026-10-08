@@ -160,6 +160,6 @@ def test_generic_instrument_membership_still_accepts_service_accounts(client, db
 
 
 def test_generic_membership_mutations_are_deprecated(client):
-    route = client.get("/openapi.json").json()["paths"]["/users/{user_id}/access_groups/{group_name}"]
+    route = client.get("/openapi.json").json()["paths"]["/users/{user_ref}/access_groups/{group_name}"]
     assert route["post"]["deprecated"] is True
     assert route["delete"]["deprecated"] is True

@@ -724,6 +724,86 @@
         "title": "AssociationGraphEdge",
         "type": "object"
       },
+      "BarcodePrintRequest": {
+        "properties": {
+          "mfid": {
+            "description": "MFID of the resource to print.",
+            "title": "Mfid",
+            "type": "string"
+          },
+          "name": {
+            "description": "Human-readable label text.",
+            "title": "Name",
+            "type": "string"
+          },
+          "printer_id": {
+            "description": "Target printer identifier, e.g. 'spinbot'.",
+            "title": "Printer Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "printer_id",
+          "mfid",
+          "name"
+        ],
+        "title": "BarcodePrintRequest",
+        "type": "object"
+      },
+      "BarcodePrintResponse": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "mfid": {
+            "title": "Mfid",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "printer_id": {
+            "title": "Printer Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "error",
+              "timeout"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "number"
+          }
+        },
+        "required": [
+          "job_id",
+          "printer_id",
+          "mfid",
+          "name",
+          "ts",
+          "status"
+        ],
+        "title": "BarcodePrintResponse",
+        "type": "object"
+      },
       "Body_create_user_users_post": {
         "properties": {
           "project_ids": {
@@ -1798,7 +1878,13 @@
       "DatasetSampleLinkResponse": {
         "properties": {
           "dataset_id": {
+            "deprecated": true,
+            "description": "Deprecated. Use dataset_mfid.",
             "title": "Dataset Id",
+            "type": "string"
+          },
+          "dataset_mfid": {
+            "title": "Dataset Mfid",
             "type": "string"
           },
           "dataset_name": {
@@ -1806,7 +1892,13 @@
             "type": "string"
           },
           "sample_id": {
+            "deprecated": true,
+            "description": "Deprecated. Use sample_mfid.",
             "title": "Sample Id",
+            "type": "string"
+          },
+          "sample_mfid": {
+            "title": "Sample Mfid",
             "type": "string"
           },
           "sample_name": {
@@ -1827,8 +1919,10 @@
         },
         "required": [
           "dataset_id",
+          "dataset_mfid",
           "dataset_name",
           "sample_id",
+          "sample_mfid",
           "sample_name",
           "sample_type"
         ],
@@ -5177,6 +5271,10 @@
             "title": "New Project Id",
             "type": "string"
           },
+          "new_project_mfid": {
+            "title": "New Project Mfid",
+            "type": "string"
+          },
           "previous_project_id": {
             "anyOf": [
               {
@@ -5188,14 +5286,31 @@
             ],
             "title": "Previous Project Id"
           },
+          "previous_project_mfid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Project Mfid"
+          },
           "resource_id": {
             "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_mfid": {
+            "title": "Resource Mfid",
             "type": "string"
           }
         },
         "required": [
           "resource_id",
-          "new_project_id"
+          "resource_mfid",
+          "new_project_id",
+          "new_project_mfid"
         ],
         "title": "ReassignProjectRead",
         "type": "object"
@@ -5204,13 +5319,30 @@
         "description": "Body for POST /resources/{mfid}/project.",
         "properties": {
           "project_id": {
-            "title": "Project Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Target project slug. May be combined with a matching project_mfid.",
+            "title": "Project Id"
+          },
+          "project_mfid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Target project MFID. May be combined with a matching project_id.",
+            "title": "Project Mfid"
           }
         },
-        "required": [
-          "project_id"
-        ],
         "title": "ReassignProjectRequest",
         "type": "object"
       },
@@ -6429,8 +6561,14 @@
         "description": "Response model for Thumbnail.",
         "properties": {
           "dataset_id": {
+            "deprecated": true,
+            "description": "Deprecated internal dataset key. Use dataset_mfid.",
             "title": "Dataset Id",
             "type": "integer"
+          },
+          "dataset_mfid": {
+            "title": "Dataset Mfid",
+            "type": "string"
           },
           "id": {
             "title": "Id",
@@ -6454,6 +6592,7 @@
         "required": [
           "id",
           "dataset_id",
+          "dataset_mfid",
           "thumbnail_name",
           "thumbnail_b64str"
         ],
@@ -6532,7 +6671,7 @@
         "type": "object"
       },
       "UploadComplete": {
-        "description": "Body for POST /datasets/{dsid}/upload/complete.",
+        "description": "Body for POST /datasets/{dataset_mfid}/upload/complete.",
         "properties": {
           "sha256_hash": {
             "title": "Sha256 Hash",
@@ -6551,7 +6690,7 @@
         "type": "object"
       },
       "UploadInitiate": {
-        "description": "Body for POST /datasets/{dsid}/upload/initiate.",
+        "description": "Body for POST /datasets/{dataset_mfid}/upload/initiate.",
         "properties": {
           "filename": {
             "title": "Filename",
@@ -6631,7 +6770,7 @@
         "type": "object"
       },
       "UploadMultipartInitiateRead": {
-        "description": "Response from POST /datasets/{dsid}/upload/initiate/multipart.\nEither existing_file is set (dedup hit — no upload needed), or all other fields are set.\nPass upload_id to POST /datasets/{dsid}/upload/complete after the transfer finishes.",
+        "description": "Response from POST /datasets/{dataset_mfid}/upload/initiate/multipart.\nEither existing_file is set (dedup hit — no upload needed), or all other fields are set.\nPass upload_id to POST /datasets/{dataset_mfid}/upload/complete after the transfer finishes.",
         "properties": {
           "access_token": {
             "anyOf": [
@@ -9554,7 +9693,7 @@
             }
           },
           {
-            "description": "Filter datasets assigned to this canonical instrument MFID.",
+            "description": "Filter datasets assigned to this canonical instrument MFID. May be combined with a matching instrument_id.",
             "in": "query",
             "name": "instrument_mfid",
             "required": false,
@@ -9567,8 +9706,26 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter datasets assigned to this canonical instrument MFID.",
+              "description": "Filter datasets assigned to this canonical instrument MFID. May be combined with a matching instrument_id.",
               "title": "Instrument Mfid"
+            }
+          },
+          {
+            "description": "Filter datasets assigned to this instrument slug (case-insensitive). May be combined with a matching instrument_mfid.",
+            "in": "query",
+            "name": "instrument_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter datasets assigned to this instrument slug (case-insensitive). May be combined with a matching instrument_mfid.",
+              "title": "Instrument Id"
             }
           },
           {
@@ -10350,6 +10507,7 @@
             }
           },
           {
+            "description": "Instrument MFID. May be combined with a matching instrument_id.",
             "in": "query",
             "name": "instrument_mfid",
             "required": false,
@@ -10362,7 +10520,26 @@
                   "type": "null"
                 }
               ],
+              "description": "Instrument MFID. May be combined with a matching instrument_id.",
               "title": "Instrument Mfid"
+            }
+          },
+          {
+            "description": "Instrument slug (case-insensitive). May be combined with a matching instrument_mfid.",
+            "in": "query",
+            "name": "instrument_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Instrument slug (case-insensitive). May be combined with a matching instrument_mfid.",
+              "title": "Instrument Id"
             }
           },
           {
@@ -10890,17 +11067,19 @@
         ]
       }
     },
-    "/datasets/{child_dataset_id}/parents": {
+    "/datasets/{child_dataset_mfid}/parents": {
       "get": {
         "description": "Returns a paginated list of parent datasets for a given dataset.\n\nrelationship_type restricts the result to links of that kind. Links with no\nrecorded type are excluded when the filter is set.",
-        "operationId": "list_parent_datasets_datasets__child_dataset_id__parents_get",
+        "operationId": "list_parent_datasets_datasets__child_dataset_mfid__parents_get",
         "parameters": [
           {
+            "description": "Child dataset MFID.",
             "in": "path",
-            "name": "child_dataset_id",
+            "name": "child_dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Child Dataset Id",
+              "description": "Child dataset MFID.",
+              "title": "Child Dataset Mfid",
               "type": "string"
             }
           },
@@ -11008,162 +11187,6 @@
           }
         ],
         "summary": "List Parent Datasets",
-        "tags": [
-          "datasets"
-        ]
-      }
-    },
-    "/datasets/{dataset_id}/dataset_graph": {
-      "get": {
-        "description": "Returns a NetworkX node-link graph of all datasets connected (via parent/child\nrelationships) to the given dataset. Loads all authorized datasets in the\nproject and returns the directed lineage subgraph (ancestors + descendants) of the target.",
-        "operationId": "dataset_graph_datasets__dataset_id__dataset_graph_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "dataset_id",
-            "required": true,
-            "schema": {
-              "title": "Dataset Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Dataset Graph",
-        "tags": [
-          "datasets"
-        ]
-      }
-    },
-    "/datasets/{dataset_id}/dataset_graph_cte": {
-      "get": {
-        "description": "CTE-based implementation (kept for reference). Prefer /dataset_graph.\nReturns a NetworkX node-link graph of all datasets connected (via parent/child\nrelationships) to the given dataset, i.e. its full lineage subgraph.",
-        "operationId": "dataset_graph_cte_datasets__dataset_id__dataset_graph_cte_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "dataset_id",
-            "required": true,
-            "schema": {
-              "title": "Dataset Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Dataset Graph Cte",
         "tags": [
           "datasets"
         ]
@@ -11277,19 +11300,19 @@
         "tags": [
           "datasets"
         ]
-      }
-    },
-    "/datasets/{dsid}": {
+      },
       "patch": {
         "description": "Partially update a dataset record. Only provided fields are modified.\nNo owner_orcid/project_id — use POST /resources/{mfid}/transfer_ownership\nand POST /resources/{mfid}/project.",
-        "operationId": "update_dataset_datasets__dsid__patch",
+        "operationId": "update_dataset_datasets__dataset_mfid__patch",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -11369,16 +11392,19 @@
         ]
       }
     },
-    "/datasets/{dsid}/carrier_segmentation": {
+    "/datasets/{dataset_mfid}/carrier_segmentation": {
       "post": {
-        "operationId": "request_carrier_segmentation_datasets__dsid__carrier_segmentation_post",
+        "operationId": "request_carrier_segmentation_datasets__dataset_mfid__carrier_segmentation_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid"
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
+              "type": "string"
             }
           },
           {
@@ -11445,17 +11471,179 @@
         ]
       }
     },
-    "/datasets/{dsid}/download_links": {
+    "/datasets/{dataset_mfid}/dataset_graph": {
       "get": {
-        "description": "Returns signed GCS download URLs (1-hour expiry) for all files in the dataset,\nkeyed by AssociatedFile mfid. Backfills missing storage_path records on the fly.",
-        "operationId": "generate_dataset_download_links_datasets__dsid__download_links_get",
+        "description": "Returns a NetworkX node-link graph of all datasets connected (via parent/child\nrelationships) to the given dataset. Loads all authorized datasets in the\nproject and returns the directed lineage subgraph (ancestors + descendants) of the target.",
+        "operationId": "dataset_graph_datasets__dataset_mfid__dataset_graph_get",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Dataset Graph",
+        "tags": [
+          "datasets"
+        ]
+      }
+    },
+    "/datasets/{dataset_mfid}/dataset_graph_cte": {
+      "get": {
+        "description": "CTE-based implementation (kept for reference). Prefer /dataset_graph.\nReturns a NetworkX node-link graph of all datasets connected (via parent/child\nrelationships) to the given dataset, i.e. its full lineage subgraph.",
+        "operationId": "dataset_graph_cte_datasets__dataset_mfid__dataset_graph_cte_get",
+        "parameters": [
+          {
+            "description": "Dataset MFID.",
+            "in": "path",
+            "name": "dataset_mfid",
+            "required": true,
+            "schema": {
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Dataset Graph Cte",
+        "tags": [
+          "datasets"
+        ]
+      }
+    },
+    "/datasets/{dataset_mfid}/download_links": {
+      "get": {
+        "description": "Returns signed GCS download URLs (1-hour expiry) for all files in the dataset,\nkeyed by AssociatedFile mfid. Backfills missing storage_path records on the fly.",
+        "operationId": "generate_dataset_download_links_datasets__dataset_mfid__download_links_get",
+        "parameters": [
+          {
+            "description": "Dataset MFID.",
+            "in": "path",
+            "name": "dataset_mfid",
+            "required": true,
+            "schema": {
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -11523,17 +11711,19 @@
         ]
       }
     },
-    "/datasets/{dsid}/files": {
+    "/datasets/{dataset_mfid}/files": {
       "get": {
         "description": "Returns a list of the files associated with the dataset ID provided.",
-        "operationId": "read_associated_files_datasets__dsid__files_get",
+        "operationId": "read_associated_files_datasets__dataset_mfid__files_get",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -11564,7 +11754,7 @@
                   "items": {
                     "$ref": "#/components/schemas/AssociatedFileRead"
                   },
-                  "title": "Response Read Associated Files Datasets  Dsid  Files Get",
+                  "title": "Response Read Associated Files Datasets  Dataset Mfid  Files Get",
                   "type": "array"
                 }
               }
@@ -11607,15 +11797,17 @@
         ]
       },
       "post": {
-        "description": "Adds a file record to a dataset.\nCreates the record if one with the same sha256_hash and dataset does not already exist.\nUse POST /datasets/{dsid}/files/{file_id}/ingest to trigger ingestion.\nRequires contributor access. A repeated hash returns the existing record unchanged.",
-        "operationId": "add_associated_file_datasets__dsid__files_post",
+        "description": "Adds a file record to a dataset.\nCreates the record if one with the same sha256_hash and dataset does not already exist.\nUse POST /datasets/{dataset_mfid}/files/{file_id}/ingest to trigger ingestion.\nRequires contributor access. A repeated hash returns the existing record unchanged.",
+        "operationId": "add_associated_file_datasets__dataset_mfid__files_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -11695,18 +11887,20 @@
         ]
       }
     },
-    "/datasets/{dsid}/files/{file_id}/ingest": {
+    "/datasets/{dataset_mfid}/files/{file_id}/ingest": {
       "post": {
         "deprecated": true,
         "description": "Creates an ingestion request for a file.\nReturns error if the dataset associated with the file is not found, or the user does not have access.\nRequires write access to the dataset.",
-        "operationId": "create_ds_file_ingestion_request_datasets__dsid__files__file_id__ingest_post",
+        "operationId": "create_ds_file_ingestion_request_datasets__dataset_mfid__files__file_id__ingest_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -11815,16 +12009,19 @@
         ]
       }
     },
-    "/datasets/{dsid}/insitu_spec_aggregation": {
+    "/datasets/{dataset_mfid}/insitu_spec_aggregation": {
       "post": {
-        "operationId": "request_insitu_aggregation_datasets__dsid__insitu_spec_aggregation_post",
+        "operationId": "request_insitu_aggregation_datasets__dataset_mfid__insitu_spec_aggregation_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid"
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
+              "type": "string"
             }
           },
           {
@@ -11891,17 +12088,19 @@
         ]
       }
     },
-    "/datasets/{dsid}/instrument": {
+    "/datasets/{dataset_mfid}/instrument": {
       "put": {
         "description": "Assign or reassign the dataset's instrument, by slug or MFID.\n\nThe three instrument columns are written from one resolved instrument row,\nso instrument_id (the integer FK), instrument_mfid, and the instrument_name\nlabel cannot drift apart. Nothing about the instrument is taken from the\nrequest body beyond the identifier used to look it up.\n\nThe instrument's access group is granted contributor on the dataset, the\nsame grant dataset creation makes. Reassignment removes the grant belonging\nto the outgoing instrument's group only — resourceacl records no provenance,\nso a broader sweep could not tell a derived grant from a deliberate one.\n\nResubmitting the dataset's current instrument changes no columns but still\nensures the ACL row exists, which repairs datasets whose instrument columns\nwere backfilled without the accompanying grant.",
-        "operationId": "assign_dataset_instrument_datasets__dsid__instrument_put",
+        "operationId": "assign_dataset_instrument_datasets__dataset_mfid__instrument_put",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -11981,16 +12180,18 @@
         ]
       }
     },
-    "/datasets/{dsid}/keywords": {
+    "/datasets/{dataset_mfid}/keywords": {
       "get": {
-        "operationId": "list_keywords_for_dataset_datasets__dsid__keywords_get",
+        "operationId": "list_keywords_for_dataset_datasets__dataset_mfid__keywords_get",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -12021,7 +12222,7 @@
                   "items": {
                     "$ref": "#/components/schemas/Keyword"
                   },
-                  "title": "Response List Keywords For Dataset Datasets  Dsid  Keywords Get",
+                  "title": "Response List Keywords For Dataset Datasets  Dataset Mfid  Keywords Get",
                   "type": "array"
                 }
               }
@@ -12065,14 +12266,16 @@
       },
       "post": {
         "description": "Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object.\nOtherwise, the keyword will be created and then added to the dataset.\nRequires contributor access.",
-        "operationId": "add_keyword_datasets__dsid__keywords_post",
+        "operationId": "add_keyword_datasets__dataset_mfid__keywords_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -12151,16 +12354,19 @@
         ]
       }
     },
-    "/datasets/{dsid}/mosaic_stitch": {
+    "/datasets/{dataset_mfid}/mosaic_stitch": {
       "post": {
-        "operationId": "request_mosaic_stitch_datasets__dsid__mosaic_stitch_post",
+        "operationId": "request_mosaic_stitch_datasets__dataset_mfid__mosaic_stitch_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid"
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
+              "type": "string"
             }
           },
           {
@@ -12227,16 +12433,19 @@
         ]
       }
     },
-    "/datasets/{dsid}/rga_analysis": {
+    "/datasets/{dataset_mfid}/rga_analysis": {
       "post": {
-        "operationId": "request_rga_analysis_datasets__dsid__rga_analysis_post",
+        "operationId": "request_rga_analysis_datasets__dataset_mfid__rga_analysis_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid"
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
+              "type": "string"
             }
           },
           {
@@ -12303,18 +12512,20 @@
         ]
       }
     },
-    "/datasets/{dsid}/samples": {
+    "/datasets/{dataset_mfid}/samples": {
       "get": {
         "deprecated": true,
-        "description": "Returns a paginated list of samples associated with the dataset ID provided.\nDeprecated: use GET /samples?dataset_mfid={dsid}.",
-        "operationId": "read_samples_in_dataset_datasets__dsid__samples_get",
+        "description": "Returns a paginated list of samples associated with the dataset ID provided.\nDeprecated: use GET /samples?dataset_mfid={dataset_mfid}.",
+        "operationId": "read_samples_in_dataset_datasets__dataset_mfid__samples_get",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -12407,25 +12618,29 @@
         ]
       }
     },
-    "/datasets/{dsid}/samples/{sample_id}": {
+    "/datasets/{dataset_mfid}/samples/{sample_mfid}": {
       "delete": {
-        "operationId": "unlink_dataset_sample_datasets__dsid__samples__sample_id__delete",
+        "operationId": "unlink_dataset_sample_datasets__dataset_mfid__samples__sample_mfid__delete",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
           {
+            "description": "Sample MFID.",
             "in": "path",
-            "name": "sample_id",
+            "name": "sample_mfid",
             "required": true,
             "schema": {
-              "title": "Sample Id",
+              "description": "Sample MFID.",
+              "title": "Sample Mfid",
               "type": "string"
             }
           },
@@ -12494,23 +12709,27 @@
       },
       "post": {
         "description": "Links a dataset to a readable sample in the same project with contributor access.\n\nCross-project links retain the editor requirement on both resources.",
-        "operationId": "link_dataset_sample_datasets__dsid__samples__sample_id__post",
+        "operationId": "link_dataset_sample_datasets__dataset_mfid__samples__sample_mfid__post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
           {
+            "description": "Sample MFID.",
             "in": "path",
-            "name": "sample_id",
+            "name": "sample_mfid",
             "required": true,
             "schema": {
-              "title": "Sample Id",
+              "description": "Sample MFID.",
+              "title": "Sample Mfid",
               "type": "string"
             }
           },
@@ -12580,17 +12799,19 @@
         ]
       }
     },
-    "/datasets/{dsid}/thumbnails": {
+    "/datasets/{dataset_mfid}/thumbnails": {
       "get": {
         "description": "Returns a list of thumbnail objects associated with the dataset ID provided",
-        "operationId": "read_thumbnails_datasets__dsid__thumbnails_get",
+        "operationId": "read_thumbnails_datasets__dataset_mfid__thumbnails_get",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -12621,7 +12842,7 @@
                   "items": {
                     "$ref": "#/components/schemas/ThumbnailRead"
                   },
-                  "title": "Response Read Thumbnails Datasets  Dsid  Thumbnails Get",
+                  "title": "Response Read Thumbnails Datasets  Dataset Mfid  Thumbnails Get",
                   "type": "array"
                 }
               }
@@ -12665,14 +12886,16 @@
       },
       "post": {
         "description": "Adds a thumbnail to a dataset. Repeated uploads of the same normalized image\nto one dataset update that thumbnail's name.\n\nRaises:\n    HTTPException: If required thumbnail fields are missing or dataset not found",
-        "operationId": "add_thumbnail_datasets__dsid__thumbnails_post",
+        "operationId": "add_thumbnail_datasets__dataset_mfid__thumbnails_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -12752,17 +12975,19 @@
         ]
       }
     },
-    "/datasets/{dsid}/thumbnails/{thumbnail_id}": {
+    "/datasets/{dataset_mfid}/thumbnails/{thumbnail_id}": {
       "delete": {
         "description": "Removes a thumbnail from a dataset and deletes it.",
-        "operationId": "delete_thumbnail_datasets__dsid__thumbnails__thumbnail_id__delete",
+        "operationId": "delete_thumbnail_datasets__dataset_mfid__thumbnails__thumbnail_id__delete",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -12802,7 +13027,7 @@
                   "additionalProperties": {
                     "type": "string"
                   },
-                  "title": "Response Delete Thumbnail Datasets  Dsid  Thumbnails  Thumbnail Id  Delete",
+                  "title": "Response Delete Thumbnail Datasets  Dataset Mfid  Thumbnails  Thumbnail Id  Delete",
                   "type": "object"
                 }
               }
@@ -12845,14 +13070,16 @@
         ]
       },
       "patch": {
-        "operationId": "update_thumbnail_datasets__dsid__thumbnails__thumbnail_id__patch",
+        "operationId": "update_thumbnail_datasets__dataset_mfid__thumbnails__thumbnail_id__patch",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -12941,17 +13168,19 @@
         ]
       }
     },
-    "/datasets/{dsid}/upload/complete": {
+    "/datasets/{dataset_mfid}/upload/complete": {
       "post": {
         "description": "Finalise a GCS resumable upload.\nRequires contributor access to the dataset and ownership of the upload session.\nVerifies the blob landed in GCS, registers it as an AssociatedFile on the dataset,\nand deletes the upload session record.",
-        "operationId": "complete_resumable_upload_datasets__dsid__upload_complete_post",
+        "operationId": "complete_resumable_upload_datasets__dataset_mfid__upload_complete_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -13031,17 +13260,19 @@
         ]
       }
     },
-    "/datasets/{dsid}/upload/initiate": {
+    "/datasets/{dataset_mfid}/upload/initiate": {
       "post": {
-        "description": "Initiate a GCS resumable upload session for a large file.\nRequires contributor access to the dataset.\nReturns an upload_id and a resumable_uri the client uses to PUT chunks directly to GCS\n(no API credentials needed for the chunk transfers).\nCall POST /datasets/{dsid}/upload/complete when all chunks are uploaded.",
-        "operationId": "initiate_resumable_upload_datasets__dsid__upload_initiate_post",
+        "description": "Initiate a GCS resumable upload session for a large file.\nRequires contributor access to the dataset.\nReturns an upload_id and a resumable_uri the client uses to PUT chunks directly to GCS\n(no API credentials needed for the chunk transfers).\nCall POST /datasets/{dataset_mfid}/upload/complete when all chunks are uploaded.",
+        "operationId": "initiate_resumable_upload_datasets__dataset_mfid__upload_initiate_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -13121,17 +13352,19 @@
         ]
       }
     },
-    "/datasets/{dsid}/upload/initiate/multipart": {
+    "/datasets/{dataset_mfid}/upload/initiate/multipart": {
       "post": {
-        "description": "Vend a short-lived GCS OAuth2 access token for parallel client-side uploads.\nRequires contributor access to the dataset.\nThe client uses this token with google-cloud-storage transfer_manager.upload_chunks_concurrently().\nReturns upload_id — pass it to POST /datasets/{dsid}/upload/complete after the transfer.\nIf existing_file is set, the file already exists; skip the upload entirely.",
-        "operationId": "initiate_multipart_upload_datasets__dsid__upload_initiate_multipart_post",
+        "description": "Vend a short-lived GCS OAuth2 access token for parallel client-side uploads.\nRequires contributor access to the dataset.\nThe client uses this token with google-cloud-storage transfer_manager.upload_chunks_concurrently().\nReturns upload_id — pass it to POST /datasets/{dataset_mfid}/upload/complete after the transfer.\nIf existing_file is set, the file already exists; skip the upload entirely.",
+        "operationId": "initiate_multipart_upload_datasets__dataset_mfid__upload_initiate_multipart_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -13211,17 +13444,19 @@
         ]
       }
     },
-    "/datasets/{parent_dataset_id}/children": {
+    "/datasets/{parent_dataset_mfid}/children": {
       "get": {
         "description": "Returns a paginated list of child datasets for a given parent dataset.\n\nrelationship_type restricts the result to links of that kind. Links with no\nrecorded type are excluded when the filter is set.",
-        "operationId": "list_child_datasets_datasets__parent_dataset_id__children_get",
+        "operationId": "list_child_datasets_datasets__parent_dataset_mfid__children_get",
         "parameters": [
           {
+            "description": "Parent dataset MFID.",
             "in": "path",
-            "name": "parent_dataset_id",
+            "name": "parent_dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Parent Dataset Id",
+              "description": "Parent dataset MFID.",
+              "title": "Parent Dataset Mfid",
               "type": "string"
             }
           },
@@ -13334,25 +13569,29 @@
         ]
       }
     },
-    "/datasets/{parent_dataset_id}/children/{child_dataset_id}": {
+    "/datasets/{parent_dataset_mfid}/children/{child_dataset_mfid}": {
       "delete": {
-        "operationId": "unlink_dataset_parent_child_datasets__parent_dataset_id__children__child_dataset_id__delete",
+        "operationId": "unlink_dataset_parent_child_datasets__parent_dataset_mfid__children__child_dataset_mfid__delete",
         "parameters": [
           {
+            "description": "Parent dataset MFID.",
             "in": "path",
-            "name": "parent_dataset_id",
+            "name": "parent_dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Parent Dataset Id",
+              "description": "Parent dataset MFID.",
+              "title": "Parent Dataset Mfid",
               "type": "string"
             }
           },
           {
+            "description": "Child dataset MFID.",
             "in": "path",
-            "name": "child_dataset_id",
+            "name": "child_dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Child Dataset Id",
+              "description": "Child dataset MFID.",
+              "title": "Child Dataset Mfid",
               "type": "string"
             }
           },
@@ -13421,22 +13660,28 @@
       },
       "post": {
         "description": "Link two datasets as parent and child.\n\nrelationship_type describes the child relative to the parent, so\nis_part_of means \"child is_part_of parent\". Omit it to leave the kind\nunspecified; on a link that already exists, omitting it preserves the\ntype already stored rather than clearing it.\nSame-project links require contributor access to the parent and read access\nto the child. Cross-project links and relationship-type changes require\neditor access to both datasets.",
-        "operationId": "link_dataset_parent_child_datasets__parent_dataset_id__children__child_dataset_id__post",
+        "operationId": "link_dataset_parent_child_datasets__parent_dataset_mfid__children__child_dataset_mfid__post",
         "parameters": [
           {
+            "description": "Parent dataset MFID.",
             "in": "path",
-            "name": "parent_dataset_id",
+            "name": "parent_dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Parent Dataset Id"
+              "description": "Parent dataset MFID.",
+              "title": "Parent Dataset Mfid",
+              "type": "string"
             }
           },
           {
+            "description": "Child dataset MFID.",
             "in": "path",
-            "name": "child_dataset_id",
+            "name": "child_dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Child Dataset Id"
+              "description": "Child dataset MFID.",
+              "title": "Child Dataset Mfid",
+              "type": "string"
             }
           },
           {
@@ -14511,17 +14756,19 @@
         ]
       }
     },
-    "/entity_graph/{entity_id}": {
+    "/entity_graph/{entity_mfid}": {
       "get": {
         "description": "Returns a NetworkX node-link graph of all samples and datasets connected to\nthe given entity via sample lineage, dataset lineage, and sample-dataset\nassociations. entity_id may be a sample or dataset unique_id.\nNodes carry entity_type ('sample' or 'dataset') and name attributes.\n\nLoads all samples and datasets in the root entity's project in a small number\nof broad queries, builds the combined graph in Python, then returns the weakly\nconnected component containing the root entity.",
-        "operationId": "entity_graph_entity_graph__entity_id__get",
+        "operationId": "entity_graph_entity_graph__entity_mfid__get",
         "parameters": [
           {
+            "description": "Sample or dataset MFID.",
             "in": "path",
-            "name": "entity_id",
+            "name": "entity_mfid",
             "required": true,
             "schema": {
-              "title": "Entity Id",
+              "description": "Sample or dataset MFID.",
+              "title": "Entity Mfid",
               "type": "string"
             }
           },
@@ -14589,17 +14836,19 @@
         ]
       }
     },
-    "/entity_graph_bfs/{entity_id}": {
+    "/entity_graph_bfs/{entity_mfid}": {
       "get": {
         "description": "BFS-based implementation (kept for reference). Prefer /entity_graph/{entity_id}.\nReturns a NetworkX node-link graph of all samples and datasets connected to\nthe given entity via sample lineage, dataset lineage, and sample-dataset\nassociations. entity_id may be a sample or dataset unique_id.\nNodes carry entity_type ('sample' or 'dataset') and name attributes.",
-        "operationId": "entity_graph_bfs_entity_graph_bfs__entity_id__get",
+        "operationId": "entity_graph_bfs_entity_graph_bfs__entity_mfid__get",
         "parameters": [
           {
+            "description": "Sample or dataset MFID.",
             "in": "path",
-            "name": "entity_id",
+            "name": "entity_mfid",
             "required": true,
             "schema": {
-              "title": "Entity Id",
+              "description": "Sample or dataset MFID.",
+              "title": "Entity Mfid",
               "type": "string"
             }
           },
@@ -14667,17 +14916,19 @@
         ]
       }
     },
-    "/entity_graph_cte/{entity_id}": {
+    "/entity_graph_cte/{entity_mfid}": {
       "get": {
-        "description": "Returns the graph of entities connected to entity_id.\nBy default returns only first-degree neighbours (direct parents, children,\nand cross-linked entities). Pass recursive=true for the full connected component.\nUse /project_graph/{project_id} to get all entities in a project.",
-        "operationId": "entity_graph_cte_entity_graph_cte__entity_id__get",
+        "description": "Returns the graph of entities connected to entity_id.\nBy default returns only first-degree neighbours (direct parents, children,\nand cross-linked entities). Pass recursive=true for the full connected component.\nUse /project_graph/{project_ref} to get all entities in a project.",
+        "operationId": "entity_graph_cte_entity_graph_cte__entity_mfid__get",
         "parameters": [
           {
+            "description": "Sample or dataset MFID.",
             "in": "path",
-            "name": "entity_id",
+            "name": "entity_mfid",
             "required": true,
             "schema": {
-              "title": "Entity Id",
+              "description": "Sample or dataset MFID.",
+              "title": "Entity Mfid",
               "type": "string"
             }
           },
@@ -16437,17 +16688,19 @@
         ]
       }
     },
-    "/instruments/{instrument_mfid}": {
+    "/instruments/{instrument_ref}": {
       "get": {
         "description": "Returns the instrument with the provided unique ID, or 404 if not found.\nThe owner identity is resolved by default. Pass include_owner=false to omit it.",
-        "operationId": "read_instrument_instruments__instrument_mfid__get",
+        "operationId": "read_instrument_instruments__instrument_ref__get",
         "parameters": [
           {
+            "description": "Instrument MFID or instrument_id slug (case-insensitive).",
             "in": "path",
-            "name": "instrument_mfid",
+            "name": "instrument_ref",
             "required": true,
             "schema": {
-              "title": "Instrument Mfid",
+              "description": "Instrument MFID or instrument_id slug (case-insensitive).",
+              "title": "Instrument Ref",
               "type": "string"
             }
           },
@@ -16550,14 +16803,16 @@
       },
       "patch": {
         "description": "Partially update an instrument record. Only provided fields are modified.",
-        "operationId": "update_instrument_instruments__instrument_mfid__patch",
+        "operationId": "update_instrument_instruments__instrument_ref__patch",
         "parameters": [
           {
+            "description": "Instrument MFID or instrument_id slug (case-insensitive).",
             "in": "path",
-            "name": "instrument_mfid",
+            "name": "instrument_ref",
             "required": true,
             "schema": {
-              "title": "Instrument Mfid",
+              "description": "Instrument MFID or instrument_id slug (case-insensitive).",
+              "title": "Instrument Ref",
               "type": "string"
             }
           },
@@ -16637,16 +16892,18 @@
         ]
       }
     },
-    "/instruments/{instrument_mfid}/service_accounts": {
+    "/instruments/{instrument_ref}/service_accounts": {
       "get": {
-        "operationId": "list_instrument_service_accounts_instruments__instrument_mfid__service_accounts_get",
+        "operationId": "list_instrument_service_accounts_instruments__instrument_ref__service_accounts_get",
         "parameters": [
           {
+            "description": "Instrument MFID or instrument_id slug (case-insensitive).",
             "in": "path",
-            "name": "instrument_mfid",
+            "name": "instrument_ref",
             "required": true,
             "schema": {
-              "title": "Instrument Mfid",
+              "description": "Instrument MFID or instrument_id slug (case-insensitive).",
+              "title": "Instrument Ref",
               "type": "string"
             }
           },
@@ -16677,7 +16934,7 @@
                   "items": {
                     "$ref": "#/components/schemas/AccessGroupMemberRead"
                   },
-                  "title": "Response List Instrument Service Accounts Instruments  Instrument Mfid  Service Accounts Get",
+                  "title": "Response List Instrument Service Accounts Instruments  Instrument Ref  Service Accounts Get",
                   "type": "array"
                 }
               }
@@ -16720,26 +16977,30 @@
         ]
       }
     },
-    "/instruments/{instrument_mfid}/service_accounts/{sa_unique_id}": {
+    "/instruments/{instrument_ref}/service_accounts/{service_account_ref}": {
       "delete": {
         "description": "Unbind a service account from an instrument's operator group.\nRequires admin on the instrument.",
-        "operationId": "remove_instrument_service_account_instruments__instrument_mfid__service_accounts__sa_unique_id__delete",
+        "operationId": "remove_instrument_service_account_instruments__instrument_ref__service_accounts__service_account_ref__delete",
         "parameters": [
           {
+            "description": "Instrument MFID or instrument_id slug (case-insensitive).",
             "in": "path",
-            "name": "instrument_mfid",
+            "name": "instrument_ref",
             "required": true,
             "schema": {
-              "title": "Instrument Mfid",
+              "description": "Instrument MFID or instrument_id slug (case-insensitive).",
+              "title": "Instrument Ref",
               "type": "string"
             }
           },
           {
+            "description": "Service-account MFID or username.",
             "in": "path",
-            "name": "sa_unique_id",
+            "name": "service_account_ref",
             "required": true,
             "schema": {
-              "title": "Sa Unique Id",
+              "description": "Service-account MFID or username.",
+              "title": "Service Account Ref",
               "type": "string"
             }
           },
@@ -16770,7 +17031,7 @@
                   "items": {
                     "$ref": "#/components/schemas/AccessGroupMemberRead"
                   },
-                  "title": "Response Remove Instrument Service Account Instruments  Instrument Mfid  Service Accounts  Sa Unique Id  Delete",
+                  "title": "Response Remove Instrument Service Account Instruments  Instrument Ref  Service Accounts  Service Account Ref  Delete",
                   "type": "array"
                 }
               }
@@ -16814,23 +17075,27 @@
       },
       "post": {
         "description": "Bind a service account to an instrument's operator group, at admin standing.\nRequires admin on the instrument.",
-        "operationId": "add_instrument_service_account_instruments__instrument_mfid__service_accounts__sa_unique_id__post",
+        "operationId": "add_instrument_service_account_instruments__instrument_ref__service_accounts__service_account_ref__post",
         "parameters": [
           {
+            "description": "Instrument MFID or instrument_id slug (case-insensitive).",
             "in": "path",
-            "name": "instrument_mfid",
+            "name": "instrument_ref",
             "required": true,
             "schema": {
-              "title": "Instrument Mfid",
+              "description": "Instrument MFID or instrument_id slug (case-insensitive).",
+              "title": "Instrument Ref",
               "type": "string"
             }
           },
           {
+            "description": "Service-account MFID or username.",
             "in": "path",
-            "name": "sa_unique_id",
+            "name": "service_account_ref",
             "required": true,
             "schema": {
-              "title": "Sa Unique Id",
+              "description": "Service-account MFID or username.",
+              "title": "Service Account Ref",
               "type": "string"
             }
           },
@@ -16861,7 +17126,7 @@
                   "items": {
                     "$ref": "#/components/schemas/AccessGroupMemberRead"
                   },
-                  "title": "Response Add Instrument Service Account Instruments  Instrument Mfid  Service Accounts  Sa Unique Id  Post",
+                  "title": "Response Add Instrument Service Account Instruments  Instrument Ref  Service Accounts  Service Account Ref  Post",
                   "type": "array"
                 }
               }
@@ -16904,17 +17169,19 @@
         ]
       }
     },
-    "/instruments/{instrument_mfid}/status": {
+    "/instruments/{instrument_ref}/status": {
       "post": {
         "description": "Change an instrument's lifecycle status.\n\nIts own route rather than a field on PATCH: decommissioning is a lifecycle\ntransition, not a metadata edit, and carries a higher bar. Instruments are\nnever deleted, so this is how one is retired.",
-        "operationId": "set_instrument_status_instruments__instrument_mfid__status_post",
+        "operationId": "set_instrument_status_instruments__instrument_ref__status_post",
         "parameters": [
           {
+            "description": "Instrument MFID or instrument_id slug (case-insensitive).",
             "in": "path",
-            "name": "instrument_mfid",
+            "name": "instrument_ref",
             "required": true,
             "schema": {
-              "title": "Instrument Mfid",
+              "description": "Instrument MFID or instrument_id slug (case-insensitive).",
+              "title": "Instrument Ref",
               "type": "string"
             }
           },
@@ -17444,17 +17711,100 @@
         "summary": "Metrics"
       }
     },
-    "/project_graph/{project_id}": {
-      "get": {
-        "description": "Returns all authorized samples and datasets belonging to project_id\nas a single node-link graph.",
-        "operationId": "project_graph_project_graph__project_id__get",
+    "/print/barcode": {
+      "post": {
+        "description": "Publishes a barcode print job and waits briefly for a print result.\n\nAlways returns 200; `status` distinguishes confirmed success (\"ok\") from\nan explicit printer-reported failure (\"error\") or no result within the\nwait window (\"timeout\"). On \"error\"/\"timeout\", `detail` may note whether\nthe requested printer currently appears online, via\ncrucible-label-printer-status, to help diagnose typos vs. offline\nhardware.",
+        "operationId": "print_barcode_print_barcode_post",
         "parameters": [
           {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BarcodePrintRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BarcodePrintResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Print Barcode",
+        "tags": [
+          "print"
+        ]
+      }
+    },
+    "/project_graph/{project_ref}": {
+      "get": {
+        "description": "Returns all authorized samples and datasets belonging to the project\nas a single node-link graph.",
+        "operationId": "project_graph_project_graph__project_ref__get",
+        "parameters": [
+          {
+            "description": "Project MFID or project_id slug (case-insensitive).",
             "in": "path",
-            "name": "project_id",
+            "name": "project_ref",
             "required": true,
             "schema": {
-              "title": "Project Id",
+              "description": "Project MFID or project_id slug (case-insensitive).",
+              "title": "Project Ref",
               "type": "string"
             }
           },
@@ -17967,10 +18317,12 @@
         "operationId": "read_project_projects__project_ref__get",
         "parameters": [
           {
+            "description": "Project MFID or project_id slug (case-insensitive).",
             "in": "path",
             "name": "project_ref",
             "required": true,
             "schema": {
+              "description": "Project MFID or project_id slug (case-insensitive).",
               "title": "Project Ref",
               "type": "string"
             }
@@ -18065,10 +18417,12 @@
         "operationId": "update_project_projects__project_ref__patch",
         "parameters": [
           {
+            "description": "Project MFID or project_id slug (case-insensitive).",
             "in": "path",
             "name": "project_ref",
             "required": true,
             "schema": {
+              "description": "Project MFID or project_id slug (case-insensitive).",
               "title": "Project Ref",
               "type": "string"
             }
@@ -18154,10 +18508,12 @@
         "operationId": "project_dataset_graph_projects__project_ref__dataset_graph_get",
         "parameters": [
           {
+            "description": "Project MFID or project_id slug (case-insensitive).",
             "in": "path",
             "name": "project_ref",
             "required": true,
             "schema": {
+              "description": "Project MFID or project_id slug (case-insensitive).",
               "title": "Project Ref",
               "type": "string"
             }
@@ -18232,10 +18588,12 @@
         "operationId": "project_entity_graph_projects__project_ref__entity_graph_get",
         "parameters": [
           {
+            "description": "Project MFID or project_id slug (case-insensitive).",
             "in": "path",
             "name": "project_ref",
             "required": true,
             "schema": {
+              "description": "Project MFID or project_id slug (case-insensitive).",
               "title": "Project Ref",
               "type": "string"
             }
@@ -18309,10 +18667,12 @@
         "operationId": "project_sample_graph_projects__project_ref__sample_graph_get",
         "parameters": [
           {
+            "description": "Project MFID or project_id slug (case-insensitive).",
             "in": "path",
             "name": "project_ref",
             "required": true,
             "schema": {
+              "description": "Project MFID or project_id slug (case-insensitive).",
               "title": "Project Ref",
               "type": "string"
             }
@@ -18387,10 +18747,12 @@
         "operationId": "read_users_on_project_projects__project_ref__users_get",
         "parameters": [
           {
+            "description": "Project MFID or project_id slug (case-insensitive).",
             "in": "path",
             "name": "project_ref",
             "required": true,
             "schema": {
+              "description": "Project MFID or project_id slug (case-insensitive).",
               "title": "Project Ref",
               "type": "string"
             }
@@ -18484,30 +18846,36 @@
         ]
       }
     },
-    "/projects/{project_ref}/users/{orcid}": {
+    "/projects/{project_ref}/users/{user_ref}": {
       "delete": {
-        "description": "Remove a user from a project and its associated access group.\nAdmins or the project lead can remove any member. A member can also\nremove themselves (leave the project), but the project lead cannot\nremove themselves — transfer leadership first.\nProvide ?email= or ?username= to look up the user instead of the orcid path parameter.",
-        "operationId": "remove_user_from_project_projects__project_ref__users__orcid__delete",
+        "description": "Remove a user from a project and its associated access group.\nAdmins or the project lead can remove any member. A member can also\nremove themselves (leave the project), but the project lead cannot\nremove themselves — transfer leadership first.",
+        "operationId": "remove_user_from_project_projects__project_ref__users__user_ref__delete",
         "parameters": [
           {
+            "description": "Project MFID or project_id slug (case-insensitive).",
             "in": "path",
             "name": "project_ref",
             "required": true,
             "schema": {
+              "description": "Project MFID or project_id slug (case-insensitive).",
               "title": "Project Ref",
               "type": "string"
             }
           },
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "orcid",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "Orcid",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
           {
+            "deprecated": true,
+            "description": "Deprecated. Put the username in the path instead; email in URLs is discouraged.",
             "in": "query",
             "name": "email",
             "required": false,
@@ -18520,10 +18888,14 @@
                   "type": "null"
                 }
               ],
+              "deprecated": true,
+              "description": "Deprecated. Put the username in the path instead; email in URLs is discouraged.",
               "title": "Email"
             }
           },
           {
+            "deprecated": true,
+            "description": "Deprecated. Put the username in the path instead.",
             "in": "query",
             "name": "username",
             "required": false,
@@ -18536,6 +18908,8 @@
                   "type": "null"
                 }
               ],
+              "deprecated": true,
+              "description": "Deprecated. Put the username in the path instead.",
               "title": "Username"
             }
           },
@@ -18566,7 +18940,7 @@
                   "items": {
                     "$ref": "#/components/schemas/AccessGroupMemberRead"
                   },
-                  "title": "Response Remove User From Project Projects  Project Ref  Users  Orcid  Delete",
+                  "title": "Response Remove User From Project Projects  Project Ref  Users  User Ref  Delete",
                   "type": "array"
                 }
               }
@@ -18610,23 +18984,27 @@
       },
       "patch": {
         "description": "Change a member's role in a project.\n\nRole management follows a strict hierarchy. Editors manage contributor and\nviewer roles, admins manage editor and below, and owners manage admin and below.\n\nCannot grant or touch owner standing at all, even as the owner yourself.\na project has exactly one owner, changed only via\nPOST /resources/{mfid}/transfer_ownership.",
-        "operationId": "set_project_user_role_projects__project_ref__users__orcid__patch",
+        "operationId": "set_project_user_role_projects__project_ref__users__user_ref__patch",
         "parameters": [
           {
+            "description": "Project MFID or project_id slug (case-insensitive).",
             "in": "path",
             "name": "project_ref",
             "required": true,
             "schema": {
+              "description": "Project MFID or project_id slug (case-insensitive).",
               "title": "Project Ref",
               "type": "string"
             }
           },
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "orcid",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "Orcid",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -18665,7 +19043,7 @@
                   "items": {
                     "$ref": "#/components/schemas/AccessGroupMemberRead"
                   },
-                  "title": "Response Set Project User Role Projects  Project Ref  Users  Orcid  Patch",
+                  "title": "Response Set Project User Role Projects  Project Ref  Users  User Ref  Patch",
                   "type": "array"
                 }
               }
@@ -18709,27 +19087,33 @@
       },
       "post": {
         "description": "Add a user to a project at `role`, defaulting to contributor.\n\nRequires editor or above in the project. Editors may grant contributor or\nviewer, admins may grant editor or below, and owners may grant admin or below.\nCannot seat someone as owner this way; a project has exactly one owner,\nchanged only via POST /resources/{mfid}/transfer_ownership.",
-        "operationId": "add_users_to_project_projects__project_ref__users__orcid__post",
+        "operationId": "add_users_to_project_projects__project_ref__users__user_ref__post",
         "parameters": [
           {
+            "description": "Project MFID or project_id slug (case-insensitive).",
             "in": "path",
             "name": "project_ref",
             "required": true,
             "schema": {
+              "description": "Project MFID or project_id slug (case-insensitive).",
               "title": "Project Ref",
               "type": "string"
             }
           },
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "orcid",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "Orcid",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
           {
+            "deprecated": true,
+            "description": "Deprecated. Put the username in the path instead; email in URLs is discouraged.",
             "in": "query",
             "name": "email",
             "required": false,
@@ -18742,10 +19126,14 @@
                   "type": "null"
                 }
               ],
+              "deprecated": true,
+              "description": "Deprecated. Put the username in the path instead; email in URLs is discouraged.",
               "title": "Email"
             }
           },
           {
+            "deprecated": true,
+            "description": "Deprecated. Put the username in the path instead.",
             "in": "query",
             "name": "username",
             "required": false,
@@ -18758,6 +19146,8 @@
                   "type": "null"
                 }
               ],
+              "deprecated": true,
+              "description": "Deprecated. Put the username in the path instead.",
               "title": "Username"
             }
           },
@@ -18797,7 +19187,7 @@
                   "items": {
                     "$ref": "#/components/schemas/AccessGroupMemberRead"
                   },
-                  "title": "Response Add Users To Project Projects  Project Ref  Users  Orcid  Post",
+                  "title": "Response Add Users To Project Projects  Project Ref  Users  User Ref  Post",
                   "type": "array"
                 }
               }
@@ -18956,6 +19346,245 @@
           }
         ],
         "summary": "Search Resource Metadata V2",
+        "tags": [
+          "resources"
+        ]
+      }
+    },
+    "/resources/{mfid}": {
+      "delete": {
+        "description": "Permanently delete a resource from the database without a deletion request.\nRequires force=true and resource owner or platform-admin authority.\nDatasets and samples delete immediately. Projects and instruments first\nreturn a preview; pass confirm=true to execute the deletion, which still\nrequires them to be empty. Stored GCS objects are not deleted.",
+        "operationId": "hard_delete_resource_route_resources__mfid__delete",
+        "parameters": [
+          {
+            "description": "Resource MFID.",
+            "in": "path",
+            "name": "mfid",
+            "required": true,
+            "schema": {
+              "description": "Resource MFID.",
+              "title": "Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Required acknowledgement for direct permanent deletion.",
+            "in": "query",
+            "name": "force",
+            "required": true,
+            "schema": {
+              "description": "Required acknowledgement for direct permanent deletion.",
+              "title": "Force",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Required to actually delete a project or instrument. Omitting it returns a preview and deletes nothing.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Required to actually delete a project or instrument. Omitting it returns a preview and deletes nothing.",
+              "title": "Confirm",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Hard Delete Resource Route",
+        "tags": [
+          "deletion"
+        ]
+      },
+      "get": {
+        "description": "Fetch a dataset, sample, instrument, or project by ID without knowing its type in advance.\nResolves the type from idtype, then returns the full resource record.\nPass include_metadata=true to include scientific metadata.\nPass include_links=true to include parent/child/associated resources (datasets and samples only).\nSample dataset objects remain embedded by default for compatibility. Pass include_datasets=false to omit them.\nThe owner identity is resolved by default for datasets, samples, and instruments. Pass include_owner=false to omit it.",
+        "operationId": "get_resource_resources__mfid__get",
+        "parameters": [
+          {
+            "description": "Resource MFID.",
+            "in": "path",
+            "name": "mfid",
+            "required": true,
+            "schema": {
+              "description": "Resource MFID.",
+              "title": "Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_metadata",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Metadata",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_links",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Links",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_owner",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Include Owner",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+            "in": "query",
+            "name": "include_datasets",
+            "required": false,
+            "schema": {
+              "default": true,
+              "description": "Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
+              "title": "Include Datasets",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatasetResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SampleResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InstrumentResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ProjectWithLead"
+                    }
+                  ],
+                  "title": "Response Get Resource Resources  Mfid  Get"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Resource",
         "tags": [
           "resources"
         ]
@@ -19592,6 +20221,464 @@
         ]
       }
     },
+    "/resources/{mfid}/delete": {
+      "post": {
+        "description": "Request deletion of a resource. Requires contributor access for datasets and\nsamples, admin for projects and instruments. Pending requests hide the\nresource from ordinary discovery until rejected.\nReturns 409 if an active deletion request already exists for this resource,\nor if a project or instrument still has assigned datasets or samples.",
+        "operationId": "create_deletion_request_resources__mfid__delete_post",
+        "parameters": [
+          {
+            "description": "Resource MFID.",
+            "in": "path",
+            "name": "mfid",
+            "required": true,
+            "schema": {
+              "description": "Resource MFID.",
+              "title": "Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reason",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reason"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionRequestRead"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Deletion Request",
+        "tags": [
+          "resources"
+        ]
+      }
+    },
+    "/resources/{mfid}/links": {
+      "get": {
+        "description": "Returns the immediate links for a resource (dataset or sample):\nparent/child via lineage and associated resources.",
+        "operationId": "get_resource_links_resources__mfid__links_get",
+        "parameters": [
+          {
+            "description": "Resource MFID.",
+            "in": "path",
+            "name": "mfid",
+            "required": true,
+            "schema": {
+              "description": "Resource MFID.",
+              "title": "Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LinkedResource"
+                  },
+                  "title": "Response Get Resource Links Resources  Mfid  Links Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Resource Links",
+        "tags": [
+          "resources"
+        ]
+      }
+    },
+    "/resources/{mfid}/metadata": {
+      "get": {
+        "operationId": "read_resource_metadata_resources__mfid__metadata_get",
+        "parameters": [
+          {
+            "description": "Resource MFID.",
+            "in": "path",
+            "name": "mfid",
+            "required": true,
+            "schema": {
+              "description": "Resource MFID.",
+              "title": "Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScientificMetadataBinaryRead"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Resource Metadata",
+        "tags": [
+          "resources"
+        ]
+      },
+      "patch": {
+        "operationId": "update_resource_metadata_resources__mfid__metadata_patch",
+        "parameters": [
+          {
+            "description": "Resource MFID.",
+            "in": "path",
+            "name": "mfid",
+            "required": true,
+            "schema": {
+              "description": "Resource MFID.",
+              "title": "Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Scientific Md Updates",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScientificMetadataBinaryRead"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Resource Metadata",
+        "tags": [
+          "resources"
+        ]
+      },
+      "post": {
+        "description": "Creates initial metadata with contributor access. Replacing metadata requires editor access.",
+        "operationId": "create_resource_metadata_resources__mfid__metadata_post",
+        "parameters": [
+          {
+            "description": "Resource MFID.",
+            "in": "path",
+            "name": "mfid",
+            "required": true,
+            "schema": {
+              "description": "Resource MFID.",
+              "title": "Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "overwrite",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Overwrite",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Scientific Md",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScientificMetadataBinaryRead"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Resource Metadata",
+        "tags": [
+          "resources"
+        ]
+      }
+    },
     "/resources/{mfid}/project": {
       "post": {
         "operationId": "reassign_resource_project_resources__mfid__project_post",
@@ -19791,421 +20878,6 @@
         ]
       }
     },
-    "/resources/{resource_id}": {
-      "delete": {
-        "description": "Permanently delete a resource from the database without a deletion request.\nRequires force=true and resource owner or platform-admin authority.\nDatasets and samples delete immediately. Projects and instruments first\nreturn a preview; pass confirm=true to execute the deletion, which still\nrequires them to be empty. Stored GCS objects are not deleted.",
-        "operationId": "hard_delete_resource_route_resources__resource_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "resource_id",
-            "required": true,
-            "schema": {
-              "title": "Resource Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Required acknowledgement for direct permanent deletion.",
-            "in": "query",
-            "name": "force",
-            "required": true,
-            "schema": {
-              "description": "Required acknowledgement for direct permanent deletion.",
-              "title": "Force",
-              "type": "boolean"
-            }
-          },
-          {
-            "description": "Required to actually delete a project or instrument. Omitting it returns a preview and deletes nothing.",
-            "in": "query",
-            "name": "confirm",
-            "required": false,
-            "schema": {
-              "default": false,
-              "description": "Required to actually delete a project or instrument. Omitting it returns a preview and deletes nothing.",
-              "title": "Confirm",
-              "type": "boolean"
-            }
-          },
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Hard Delete Resource Route",
-        "tags": [
-          "deletion"
-        ]
-      },
-      "get": {
-        "description": "Fetch a dataset, sample, instrument, or project by ID without knowing its type in advance.\nResolves the type from idtype, then returns the full resource record.\nPass include_metadata=true to include scientific metadata.\nPass include_links=true to include parent/child/associated resources (datasets and samples only).\nSample dataset objects remain embedded by default for compatibility. Pass include_datasets=false to omit them.\nThe owner identity is resolved by default for datasets, samples, and instruments. Pass include_owner=false to omit it.",
-        "operationId": "get_resource_resources__resource_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "resource_id",
-            "required": true,
-            "schema": {
-              "title": "Resource Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "include_metadata",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Include Metadata",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "query",
-            "name": "include_links",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Include Links",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "query",
-            "name": "include_owner",
-            "required": false,
-            "schema": {
-              "default": true,
-              "title": "Include Owner",
-              "type": "boolean"
-            }
-          },
-          {
-            "description": "Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
-            "in": "query",
-            "name": "include_datasets",
-            "required": false,
-            "schema": {
-              "default": true,
-              "description": "Include legacy embedded dataset objects. Set false and use include_links or GET /datasets?sample_mfid=... for efficient relationship access.",
-              "title": "Include Datasets",
-              "type": "boolean"
-            }
-          },
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/DatasetResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/SampleResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/InstrumentResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ProjectWithLead"
-                    }
-                  ],
-                  "title": "Response Get Resource Resources  Resource Id  Get"
-                }
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get Resource",
-        "tags": [
-          "resources"
-        ]
-      }
-    },
-    "/resources/{resource_id}/delete": {
-      "post": {
-        "description": "Request deletion of a resource. Requires contributor access for datasets and\nsamples, admin for projects and instruments. Pending requests hide the\nresource from ordinary discovery until rejected.\nReturns 409 if an active deletion request already exists for this resource,\nor if a project or instrument still has assigned datasets or samples.",
-        "operationId": "create_deletion_request_resources__resource_id__delete_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "resource_id",
-            "required": true,
-            "schema": {
-              "title": "Resource Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "reason",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Reason"
-            }
-          },
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeletionRequestRead"
-                }
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Create Deletion Request",
-        "tags": [
-          "resources"
-        ]
-      }
-    },
-    "/resources/{resource_id}/links": {
-      "get": {
-        "description": "Returns the immediate links for a resource (dataset or sample):\nparent/child via lineage and associated resources.",
-        "operationId": "get_resource_links_resources__resource_id__links_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "resource_id",
-            "required": true,
-            "schema": {
-              "title": "Resource Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/LinkedResource"
-                  },
-                  "title": "Response Get Resource Links Resources  Resource Id  Links Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get Resource Links",
-        "tags": [
-          "resources"
-        ]
-      }
-    },
     "/resources/{resource_mfid}/graph": {
       "get": {
         "description": "Return a bounded, authorization-filtered sample and dataset graph.",
@@ -20346,274 +21018,6 @@
           }
         ],
         "summary": "Read Resource Graph",
-        "tags": [
-          "resources"
-        ]
-      }
-    },
-    "/resources/{unique_id}/metadata": {
-      "get": {
-        "operationId": "read_resource_metadata_resources__unique_id__metadata_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "unique_id",
-            "required": true,
-            "schema": {
-              "title": "Unique Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScientificMetadataBinaryRead"
-                }
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Read Resource Metadata",
-        "tags": [
-          "resources"
-        ]
-      },
-      "patch": {
-        "operationId": "update_resource_metadata_resources__unique_id__metadata_patch",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "unique_id",
-            "required": true,
-            "schema": {
-              "title": "Unique Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "title": "Scientific Md Updates",
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScientificMetadataBinaryRead"
-                }
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Update Resource Metadata",
-        "tags": [
-          "resources"
-        ]
-      },
-      "post": {
-        "description": "Creates initial metadata with contributor access. Replacing metadata requires editor access.",
-        "operationId": "create_resource_metadata_resources__unique_id__metadata_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "unique_id",
-            "required": true,
-            "schema": {
-              "title": "Unique Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "overwrite",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Overwrite",
-              "type": "boolean"
-            }
-          },
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "title": "Scientific Md",
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScientificMetadataBinaryRead"
-                }
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Create Resource Metadata",
         "tags": [
           "resources"
         ]
@@ -22009,17 +22413,19 @@
         ]
       }
     },
-    "/samples/{child_sample_id}/parents": {
+    "/samples/{child_sample_mfid}/parents": {
       "get": {
         "description": "Returns a paginated list of parent samples for a given child sample.\n\nrelationship_type restricts the result to links of that kind. Links with no\nrecorded type are excluded when the filter is set.",
-        "operationId": "list_parent_samples_samples__child_sample_id__parents_get",
+        "operationId": "list_parent_samples_samples__child_sample_mfid__parents_get",
         "parameters": [
           {
+            "description": "Child sample MFID.",
             "in": "path",
-            "name": "child_sample_id",
+            "name": "child_sample_mfid",
             "required": true,
             "schema": {
-              "title": "Child Sample Id",
+              "description": "Child sample MFID.",
+              "title": "Child Sample Mfid",
               "type": "string"
             }
           },
@@ -22132,17 +22538,19 @@
         ]
       }
     },
-    "/samples/{parent_sample_id}/children": {
+    "/samples/{parent_sample_mfid}/children": {
       "get": {
         "description": "Returns a paginated list of child samples for a given parent sample.\n\nrelationship_type restricts the result to links of that kind. Links with no\nrecorded type are excluded when the filter is set.",
-        "operationId": "list_child_samples_samples__parent_sample_id__children_get",
+        "operationId": "list_child_samples_samples__parent_sample_mfid__children_get",
         "parameters": [
           {
+            "description": "Parent sample MFID.",
             "in": "path",
-            "name": "parent_sample_id",
+            "name": "parent_sample_mfid",
             "required": true,
             "schema": {
-              "title": "Parent Sample Id",
+              "description": "Parent sample MFID.",
+              "title": "Parent Sample Mfid",
               "type": "string"
             }
           },
@@ -22255,25 +22663,29 @@
         ]
       }
     },
-    "/samples/{parent_sample_id}/children/{child_sample_id}": {
+    "/samples/{parent_sample_mfid}/children/{child_sample_mfid}": {
       "delete": {
-        "operationId": "unlink_sample_parent_child_samples__parent_sample_id__children__child_sample_id__delete",
+        "operationId": "unlink_sample_parent_child_samples__parent_sample_mfid__children__child_sample_mfid__delete",
         "parameters": [
           {
+            "description": "Parent sample MFID.",
             "in": "path",
-            "name": "parent_sample_id",
+            "name": "parent_sample_mfid",
             "required": true,
             "schema": {
-              "title": "Parent Sample Id",
+              "description": "Parent sample MFID.",
+              "title": "Parent Sample Mfid",
               "type": "string"
             }
           },
           {
+            "description": "Child sample MFID.",
             "in": "path",
-            "name": "child_sample_id",
+            "name": "child_sample_mfid",
             "required": true,
             "schema": {
-              "title": "Child Sample Id",
+              "description": "Child sample MFID.",
+              "title": "Child Sample Mfid",
               "type": "string"
             }
           },
@@ -22342,22 +22754,28 @@
       },
       "post": {
         "description": "Link two samples as parent and child.\n\nrelationship_type describes the child relative to the parent, so\nis_part_of means \"child is_part_of parent\". Omit it to leave the kind\nunspecified; on a link that already exists, omitting it preserves the\ntype already stored rather than clearing it.\nSame-project links require contributor access to the parent and read access\nto the child. Cross-project links and relationship-type changes require\neditor access to both samples.",
-        "operationId": "link_sample_parent_child_samples__parent_sample_id__children__child_sample_id__post",
+        "operationId": "link_sample_parent_child_samples__parent_sample_mfid__children__child_sample_mfid__post",
         "parameters": [
           {
+            "description": "Parent sample MFID.",
             "in": "path",
-            "name": "parent_sample_id",
+            "name": "parent_sample_mfid",
             "required": true,
             "schema": {
-              "title": "Parent Sample Id"
+              "description": "Parent sample MFID.",
+              "title": "Parent Sample Mfid",
+              "type": "string"
             }
           },
           {
+            "description": "Child sample MFID.",
             "in": "path",
-            "name": "child_sample_id",
+            "name": "child_sample_mfid",
             "required": true,
             "schema": {
-              "title": "Child Sample Id"
+              "description": "Child sample MFID.",
+              "title": "Child Sample Mfid",
+              "type": "string"
             }
           },
           {
@@ -22441,357 +22859,6 @@
           }
         ],
         "summary": "Link Sample Parent Child",
-        "tags": [
-          "samples"
-        ]
-      }
-    },
-    "/samples/{sample_id}": {
-      "patch": {
-        "description": "Partially update a sample record. Only provided fields are modified.\nNo project_id — use POST /resources/{mfid}/project.",
-        "operationId": "update_sample_samples__sample_id__patch",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sample_id",
-            "required": true,
-            "schema": {
-              "title": "Sample Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SampleUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SampleResponse"
-                }
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Update Sample",
-        "tags": [
-          "samples"
-        ]
-      }
-    },
-    "/samples/{sample_id}/datasets": {
-      "get": {
-        "deprecated": true,
-        "description": "Returns a list of all datasets linked to a given sample.\nDeprecated: use GET /datasets?sample_mfid={sample_id}.",
-        "operationId": "list_sample_datasets_samples__sample_id__datasets_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sample_id",
-            "required": true,
-            "schema": {
-              "title": "Sample Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "include_metadata",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Include Metadata",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Limit"
-            }
-          },
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Sample Datasets",
-        "tags": [
-          "samples"
-        ]
-      }
-    },
-    "/samples/{sample_id}/sample_graph": {
-      "get": {
-        "description": "Returns a NetworkX node-link graph of all samples connected (via parent/child\nrelationships) to the given sample. Loads all samples in the project and\nreturns the directed lineage subgraph (ancestors + descendants) of the target.",
-        "operationId": "sample_graph_samples__sample_id__sample_graph_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sample_id",
-            "required": true,
-            "schema": {
-              "title": "Sample Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Sample Graph",
-        "tags": [
-          "samples"
-        ]
-      }
-    },
-    "/samples/{sample_id}/sample_graph_cte": {
-      "get": {
-        "description": "CTE-based implementation (kept for reference). Prefer /sample_graph.\nReturns a NetworkX node-link graph of all samples connected (via parent/child\nrelationships) to the given sample, i.e. its full lineage subgraph.",
-        "operationId": "sample_graph_cte_samples__sample_id__sample_graph_cte_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sample_id",
-            "required": true,
-            "schema": {
-              "title": "Sample Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Sample Graph Cte",
         "tags": [
           "samples"
         ]
@@ -22914,6 +22981,363 @@
           }
         ],
         "summary": "Read Sample",
+        "tags": [
+          "samples"
+        ]
+      },
+      "patch": {
+        "description": "Partially update a sample record. Only provided fields are modified.\nNo project_id — use POST /resources/{mfid}/project.",
+        "operationId": "update_sample_samples__sample_mfid__patch",
+        "parameters": [
+          {
+            "description": "Sample MFID.",
+            "in": "path",
+            "name": "sample_mfid",
+            "required": true,
+            "schema": {
+              "description": "Sample MFID.",
+              "title": "Sample Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SampleUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SampleResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Sample",
+        "tags": [
+          "samples"
+        ]
+      }
+    },
+    "/samples/{sample_mfid}/datasets": {
+      "get": {
+        "deprecated": true,
+        "description": "Returns a list of all datasets linked to a given sample.\nDeprecated: use GET /datasets?sample_mfid={sample_id}.",
+        "operationId": "list_sample_datasets_samples__sample_mfid__datasets_get",
+        "parameters": [
+          {
+            "description": "Sample MFID.",
+            "in": "path",
+            "name": "sample_mfid",
+            "required": true,
+            "schema": {
+              "description": "Sample MFID.",
+              "title": "Sample Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_metadata",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Metadata",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Sample Datasets",
+        "tags": [
+          "samples"
+        ]
+      }
+    },
+    "/samples/{sample_mfid}/sample_graph": {
+      "get": {
+        "description": "Returns a NetworkX node-link graph of all samples connected (via parent/child\nrelationships) to the given sample. Loads all samples in the project and\nreturns the directed lineage subgraph (ancestors + descendants) of the target.",
+        "operationId": "sample_graph_samples__sample_mfid__sample_graph_get",
+        "parameters": [
+          {
+            "description": "Sample MFID.",
+            "in": "path",
+            "name": "sample_mfid",
+            "required": true,
+            "schema": {
+              "description": "Sample MFID.",
+              "title": "Sample Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Sample Graph",
+        "tags": [
+          "samples"
+        ]
+      }
+    },
+    "/samples/{sample_mfid}/sample_graph_cte": {
+      "get": {
+        "description": "CTE-based implementation (kept for reference). Prefer /sample_graph.\nReturns a NetworkX node-link graph of all samples connected (via parent/child\nrelationships) to the given sample, i.e. its full lineage subgraph.",
+        "operationId": "sample_graph_cte_samples__sample_mfid__sample_graph_cte_get",
+        "parameters": [
+          {
+            "description": "Sample MFID.",
+            "in": "path",
+            "name": "sample_mfid",
+            "required": true,
+            "schema": {
+              "description": "Sample MFID.",
+              "title": "Sample Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Sample Graph Cte",
         "tags": [
           "samples"
         ]
@@ -23110,17 +23534,19 @@
         ]
       }
     },
-    "/service_accounts/{unique_id}": {
+    "/service_accounts/{service_account_ref}": {
       "get": {
         "description": "Return administrator-visible service-account details without a secret.",
-        "operationId": "get_service_account_service_accounts__unique_id__get",
+        "operationId": "get_service_account_service_accounts__service_account_ref__get",
         "parameters": [
           {
+            "description": "Service-account MFID or username.",
             "in": "path",
-            "name": "unique_id",
+            "name": "service_account_ref",
             "required": true,
             "schema": {
-              "title": "Unique Id",
+              "description": "Service-account MFID or username.",
+              "title": "Service Account Ref",
               "type": "string"
             }
           },
@@ -23191,14 +23617,16 @@
       },
       "patch": {
         "description": "Update a service account's platform role.",
-        "operationId": "update_service_account_platform_role_service_accounts__unique_id__patch",
+        "operationId": "update_service_account_platform_role_service_accounts__service_account_ref__patch",
         "parameters": [
           {
+            "description": "Service-account MFID or username.",
             "in": "path",
-            "name": "unique_id",
+            "name": "service_account_ref",
             "required": true,
             "schema": {
-              "title": "Unique Id",
+              "description": "Service-account MFID or username.",
+              "title": "Service Account Ref",
               "type": "string"
             }
           },
@@ -23278,17 +23706,19 @@
         ]
       }
     },
-    "/service_accounts/{unique_id}/rotate_key": {
+    "/service_accounts/{service_account_ref}/rotate_key": {
       "post": {
         "description": "Generate a new API key for a service account, invalidating the previous one.\nThe new key is only returned once — store it securely.\nAdmin only.",
-        "operationId": "rotate_service_account_key_service_accounts__unique_id__rotate_key_post",
+        "operationId": "rotate_service_account_key_service_accounts__service_account_ref__rotate_key_post",
         "parameters": [
           {
+            "description": "Service-account MFID or username.",
             "in": "path",
-            "name": "unique_id",
+            "name": "service_account_ref",
             "required": true,
             "schema": {
-              "title": "Unique Id",
+              "description": "Service-account MFID or username.",
+              "title": "Service Account Ref",
               "type": "string"
             }
           },
@@ -23386,7 +23816,7 @@
     },
     "/users": {
       "get": {
-        "description": "Returns a paginated list of users. Platform administrators receive the full\ndirectory with email and platform roles; other callers receive public-safe\nprofiles scoped to users who share an access group with them.\nExact unique_id, username, and email filters return the same authorized\nrepresentation as GET /users/{user_id}. Any other query parameter is ignored\nand reported through the Deprecation response header.",
+        "description": "Returns a paginated list of users. Platform administrators receive the full\ndirectory with email and platform roles; other callers receive public-safe\nprofiles scoped to users who share an access group with them.\nExact unique_id, username, and email filters return the same authorized\nrepresentation as GET /users/{user_ref}. Any other query parameter is ignored\nand reported through the Deprecation response header.",
         "operationId": "list_users_users_get",
         "parameters": [
           {
@@ -23807,7 +24237,8 @@
     },
     "/users/by-username/{username}": {
       "get": {
-        "description": "Look up a user by username. Email is visible only to self and platform administrators.",
+        "deprecated": true,
+        "description": "Deprecated: use GET /users/{user_ref}. Email is visible only to self and platform administrators.",
         "operationId": "get_user_by_username_users_by_username__username__get",
         "parameters": [
           {
@@ -24047,7 +24478,7 @@
     },
     "/users/resolve": {
       "post": {
-        "description": "Batch-resolve users by any mix of ORCIDs, usernames, or emails.\nReturns a dict keyed by ORCID: {orcid: UserPublicRead}. No email included.\nAny authenticated user can call this. Admins needing email should use GET /users/{orcid}.",
+        "description": "Batch-resolve users by any mix of ORCIDs, usernames, or emails.\nReturns a dict keyed by ORCID: {orcid: UserPublicRead}. No email included.\nAny authenticated user can call this. Admins needing email should use GET /users/{user_ref}.",
         "operationId": "resolve_users_users_resolve_post",
         "parameters": [
           {
@@ -24247,16 +24678,18 @@
         ]
       }
     },
-    "/users/{user_id}": {
+    "/users/{user_ref}": {
       "get": {
-        "operationId": "read_user_users__user_id__get",
+        "operationId": "read_user_users__user_ref__get",
         "parameters": [
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "user_id",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "User Id",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -24292,7 +24725,7 @@
                       "$ref": "#/components/schemas/UserPublicRead"
                     }
                   ],
-                  "title": "Response Read User Users  User Id  Get"
+                  "title": "Response Read User Users  User Ref  Get"
                 }
               }
             },
@@ -24335,14 +24768,16 @@
       },
       "patch": {
         "description": "Partially update a user record. Only fields provided in the request body are modified.",
-        "operationId": "update_user_users__user_id__patch",
+        "operationId": "update_user_users__user_ref__patch",
         "parameters": [
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "user_id",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "User Id",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -24422,16 +24857,18 @@
         ]
       }
     },
-    "/users/{user_id}/access_groups": {
+    "/users/{user_ref}/access_groups": {
       "get": {
-        "operationId": "list_user_access_groups_users__user_id__access_groups_get",
+        "operationId": "list_user_access_groups_users__user_ref__access_groups_get",
         "parameters": [
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "user_id",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "User Id",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -24462,7 +24899,7 @@
                   "items": {
                     "type": "string"
                   },
-                  "title": "Response List User Access Groups Users  User Id  Access Groups Get",
+                  "title": "Response List User Access Groups Users  User Ref  Access Groups Get",
                   "type": "array"
                 }
               }
@@ -24505,18 +24942,20 @@
         ]
       }
     },
-    "/users/{user_id}/access_groups/{group_name}": {
+    "/users/{user_ref}/access_groups/{group_name}": {
       "delete": {
         "deprecated": true,
-        "description": "Remove a user from an access group. Not for project groups. Use\nDELETE /projects/{project_ref}/users/{orcid}, which keeps membership records\nin step instead of only revoking access-group standing.",
-        "operationId": "remove_user_from_access_group_users__user_id__access_groups__group_name__delete",
+        "description": "Remove a user from an access group. Not for project groups. Use\nDELETE /projects/{project_ref}/users/{user_ref}, which keeps membership records\nin step instead of only revoking access-group standing.",
+        "operationId": "remove_user_from_access_group_users__user_ref__access_groups__group_name__delete",
         "parameters": [
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "user_id",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "User Id",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -24594,15 +25033,17 @@
       },
       "post": {
         "deprecated": true,
-        "description": "Add a user to an access group. Not for project groups. Use\nPOST /projects/{project_ref}/users/{orcid}, which applies the project's own\nrole cap instead of platform-admin-only.",
-        "operationId": "add_user_to_access_group_users__user_id__access_groups__group_name__post",
+        "description": "Add a user to an access group. Not for project groups. Use\nPOST /projects/{project_ref}/users/{user_ref}, which applies the project's own\nrole cap instead of platform-admin-only.",
+        "operationId": "add_user_to_access_group_users__user_ref__access_groups__group_name__post",
         "parameters": [
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "user_id",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "User Id",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -24681,17 +25122,19 @@
         ]
       }
     },
-    "/users/{user_id}/apikey": {
+    "/users/{user_ref}/apikey": {
       "delete": {
         "description": "Revoke every API key held by the user. Platform administrators only. 204 on success.",
-        "operationId": "delete_user_apikey_users__user_id__apikey_delete",
+        "operationId": "delete_user_apikey_users__user_ref__apikey_delete",
         "parameters": [
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "user_id",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "User Id",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -24755,14 +25198,16 @@
       },
       "post": {
         "description": "Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.",
-        "operationId": "get_or_provision_user_apikey_users__user_id__apikey_post",
+        "operationId": "get_or_provision_user_apikey_users__user_ref__apikey_post",
         "parameters": [
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "user_id",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "User Id",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -24832,17 +25277,19 @@
         ]
       }
     },
-    "/users/{user_id}/apikey/verify": {
+    "/users/{user_ref}/apikey/verify": {
       "get": {
         "description": "Returns validity and expiry info for the given user's API key. Admin only.",
-        "operationId": "verify_user_apikey_users__user_id__apikey_verify_get",
+        "operationId": "verify_user_apikey_users__user_ref__apikey_verify_get",
         "parameters": [
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "user_id",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "User Id",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -24912,18 +25359,20 @@
         ]
       }
     },
-    "/users/{user_id}/datasets": {
+    "/users/{user_ref}/datasets": {
       "get": {
         "deprecated": true,
-        "description": "Deprecated compatibility route returning dataset MFIDs. Use GET /datasets?accessible_to_user={user_id}.",
-        "operationId": "read_user_datasets_users__user_id__datasets_get",
+        "description": "Deprecated compatibility route returning dataset MFIDs. Use GET /datasets?accessible_to_user={user_ref}.",
+        "operationId": "read_user_datasets_users__user_ref__datasets_get",
         "parameters": [
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "user_id",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "User Id",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -24954,7 +25403,7 @@
                   "items": {
                     "type": "string"
                   },
-                  "title": "Response Read User Datasets Users  User Id  Datasets Get",
+                  "title": "Response Read User Datasets Users  User Ref  Datasets Get",
                   "type": "array"
                 }
               }
@@ -24997,26 +25446,30 @@
         ]
       }
     },
-    "/users/{user_id}/datasets/{dataset_mfid}": {
+    "/users/{user_ref}/datasets/{dataset_mfid}": {
       "get": {
         "description": "Returns the user's effective role on one dataset. Limited to self and platform administrators.",
-        "operationId": "read_user_access_to_dataset_users__user_id__datasets__dataset_mfid__get",
+        "operationId": "read_user_access_to_dataset_users__user_ref__datasets__dataset_mfid__get",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
             "name": "dataset_mfid",
             "required": true,
             "schema": {
+              "description": "Dataset MFID.",
               "title": "Dataset Mfid",
               "type": "string"
             }
           },
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "user_id",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "User Id",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -25086,17 +25539,19 @@
         ]
       }
     },
-    "/users/{user_id}/platform_role": {
+    "/users/{user_ref}/platform_role": {
       "patch": {
         "description": "Change a human user's platform role. Human platform administrators only.",
-        "operationId": "update_user_platform_role_users__user_id__platform_role_patch",
+        "operationId": "update_user_platform_role_users__user_ref__platform_role_patch",
         "parameters": [
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "user_id",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "User Id",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -25176,17 +25631,19 @@
         ]
       }
     },
-    "/users/{user_id}/projects": {
+    "/users/{user_ref}/projects": {
       "get": {
         "description": "Returns a paginated list of the projects the user is a member of, each with\nthe user's standing role in that project's access group.\nAvailable to the user themselves and to callers with platform_role\ncontributor or admin, the same rule as accessible_to_user on GET /projects.\nMembership only: unlike GET /projects?accessible_to_user=, projects reached\nonly through explicit resource grants are not included.",
-        "operationId": "read_projects_for_user_users__user_id__projects_get",
+        "operationId": "read_projects_for_user_users__user_ref__projects_get",
         "parameters": [
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "user_id",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "User Id",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -25279,18 +25736,20 @@
         ]
       }
     },
-    "/users/{user_id}/samples": {
+    "/users/{user_ref}/samples": {
       "get": {
         "deprecated": true,
-        "description": "Deprecated compatibility route returning sample MFIDs. Use GET /samples?accessible_to_user={user_id}.",
-        "operationId": "read_user_samples_users__user_id__samples_get",
+        "description": "Deprecated compatibility route returning sample MFIDs. Use GET /samples?accessible_to_user={user_ref}.",
+        "operationId": "read_user_samples_users__user_ref__samples_get",
         "parameters": [
           {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
             "in": "path",
-            "name": "user_id",
+            "name": "user_ref",
             "required": true,
             "schema": {
-              "title": "User Id",
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
               "type": "string"
             }
           },
@@ -25321,7 +25780,7 @@
                   "items": {
                     "type": "string"
                   },
-                  "title": "Response Read User Samples Users  User Id  Samples Get",
+                  "title": "Response Read User Samples Users  User Ref  Samples Get",
                   "type": "array"
                 }
               }

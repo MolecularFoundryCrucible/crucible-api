@@ -10,6 +10,7 @@ from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
+from app.api.path_params import ResourceMfid
 from app.models.core_models import (
     Dataset,
     DeletionAuditLog,
@@ -707,9 +708,9 @@ def review_deletion_request(
 # Owner or platform-admin direct deletion with explicit acknowledgement.
 # Projects and instruments preview first and delete only with confirm=true.
 # ---------------------------------------------------------------------------
-@router.delete("/resources/{resource_id}")
+@router.delete("/resources/{mfid}")
 def hard_delete_resource_route(
-    resource_id: str,
+    resource_id: ResourceMfid,
     background_tasks: BackgroundTasks,
     auth_res: Annotated[Principal, Depends(authorize_user)],
     force: bool = Query(

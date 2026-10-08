@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Added slug and username resolution to identifier path segments. `{project_ref}` and `{instrument_ref}` accept the MFID or the case-insensitive slug, `{user_ref}` accepts an ORCID, service-account MFID, or username, and `{service_account_ref}` accepts the service-account MFID or username. Applies to every `/instruments/{instrument_ref}/...`, `/users/{user_ref}/...`, `/service_accounts/{service_account_ref}/...`, and `/projects/{project_ref}/users/{user_ref}` route. MFID and ORCID requests behave as before. Each path parameter now documents the forms it accepts in OpenAPI. See `docs/resource_identifier_routes.md`.
+- Added `instrument_id` filtering to `GET /datasets` and `GET /datasets/facets`, combinable with a matching `instrument_mfid` (422 if they disagree, 404 for an unknown slug).
+- Added `project_mfid` to the `POST /resources/{mfid}/project` body as an alternative or agreeing pair with `project_id`, and `resource_mfid`, `previous_project_mfid`, and `new_project_mfid` to its response.
+- Added `dataset_mfid` to thumbnail responses, and `dataset_mfid` and `sample_mfid` to the `POST /datasets/{dataset_mfid}/samples/{sample_mfid}` response.
+- `GET /instruments/{instrument_ref}` requested by slug now returns `Content-Location` with the MFID route.
 - Added authenticated `POST /print/barcode` for publishing MQTT barcode print jobs and waiting briefly for a print result, moving the MQTT broker credential server-side instead of per-lab-machine `.env` files. Responds 200 with a `status` of `ok`, `error`, or `timeout`, and an optional `detail` noting the requested printer's online status from `crucible-label-printer-status` when a job doesn't succeed.
 - Added `user_capabilities` to user responses, populated for singleton and exact lookups with caller-relative `can_view_private`, `can_edit_profile`, `can_manage_api_key`, and `can_change_platform_role` flags.
 - Added the platform-admin directory to broad `GET /users` listings: administrators receive `UserRead` items with email and platform roles across the full directory, while non-administrators keep the group-scoped public-safe listing.
@@ -81,6 +86,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Renamed OpenAPI path parameters to match what they accept; request URLs are unchanged: `{dsid}`, `{dataset_id}`, `{parent_dataset_id}`, and `{child_dataset_id}` to `_mfid` names; `{sample_id}`, `{parent_sample_id}`, and `{child_sample_id}` to `_mfid` names; `{resource_id}` and `{unique_id}` under `/resources` to `{mfid}`; `{entity_id}` to `{entity_mfid}`; `{instrument_mfid}` to `{instrument_ref}`; `{user_id}` and `{orcid}` under `/users` and project membership to `{user_ref}`; `{unique_id}` and `{sa_unique_id}` for service accounts to `{service_account_ref}`; and `/project_graph/{project_id}` to `{project_ref}`. Clients generated from OpenAPI see new argument names.
+- `PUT` and `DELETE /resources/{mfid}/access/projects/{project_ref}` now accept a project MFID. They previously accepted only the slug and returned 404 for an MFID.
+- `POST /access_groups/{group_name}/join` and the `group_name` filter on `GET /join_requests` now accept a project MFID, and join-request responses return the project's stored slug.
+- `POST /service_accounts` now rejects a supplied `unique_id` that is not a 26-character MFID (422), or that is already used by a user, resource, or access group (409). Previously any unused string was accepted and only other users were checked.
+- An unknown `instrument_id` in `POST /datasets` or `PUT /datasets/{dataset_mfid}/instrument` now returns 404, matching an unknown `instrument_mfid`. It previously returned 400. An unregistered `instrument_name` still returns 400.
+- `POST /resources/{mfid}/project` now stores and returns the target project's slug with its stored casing.
 - `UserRead` now exposes `platform_role` to the user themselves and to platform administrators.
 - `GET /users/{user_id}/projects` is now available to callers with `platform_role` `contributor` or `admin`, including unbound service accounts, matching the authority for `accessible_to_user`. Instrument-group membership no longer grants access, and the reduced `ProjectMinimalRead` projection for instrument-group members is removed; every authorized caller receives `ProjectWithLead`.
 - Project slugs are now matched case-insensitively in `GET /projects?project_id=`, the `GET /projects/{project_id}` compatibility alias, project filters, and project references in other routes, matching instrument slugs. Creating or renaming a project to a slug that differs from another only by case returns 409. Migration `b7e2d9c4a1f3` adds case-insensitive unique indexes on `project.project_id` and `instrument.instrument_id`; `migrations/data/20261005_audit_case_insensitive_slugs.py` audits for conflicting slugs first.
@@ -122,6 +133,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Deprecated
 
+- The `email` and `username` query parameters on `POST` and `DELETE /projects/{project_ref}/users/{user_ref}`. Put the username in the path instead.
+- Email in `{user_ref}` path segments. It still resolves, but emails in URLs are written to access logs; use the ORCID, MFID, or username.
+- `GET /users/by-username/{username}`. Use `GET /users/{user_ref}`.
+- `ThumbnailRead.dataset_id` (internal integer key) in favor of `dataset_mfid`, and `dataset_id` and `sample_id` on the dataset-sample link response in favor of `dataset_mfid` and `sample_mfid`.
 - Undeclared `GET /users` query parameters are now ignored instead of being applied as user-attribute filters. Affected responses carry `Deprecation: @1791244800` and name the ignored parameters in the server log; the parameters will be rejected with 422 at a future announced date. No `Sunset` header is sent.
 
 ### Security

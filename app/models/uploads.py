@@ -6,7 +6,7 @@ from app.models.datasets import AssociatedFileRead
 
 
 class UploadInitiate(SQLModel):
-    '''Body for POST /datasets/{dsid}/upload/initiate.'''
+    '''Body for POST /datasets/{dataset_mfid}/upload/initiate.'''
     filename: str
     size: int
     sha256_hash: Optional[str] = None
@@ -24,15 +24,15 @@ class UploadInitiateRead(SQLModel):
 
 
 class UploadComplete(SQLModel):
-    '''Body for POST /datasets/{dsid}/upload/complete.'''
+    '''Body for POST /datasets/{dataset_mfid}/upload/complete.'''
     upload_id: str
     sha256_hash: str        # computed by the client during upload
 
 
 class UploadMultipartInitiateRead(SQLModel):
-    '''Response from POST /datasets/{dsid}/upload/initiate/multipart.
+    '''Response from POST /datasets/{dataset_mfid}/upload/initiate/multipart.
     Either existing_file is set (dedup hit — no upload needed), or all other fields are set.
-    Pass upload_id to POST /datasets/{dsid}/upload/complete after the transfer finishes.
+    Pass upload_id to POST /datasets/{dataset_mfid}/upload/complete after the transfer finishes.
     '''
     upload_id: Optional[str] = None
     access_token: Optional[str] = None

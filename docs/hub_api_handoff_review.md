@@ -119,6 +119,8 @@ Existing service accounts retain their current platform role during deployment. 
 
 Platform contributors may read projects and resources, create datasets and samples for registered users, add initial metadata, register associated files, initiate and complete uploads, add keywords, create ingestion requests, and create resource links within one project. A non-admin service account is capped at contributor even when an ACL or group standing would otherwise grant a higher role. It cannot edit existing values, delete resources, manage ACLs, transfer ownership, register instruments, or use platform-administrator routes. Cross-project links and relationship-type changes retain the editor requirement on both resources.
 
+For the caller's projects with their role, `GET /projects` items carry `role`; use `member_ref={user_ref}` (optionally with `member_role`) for membership-only listings of another user, as an alternative to `GET /users/{user_id}/projects` with cursor pagination, sorting, and `include_total`. On `GET /projects`, `role` is always the caller's own role. Project and instrument collections accept `sort` and `direction`; see `docs/get_query_contract.md`.
+
 For a project picker or resource picker, pass one MFID, ORCID, username, or email through `accessible_to_user` on `GET /projects`, `GET /samples`, or `GET /datasets`. Use the same reference as `owner` when creating a sample or dataset for that person. Multiple `accessible_to_user` values retain AND semantics.
 
 The Hub source handoff remains pending explicit authorization to modify the Hub repository.

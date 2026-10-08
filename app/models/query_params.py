@@ -18,6 +18,7 @@ from app.models.resource_graph import (
     GraphRelationshipTypeFilter,
 )
 from app.utils.permissions import PlatformRole
+from app.models.access import AccessPermission
 
 
 AFFILIATION_DESCRIPTION = (
@@ -49,6 +50,24 @@ INSTRUMENT_AFFILIATION_DESCRIPTION = (
     AFFILIATION_DESCRIPTION
     + " maintainer matches instruments where the caller holds editor or admin on the instrument record."
 )
+MEMBER_REF_DESCRIPTION = (
+    "Projects where every listed user is a member. Accepts an ORCID, service-account MFID, "
+    "username, or email. Repeated values use AND semantics, like accessible_to_user. "
+    "Platform contributors and administrators may select another user; other callers only themselves."
+)
+SORT_DIRECTION_DESCRIPTION = (
+    "Direction for an explicit sort. Defaults to desc for created and updated, asc otherwise. "
+    "Supplying direction without sort returns 422."
+)
+PROJECT_SORT_DESCRIPTION = (
+    "Explicit ordering with unique_id as tie-breaker and nulls last. title is case-insensitive; "
+    "project_id uses the stored slug, matching the default order. Omit to keep the default "
+    "project_id ascending order."
+)
+INSTRUMENT_SORT_DESCRIPTION = (
+    "Explicit ordering with unique_id as tie-breaker and nulls last. instrument_id and name "
+    "(instrument_name) are case-insensitive. Omit to keep the default newest-first order."
+)
 INSTRUMENT_MEMBERS_DESCRIPTION = (
     "Include people and projects holding a role on the instrument record. "
     "Returned only to callers who hold a role on the instrument and to platform administrators."
@@ -64,6 +83,20 @@ class ResourceSort(str, Enum):
 class SortDirection(str, Enum):
     ASC = "asc"
     DESC = "desc"
+
+
+class ProjectSort(str, Enum):
+    PROJECT_ID = "project_id"
+    TITLE = "title"
+    CREATED = "created"
+    UPDATED = "updated"
+
+
+class InstrumentSort(str, Enum):
+    INSTRUMENT_ID = "instrument_id"
+    NAME = "name"
+    CREATED = "created"
+    UPDATED = "updated"
 
 
 class FacetSort(str, Enum):
@@ -597,6 +630,20 @@ class ProjectListQuery(StrictQueryModel):
         default=False,
         description="Include members for an exact project_id lookup when authorized.",
     )
+    member_ref: Optional[list[str]] = Field(
+        default=None,
+        min_length=1,
+        max_length=10,
+        description=MEMBER_REF_DESCRIPTION,
+    )
+    member_role: Optional[list[AccessPermission]] = Field(
+        default=None,
+        min_length=1,
+        max_length=5,
+        description="Restrict member_ref to these project roles. Repeated values use OR semantics. Requires member_ref.",
+    )
+    sort: Optional[ProjectSort] = Field(default=None, description=PROJECT_SORT_DESCRIPTION)
+    direction: Optional[SortDirection] = Field(default=None, description=SORT_DIRECTION_DESCRIPTION)
     limit: int = Field(default=100, ge=1, le=1000)
     cursor: Optional[str] = Field(
         default=None,
@@ -616,10 +663,22 @@ class ProjectListQuery(StrictQueryModel):
             raise ValueError("access selectors cannot contain blank values")
         return normalized
 
+    @field_validator("member_ref")
+    @classmethod
+    def validate_member_ref(cls, values):
+        if values is None:
+            return None
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("member_ref cannot contain blank values")
+        return normalized
+
     @model_validator(mode="after")
     def validate_combinations(self):
         if self.include_members and self.project_id is None:
             raise ValueError("include_members requires an exact project_id filter")
+        if self.member_role and not self.member_ref:
+            raise ValueError("member_role requires member_ref")
         return self
 
     def normalized_result_filters(self) -> dict:
@@ -627,7 +686,7 @@ class ProjectListQuery(StrictQueryModel):
             mode="json",
             exclude={
                 "cursor", "offset", "limit", "include_metadata",
-                "include_members", "include_total",
+                "include_members", "include_total", "sort", "direction",
             },
         )
 
@@ -653,6 +712,8 @@ class InstrumentListQuery(StrictQueryModel):
             "true always computes it and false always omits it."
         ),
     )
+    sort: Optional[InstrumentSort] = Field(default=None, description=INSTRUMENT_SORT_DESCRIPTION)
+    direction: Optional[SortDirection] = Field(default=None, description=SORT_DIRECTION_DESCRIPTION)
     limit: int = Field(default=100, ge=1, le=1000)
     cursor: Optional[str] = Field(
         default=None,
@@ -700,6 +761,7 @@ class InstrumentListQuery(StrictQueryModel):
             exclude={
                 "cursor", "offset", "limit", "include_metadata",
                 "include_owner", "include_members", "include_total", "owner",
+                "sort", "direction",
             },
         )
         values["owner_id"] = self.owner_id or self.__dict__.get("owner")

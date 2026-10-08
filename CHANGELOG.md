@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Added `sort=project_id|title|created|updated` to `GET /projects` and `sort=instrument_id|name|created|updated` to `GET /instruments`, with `direction=asc|desc` and signed cursors bound to the sort. Omitting `sort` keeps each collection's existing order.
+- Added the caller's `role` to `GET /projects` and project singleton items (project membership role) and to `GET /instruments` and instrument singleton items (effective role on the instrument record). Previously `role` was always null on these routes.
+- Added repeatable `member_ref` and `member_role` filters to `GET /projects` for membership-only listings. `member_ref` accepts any user reference with AND semantics and the same selection rule as `accessible_to_user`; `member_role` restricts the matched roles.
 - Added authenticated `POST /print/barcode` for publishing MQTT barcode print jobs and waiting briefly for a print result, moving the MQTT broker credential server-side instead of per-lab-machine `.env` files. Responds 200 with a `status` of `ok`, `error`, or `timeout`, and an optional `detail` noting the requested printer's online status from `crucible-label-printer-status` when a job doesn't succeed.
 - Added `user_capabilities` to user responses, populated for singleton and exact lookups with caller-relative `can_view_private`, `can_edit_profile`, `can_manage_api_key`, and `can_change_platform_role` flags.
 - Added the platform-admin directory to broad `GET /users` listings: administrators receive `UserRead` items with email and platform roles across the full directory, while non-administrators keep the group-scoped public-safe listing.

@@ -35,6 +35,8 @@ No instrument role grants access to datasets assigned to the instrument. Maintai
 
 `GET /resources/{instrument_mfid}/access` remains the full ACL listing and still requires `admin`.
 
+Instrument collection and singleton responses include `role`, the caller's own effective role on the instrument record (`owner`, `admin`, `editor`, or another granted role), or `null`. Bound service accounts receive `null` because operator binding is not a record role.
+
 ## Finding instruments a caller manages
 
 `GET /instruments` and `GET /instruments/search` accept repeatable `affiliation` values:

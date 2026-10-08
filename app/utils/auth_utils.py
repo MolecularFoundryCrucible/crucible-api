@@ -1,4 +1,4 @@
-from typing import Annotated, Optional, Sequence
+from typing import Annotated, Iterable, Optional, Sequence
 import logging
 import re
 import os
@@ -518,24 +518,32 @@ def maintainer_affiliation_filter(principal: Principal, resource_model):
     )
 
 
-def project_owner_affiliation_filter(principal: Principal, project_model):
+def project_member_filter(user_id: str, project_model, roles: Optional[Iterable[Role]] = None):
+    """Projects where `user_id` stands in the project's own access group,
+    optionally at one of `roles`."""
     from sqlalchemy import exists
     from app.models.core_models import AccessGroup, User, UserAccessGroupLink
     from app.utils.permissions import AccessGroupType
 
+    conditions = [
+        AccessGroup.group_name == project_model.unique_id,
+        AccessGroup.group_type == AccessGroupType.PROJECT.value,
+        UserAccessGroupLink.accessgroup_id == AccessGroup.id,
+        UserAccessGroupLink.user_id == User.id,
+        User.unique_id == user_id,
+    ]
+    if roles:
+        conditions.append(UserAccessGroupLink.role.in_([Role.from_db(r).db_value for r in roles]))
     return (
         exists()
-        .where(
-            AccessGroup.group_name == project_model.unique_id,
-            AccessGroup.group_type == AccessGroupType.PROJECT.value,
-            UserAccessGroupLink.accessgroup_id == AccessGroup.id,
-            UserAccessGroupLink.role == Role.OWNER.db_value,
-            UserAccessGroupLink.user_id == User.id,
-            User.unique_id == principal.user_id,
-        )
+        .where(*conditions)
         .select_from(AccessGroup, UserAccessGroupLink, User)
         .correlate(project_model)
     )
+
+
+def project_owner_affiliation_filter(principal: Principal, project_model):
+    return project_member_filter(principal.user_id, project_model, roles=(Role.OWNER,))
 
 
 def access_group_permission_filter(accessgroup_id: int, resource_model,

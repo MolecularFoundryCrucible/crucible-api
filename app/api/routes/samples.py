@@ -65,9 +65,11 @@ RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
 SAMPLE_PAGINATION = ResourcePaginationSpec(
     kind="sample",
     unique_id_column=Sample.unique_id,
-    created_sort=Resource.creation_time,
-    updated_sort=func.coalesce(Resource.modification_time, Resource.creation_time),
-    name_sort=func.lower(Sample.sample_name),
+    sorts={
+        "created": Resource.creation_time,
+        "updated": func.coalesce(Resource.modification_time, Resource.creation_time),
+        "name": func.lower(Sample.sample_name),
+    },
 )
 
 API_VERSION = os.getenv('API_VERSION', None)

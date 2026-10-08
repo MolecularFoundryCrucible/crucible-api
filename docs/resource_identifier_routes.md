@@ -14,6 +14,25 @@ This document is the API and Python client contract for stable identifiers and h
 - Project and instrument slugs are unique and matched case-insensitively. Responses return the slug with its stored casing.
 - Sample and dataset names are not unique identifiers.
 
+## Parameter naming
+
+A parameter's suffix states what it accepts, so a client can tell from the name alone what to send.
+
+| Suffix | Meaning | Examples |
+|---|---|---|
+| `x_id` | Canonical stable identity, or the slug for projects and instruments; exact match, no resolution | `owner_id`, `user_id`, `project_id`, `instrument_id` |
+| `x_mfid` | MFID, exact match | `project_mfid`, `instrument_mfid`, `dataset_mfid` |
+| `x_ref` | Any identifier form for that entity, resolved by shape | `member_ref` |
+| Bare noun | An expanded object, in responses only | `owner`, `lead`, `members` |
+
+| Entity | Query parameters and bodies |
+|---|---|
+| Project, instrument | `x_id` and `x_mfid` as an agreeing pair (422 if they disagree) |
+| User, service account | `x_ref` for lookups that accept an ORCID, service-account MFID, username, or email; `x_id` only for exact stored-value filters such as `owner_id` |
+| Dataset, sample | `x_mfid` |
+
+New parameters follow these rules. Existing parameters that accept a user reference under a bare name (`owner` and `new_owner` in request bodies, `project_lead`, `accessible_to_user`) predate them and remain supported; renaming them to `_ref` forms with deprecated aliases is planned separately.
+
 ## Canonical GET routes
 
 | Resource | Request |

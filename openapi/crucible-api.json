@@ -3355,6 +3355,17 @@
             "default": "instrument",
             "title": "Resource Type"
           },
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessPermission"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The caller's effective role on the instrument record. Null when the caller holds none; bound service accounts are operators, not record roles."
+          },
           "scientific_metadata": {
             "anyOf": [
               {
@@ -3391,6 +3402,16 @@
         ],
         "title": "InstrumentResponse",
         "type": "object"
+      },
+      "InstrumentSort": {
+        "enum": [
+          "instrument_id",
+          "name",
+          "created",
+          "updated"
+        ],
+        "title": "InstrumentSort",
+        "type": "string"
       },
       "InstrumentStatus": {
         "enum": [
@@ -5001,6 +5022,16 @@
         "title": "ProjectReferenceRead",
         "type": "object"
       },
+      "ProjectSort": {
+        "enum": [
+          "project_id",
+          "title",
+          "created",
+          "updated"
+        ],
+        "title": "ProjectSort",
+        "type": "string"
+      },
       "ProjectSyncResult": {
         "properties": {
           "orcid": {
@@ -5191,6 +5222,7 @@
                 "type": "null"
               }
             ],
+            "description": "Project membership role. On GET /projects and project singletons it is the caller's role; on GET /users/{user_id}/projects it is that user's role. Null when not a member.",
             "title": "Role"
           },
           "scientific_metadata": {
@@ -6405,7 +6437,7 @@
         "type": "object"
       },
       "ServiceAccountCreate": {
-        "description": "Request body for POST /service_accounts.\nusername is required and must be unique across all users.\nunique_id is optional — if omitted the server generates an mfid.",
+        "description": "Request body for POST /service_accounts.\nusername is required and must be unique across all users.\nunique_id is optional and must be an MFID; if omitted the server generates one.",
         "properties": {
           "unique_id": {
             "anyOf": [
@@ -16055,7 +16087,7 @@
     },
     "/instruments": {
       "get": {
-        "description": "Returns a paginated list of instruments filtered by any provided query parameters that\nmatch Instrument attributes. Matching is case-insensitive exact match.\nUse instrument_id for exact slug lookup. Other filterable fields include\nother_id, other_id_source, instrument_name, manufacturer,\nmodel, owner, location, description, instrument_type, status.\nUse owner_id for an exact owner match; owner remains as a deprecated alias.\nPass affiliation=owner to return only instruments authoritatively owned by the caller.\nPass include_total=false to omit the exact authorization-filtered count.\nDefaults to status=active; pass ?status=maintenance or ?status=decommissioned to see others.\nAn exact instrument_id lookup searches every status unless status is also provided.",
+        "description": "Returns a paginated list of instruments filtered by any provided query parameters that\nmatch Instrument attributes. Matching is case-insensitive exact match.\nUse instrument_id for exact slug lookup. Other filterable fields include\nother_id, other_id_source, instrument_name, manufacturer,\nmodel, owner, location, description, instrument_type, status.\nUse owner_id for an exact owner match; owner remains as a deprecated alias.\nPass affiliation=owner to return only instruments authoritatively owned by the caller.\nPass sort=instrument_id|name|created|updated with direction=asc|desc to change the order.\nEach item carries the caller's effective role on the instrument record in role.\nPass include_total=false to omit the exact authorization-filtered count.\nDefaults to status=active; pass ?status=maintenance or ?status=decommissioned to see others.\nAn exact instrument_id lookup searches every status unless status is also provided.",
         "operationId": "list_instruments_instruments_get",
         "parameters": [
           {
@@ -16147,6 +16179,42 @@
               ],
               "description": "Exact authorization-filtered total. Omit to preserve legacy endpoint behavior; true always computes it and false always omits it.",
               "title": "Include Total"
+            }
+          },
+          {
+            "description": "Explicit ordering with unique_id as tie-breaker and nulls last. instrument_id and name (instrument_name) are case-insensitive. Omit to keep the default newest-first order.",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/InstrumentSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Explicit ordering with unique_id as tie-breaker and nulls last. instrument_id and name (instrument_name) are case-insensitive. Omit to keep the default newest-first order.",
+              "title": "Sort"
+            }
+          },
+          {
+            "description": "Direction for an explicit sort. Defaults to desc for created and updated, asc otherwise. Supplying direction without sort returns 422.",
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SortDirection"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Direction for an explicit sort. Defaults to desc for created and updated, asc otherwise. Supplying direction without sort returns 422.",
+              "title": "Direction"
             }
           },
           {
@@ -17874,7 +17942,7 @@
     },
     "/projects": {
       "get": {
-        "description": "Returns a paginated list of projects the user is authorized to see, including the resolved project lead.\nPass affiliation=owner to return only projects authoritatively owned by the caller.\nPass include_total=false to omit the exact authorization-filtered count.",
+        "description": "Returns a paginated list of projects the user is authorized to see, including the resolved project lead\nand the caller's own membership role.\nPass affiliation=owner to return only projects authoritatively owned by the caller.\nPass member_ref (and optionally member_role) to return only projects where the given users are members.\nPass sort=project_id|title|created|updated with direction=asc|desc to change the order.\nPass include_total=false to omit the exact authorization-filtered count.",
         "operationId": "list_projects_projects_get",
         "parameters": [
           {
@@ -18002,6 +18070,88 @@
               "description": "Include members for an exact project_id lookup when authorized.",
               "title": "Include Members",
               "type": "boolean"
+            }
+          },
+          {
+            "description": "Projects where every listed user is a member. Accepts an ORCID, service-account MFID, username, or email. Repeated values use AND semantics, like accessible_to_user. Platform contributors and administrators may select another user; other callers only themselves.",
+            "in": "query",
+            "name": "member_ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Projects where every listed user is a member. Accepts an ORCID, service-account MFID, username, or email. Repeated values use AND semantics, like accessible_to_user. Platform contributors and administrators may select another user; other callers only themselves.",
+              "title": "Member Ref"
+            }
+          },
+          {
+            "description": "Restrict member_ref to these project roles. Repeated values use OR semantics. Requires member_ref.",
+            "in": "query",
+            "name": "member_role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/AccessPermission"
+                  },
+                  "maxItems": 5,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict member_ref to these project roles. Repeated values use OR semantics. Requires member_ref.",
+              "title": "Member Role"
+            }
+          },
+          {
+            "description": "Explicit ordering with unique_id as tie-breaker and nulls last. title is case-insensitive; project_id uses the stored slug, matching the default order. Omit to keep the default project_id ascending order.",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ProjectSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Explicit ordering with unique_id as tie-breaker and nulls last. title is case-insensitive; project_id uses the stored slug, matching the default order. Omit to keep the default project_id ascending order.",
+              "title": "Sort"
+            }
+          },
+          {
+            "description": "Direction for an explicit sort. Defaults to desc for created and updated, asc otherwise. Supplying direction without sort returns 422.",
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SortDirection"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Direction for an explicit sort. Defaults to desc for created and updated, asc otherwise. Supplying direction without sort returns 422.",
+              "title": "Direction"
             }
           },
           {
@@ -23455,7 +23605,7 @@
         ]
       },
       "post": {
-        "description": "Create a service account and return its API key.\nThe API key is only returned once.\nunique_id is optional; if omitted the server generates an mfid.\nAdmin only.",
+        "description": "Create a service account and return its API key.\nThe API key is only returned once.\nunique_id is optional and must be an MFID; if omitted the server generates one.\nAdmin only.",
         "operationId": "create_service_account_service_accounts_post",
         "parameters": [
           {

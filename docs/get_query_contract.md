@@ -10,6 +10,8 @@ Dataset, sample, project, and instrument collections use endpoint-specific query
 
 - `accessible_to_user` and `accessible_to_project` constrain effective access. Platform contributors and administrators may select another user or project; ordinary callers remain limited to themselves and projects where they hold standing.
 - Repeatable `affiliation=owner` selects resources authoritatively owned by the current caller.
+- Repeatable `member_ref` on `GET /projects` selects projects where every listed user holds standing in the project's access group (AND semantics, like `accessible_to_user`, with the same rule for selecting another user). It accepts an ORCID, service-account MFID, username, or email. Repeatable `member_role` restricts those memberships to the listed roles (OR semantics) and requires `member_ref`. Unlike `accessible_to_user`, `member_ref` excludes projects reached only through resource grants.
+- Project and instrument collection and singleton items include `role`: the caller's project membership role, or the caller's effective role on the instrument record. Public access is not a role. Bound instrument service accounts are operators and receive `null`.
 - `owner_id` is the preferred exact person or service-account owner filter. `owner_orcid` remains a deprecated alias on supported routes.
 - `project_id`, `project_mfid`, and `project_scope=assigned|shared|all` constrain project relationships on dataset and sample collections.
 - `creation_time_gte`, `creation_time_lte`, `modification_time_gte`, and `modification_time_lte` require timezone-aware values.
@@ -22,7 +24,7 @@ Repeated values use OR within one filter family. Different filter families compo
 
 Dataset and sample collections accept `sort=created|updated|name` and `direction=asc|desc`. Omitting `sort` preserves the legacy `unique_id DESC` order. Every order uses `unique_id` as a deterministic tie-breaker, and null primary values sort last.
 
-Projects retain `project_id ASC, unique_id ASC`. Instruments retain `creation_time DESC NULLS LAST, unique_id DESC`. The user collection accepts `sort=name|username|unique_id|email` with `direction=asc|desc` (default `asc`). All user sorts are case-insensitive, use `unique_id` as tie-breaker, and place nulls last; `name` sorts by last name then first name, and `email` is administrator only. Omitting `sort` is equivalent to `sort=name&direction=asc`.
+Project collections accept `sort=project_id|title|created|updated` and instrument collections accept `sort=instrument_id|name|created|updated`, with `direction=asc|desc`. An explicit sort without `direction` defaults to `desc` for `created` and `updated` and `asc` otherwise; `direction` without `sort` returns 422. `title`, `instrument_id`, and `name` (the instrument display name) are case-insensitive; project `project_id` sorts by the stored slug. `updated` uses `modification_time`, falling back to `creation_time`. Omitting `sort` keeps the defaults: projects `project_id ASC, unique_id ASC`, instruments `creation_time DESC NULLS LAST, unique_id DESC`. The user collection accepts `sort=name|username|unique_id|email` with `direction=asc|desc` (default `asc`). All user sorts are case-insensitive, use `unique_id` as tie-breaker, and place nulls last; `name` sorts by last name then first name, and `email` is administrator only. Omitting `sort` is equivalent to `sort=name&direction=asc`.
 
 Mutable sorts are live views. An item can move between pages if its name or modification time changes during traversal. Clients should restart pagination after a mutation or refresh.
 
@@ -106,7 +108,6 @@ Sorting and lifecycle time filters use API-owned `creation_time` and `modificati
 ## Deferred features
 
 - A unified dataset and sample collection with one global cursor
-- Additional project and instrument sort and filter parity
 - Cursor conversion for every remaining collection
 - Removal of offset pagination, legacy exact filters, or raw cursors
 - Generic query languages, arbitrary field selection, or broad expansion syntax

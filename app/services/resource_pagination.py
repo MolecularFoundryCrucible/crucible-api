@@ -4,7 +4,7 @@ from typing import Any, Mapping
 from fastapi import HTTPException
 from sqlmodel import Session, and_, or_
 
-from app.models.query_params import ResourceCollectionQuery, ResourceSort
+from app.models.query_params import SortDirection
 from app.utils.cursor_utils import (
     CursorError,
     ResourceCursor,
@@ -17,26 +17,25 @@ from app.utils.cursor_utils import (
 
 @dataclass(frozen=True)
 class ResourcePaginationSpec:
+    """How one collection orders and pages.
+
+    `sorts` maps a public sort name to its ORDER BY expression. When the caller
+    omits `sort`, `default_sort` (a key of `sorts`, or None for the legacy
+    unique_id order) and `default_direction` apply.
+    """
     kind: str
     unique_id_column: Any
-    created_sort: Any
-    updated_sort: Any
-    name_sort: Any
+    sorts: Mapping[str, Any]
+    default_sort: str | None = None
+    default_direction: str = "desc"
 
-    def primary_sort(self, sort: ResourceSort | None):
-        if sort is ResourceSort.CREATED:
-            return self.created_sort
-        if sort is ResourceSort.UPDATED:
-            return self.updated_sort
-        if sort is ResourceSort.NAME:
-            return self.name_sort
-        return None
+    def primary_sort(self, sort_name: str):
+        return self.sorts.get(sort_name)
 
 
 @dataclass(frozen=True)
 class ResourcePagination:
     spec: ResourcePaginationSpec
-    sort: ResourceSort | None
     sort_name: str
     direction: str
     limit: int
@@ -50,7 +49,7 @@ class ResourcePagination:
 
     @property
     def primary_sort(self):
-        return self.spec.primary_sort(self.sort)
+        return self.spec.primary_sort(self.sort_name)
 
     def should_include_total(self, include_total: bool | None) -> bool:
         if include_total is not None:
@@ -70,17 +69,25 @@ class ResourcePage:
     next_cursor: str | None
 
 
+def _default_direction(sort_name: str) -> str:
+    return "desc" if sort_name in ("created", "updated") else "asc"
+
+
 def prepare_resource_pagination(
     *,
-    params: ResourceCollectionQuery,
+    params,
     query_params: Mapping[str, str],
     spec: ResourcePaginationSpec,
     result_filters: dict[str, Any],
     user_id: str,
 ) -> ResourcePagination:
+    """`params` provides sort, direction, limit, cursor, and offset, and
+    optionally anchor_mfid. A None direction with an explicit sort defaults to
+    desc for dates and asc otherwise."""
+    anchor_mfid = getattr(params, "anchor_mfid", None)
     if params.sort is None and "direction" in query_params:
         raise HTTPException(status_code=422, detail="direction requires sort")
-    if params.anchor_mfid is not None and (
+    if anchor_mfid is not None and (
         params.cursor is not None or "offset" in query_params
     ):
         raise HTTPException(
@@ -88,8 +95,16 @@ def prepare_resource_pagination(
             detail="anchor_mfid cannot be combined with cursor or offset",
         )
 
-    sort_name = params.sort.value if params.sort is not None else "unique_id"
-    direction = params.direction.value if params.sort is not None else "desc"
+    if params.sort is not None:
+        sort_name = params.sort.value
+        direction = (
+            params.direction.value
+            if isinstance(params.direction, SortDirection)
+            else _default_direction(sort_name)
+        )
+    else:
+        sort_name = spec.default_sort or "unique_id"
+        direction = spec.default_direction
     filters_digest = filter_fingerprint(result_filters)
     decoded_cursor = None
     decoded_primary = None
@@ -110,12 +125,11 @@ def prepare_resource_pagination(
 
     return ResourcePagination(
         spec=spec,
-        sort=params.sort,
         sort_name=sort_name,
         direction=direction,
         limit=params.limit,
         cursor=params.cursor,
-        anchor_mfid=params.anchor_mfid,
+        anchor_mfid=anchor_mfid,
         offset=params.offset,
         filters_digest=filters_digest,
         user_id=user_id,
@@ -203,7 +217,9 @@ def execute_resource_page(
             )
 
     if primary_sort is None:
-        query = query.order_by(unique_id_column.desc())
+        query = query.order_by(
+            unique_id_column.asc() if pagination.direction == "asc" else unique_id_column.desc()
+        )
     elif pagination.direction == "asc":
         query = query.order_by(primary_sort.asc().nulls_last(), unique_id_column.asc())
     else:

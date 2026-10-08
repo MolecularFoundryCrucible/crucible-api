@@ -1,28 +1,28 @@
 import os
 from typing import Annotated, List
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
-from sqlalchemy import and_, func, join, or_
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
+from sqlalchemy import func, join, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import InstrumentRef, ServiceAccountRef
 from app.general_utils import get_utc_datetime
 from app.models.access_groups import AccessGroupMemberRead
-from app.models.core_models import AccessGroup, Instrument, Resource, ScientificMetadataBinary, User, UserAccessGroupLink
+from app.models.core_models import (
+    AccessGroup, Instrument, Resource, ResourceACL, ScientificMetadataBinary, User, UserAccessGroupLink)
 from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
     InstrumentAffiliation, InstrumentDetailQuery, InstrumentListQuery,
     InstrumentSearchQuery, InstrumentStatus)
 from app.models.users import UserPublicRead
-from app.services.resource_access import load_member_grants, may_view_members
+from app.services.resource_access import load_member_grants, may_view_members, record_role
 from app.services.resource_details import ResourceDetailOptions, load_instrument_detail
 from app.utils.auth_utils import (
     authorize_user, maintainer_affiliation_filter, owner_affiliation_filter,
     require_permission, resource_capabilities)
-from app.utils.cursor_utils import (
-    CursorError, cursor_primary_value, filter_fingerprint, new_cursor,
-    validate_cursor)
+from app.services.resource_pagination import (
+    ResourcePaginationSpec, execute_resource_page, prepare_resource_pagination)
 from app.utils.deletion_utils import deletion_blockers
 from app.utils.instrument_utils import assert_instrument_id_available, get_instrument_or_404
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
@@ -41,6 +41,19 @@ engine = get_engine()
 
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
+
+INSTRUMENT_PAGINATION = ResourcePaginationSpec(
+    kind="instrument",
+    unique_id_column=Instrument.unique_id,
+    sorts={
+        "instrument_id": func.lower(Instrument.instrument_id),
+        "name": func.lower(Instrument.instrument_name),
+        "created": Resource.creation_time,
+        "updated": func.coalesce(Resource.modification_time, Resource.creation_time),
+    },
+    default_sort="created",
+    default_direction="desc",
+)
 
 INSTRUMENT_FILTER_FIELDS = {
     "other_id",
@@ -77,7 +90,7 @@ def _instrument_capabilities(session, principal, instrument):
 
 
 def _instrument_response(instrument, resource=None, scientific_metadata=None, owner=None,
-                         capabilities=None, members=None):
+                         capabilities=None, members=None, role=None):
     return InstrumentResponse.model_validate({
         **instrument.model_dump(exclude={"owner"}),
         "owner_orcid": instrument.owner,
@@ -87,7 +100,27 @@ def _instrument_response(instrument, resource=None, scientific_metadata=None, ow
         "scientific_metadata": scientific_metadata,
         "capabilities": capabilities,
         "members": members,
+        "role": role,
     })
+
+
+def _instrument_roles(session, principal, instrument_mfids) -> dict:
+    """Caller's effective role on each instrument record, from one ACL query."""
+    group_ids = {m.id for m in principal.groups}
+    if not instrument_mfids or not group_ids:
+        return {}
+    acl_by_mfid: dict = {}
+    for mfid, group_id, permission in session.exec(
+        select(ResourceACL.mfid, ResourceACL.accessgroup_id, ResourceACL.permission)
+        .where(ResourceACL.mfid.in_(instrument_mfids), ResourceACL.accessgroup_id.in_(group_ids))
+    ).all():
+        if permission is not None:
+            acl_by_mfid.setdefault(mfid, []).append((group_id, Role.from_db(permission)))
+    return {
+        mfid: role.db_value
+        for mfid, acl_rows in acl_by_mfid.items()
+        if (role := record_role(principal, acl_rows)) is not None
+    }
 
 
 def _instrument_members(session, principal, instrument):
@@ -109,6 +142,7 @@ def _instrument_owners(session, instruments):
 def list_instruments(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     params: Annotated[InstrumentListQuery, Query()],
+    request: Request = None,
 ):
     '''
     Returns a paginated list of instruments filtered by any provided query parameters that
@@ -118,6 +152,8 @@ def list_instruments(
     model, owner, location, description, instrument_type, status.
     Use owner_id for an exact owner match; owner remains as a deprecated alias.
     Pass affiliation=owner to return only instruments authoritatively owned by the caller.
+    Pass sort=instrument_id|name|created|updated with direction=asc|desc to change the order.
+    Each item carries the caller's effective role on the instrument record in role.
     Pass include_total=false to omit the exact authorization-filtered count.
     Defaults to status=active; pass ?status=maintenance or ?status=decommissioned to see others.
     An exact instrument_id lookup searches every status unless status is also provided.
@@ -141,37 +177,15 @@ def list_instruments(
     ]
     if instrument_id is not None:
         filters.append(func.lower(Instrument.instrument_id) == instrument_id.lower().strip())
-    filters_digest = filter_fingerprint(params.normalized_result_filters())
-    decoded_cursor = None
-    decoded_primary = None
-    if cursor is not None:
-        try:
-            decoded_cursor = validate_cursor(
-                cursor,
-                kind="instrument",
-                sort="created",
-                direction="desc",
-                filters=filters_digest,
-                user_id=auth_res.user_id,
-            )
-            decoded_primary = cursor_primary_value(decoded_cursor)
-        except CursorError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    pagination = prepare_resource_pagination(
+        params=params,
+        query_params=request.query_params if request is not None else {},
+        spec=INSTRUMENT_PAGINATION,
+        result_filters=params.normalized_result_filters(),
+        user_id=auth_res.user_id,
+    )
 
     with Session(engine) as session:
-        base = select(Instrument).join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
-        base = base.where(deletion_filter_for(Instrument))
-        for f in filters:
-            base = base.where(f)
-        if params.affiliation:
-            base = base.where(_instrument_affiliation_filter(auth_res, params.affiliation))
-
-        total = (
-            session.exec(select(func.count()).select_from(base.subquery())).one()
-            if include_total is not False
-            else None
-        )
-
         if include_metadata:
             statement = (
                 select(Instrument, Resource, ScientificMetadataBinary)
@@ -181,32 +195,20 @@ def list_instruments(
         else:
             statement = select(Instrument, Resource).join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
         statement = statement.where(deletion_filter_for(Instrument))
-
         for f in filters:
             statement = statement.where(f)
         if params.affiliation:
             statement = statement.where(_instrument_affiliation_filter(auth_res, params.affiliation))
 
-        if decoded_cursor is not None:
-            id_comparison = Instrument.unique_id < decoded_cursor.unique_id
-            if decoded_cursor.is_null:
-                statement = statement.where(Resource.creation_time.is_(None), id_comparison)
-            else:
-                statement = statement.where(or_(
-                    Resource.creation_time < decoded_primary,
-                    and_(Resource.creation_time == decoded_primary, id_comparison),
-                    Resource.creation_time.is_(None),
-                ))
-        statement = statement.order_by(
-            Resource.creation_time.desc().nulls_last(),
-            Instrument.unique_id.desc(),
+        total = (
+            session.exec(select(func.count()).select_from(statement.with_only_columns(Instrument.id).subquery())).one()
+            if include_total is not False
+            else None
         )
-        if cursor is None and offset:
-            statement = statement.offset(offset)
-        rows = session.exec(statement.limit(limit + 1)).all()
-        has_more = len(rows) > limit
-        rows = rows[:limit]
+        page = execute_resource_page(session, statement, pagination)
+        rows = page.rows
         owners = _instrument_owners(session, (row[0] for row in rows)) if include_owner else {}
+        roles = _instrument_roles(session, auth_res, [row[0].unique_id for row in rows])
 
         items = []
         for row in rows:
@@ -219,25 +221,14 @@ def list_instruments(
                 owners.get(inst.owner),
                 _instrument_capabilities(session, auth_res, inst) if instrument_id is not None else None,
                 _instrument_members(session, auth_res, inst) if params.include_members else None,
+                role=roles.get(inst.unique_id),
             ))
-        next_cursor = None
-        if has_more:
-            last_instrument, last_resource = rows[-1][:2]
-            next_cursor = new_cursor(
-                kind="instrument",
-                sort="created",
-                direction="desc",
-                primary=last_resource.creation_time if last_resource else None,
-                unique_id=last_instrument.unique_id,
-                filters=filters_digest,
-                user_id=auth_res.user_id,
-            )
         return PaginatedResponse(
             total=total,
             limit=limit,
             offset=offset if cursor is None else None,
             items=items,
-            next_cursor=next_cursor,
+            next_cursor=page.next_cursor,
         )
 
 

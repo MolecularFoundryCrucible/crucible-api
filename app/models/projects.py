@@ -2,7 +2,7 @@ import warnings
 from enum import Enum
 from typing import List, Literal, Optional
 from pydantic import ConfigDict, field_validator, model_validator
-from sqlmodel import SQLModel
+from sqlmodel import Field, SQLModel
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.resource import ResourceCapabilities
 from app.models.timestamps import UtcDatetime
@@ -71,7 +71,13 @@ class ProjectWithLead(ProjectRead):
     modification_time: Optional[UtcDatetime] = None
     members: Optional[List[AccessGroupMemberRead]] = None
     deletion_request: Optional[dict] = None
-    role: Optional[str] = None
+    role: Optional[str] = Field(
+        default=None,
+        description=(
+            "Project membership role. On GET /projects and project singletons it is the caller's role; "
+            "on GET /users/{user_id}/projects it is that user's role. Null when not a member."
+        ),
+    )
 
 
 class ProjectReferenceRead(SQLModel):

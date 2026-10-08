@@ -16,17 +16,26 @@ This document is the API and Python client contract for stable identifiers, huma
 
 Because the forms never overlap, the API resolves a single value by its shape without ambiguity.
 
-## Naming
+## Parameter naming
 
-| Name | Meaning | Matching |
+A parameter's suffix states what it accepts, so a client can tell from the name alone what to send.
+
+| Suffix | Meaning | Matching | Examples |
+|---|---|---|---|
+| `x_id` | Canonical stable identity (ORCID, or MFID for a service account), or the slug for projects and instruments | Exact; slugs case-insensitive | `owner_id`, `user_id`, `project_id`, `instrument_id` |
+| `x_mfid`, `{mfid}` | The MFID | Exact | `project_mfid`, `instrument_mfid`, `dataset_mfid` |
+| `x_ref`, `{x_ref}` | Any identifier form for that entity | Resolved by shape | `member_ref`, `{user_ref}`, `{project_ref}` |
+| Bare noun | An expanded object, in responses only | n/a | `owner`, `lead`, `members` |
+
+| Entity | Paths | Query parameters and bodies |
 |---|---|---|
-| `x_mfid`, `{mfid}` | The MFID | Exact |
-| `project_id`, `instrument_id` | The human slug | Case-insensitive |
-| `user_id`, `owner_id` | The user's stable identity: ORCID, or MFID for a service account | Exact |
-| `{x_ref}` (path only) | Any identifier form for that entity, resolved by shape | See below |
-| `owner`, `new_owner`, `project_lead` (bodies) | Any user identifier form | See below |
+| Project, instrument | `{x_ref}` | `x_id` and `x_mfid` as an agreeing pair (422 if they disagree) |
+| User, service account | `{x_ref}` | `x_ref` for lookups that accept an ORCID, service-account MFID, username, or email; `x_id` only for exact stored-value filters such as `owner_id` |
+| Dataset, sample | `{x_mfid}` | `x_mfid` |
 
 The `_id` suffix never names an MFID in new fields. Legacy response fields that did so are deprecated and kept alongside their `_mfid` replacement.
+
+New parameters follow these rules. Existing parameters that accept a user reference under a bare name (`owner` and `new_owner` in request bodies, `project_lead`, `accessible_to_user`) predate them and remain supported; renaming them to `_ref` forms with deprecated aliases is planned separately.
 
 ## Path segments
 

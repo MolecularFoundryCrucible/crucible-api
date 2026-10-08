@@ -27,7 +27,7 @@ from app.utils.auth_utils import (
     require_permission,
     resource_capabilities,
 )
-from app.services.resource_access import load_member_grants, may_view_members
+from app.services.resource_access import load_member_grants, may_view_members, record_role
 from app.utils.deletion_utils import deletion_blockers
 from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
@@ -288,6 +288,7 @@ def load_instrument_detail(
         "deletion_request": deletion_request.model_dump() if deletion_request else None,
         "members": load_member_grants(session, resource_id)
         if options.include_members and may_view_members(session, principal, resource_id) else None,
+        "role": role.db_value if (role := record_role(principal, acl_rows)) is not None else None,
     })
 
 
@@ -333,6 +334,7 @@ def load_project_detail(
             can_delete=not deletion_blockers(session, "project", resource_id),
         ),
         deletion_request=deletion_request.model_dump() if deletion_request else None,
+        role=role.db_value if (role := principal.role_in(project.unique_id)) is not None else None,
     )
 
 

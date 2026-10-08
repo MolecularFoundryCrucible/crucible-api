@@ -99,9 +99,11 @@ RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
 DATASET_PAGINATION = ResourcePaginationSpec(
     kind="dataset",
     unique_id_column=Dataset.unique_id,
-    created_sort=Resource.creation_time,
-    updated_sort=func.coalesce(Resource.modification_time, Resource.creation_time),
-    name_sort=func.lower(Dataset.dataset_name),
+    sorts={
+        "created": Resource.creation_time,
+        "updated": func.coalesce(Resource.modification_time, Resource.creation_time),
+        "name": func.lower(Dataset.dataset_name),
+    },
 )
 LARGE_THUMBNAIL_LOOKUP_WARNING_SIZE = int(
     os.environ.get("THUMBNAIL_LARGE_LOOKUP_WARNING_SIZE", "1000")

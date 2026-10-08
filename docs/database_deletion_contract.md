@@ -49,7 +49,7 @@ The preview and executed response both use the `DeletionPreviewRead` model: `res
 While a project or instrument has a pending or approved deletion request:
 
 - It is hidden from `GET /projects`, `GET /projects/search`, `GET /instruments`, and `GET /instruments/search`. The singleton lookups `GET /projects/{ref}` and `GET /instruments/{mfid}` remain reachable and carry a `deletion_request` field, mirroring dataset and sample detail reads.
-- New assignments are rejected with 409: `POST /datasets` and `POST /samples` targeting the project or instrument, `PUT /datasets/{dataset_mfid}/instrument`, `POST /resources/{mfid}/project`, and `POST /projects/{project_ref}/users/{orcid}`.
+- New assignments are rejected with 409: `POST /datasets` and `POST /samples` targeting the project or instrument, `PUT /datasets/{dataset_mfid}/instrument`, `POST /resources/{mfid}/project`, and `POST /projects/{project_ref}/users/{user_ref}`.
 
 Rejecting the request removes the pending state and assignments are possible again.
 

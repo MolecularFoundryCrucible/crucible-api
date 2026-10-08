@@ -336,8 +336,8 @@ def test_deprecated_user_routes_preserve_mfid_list_contract(client, db_engine, a
 def test_user_resource_routes_are_deprecated_in_openapi(client):
     schema = client.get("/openapi.json").json()
 
-    assert schema["paths"]["/users/{user_id}/datasets"]["get"]["deprecated"] is True
-    assert schema["paths"]["/users/{user_id}/samples"]["get"]["deprecated"] is True
+    assert schema["paths"]["/users/{user_ref}/datasets"]["get"]["deprecated"] is True
+    assert schema["paths"]["/users/{user_ref}/samples"]["get"]["deprecated"] is True
 
 
 def test_dataset_access_reports_effective_role_capped_by_group_standing(client, db_engine, auth_as):

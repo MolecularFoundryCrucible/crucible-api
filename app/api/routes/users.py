@@ -10,7 +10,8 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select, col
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
-from app.general_utils import is_orcid
+from app.api.path_params import DatasetMfid, UserRef
+from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import (
     AccessGroup, ApiToken, Dataset, Project, Sample, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
 )
@@ -158,7 +159,7 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
     directory with email and platform roles; other callers receive public-safe
     profiles scoped to users who share an access group with them.
     Exact unique_id, username, and email filters return the same authorized
-    representation as GET /users/{user_id}. Any other query parameter is ignored
+    representation as GET /users/{user_ref}. Any other query parameter is ignored
     and reported through the Deprecation response header.
     '''
     query_params = set(request.query_params.keys())
@@ -326,7 +327,7 @@ def resolve_users(
     '''
     Batch-resolve users by any mix of ORCIDs, usernames, or emails.
     Returns a dict keyed by ORCID: {orcid: UserPublicRead}. No email included.
-    Any authenticated user can call this. Admins needing email should use GET /users/{orcid}.
+    Any authenticated user can call this. Admins needing email should use GET /users/{user_ref}.
     '''
     if not orcids and not usernames and not emails:
         return {}
@@ -426,10 +427,10 @@ def search_users(
     return results
 
 
-@router.get("/users/by-username/{username}", response_model=Union[UserRead, UserPublicRead])
+@router.get("/users/by-username/{username}", response_model=Union[UserRead, UserPublicRead], deprecated=True)
 def get_user_by_username(username: str, response: Response,
                          auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Look up a user by username. Email is visible only to self and platform administrators.'''
+    '''Deprecated: use GET /users/{user_ref}. Email is visible only to self and platform administrators.'''
     with Session(engine) as session:
         user = session.exec(select(User).where(User.username == username.lower())).one_or_none()
         if user is None:
@@ -441,13 +442,26 @@ def get_user_by_username(username: str, response: Response,
         return _user_public_read(auth_res, user, with_capabilities=True)
 
 
-@router.get("/users/{user_id}", response_model=Union[UserRead, UserPublicRead])
-def read_user(user_id: str, response: Response,
+def _canonical_user_id(user_ref: str) -> str:
+    """Map a username or email path segment to the user's unique_id. ORCIDs,
+    MFIDs, and unresolvable values pass through so the route's own exact
+    lookup and error handling apply unchanged."""
+    if is_orcid(user_ref) or is_valid_mfid(user_ref):
+        return user_ref
+    with Session(engine) as session:
+        try:
+            return resolve_user_by_identifier(session, user_ref).unique_id
+        except HTTPException:
+            return user_ref
+
+
+@router.get("/users/{user_ref}", response_model=Union[UserRead, UserPublicRead])
+def read_user(user_ref: UserRef, response: Response,
               auth_res: Annotated[Principal, Depends(authorize_user)]):
     with Session(engine) as session:
-        user = resolve_user_by_identifier(session, user_id)
+        user = resolve_user_by_identifier(session, user_ref)
         is_admin = auth_res.is_platform_admin
-        if user_id != user.unique_id:
+        if user_ref != user.unique_id:
             response.headers["Content-Location"] = f"/users/{user.unique_id}"
         if auth_res.user_id == user.unique_id or is_admin:
             key_status = _admin_key_status(session, auth_res, user)
@@ -466,13 +480,14 @@ def _admin_key_status(session, caller: Principal, user: User) -> Optional[Servic
     return _key_status(token)
 
 
-@router.post("/users/{user_id}/apikey", response_model=ApiKeyRead)
+@router.post("/users/{user_ref}/apikey", response_model=ApiKeyRead)
 def get_or_provision_user_apikey(
-    user_id: str,
+    user_ref: UserRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
     response: Response,
 ):
     '''Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.'''
+    user_id = _canonical_user_id(user_ref)
     require_platform_admin(auth_res)
 
     with Session(engine) as session:
@@ -484,9 +499,10 @@ def get_or_provision_user_apikey(
     return ApiKeyRead(api_key=find_or_add_api_access(user_id, engine, regenerate=False))
 
 
-@router.get("/users/{user_id}/apikey/verify", response_model=ApiKeyVerify)
-def verify_user_apikey(user_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/users/{user_ref}/apikey/verify", response_model=ApiKeyVerify)
+def verify_user_apikey(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Returns validity and expiry info for the given user's API key. Admin only.'''
+    user_id = _canonical_user_id(user_ref)
     require_platform_admin(auth_res)
 
     with Session(engine) as session:
@@ -614,9 +630,10 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
     return _user_read(auth_res, user, with_capabilities=True)
 
 
-@router.patch("/users/{user_id}", response_model=UserRead)
-def update_user(user_id: str, auth_res: Annotated[Principal, Depends(authorize_user)], user_update: UserUpdate):
+@router.patch("/users/{user_ref}", response_model=UserRead)
+def update_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)], user_update: UserUpdate):
     '''Partially update a user record. Only fields provided in the request body are modified.'''
+    user_id = _canonical_user_id(user_ref)
     require_self_or_platform_admin(auth_res, user_id)
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
@@ -636,9 +653,9 @@ def update_user(user_id: str, auth_res: Annotated[Principal, Depends(authorize_u
         return _user_read(auth_res, user, with_capabilities=True)
 
 
-@router.patch("/users/{user_id}/platform_role", response_model=UserRead)
+@router.patch("/users/{user_ref}/platform_role", response_model=UserRead)
 def update_user_platform_role(
-    user_id: str,
+    user_ref: UserRef,
     body: UserPlatformRoleUpdate,
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
@@ -651,7 +668,7 @@ def update_user_platform_role(
         )
 
     with Session(engine) as session:
-        user = resolve_user_by_identifier(session, user_id)
+        user = resolve_user_by_identifier(session, user_ref)
         if user.is_service_account:
             raise HTTPException(
                 status_code=409,
@@ -687,12 +704,13 @@ def update_user_platform_role(
         return _user_read(auth_res, user, key_status=key_status, with_capabilities=True)
 
 
-@router.delete("/users/{user_id}/apikey", status_code=204)
+@router.delete("/users/{user_ref}/apikey", status_code=204)
 def delete_user_apikey(
-    user_id: str,
+    user_ref: UserRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
     '''Revoke every API key held by the user. Platform administrators only. 204 on success.'''
+    user_id = _canonical_user_id(user_ref)
     require_platform_admin(auth_res)
 
     with Session(engine) as session:
@@ -712,13 +730,13 @@ def delete_user_apikey(
     return Response(status_code=204)
 
 
-@router.get("/users/{user_id}/datasets", response_model=List[str], deprecated=True)
-def read_user_datasets(user_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/users/{user_ref}/datasets", response_model=List[str], deprecated=True)
+def read_user_datasets(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
-    Deprecated compatibility route returning dataset MFIDs. Use GET /datasets?accessible_to_user={user_id}.
+    Deprecated compatibility route returning dataset MFIDs. Use GET /datasets?accessible_to_user={user_ref}.
     '''
     with Session(engine) as session:
-        access_principal = resolve_access_principal(session, auth_res, user_id)
+        access_principal = resolve_access_principal(session, auth_res, user_ref)
         return session.exec(
             select(Dataset.unique_id)
             .where(permission_filter(access_principal, Dataset))
@@ -727,11 +745,11 @@ def read_user_datasets(user_id: str, auth_res: Annotated[Principal, Depends(auth
         ).all()
 
 
-@router.get("/users/{user_id}/samples", response_model=List[str], deprecated=True)
-def read_user_samples(user_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Deprecated compatibility route returning sample MFIDs. Use GET /samples?accessible_to_user={user_id}.'''
+@router.get("/users/{user_ref}/samples", response_model=List[str], deprecated=True)
+def read_user_samples(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    '''Deprecated compatibility route returning sample MFIDs. Use GET /samples?accessible_to_user={user_ref}.'''
     with Session(engine) as session:
-        access_principal = resolve_access_principal(session, auth_res, user_id)
+        access_principal = resolve_access_principal(session, auth_res, user_ref)
         return session.exec(
             select(Sample.unique_id)
             .where(permission_filter(access_principal, Sample))
@@ -740,11 +758,11 @@ def read_user_samples(user_id: str, auth_res: Annotated[Principal, Depends(autho
         ).all()
 
 
-@router.get("/users/{user_id}/datasets/{dataset_mfid}", response_model=EffectiveResourceAccessRead)
-def read_user_access_to_dataset(dataset_mfid: str, user_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/users/{user_ref}/datasets/{dataset_mfid}", response_model=EffectiveResourceAccessRead)
+def read_user_access_to_dataset(dataset_mfid: DatasetMfid, user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Returns the user's effective role on one dataset. Limited to self and platform administrators.'''
     with Session(engine) as session:
-        access_principal = resolve_access_principal(session, auth_res, user_id)
+        access_principal = resolve_access_principal(session, auth_res, user_ref)
         dataset = session.exec(
             select(Dataset).where(Dataset.unique_id == dataset_mfid)
         ).one_or_none()
@@ -769,14 +787,15 @@ def read_user_access_to_dataset(dataset_mfid: str, user_id: str, auth_res: Annot
 
 
 @router.post(
-    "/users/{user_id}/access_groups/{group_name}",
+    "/users/{user_ref}/access_groups/{group_name}",
     response_model=AccessGroupRead,
     deprecated=True,
 )
-def add_user_to_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], user_id: str, group_name: str):
+def add_user_to_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], user_ref: UserRef, group_name: str):
     '''Add a user to an access group. Not for project groups. Use
-    POST /projects/{project_ref}/users/{orcid}, which applies the project's own
+    POST /projects/{project_ref}/users/{user_ref}, which applies the project's own
     role cap instead of platform-admin-only.'''
+    user_id = _canonical_user_id(user_ref)
     require_platform_admin(auth_res)
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
@@ -804,8 +823,9 @@ def add_user_to_access_group(auth_res: Annotated[Principal, Depends(authorize_us
     return ag
 
 
-@router.get("/users/{user_id}/access_groups", response_model=List[str])
-def list_user_access_groups(auth_res: Annotated[Principal, Depends(authorize_user)], user_id: str):
+@router.get("/users/{user_ref}/access_groups", response_model=List[str])
+def list_user_access_groups(auth_res: Annotated[Principal, Depends(authorize_user)], user_ref: UserRef):
+    user_id = _canonical_user_id(user_ref)
     require_self_or_platform_admin(auth_res, user_id)
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
@@ -822,13 +842,14 @@ def list_user_access_groups(auth_res: Annotated[Principal, Depends(authorize_use
 
 
 @router.delete(
-    "/users/{user_id}/access_groups/{group_name}",
+    "/users/{user_ref}/access_groups/{group_name}",
     deprecated=True,
 )
-def remove_user_from_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], user_id: str, group_name: str):
+def remove_user_from_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], user_ref: UserRef, group_name: str):
     '''Remove a user from an access group. Not for project groups. Use
-    DELETE /projects/{project_ref}/users/{orcid}, which keeps membership records
+    DELETE /projects/{project_ref}/users/{user_ref}, which keeps membership records
     in step instead of only revoking access-group standing.'''
+    user_id = _canonical_user_id(user_ref)
     require_platform_admin(auth_res)
     with Session(engine) as session:
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
@@ -862,8 +883,8 @@ def remove_user_from_access_group(auth_res: Annotated[Principal, Depends(authori
         return {"detail": f"User {user_id} removed from access group {group_name}"}
 
 
-@router.get("/users/{user_id}/projects", response_model=PaginatedResponse[ProjectWithLead])
-def read_projects_for_user(user_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
+@router.get("/users/{user_ref}/projects", response_model=PaginatedResponse[ProjectWithLead])
+def read_projects_for_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)],
                            limit: int = Query(default=100, ge=1, le=1000),
                            offset: int = Query(default=0, ge=0)):
     '''
@@ -874,6 +895,7 @@ def read_projects_for_user(user_id: str, auth_res: Annotated[Principal, Depends(
     Membership only: unlike GET /projects?accessible_to_user=, projects reached
     only through explicit resource grants are not included.
     '''
+    user_id = _canonical_user_id(user_ref)
     with Session(engine) as session:
         if auth_res.user_id != user_id and not has_global_permission(auth_res, Permission.READ):
             raise HTTPException(status_code=403, detail="Not authorized")

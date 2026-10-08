@@ -9,6 +9,7 @@ import networkx as nx
 from networkx.readwrite import json_graph
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
+from app.api.path_params import ProjectRef, UserRef
 from app.models.core_models import (
     AccessGroup, Project, Resource, Sample, ScientificMetadataBinary, User, UserProjectLink, UserAccessGroupLink,
     Dataset, DatasetSampleLink,
@@ -311,7 +312,7 @@ def search_projects(
 
 @router.get("/projects/{project_ref}", response_model=ProjectWithLead)
 def read_project(
-    project_ref: str,
+    project_ref: ProjectRef,
     response: Response,
     auth_res: Annotated[Principal, Depends(authorize_user)],
     params: Annotated[ProjectDetailQuery, Query()],
@@ -346,7 +347,7 @@ def read_project(
 
 
 @router.patch("/projects/{project_ref}", response_model=ProjectWithLead)
-def update_project(project_ref: str, auth_res: Annotated[Principal, Depends(authorize_user)], project_update: ProjectUpdate):
+def update_project(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)], project_update: ProjectUpdate):
     '''
     Partially update a project record. Only fields provided in the request body are modified.
     Accessible by admins and the project lead.
@@ -401,7 +402,7 @@ def _get_project_users(proj_id: str, session) -> List[AccessGroupMemberRead]:
     '''Public-safe project members and their role.'''
     return load_project_members(session, proj_id)
 @router.get("/projects/{project_ref}/users", response_model=PaginatedResponse[AccessGroupMemberRead])
-def read_users_on_project(project_ref: str, auth_res: Annotated[Principal, Depends(authorize_user)],
+def read_users_on_project(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)],
                           limit: int = Query(default=100, ge=1, le=1000),
                           offset: int = Query(default=0, ge=0)):
     '''
@@ -419,13 +420,19 @@ def read_users_on_project(project_ref: str, auth_res: Annotated[Principal, Depen
         return PaginatedResponse(total=len(all_users), limit=limit, offset=offset, items=all_users[offset:offset + limit])
 
 
-@router.post("/projects/{project_ref}/users/{orcid}", response_model=List[AccessGroupMemberRead])
+def _resolve_member(session, user_ref: str, email: Optional[str], username: Optional[str]) -> User:
+    if email or username:
+        return resolve_user(session, email=email, username=username)
+    return resolve_user_by_identifier(session, user_ref)
+
+
+@router.post("/projects/{project_ref}/users/{user_ref}", response_model=List[AccessGroupMemberRead])
 def add_users_to_project(
-    project_ref: str,
-    orcid: str,
+    project_ref: ProjectRef,
+    user_ref: UserRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    email: Optional[str] = None,
-    username: Optional[str] = None,
+    email: Annotated[Optional[str], Query(deprecated=True, description="Deprecated. Put the username in the path instead; email in URLs is discouraged.")] = None,
+    username: Annotated[Optional[str], Query(deprecated=True, description="Deprecated. Put the username in the path instead.")] = None,
     role: ProjectMembershipRole = ProjectMembershipRole.CONTRIBUTOR,
 ):
     '''
@@ -449,7 +456,7 @@ def add_users_to_project(
 
         require_permission(session, auth_res, proj.unique_id, Permission.EDIT)
         assert_not_pending_deletion(session, proj.unique_id)
-        user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
+        user = _resolve_member(session, user_ref, email, username)
         _validate_service_account_project_role(user, internal_role)
         ag = session.exec(
             select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)
@@ -489,10 +496,10 @@ def add_users_to_project(
         return _get_project_users(proj.project_id, session)
 
 
-@router.patch("/projects/{project_ref}/users/{orcid}", response_model=List[AccessGroupMemberRead])
+@router.patch("/projects/{project_ref}/users/{user_ref}", response_model=List[AccessGroupMemberRead])
 def set_project_user_role(
-    project_ref: str,
-    orcid: str,
+    project_ref: ProjectRef,
+    user_ref: UserRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
     role: ProjectMembershipRole,
 ):
@@ -519,7 +526,7 @@ def set_project_user_role(
 
         require_permission(session, auth_res, proj.unique_id, Permission.EDIT)
 
-        user = resolve_user(session, orcid=orcid)
+        user = resolve_user_by_identifier(session, user_ref)
         _validate_service_account_project_role(user, internal_role)
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)).one_or_none()
         if ag is None:
@@ -532,7 +539,7 @@ def set_project_user_role(
         ).one_or_none()
         if link is None:
             raise HTTPException(status_code=404,
-                                detail=f'{orcid} is not a member of {proj.project_id}')
+                                detail=f'{user.unique_id} is not a member of {proj.project_id}')
 
         current = Role.from_db(link.role) if link.role else None
         if current is Role.OWNER:
@@ -557,15 +564,19 @@ def set_project_user_role(
         return _get_project_users(proj.project_id, session)
 
 
-@router.delete("/projects/{project_ref}/users/{orcid}", response_model=List[AccessGroupMemberRead])
-def remove_user_from_project(project_ref: str, orcid: str, auth_res: Annotated[Principal, Depends(authorize_user)],
-                             email: Optional[str] = None, username: Optional[str] = None):
+@router.delete("/projects/{project_ref}/users/{user_ref}", response_model=List[AccessGroupMemberRead])
+def remove_user_from_project(
+    project_ref: ProjectRef,
+    user_ref: UserRef,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    email: Annotated[Optional[str], Query(deprecated=True, description="Deprecated. Put the username in the path instead; email in URLs is discouraged.")] = None,
+    username: Annotated[Optional[str], Query(deprecated=True, description="Deprecated. Put the username in the path instead.")] = None,
+):
     '''
     Remove a user from a project and its associated access group.
     Admins or the project lead can remove any member. A member can also
     remove themselves (leave the project), but the project lead cannot
     remove themselves — transfer leadership first.
-    Provide ?email= or ?username= to look up the user instead of the orcid path parameter.
     '''
     user_unique_id = auth_res.user_id
     is_admin = auth_res.is_platform_admin
@@ -575,18 +586,23 @@ def remove_user_from_project(project_ref: str, orcid: str, auth_res: Annotated[P
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project {project_ref} not found")
 
-        is_self = user_unique_id == orcid and not email and not username
         caller_is_owner = (
             not auth_res.is_service_account
             and is_project_owner(user_unique_id, proj.project_id, session)
         )
+        try:
+            user = _resolve_member(session, user_ref, email, username)
+        except HTTPException:
+            if not is_admin and not caller_is_owner:
+                raise HTTPException(status_code=403, detail="Only platform admins, the project lead, or the member themselves can remove a member.")
+            raise
+        is_self = user_unique_id == user.unique_id
         if not is_admin and not caller_is_owner and not is_self:
             raise HTTPException(status_code=403, detail="Only platform admins, the project lead, or the member themselves can remove a member.")
 
         if is_self and caller_is_owner:
             raise HTTPException(status_code=409, detail="The project lead cannot remove themselves. Transfer leadership first.")
 
-        user = resolve_user(session, orcid=orcid if not email and not username else None, email=email, username=username)
 
         # The access-group standing is the real membership record — see
         # is_project_member. A missing UserAccessGroupLink means the user has
@@ -618,7 +634,7 @@ def remove_user_from_project(project_ref: str, orcid: str, auth_res: Annotated[P
 
 
 @router.get("/projects/{project_ref}/sample_graph")
-def project_sample_graph(project_ref: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+def project_sample_graph(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
     with Session(engine) as session:
         proj = resolve_project_reference(project_ref, session)
@@ -652,7 +668,7 @@ def project_sample_graph(project_ref: str, auth_res: Annotated[Principal, Depend
         return json_graph.node_link_data(G)
 
 @router.get("/projects/{project_ref}/dataset_graph")
-def project_dataset_graph(project_ref: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+def project_dataset_graph(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
     with Session(engine) as session:
         proj = resolve_project_reference(project_ref, session)
@@ -685,7 +701,7 @@ def project_dataset_graph(project_ref: str, auth_res: Annotated[Principal, Depen
 
 
 @router.get("/projects/{project_ref}/entity_graph")
-def project_entity_graph(project_ref: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+def project_entity_graph(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     Returns a NetworkX node-link graph of all samples and datasets in the
     project, connected via sample lineage, dataset lineage, and sample-dataset

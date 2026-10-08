@@ -231,7 +231,11 @@ class ThumbnailUpdate(SQLModel):
 class ThumbnailRead(SQLModel):
     '''Response model for Thumbnail.'''
     id: int
-    dataset_id: int
+    dataset_id: int = Field(
+        deprecated=True,
+        description="Deprecated internal dataset key. Use dataset_mfid.",
+    )
+    dataset_mfid: str
     thumbnail_name: str
     thumbnail_b64str: str
     mime_type: Literal["image/jpeg"] = "image/jpeg"

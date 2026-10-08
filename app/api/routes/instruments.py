@@ -1,10 +1,11 @@
 import os
 from typing import Annotated, List
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, join, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
+from app.api.path_params import InstrumentRef, ServiceAccountRef
 from app.general_utils import get_utc_datetime
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.core_models import (
@@ -23,7 +24,7 @@ from app.utils.auth_utils import (
 from app.services.resource_pagination import (
     ResourcePaginationSpec, execute_resource_page, prepare_resource_pagination)
 from app.utils.deletion_utils import deletion_blockers
-from app.utils.instrument_utils import assert_instrument_id_available
+from app.utils.instrument_utils import assert_instrument_id_available, get_instrument_or_404
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.search_utils import (
     apply_trigram_search,
@@ -32,7 +33,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import add_or_update, create_standard_acls, touch_resource_modification_time, deletion_filter_for
-from app.utils.user_utils import resolve_create_owner
+from app.utils.user_utils import resolve_create_owner, resolve_service_account_reference
 from app.utils.gcs_record_utils import write_record, instrument_record
 
 router = APIRouter(tags=["instruments"])
@@ -279,17 +280,21 @@ def search_instruments(
         return PaginatedResponse(limit=params.limit, items=items)
 
 
-@router.get("/instruments/{instrument_mfid}", response_model=InstrumentResponse)
+@router.get("/instruments/{instrument_ref}", response_model=InstrumentResponse)
 def read_instrument(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    instrument_mfid: str,
+    instrument_ref: InstrumentRef,
     params: Annotated[InstrumentDetailQuery, Query()],
+    response: Response,
 ):
     '''
     Returns the instrument with the provided unique ID, or 404 if not found.
     The owner identity is resolved by default. Pass include_owner=false to omit it.
     '''
     with Session(engine) as session:
+        instrument_mfid = get_instrument_or_404(session, instrument_ref).unique_id
+        if instrument_ref != instrument_mfid:
+            response.headers["Content-Location"] = f"/instruments/{instrument_mfid}"
         return load_instrument_detail(
             session,
             auth_res,
@@ -372,10 +377,10 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
         )
 
 
-@router.patch("/instruments/{instrument_mfid}", response_model=InstrumentResponse)
+@router.patch("/instruments/{instrument_ref}", response_model=InstrumentResponse)
 def update_instrument(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    instrument_mfid: str,
+    instrument_ref: InstrumentRef,
     instrument_update: InstrumentUpdate,
     background_tasks: BackgroundTasks,
 ):
@@ -384,12 +389,8 @@ def update_instrument(
     '''
     user_unique_id = auth_res.user_id
     with Session(engine) as session:
-        instrument = session.exec(
-            select(Instrument).where(Instrument.unique_id == instrument_mfid)
-        ).one_or_none()
-
-        if instrument is None:
-            raise HTTPException(status_code=404, detail="Instrument not found")
+        instrument = get_instrument_or_404(session, instrument_ref)
+        instrument_mfid = instrument.unique_id
 
         require_permission(session, auth_res, instrument_mfid, Permission.EDIT)
 
@@ -416,10 +417,10 @@ def update_instrument(
         )
 
 
-@router.post("/instruments/{instrument_mfid}/status", response_model=InstrumentResponse)
+@router.post("/instruments/{instrument_ref}/status", response_model=InstrumentResponse)
 def set_instrument_status(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    instrument_mfid: str,
+    instrument_ref: InstrumentRef,
     status: str,
     background_tasks: BackgroundTasks,
 ):
@@ -435,11 +436,8 @@ def set_instrument_status(
             detail=f"status must be one of {list(VALID_INSTRUMENT_STATUSES)}")
 
     with Session(engine) as session:
-        instrument = session.exec(
-            select(Instrument).where(Instrument.unique_id == instrument_mfid)
-        ).one_or_none()
-        if instrument is None:
-            raise HTTPException(status_code=404, detail="Instrument not found")
+        instrument = get_instrument_or_404(session, instrument_ref)
+        instrument_mfid = instrument.unique_id
 
         # admin, not editor: retiring a machine is not a metadata edit, and the
         # instrument's own service account holds only editor.
@@ -479,26 +477,23 @@ def _get_instrument_operators(instrument_mfid: str, session) -> List[AccessGroup
     ]
 
 
-@router.get("/instruments/{instrument_mfid}/service_accounts", response_model=List[AccessGroupMemberRead])
+@router.get("/instruments/{instrument_ref}/service_accounts", response_model=List[AccessGroupMemberRead])
 def list_instrument_service_accounts(
-    instrument_mfid: str,
+    instrument_ref: InstrumentRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
     with Session(engine) as session:
-        instrument = session.exec(
-            select(Instrument).where(Instrument.unique_id == instrument_mfid)
-        ).one_or_none()
-        if instrument is None:
-            raise HTTPException(status_code=404, detail="Instrument not found")
+        instrument = get_instrument_or_404(session, instrument_ref)
+        instrument_mfid = instrument.unique_id
 
         require_permission(session, auth_res, instrument_mfid, Permission.MANAGE_ACL)
         return _get_instrument_operators(instrument_mfid, session)
 
 
-@router.post("/instruments/{instrument_mfid}/service_accounts/{sa_unique_id}", response_model=List[AccessGroupMemberRead])
+@router.post("/instruments/{instrument_ref}/service_accounts/{service_account_ref}", response_model=List[AccessGroupMemberRead])
 def add_instrument_service_account(
-    instrument_mfid: str,
-    sa_unique_id: str,
+    instrument_ref: InstrumentRef,
+    service_account_ref: ServiceAccountRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
     '''
@@ -506,16 +501,12 @@ def add_instrument_service_account(
     Requires admin on the instrument.
     '''
     with Session(engine) as session:
-        instrument = session.exec(select(Instrument).where(Instrument.unique_id == instrument_mfid)).one_or_none()
-        if instrument is None:
-            raise HTTPException(status_code=404, detail="Instrument not found")
+        instrument = get_instrument_or_404(session, instrument_ref)
+        instrument_mfid = instrument.unique_id
 
         require_permission(session, auth_res, instrument_mfid, Permission.MANAGE_ACL)
 
-        sa = session.exec(select(User).where(
-            User.unique_id == sa_unique_id, User.is_service_account == True)).one_or_none()
-        if sa is None:
-            raise HTTPException(status_code=404, detail="Service account not found")
+        sa = resolve_service_account_reference(session, service_account_ref)
 
         ag = add_or_update(session, AccessGroup,
                            AccessGroup.group_name == instrument_mfid,
@@ -536,10 +527,10 @@ def add_instrument_service_account(
         return _get_instrument_operators(instrument_mfid, session)
 
 
-@router.delete("/instruments/{instrument_mfid}/service_accounts/{sa_unique_id}", response_model=List[AccessGroupMemberRead])
+@router.delete("/instruments/{instrument_ref}/service_accounts/{service_account_ref}", response_model=List[AccessGroupMemberRead])
 def remove_instrument_service_account(
-    instrument_mfid: str,
-    sa_unique_id: str,
+    instrument_ref: InstrumentRef,
+    service_account_ref: ServiceAccountRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
     '''
@@ -547,18 +538,12 @@ def remove_instrument_service_account(
     Requires admin on the instrument.
     '''
     with Session(engine) as session:
-        instrument = session.exec(select(Instrument).where(Instrument.unique_id == instrument_mfid)).one_or_none()
-        if instrument is None:
-            raise HTTPException(status_code=404, detail="Instrument not found")
+        instrument = get_instrument_or_404(session, instrument_ref)
+        instrument_mfid = instrument.unique_id
 
         require_permission(session, auth_res, instrument_mfid, Permission.MANAGE_ACL)
 
-        sa = session.exec(select(User).where(
-            User.unique_id == sa_unique_id,
-            User.is_service_account == True,
-        )).one_or_none()
-        if sa is None:
-            raise HTTPException(status_code=404, detail="Service account not found")
+        sa = resolve_service_account_reference(session, service_account_ref)
 
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == instrument_mfid)).one_or_none()
         link = session.exec(
@@ -568,7 +553,7 @@ def remove_instrument_service_account(
         if link is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"'{sa_unique_id}' is not bound to instrument '{instrument_mfid}'")
+                detail=f"'{sa.unique_id}' is not bound to instrument '{instrument_mfid}'")
         session.delete(link)
         session.commit()
 

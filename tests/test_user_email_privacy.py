@@ -59,7 +59,7 @@ def test_exact_user_collection_and_singleton_share_authorized_representation_typ
     collection_schema = schema["paths"]["/users"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
     collection_component = schema["components"]["schemas"][collection_schema["$ref"].rsplit("/", 1)[-1]]
     collection_items = collection_component["properties"]["items"]["items"]["anyOf"]
-    singleton_schema = schema["paths"]["/users/{user_id}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    singleton_schema = schema["paths"]["/users/{user_ref}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
     expected = {
         "#/components/schemas/UserRead",
         "#/components/schemas/UserPublicRead",
@@ -111,7 +111,7 @@ def test_canonical_singleton_returns_public_profile_to_other_caller(db_engine):
     _seed_user(db_engine)
 
     result = read_user(
-        user_id=USER_ID,
+        user_ref=USER_ID,
         response=Response(),
         auth_res=Principal(user_id="0000-0002-3456-7890", platform_role=PlatformRole.NONE),
     )

@@ -20,7 +20,7 @@ def _seed(db_engine):
                 first_name="",
                 last_name="",
                 email=None,
-                unique_id="service-account-one",
+                unique_id="0tp5sa0ne00000000000000001",
                 username="directory-bot",
                 is_service_account=True,
                 platform_role=PlatformRole.CONTRIBUTOR.value,
@@ -35,8 +35,8 @@ def _seed(db_engine):
                 platform_role=PlatformRole.NONE.value,
             ),
             ApiToken(
-                access_group_id="service-account-one",
-                user_unique_id="service-account-one",
+                access_group_id="0tp5sa0ne00000000000000001",
+                user_unique_id="0tp5sa0ne00000000000000001",
                 token="secret-not-returned",
                 token_created="2026-09-16",
             ),
@@ -51,11 +51,11 @@ def test_admin_list_and_detail_expose_role_without_secret(db_engine):
     listed = list_service_accounts(admin, q="directory", limit=100, offset=0)
     assert listed.total == 1
     assert len(listed.items) == 1
-    assert listed.items[0].unique_id == "service-account-one"
+    assert listed.items[0].unique_id == "0tp5sa0ne00000000000000001"
     assert listed.items[0].platform_role is PlatformRole.CONTRIBUTOR
     assert not hasattr(listed.items[0], "api_key")
 
-    detail = get_service_account("service-account-one", admin)
+    detail = get_service_account("0tp5sa0ne00000000000000001", admin)
     assert detail.platform_role is PlatformRole.CONTRIBUTOR
     assert detail.api_key_status is not None
     assert detail.api_key_status.valid is True
@@ -71,12 +71,12 @@ def test_service_account_admin_routes_require_platform_admin(db_engine):
     assert list_error.value.status_code == 403
 
     with pytest.raises(HTTPException) as detail_error:
-        get_service_account("service-account-one", ordinary)
+        get_service_account("0tp5sa0ne00000000000000001", ordinary)
     assert detail_error.value.status_code == 403
 
     with pytest.raises(HTTPException) as update_error:
         update_service_account_platform_role(
-            "service-account-one",
+            "0tp5sa0ne00000000000000001",
             ServiceAccountPlatformRoleUpdate(platform_role="contributor"),
             ordinary,
         )
@@ -89,7 +89,7 @@ def test_human_platform_admin_updates_service_account_role(db_engine, role):
     admin = Principal(user_id="admin", platform_role=PlatformRole.ADMIN)
 
     result = update_service_account_platform_role(
-        "service-account-one",
+        "0tp5sa0ne00000000000000001",
         ServiceAccountPlatformRoleUpdate(platform_role=role),
         admin,
     )
@@ -99,7 +99,7 @@ def test_human_platform_admin_updates_service_account_role(db_engine, role):
     assert not hasattr(result, "api_key")
     with Session(db_engine) as session:
         user = session.exec(
-            select(User).where(User.unique_id == "service-account-one")
+            select(User).where(User.unique_id == "0tp5sa0ne00000000000000001")
         ).one()
         assert user.platform_role == role
 
@@ -114,7 +114,7 @@ def test_admin_service_account_cannot_update_platform_roles(db_engine):
 
     with pytest.raises(HTTPException) as exc:
         update_service_account_platform_role(
-            "service-account-one",
+            "0tp5sa0ne00000000000000001",
             ServiceAccountPlatformRoleUpdate(platform_role="admin"),
             admin_service_account,
         )

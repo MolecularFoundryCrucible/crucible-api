@@ -2,7 +2,7 @@
 # Table model lives in core_models.py
 from typing import Literal, Optional
 
-from sqlmodel import SQLModel
+from sqlmodel import Field, SQLModel
 
 from app.models.users import UserPublicRead
 
@@ -34,10 +34,20 @@ class TransferOwnershipRead(SQLModel):
 
 class ReassignProjectRequest(SQLModel):
     """Body for POST /resources/{mfid}/project."""
-    project_id: str
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Target project slug. May be combined with a matching project_mfid.",
+    )
+    project_mfid: Optional[str] = Field(
+        default=None,
+        description="Target project MFID. May be combined with a matching project_id.",
+    )
 
 
 class ReassignProjectRead(SQLModel):
     resource_id: str
+    resource_mfid: str
     previous_project_id: Optional[str] = None
+    previous_project_mfid: Optional[str] = None
     new_project_id: str
+    new_project_mfid: str

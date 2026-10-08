@@ -6,13 +6,11 @@ import uuid
 from typing import Annotated, Literal, Optional
 
 import paho.mqtt.client as mqtt
-import requests
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from app.general_utils import get_secret, is_valid_mfid
 from app.utils.auth_utils import authorize_user
-from app.utils.constants import label_printer_status_url
 from app.utils.permissions import Principal
 
 router = APIRouter(tags=["print"])
@@ -27,6 +25,14 @@ MQTT_USERNAME = "crucible-printers"
 # anything. 8s leaves margin so a success on the last retry isn't reported
 # as a timeout here.
 RESULT_WAIT_TIMEOUT = 8
+
+# A printer publishes a retained status heartbeat every 30s
+# (crucible-label-printer's heartbeat()); crucible-label-printer-status uses
+# the same 90s (3x) threshold to call a heartbeat stale.
+STATUS_STALE_THRESHOLD = 90
+# Retained status messages normally arrive immediately on subscribe; this just
+# bounds a dead/unreachable broker connection.
+STATUS_WAIT_TIMEOUT = 3
 
 _PRINTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -70,12 +76,19 @@ def _validate_mfid(mfid: str) -> str:
     return mfid
 
 
-def _publish_and_await_result(printer_id: str, mfid: str, name: str) -> tuple[dict, Optional[dict]]:
+def _publish_and_await_result(printer_id: str, mfid: str, name: str) -> tuple[dict, Optional[dict], Optional[dict]]:
     """Publish a print job and wait briefly for a matching result.
 
-    Returns (payload, result): result is the {job_id, status} message from
-    crucible-printer/<printer_id>/result if one arrived within
-    RESULT_WAIT_TIMEOUT, else None.
+    Also subscribes to the printer's retained status heartbeat on the same
+    connection, so a failure/timeout can be explained without a second
+    round trip.
+
+    Returns (payload, result, status): result is the {job_id, status}
+    message from crucible-printer/<printer_id>/result if one arrived within
+    RESULT_WAIT_TIMEOUT, else None. status is the printer's retained
+    {state, hostname, ip, ts} status message if one arrived, else None --
+    None means no such printer_id has ever published a status (or the
+    broker couldn't be reached in time), not that it's merely offline.
     """
     mqtt_password = get_secret("MQTT_PASSWORD", "mqtt-crucible-printers-passwd/versions/1")
 
@@ -83,18 +96,26 @@ def _publish_and_await_result(printer_id: str, mfid: str, name: str) -> tuple[di
     payload = {"job_id": job_id, "mfid": mfid, "name": name, "ts": time.time()}
     print_topic = f"crucible-printer/{printer_id}/print"
     result_topic = f"crucible-printer/{printer_id}/result"
+    status_topic = f"crucible-printer/{printer_id}/status"
 
     result: dict = {}
     received = threading.Event()
+    status: dict = {}
+    status_received = threading.Event()
 
     def on_message(client, userdata, msg):
         try:
             data = json.loads(msg.payload)
         except (json.JSONDecodeError, UnicodeDecodeError):
             return
-        if data.get("job_id") == job_id:
-            result.update(data)
-            received.set()
+        if msg.topic == result_topic:
+            if data.get("job_id") == job_id:
+                result.update(data)
+                received.set()
+        elif msg.topic == status_topic:
+            status.clear()
+            status.update(data)
+            status_received.set()
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"crucible-api-{job_id}")
     client.username_pw_set(MQTT_USERNAME, mqtt_password)
@@ -102,42 +123,51 @@ def _publish_and_await_result(printer_id: str, mfid: str, name: str) -> tuple[di
     client.on_message = on_message
     client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
     # Subscribe before publishing so a fast result can't arrive before we're
-    # listening for it.
+    # listening for it. Status is retained, so it's delivered immediately
+    # on subscribe, well before the result (if any) arrives.
     client.subscribe(result_topic, qos=1)
+    client.subscribe(status_topic, qos=1)
     client.loop_start()
     try:
         info = client.publish(print_topic, json.dumps(payload), qos=1)
         info.wait_for_publish(timeout=10)
         received.wait(timeout=RESULT_WAIT_TIMEOUT)
+        if not status_received.is_set():
+            status_received.wait(timeout=STATUS_WAIT_TIMEOUT)
     finally:
         client.loop_stop()
         client.disconnect()
 
-    return payload, (dict(result) if received.is_set() else None)
+    return (
+        payload,
+        dict(result) if received.is_set() else None,
+        dict(status) if status_received.is_set() else None,
+    )
 
 
-def _printer_online(printer_id: str) -> Optional[bool]:
-    """Best-effort check against crucible-label-printer-status.
+def _printer_online(status: Optional[dict]) -> bool:
+    """Interpret a printer's retained status message.
 
-    None if the service isn't configured or the check itself fails -- this
-    is a soft dependency that must never block or fail the request.
+    A missing status (never published / broker unreachable in time) and an
+    explicit "offline" last-will both mean "not online". A stale "online"
+    heartbeat (crucible-label-printer heartbeats every 30s;
+    crucible-label-printer-status uses the same 90s/3x threshold to call one
+    stale) is also not online -- the process may still be running but hasn't
+    reported in a while.
     """
-    if not label_printer_status_url:
-        return None
-    try:
-        resp = requests.get(f"{label_printer_status_url}/api/printers", timeout=3)
-        resp.raise_for_status()
-        printers = {p["printer_id"]: p for p in resp.json()}
-    except (requests.RequestException, ValueError, KeyError):
-        return None
-    printer = printers.get(printer_id)
-    if printer is None:
+    if status is None or status.get("state") != "online":
         return False
-    return printer.get("state") not in (None, "offline")
+    ts = status.get("ts")
+    if ts is None:
+        # The very first "online" status after connect is published without
+        # a ts (only the periodic heartbeat includes one); no evidence of
+        # staleness, so trust it.
+        return True
+    return (time.time() - ts) <= STATUS_STALE_THRESHOLD
 
 
-def _offline_detail(printer_id: str) -> Optional[str]:
-    if _printer_online(printer_id) is False:
+def _offline_detail(status: Optional[dict]) -> Optional[str]:
+    if not _printer_online(status):
         return "Requested printer not currently online. Check spelling and the crucible-printer dashboard."
     return None
 
@@ -153,20 +183,19 @@ def print_barcode(
     Always returns 200; `status` distinguishes confirmed success ("ok") from
     an explicit printer-reported failure ("error") or no result within the
     wait window ("timeout"). On "error"/"timeout", `detail` may note whether
-    the requested printer currently appears online, via
-    crucible-label-printer-status, to help diagnose typos vs. offline
-    hardware.
+    the requested printer's retained MQTT status currently looks online, to
+    help diagnose typos vs. offline hardware.
     '''
     printer_id = _validate_printer_id(body.printer_id)
     mfid = _validate_mfid(body.mfid)
-    payload, result = _publish_and_await_result(printer_id, mfid, body.name)
+    payload, result, printer_status = _publish_and_await_result(printer_id, mfid, body.name)
 
     if result is None:
-        status, detail = "timeout", _offline_detail(printer_id)
+        status, detail = "timeout", _offline_detail(printer_status)
     elif result.get("status") == "ok":
         status, detail = "ok", None
     else:
-        status, detail = "error", _offline_detail(printer_id)
+        status, detail = "error", _offline_detail(printer_status)
 
     response.headers["Cache-Control"] = "no-store"
     return BarcodePrintResponse(printer_id=printer_id, status=status, detail=detail, **payload)

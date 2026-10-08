@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `POST /print/barcode`'s offline-detail check now reads the printer's own retained MQTT status heartbeat directly instead of querying `crucible-label-printer-status`, removing that service as a dependency.
 - Added slug and username resolution to identifier path segments. `{project_ref}` and `{instrument_ref}` accept the MFID or the case-insensitive slug, `{user_ref}` accepts an ORCID, service-account MFID, or username, and `{service_account_ref}` accepts the service-account MFID or username. Applies to every `/instruments/{instrument_ref}/...`, `/users/{user_ref}/...`, `/service_accounts/{service_account_ref}/...`, and `/projects/{project_ref}/users/{user_ref}` route. MFID and ORCID requests behave as before. Each path parameter now documents the forms it accepts in OpenAPI. See `docs/resource_identifier_routes.md`.
 - Added `instrument_id` filtering to `GET /datasets` and `GET /datasets/facets`, combinable with a matching `instrument_mfid` (422 if they disagree, 404 for an unknown slug).
 - Added `project_mfid` to the `POST /resources/{mfid}/project` body as an alternative or agreeing pair with `project_id`, and `resource_mfid`, `previous_project_mfid`, and `new_project_mfid` to its response.

@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
-- Added a separate signed XML multipart upload API with asynchronous initiation/completion, bounded part authorization, resumable status, idempotent cancellation, and a durable processing worker. New initiation defaults to disabled; legacy upload contracts remain supported. The worker verifies SHA-256 before publication and retains generation-aware cleanup intent. Dedicated-bucket downloads and ingestion require server-recorded generations; file identity edits invalidate trusted checksum metadata. Added a resumable reference client and operator guide.
+- Added a separate signed XML multipart upload API with asynchronous initiation/completion, bounded part authorization, resumable status, idempotent cancellation, and a durable processing worker. New initiation defaults to disabled; legacy upload contracts remain supported. Publication is guarded by provider-validated CRC32C (per-part checksums and the completed object's size and CRC32C); the completion SHA-256 is recorded with a null verification timestamp and excluded from trusted deduplication, with a later background worker planned to fill verification over time. Dedicated-bucket downloads and ingestion require server-recorded generations; file identity edits invalidate trusted checksum metadata. Added a resumable reference client and operator guide.
 
 - Added nullable multipart session and file verification metadata to existing tables, a legacy completion protocol guard, and retained cleanup intent on dataset deletion. Dedicated storage configuration defaults to disabled; new multipart initiation remains disabled by default.
 

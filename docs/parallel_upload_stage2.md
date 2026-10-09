@@ -16,7 +16,7 @@ Integration update: the completed auth changes from `origin/main` at `8e4d0ef` a
 
 Apply the additive migration before deploying code that selects the new columns. Deploy the protocol guard to every instance before any new initiation is enabled. Existing client request/response schemas are unchanged. Once new sessions exist, do not roll back to binaries lacking the guard or remove the added columns; disable new initiation while retaining processing and cleanup support.
 
-Next implement the dedicated storage client, signed-part routes, bounded manifests, current permission checks, leased processing and reconciliation, generation-pinned SHA-256 verification, and download/ingestion/delete integration. No new endpoints are exposed in stage 2.
+Next implement the dedicated storage client, signed-part routes, bounded manifests, current permission checks, leased processing and reconciliation, generation-pinned publication (provider-validated CRC32C before publication; SHA-256 verification is a later background-worker addition), and download/ingestion/delete integration. No new endpoints are exposed in stage 2.
 
 ## Local validation
 

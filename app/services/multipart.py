@@ -285,15 +285,6 @@ class MultipartWorker:
             raise InvalidUpload("completed_object_missing")
         if metadata["size"] != upload.size or metadata["crc32c"] != upload.claimed_crc32c:
             raise InvalidUpload("object_integrity_mismatch")
-        self.update(upload.upload_id, storage_generation=metadata["generation"], state="verifying", attempts=0, failure_code=None)
-
-    def verify(self, upload):
-        metadata = self.storage.metadata(upload)
-        if metadata is None or metadata["generation"] != upload.storage_generation or metadata["size"] != upload.size or metadata["crc32c"] != upload.claimed_crc32c:
-            raise InvalidUpload("object_integrity_mismatch")
-        digest = self.storage.sha256(upload, upload.storage_generation, lambda: self.heartbeat(upload.upload_id))
-        if digest != upload.claimed_sha256:
-            raise InvalidUpload("sha256_mismatch")
         with Session(self.engine) as session:
             dataset = session.exec(select(Dataset).where(Dataset.unique_id == upload.dataset_mfid).with_for_update()).one_or_none()
             if dataset is None:
@@ -305,13 +296,14 @@ class MultipartWorker:
                 require_permission(session, worker_principal(session, current), current.dataset_mfid, Permission.CREATE)
             except HTTPException:
                 raise InvalidUpload("access_revoked") from None
-            if current.state != "verifying":
+            if current.state != "finalizing":
                 raise LeaseLost()
             if session.exec(select(AssociatedFile.id).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.filename == current.associated_file_name)).first() is not None:
                 raise InvalidUpload("filename_conflict")
-            file = AssociatedFile(dataset_id=dataset.id, filename=current.associated_file_name, storage_path=f"{current.bucket}/{current.gcs_path}", size=current.size, sha256_hash=digest, storage_generation=current.storage_generation, storage_crc32c=current.claimed_crc32c, sha256_verified_at=now())
+            file = AssociatedFile(dataset_id=dataset.id, filename=current.associated_file_name, storage_path=f"{current.bucket}/{current.gcs_path}", size=current.size, sha256_hash=current.claimed_sha256, storage_generation=metadata["generation"], storage_crc32c=current.claimed_crc32c)
             session.add(file)
             current.result_file_mfid = file.mfid
+            current.storage_generation = metadata["generation"]
             current.state = "completed"
             current.failure_code = None
             save(session, current)
@@ -355,8 +347,6 @@ class MultipartWorker:
                     delay = 60
                 elif upload.state == "finalizing":
                     self.finalize(upload)
-                elif upload.state == "verifying":
-                    self.verify(upload)
                     delay = 3600
         except (LeaseLost, CleanupRequested):
             delay = 0

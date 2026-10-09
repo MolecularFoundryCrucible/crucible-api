@@ -159,7 +159,6 @@ def publish(flow):
     put(flow, identifier)
     assert complete(flow, identifier).status_code == 202
     assert flow[3].run_once()
-    assert flow[3].run_once()
     return identifier
 
 
@@ -172,8 +171,7 @@ def test_upload_resume_publish_retry_download_ingestion_and_delete(flow, monkeyp
     assert complete(flow, identifier).status_code == 202
     assert complete(flow, identifier).status_code == 202
     assert worker.run_once()
-    assert row(engine, identifier).state == "verifying"
-    assert worker.run_once()
+    assert row(engine, identifier).state == "completed"
     response = complete(flow, identifier)
     assert response.status_code == 200, response.text
     file_id = response.json()["mfid"]
@@ -181,7 +179,7 @@ def test_upload_resume_publish_retry_download_ingestion_and_delete(flow, monkeyp
     assert storage.completions == 1
     with Session(engine) as session:
         file = session.exec(select(AssociatedFile)).one()
-        assert file.sha256_verified_at is not None
+        assert file.sha256_verified_at is None
         assert file.storage_generation == "7"
         assert file.sha256_hash == SHA
     import app.services.multipart_storage as adapter
@@ -262,15 +260,14 @@ def test_lost_provider_response_recovers_without_duplicate(flow, phase):
         assert storage.completions == 1
 
 
-@pytest.mark.parametrize("failure", ["sha256", "crc32c", "missing", "revoked"])
+@pytest.mark.parametrize("failure", ["crc32c", "missing", "revoked"])
 def test_failure_never_publishes_and_cleans(flow, failure):
     client, engine, storage, worker = flow
-    identifier = start(flow, digest="0" * 64 if failure == "sha256" else SHA)
+    identifier = start(flow)
     put(flow, identifier)
     if failure == "missing":
         storage.pending[row(engine, identifier).provider_upload_id]["parts"].clear()
-    assert complete(flow, identifier, digest="0" * 64 if failure == "sha256" else SHA, crc="AAAAAA==" if failure == "crc32c" else CRC).status_code == 202
-    worker.run_once()
+    assert complete(flow, identifier, crc="AAAAAA==" if failure == "crc32c" else CRC).status_code == 202
     if failure == "revoked":
         with Session(engine) as session:
             session.delete(session.exec(select(ResourceACL)).one())
@@ -284,17 +281,17 @@ def test_failure_never_publishes_and_cleans(flow, failure):
         assert session.exec(select(AssociatedFile)).all() == []
 
 
-def test_abort_during_verification_prevents_publication(flow):
+def test_abort_before_processing_prevents_publication(flow):
     client, engine, storage, worker = flow
     identifier = start(flow)
     put(flow, identifier)
     complete(flow, identifier)
-    worker.run_once()
-    storage.read_hook = lambda: client.delete(BASE + f"/{identifier}")
-    worker.run_once()
-    worker.run_once()
+    assert client.delete(BASE + f"/{identifier}").status_code == 202
+    assert worker.run_once()
     assert row(engine, identifier).state == "aborted"
     assert not storage.objects
+    with Session(engine) as session:
+        assert session.exec(select(AssociatedFile)).all() == []
 
 
 def test_expiry_and_disabled_initiation_keep_cleanup_available(flow, monkeypatch):
@@ -323,15 +320,15 @@ def test_active_lease_excludes_second_worker_and_stale_writer(flow):
         worker.update(identifier, state="failed")
 
 
-def test_verified_dedup_and_patch_invalidates_trust(flow):
+def test_claimed_hashes_do_not_short_circuit_initiation(flow):
     client, _, _, _ = flow
     identifier = publish(flow)
     file_id = complete(flow, identifier).json()["mfid"]
-    body = {"filename": "another", "size": len(DATA), "sha256_hash": SHA}
-    response = client.post(BASE + "/initiate", json=body)
-    assert response.json()["existing_file"]["mfid"] == file_id
+    response = client.post(BASE + "/initiate", json={"filename": "another", "size": len(DATA), "sha256_hash": SHA})
+    assert response.status_code == 202
+    assert response.json()["existing_file"] is None
     assert client.patch(f"/files/{file_id}", json={"sha256_hash": "0" * 64}).status_code == 200
-    response = client.post(BASE + "/initiate", json=body | {"sha256_hash": "0" * 64})
+    response = client.post(BASE + "/initiate", json={"filename": "third", "size": len(DATA), "sha256_hash": "0" * 64})
     assert response.status_code == 202
     assert response.json()["existing_file"] is None
 
@@ -399,7 +396,6 @@ def test_database_failure_after_provider_completion_retries_one_publication(flow
     identifier = start(flow)
     put(flow, identifier)
     complete(flow, identifier)
-    worker.run_once()
     commit = Session.commit
     failed = False
 
@@ -412,7 +408,7 @@ def test_database_failure_after_provider_completion_retries_one_publication(flow
 
     monkeypatch.setattr(Session, "commit", fail_publication_once)
     worker.run_once()
-    assert row(engine, identifier).state == "verifying"
+    assert row(engine, identifier).state == "finalizing"
     change(engine, identifier, next_attempt_at=service.now())
     worker.run_once()
     assert row(engine, identifier).state == "completed"
@@ -584,6 +580,7 @@ def test_cleanup_protection_requires_server_recorded_generation(flow, generation
     identifier = start(flow)
     put(flow, identifier)
     complete(flow, identifier)
+    storage.fail_after_complete = True
     worker.run_once()
     upload = row(engine, identifier)
     with Session(engine) as session:
@@ -591,7 +588,7 @@ def test_cleanup_protection_requires_server_recorded_generation(flow, generation
         session.add(AssociatedFile(dataset_id=dataset.id, filename="reference", storage_path=f"{upload.bucket}/{upload.gcs_path}", size=len(DATA), sha256_hash=SHA, storage_generation=generation))
         session.commit()
     assert client.delete(BASE + f"/{identifier}").status_code == 202
-    worker.run_once()
+    assert worker.run_once()
     if generation is None:
         assert not storage.objects
         assert row(engine, identifier).cleaned_at is not None

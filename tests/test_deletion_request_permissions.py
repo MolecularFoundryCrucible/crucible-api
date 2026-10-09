@@ -81,6 +81,7 @@ def test_deletion_request_accepts_contributor_or_higher(
     )
 
     assert response.resource_id == "dataset-to-delete"
+    assert response.resource_mfid == "dataset-to-delete"
     assert response.status == "pending"
     assert response.capabilities.can_review is (permission >= Role.ADMIN)
 

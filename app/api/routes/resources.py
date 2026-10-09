@@ -635,6 +635,7 @@ def create_deletion_request(
             )
         return DeletionRequestRead(
             **deletion_req.model_dump(),
+            resource_mfid=deletion_req.resource_id,
             resource_type=deletion_req.resource.resource_type if deletion_req.resource else None,
             project_id=project_id,
             project_mfid=project_mfid,
@@ -1098,6 +1099,7 @@ def transfer_ownership(mfid: str, body: TransferOwnershipRequest,
             previous_owner = _current_owner(session, resource, mfid)
             return TransferOwnershipRead(
                 resource_id=mfid,
+                resource_mfid=mfid,
                 previous_owner=UserPublicRead.model_validate(previous_owner) if previous_owner else None,
                 new_owner=UserPublicRead.model_validate(new_owner),
             )
@@ -1112,6 +1114,7 @@ def transfer_ownership(mfid: str, body: TransferOwnershipRequest,
 
         return TransferOwnershipRead(
             resource_id=mfid,
+            resource_mfid=mfid,
             previous_owner=UserPublicRead.model_validate(previous_owner) if previous_owner else None,
             new_owner=UserPublicRead.model_validate(new_owner),
         )

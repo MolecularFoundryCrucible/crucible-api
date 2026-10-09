@@ -27,7 +27,7 @@ Platform administrators receive the full directory on broad listings: `UserRead`
 
 The collection accepts a strict query model: `sort=name|username|unique_id|email` with `direction=asc|desc` (case-insensitive; name sorts by last name then first name; email is administrator only; omitting `sort` keeps the last name, first name order), `unique_id` as tie-breaker, nulls last, `include_total` (omission preserves the legacy behavior that always returns a total), signed opaque `cursor` pagination alongside `offset` with cursor precedence, `next_cursor` on responses, exact `unique_id`/`username`/`email` filters, `first_name`/`last_name` (permissive substring or exact), `q` (case-insensitive substring over first name, last name, username, unique ID, and for administrators email) with optional repeatable `search_fields` to choose the searched fields, `is_service_account`, and repeatable administrator-only `platform_role` (non-admin callers receive 403).
 
-Any other query parameter is ignored without filtering, and the response carries `Deprecation: @1791244800`. The parameters will be rejected with 422 at a future announced date. `?projects=x` and `?id=1` no longer filter or fail.
+Any other query parameter is ignored without filtering, and the response carries `Deprecation: @1799280000` (2027-01-07). The parameters will be rejected with 422 at that announced date. `?projects=x` and `?id=1` no longer filter or fail.
 
 `user_capabilities` is populated on singleton and exact lookups only and remains null on broad listings, `/users/search`, and `/users/resolve`:
 
@@ -345,7 +345,7 @@ Now requires **admin** on the parent dataset (`Permission.DELETE`), not editor (
 
 ### Ingestion requests and project dataset graphs
 
-`GET /ingestion_requests`, `GET /ingestion_requests/{reqid}`, and `GET /projects/{project_ref}/dataset_graph` now use the same ACL permission evaluator as the corresponding dataset routes. Viewing remains available to viewer-or-above callers. `POST /files/{file_id}/ingest` and its deprecated dataset-scoped alias now require contributor-or-above on the parent dataset; viewers previously passed an unintended read-only check and now receive 403.
+`GET /ingestion_requests`, `GET /ingestion_requests/{request_id}`, and `GET /projects/{project_ref}/dataset_graph` now use the same ACL permission evaluator as the corresponding dataset routes. Viewing remains available to viewer-or-above callers. `POST /files/{file_id}/ingest` and its deprecated dataset-scoped alias now require contributor-or-above on the parent dataset; viewers previously passed an unintended read-only check and now receive 403.
 
 These read routes no longer authorize from the legacy `Dataset.public` Boolean. Public visibility requires a viewer grant to the public access group, as it does elsewhere. Platform administrators can read private ingestion requests and see private datasets in project graphs without belonging to their access groups.
 

@@ -35,7 +35,7 @@ A parameter's suffix states what it accepts, so a client can tell from the name 
 
 The `_id` suffix never names an MFID in new fields. Legacy response fields that did so are deprecated and kept alongside their `_mfid` replacement.
 
-New parameters follow these rules. Existing parameters that accept a user reference under a bare name (`owner` and `new_owner` in request bodies, `project_lead`, `accessible_to_user`) predate them and remain supported; renaming them to `_ref` forms with deprecated aliases is planned separately.
+New parameters follow these rules. Existing parameters that accept a user reference under a bare name (`owner` and `new_owner` in request bodies, `project_lead`, `accessible_to_user`) predate them and remain supported; renaming them to `_ref` forms with deprecated aliases is planned separately. The same applies to the `POST /users/resolve` body field `orcids`: it is matched against `unique_id`, so it accepts ORCIDs and service-account MFIDs despite the name, the response is keyed by `unique_id`, and clients keep sending `orcids` until the wire field is renamed with the deferred body-field renames.
 
 ## Path segments
 

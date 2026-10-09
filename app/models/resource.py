@@ -2,7 +2,8 @@
 # Table model lives in core_models.py
 from typing import Literal, Optional
 
-from sqlmodel import Field, SQLModel
+from pydantic import Field
+from sqlmodel import SQLModel
 
 from app.models.users import UserPublicRead
 
@@ -27,7 +28,8 @@ class TransferOwnershipRequest(SQLModel):
 
 
 class TransferOwnershipRead(SQLModel):
-    resource_id: str
+    resource_id: str = Field(deprecated=True, description="Deprecated. Use resource_mfid.")
+    resource_mfid: str
     previous_owner: Optional[UserPublicRead] = None
     new_owner: UserPublicRead
 

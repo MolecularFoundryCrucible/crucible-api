@@ -464,6 +464,7 @@ class TestPendingState:
         assert pending_detail.status_code == 200
         assert pending_detail.json()["deletion_request"]["status"] == "pending"
         assert pending_detail.json()["deletion_request"]["resource_id"] == project_mfid
+        assert pending_detail.json()["deletion_request"]["resource_mfid"] == project_mfid
 
         from sqlalchemy import func, or_
 

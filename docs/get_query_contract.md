@@ -83,7 +83,7 @@ Calendar facets remain deferred. The producer-supplied dataset `timestamp` is un
 
 Declared filters are `unique_id`, `username`, `email`, `first_name`, `last_name`, `q`, `search_fields`, `permissive`, `is_service_account`, and `platform_role`. `first_name` and `last_name` are case-insensitive substrings with `permissive=true` (the default) and exact otherwise. `q` is a case-insensitive substring search. By default it matches first name, last name, username, unique ID, and, for platform administrators only, email. Repeatable `search_fields` (`first_name`, `last_name`, `username`, `unique_id`, `email`) restricts `q` to the named fields with OR semantics and requires `q`; naming `email` is administrator only and other callers receive 403. `platform_role` is repeatable and administrator only; other callers receive 403. `include_total`, `limit`, `cursor`, `offset`, `sort`, and `direction` follow the shared collection behavior above.
 
-Any other query parameter is ignored without filtering. The response carries a `Deprecation: @1791244800` header and the ignored parameters are logged. The parameters will be rejected with 422 at a future announced date. No `Sunset` header is sent.
+Any other query parameter is ignored without filtering. The response carries a `Deprecation: @1799280000` (2027-01-07) header and the ignored parameters are logged. The parameters will be rejected with 422 at that announced date. No `Sunset` header is sent.
 
 `user_capabilities` is populated for singleton and exact lookups only and remains null on broad listings, `/users/search`, and `/users/resolve`.
 

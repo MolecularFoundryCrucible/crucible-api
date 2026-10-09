@@ -258,7 +258,7 @@ Sample response models now expose the same nullable `ProjectReferenceRead` as `p
 
 `GET /users` supports the shared collection contract: `sort=name|username|unique_id|email` with `direction=asc|desc` (omitting `sort` keeps the last name, first name order; `email` is administrator only), `include_total`, signed opaque `cursor` pagination alongside `offset`, and exact filters `unique_id`, `username`, and `email` plus `first_name`, `last_name` (permissive substring or exact), `q` with optional repeatable `search_fields`, `is_service_account`, and administrator-only repeatable `platform_role`. Searching email through `q` or `search_fields` is administrator only. A supplied cursor takes precedence over `offset`, and changing filters, sort, direction, or caller while following a cursor returns 422.
 
-Any undeclared query parameter is now ignored without filtering. The response carries a `Deprecation: @1791244800` header, and the parameters will be rejected with 422 at a future announced date. `?projects=x` and `?id=1` no longer filter or fail.
+Any undeclared query parameter is now ignored without filtering. The response carries a `Deprecation: @1799280000` (2027-01-07) header, and the parameters will be rejected with 422 at that announced date. `?projects=x` and `?id=1` no longer filter or fail.
 
 `user_capabilities` is populated on singleton and exact lookups:
 

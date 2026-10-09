@@ -2262,7 +2262,13 @@
             "type": "array"
           },
           "resource_id": {
+            "deprecated": true,
+            "description": "Deprecated. Use resource_mfid.",
             "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_mfid": {
+            "title": "Resource Mfid",
             "type": "string"
           },
           "resource_type": {
@@ -2277,6 +2283,7 @@
         },
         "required": [
           "resource_id",
+          "resource_mfid",
           "resource_type",
           "deleted"
         ],
@@ -2377,7 +2384,13 @@
             "type": "string"
           },
           "resource_id": {
+            "deprecated": true,
+            "description": "Deprecated. Use resource_mfid.",
             "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_mfid": {
+            "title": "Resource Mfid",
             "type": "string"
           },
           "resource_name": {
@@ -2452,6 +2465,7 @@
         "required": [
           "id",
           "resource_id",
+          "resource_mfid",
           "requester_id",
           "requester",
           "status",
@@ -6677,12 +6691,19 @@
             ]
           },
           "resource_id": {
+            "deprecated": true,
+            "description": "Deprecated. Use resource_mfid.",
             "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_mfid": {
+            "title": "Resource Mfid",
             "type": "string"
           }
         },
         "required": [
           "resource_id",
+          "resource_mfid",
           "new_owner"
         ],
         "title": "TransferOwnershipRead",
@@ -15551,7 +15572,7 @@
     },
     "/files/{file_id}/ingest": {
       "post": {
-        "description": "Creates an ingestion request for a file, scoped to the specified dataset.\nReturns error if the dataset associated with the file is not found, or the user does not have access.\nRequires write access to the dataset.\n\nOnly 'requested' (dispatch to the ingestion queue) and 'not_requested' (record\nthe file without dispatching) may be set here. Terminal states are written\nafterwards via PATCH /ingestion_requests/{reqid}.",
+        "description": "Creates an ingestion request for a file, scoped to the specified dataset.\nReturns error if the dataset associated with the file is not found, or the user does not have access.\nRequires write access to the dataset.\n\nOnly 'requested' (dispatch to the ingestion queue) and 'not_requested' (record\nthe file without dispatching) may be set here. Terminal states are written\nafterwards via PATCH /ingestion_requests/{request_id}.",
         "operationId": "create_file_ingestion_request_files__file_id__ingest_post",
         "parameters": [
           {
@@ -15762,10 +15783,44 @@
     },
     "/ingestion_requests": {
       "get": {
-        "description": "List ingestion requests for datasets the caller is authorized to view.",
+        "description": "List ingestion requests for datasets the caller is authorized to view.\n\nfile_mfid and dataset_mfid are the preferred filters; both accept MFIDs.\nfile_id and dataset_id remain as deprecated aliases accepting the same\nvalues. Passing a file filter together with a dataset filter selects by file.",
         "operationId": "list_ingestion_requests_ingestion_requests_get",
         "parameters": [
           {
+            "in": "query",
+            "name": "file_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "File Mfid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dataset_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dataset Mfid"
+            }
+          },
+          {
+            "deprecated": true,
+            "description": "Deprecated. Use file_mfid.",
             "in": "query",
             "name": "file_id",
             "required": false,
@@ -15778,10 +15833,14 @@
                   "type": "null"
                 }
               ],
+              "deprecated": true,
+              "description": "Deprecated. Use file_mfid.",
               "title": "File Id"
             }
           },
           {
+            "deprecated": true,
+            "description": "Deprecated. Use dataset_mfid.",
             "in": "query",
             "name": "dataset_id",
             "required": false,
@@ -15794,6 +15853,8 @@
                   "type": "null"
                 }
               ],
+              "deprecated": true,
+              "description": "Deprecated. Use dataset_mfid.",
               "title": "Dataset Id"
             }
           },
@@ -15886,17 +15947,17 @@
         ]
       }
     },
-    "/ingestion_requests/{reqid}": {
+    "/ingestion_requests/{request_id}": {
       "get": {
         "description": "Returns a specific ingestion request. Requires read access to the parent dataset.",
-        "operationId": "get_ingestion_request_ingestion_requests__reqid__get",
+        "operationId": "get_ingestion_request_ingestion_requests__request_id__get",
         "parameters": [
           {
             "in": "path",
-            "name": "reqid",
+            "name": "request_id",
             "required": true,
             "schema": {
-              "title": "Reqid",
+              "title": "Request Id",
               "type": "integer"
             }
           },
@@ -15967,14 +16028,14 @@
       },
       "patch": {
         "description": "Updates an ingestion request. Requires edit access to the parent dataset.",
-        "operationId": "patch_ingestion_request_ingestion_requests__reqid__patch",
+        "operationId": "patch_ingestion_request_ingestion_requests__request_id__patch",
         "parameters": [
           {
             "in": "path",
-            "name": "reqid",
+            "name": "request_id",
             "required": true,
             "schema": {
-              "title": "Reqid",
+              "title": "Request Id",
               "type": "integer"
             }
           },
@@ -17781,7 +17842,7 @@
     },
     "/print/barcode": {
       "post": {
-        "description": "Publishes a barcode print job and waits briefly for a print result.\n\nAlways returns 200; `status` distinguishes confirmed success (\"ok\") from\nan explicit printer-reported failure (\"error\") or no result within the\nwait window (\"timeout\"). On \"error\"/\"timeout\", `detail` may note whether\nthe requested printer currently appears online, via\ncrucible-label-printer-status, to help diagnose typos vs. offline\nhardware.",
+        "description": "Publishes a barcode print job and waits briefly for a print result.\n\nAlways returns 200; `status` distinguishes confirmed success (\"ok\") from\nan explicit printer-reported failure (\"error\") or no result within the\nwait window (\"timeout\"). On \"error\"/\"timeout\", `detail` may note whether\nthe requested printer's retained MQTT status currently looks online, to\nhelp diagnose typos vs. offline hardware.",
         "operationId": "print_barcode_print_barcode_post",
         "parameters": [
           {
@@ -24628,7 +24689,7 @@
     },
     "/users/resolve": {
       "post": {
-        "description": "Batch-resolve users by any mix of ORCIDs, usernames, or emails.\nReturns a dict keyed by ORCID: {orcid: UserPublicRead}. No email included.\nAny authenticated user can call this. Admins needing email should use GET /users/{user_ref}.",
+        "description": "Batch-resolve users by any mix of ORCIDs, usernames, or emails.\n`orcids` is matched against unique_id, so it also accepts service-account\nMFIDs; the response is keyed by unique_id. No email included.\nAny authenticated user can call this. Admins needing email should use GET /users/{user_ref}.",
         "operationId": "resolve_users_users_resolve_post",
         "parameters": [
           {

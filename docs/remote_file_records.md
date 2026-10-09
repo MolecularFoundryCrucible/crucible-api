@@ -44,3 +44,9 @@ This wasn't done as part of the remote-file-records work because:
 - It trades a small, likely-unmeasurable amount of index efficiency (26-char mfid string keys vs. 4-byte int keys) for genericity — the same tradeoff `ResourceACL` and friends already made, and one that hasn't caused a measurable problem there.
 
 Revisit this if/when a non-dataset resource actually needs to attach files.
+
+## Future: file-identifier naming
+
+The `/files/{file_id}` path segments and file response fields (`AssociatedFileRead.mfid`, `dataset_id`) predate the `_mfid` naming convention: `file_id` values hold MFIDs, and `AssociatedFileRead` exposes the canonical MFID under `mfid` rather than `file_mfid`. Renaming the path segments and adding a `file_mfid` response field is deferred.
+
+`GET /ingestion_requests` already accepts `file_mfid` (with `file_id` as a deprecated alias), so dataset-side queries can use the convention now. The route rename should land in the same coordinated step that renames the client's `file_id` parameters, so clients do not carry a mixed naming surface. Coordinate with the file-attachment generalization above, which also touches these route shapes.

@@ -141,6 +141,7 @@ def _to_read(
 ) -> DeletionRequestRead:
     return DeletionRequestRead(
         **req.model_dump(),
+        resource_mfid=req.resource_id,
         resource_type=resource_type,
         project_id=project_id,
         project_mfid=project_mfid,
@@ -639,6 +640,7 @@ def review_deletion_request(
         snapshot = DeletionRequestRead(
             id=req.id,
             resource_id=req.resource_id,
+            resource_mfid=req.resource_id,
             resource_type=resource_type,
             resource_name=resource_name,
             project_id=project_id,

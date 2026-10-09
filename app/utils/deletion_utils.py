@@ -132,6 +132,7 @@ def deletion_preview_read(
 
     return DeletionPreviewRead(
         resource_id=resource_id,
+        resource_mfid=resource_id,
         resource_type=DeletableResourceType(resource_type),
         deleted=deleted,
         blocking=summary.get("blocking", {}),

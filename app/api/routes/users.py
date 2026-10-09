@@ -51,7 +51,7 @@ from app.models.users import (
 router = APIRouter(tags=["users"])
 engine = get_engine()
 
-USER_COLLECTION_DEPRECATION = "@1791244800"
+USER_COLLECTION_DEPRECATION = "@1799280000"
 USER_LIST_DECLARED_PARAMS = {
     "unique_id", "username", "email", "permissive", "is_service_account",
     "first_name", "last_name", "q", "search_fields", "platform_role", "include_total",
@@ -326,7 +326,8 @@ def resolve_users(
 ):
     '''
     Batch-resolve users by any mix of ORCIDs, usernames, or emails.
-    Returns a dict keyed by ORCID: {orcid: UserPublicRead}. No email included.
+    `orcids` is matched against unique_id, so it also accepts service-account
+    MFIDs; the response is keyed by unique_id. No email included.
     Any authenticated user can call this. Admins needing email should use GET /users/{user_ref}.
     '''
     if not orcids and not usernames and not emails:

@@ -156,7 +156,7 @@ def create_file_ingestion_request(
 
     Only 'requested' (dispatch to the ingestion queue) and 'not_requested' (record
     the file without dispatching) may be set here. Terminal states are written
-    afterwards via PATCH /ingestion_requests/{reqid}.
+    afterwards via PATCH /ingestion_requests/{request_id}.
     '''
 
     with Session(engine) as session:

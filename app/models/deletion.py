@@ -52,7 +52,8 @@ class DeletionGrantRead(SQLModel):
 
 class DeletionPreviewRead(SQLModel):
     """What deleting a project or instrument removes, or why it is blocked."""
-    resource_id: str
+    resource_id: str = Field(deprecated=True, description="Deprecated. Use resource_mfid.")
+    resource_mfid: str
     resource_type: DeletableResourceType
     deleted: bool = Field(
         description="False for a preview, true when the deletion executed.",
@@ -94,7 +95,8 @@ class DeletionRequestCapabilities(SQLModel):
 class DeletionRequestRead(SQLModel):
     """Deletion request with resource, project, and caller capability context."""
     id: int
-    resource_id: str
+    resource_id: str = Field(deprecated=True, description="Deprecated. Use resource_mfid.")
+    resource_mfid: str
     resource_type: Optional[str] = None
     resource_name: Optional[str] = None
     project_id: Optional[str] = None

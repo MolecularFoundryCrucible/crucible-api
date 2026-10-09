@@ -14,7 +14,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Instrument and project identifier changes, October 2026](instrument_and_slug_changes_2026-10.md): client handoff for live instrument names, instrument maintainers, and case-insensitive project slugs.
 - [Resource timestamp policy](resource_timestamp_policy.md): database-owned creation and modification times and the separate producer timestamp field.
 - [Graph route migration](graph_routes_migration.md): current graph security behavior and deferred route consolidation.
-- [Remote file records](remote_file_records.md): implemented non-GCS file catalog behavior and deferred resource-generic attachment.
+- [Remote file records](remote_file_records.md): implemented non-GCS file catalog behavior and deferred resource-generic attachment and file-identifier naming.
 - [Route package conventions](../app/api/routes/readme.md): route module and shared dependency guidance.
 
 ## Operations and accepted data follow-ups

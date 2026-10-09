@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Added `resource_mfid` to `TransferOwnershipRead`, `DeletionRequestRead`, and `DeletionPreviewRead`, and to the `deletion_request` field of dataset, sample, instrument, and project detail responses. The values mirror the existing `resource_id` fields, which now document the `_mfid` form as preferred. `DeletionAuditLogRead.resource_id` keeps its current shape; a `resource_mfid` twin there can follow if wanted.
+- Added `dataset_mfid` and `file_mfid` filtering to `GET /ingestion_requests`, accepting the same MFID values as the existing `dataset_id` and `file_id` parameters, which remain as deprecated aliases. Passing a file filter together with a dataset filter selects by file, as before. The single-request path parameter is now documented as `{request_id}` in OpenAPI (URLs unchanged); regenerated OpenAPI operationIds for `GET/PATCH /ingestion_requests/{request_id}` change accordingly. See `docs/remote_file_records.md` for the deferred file-identifier naming.
 - `POST /print/barcode`'s offline-detail check now reads the printer's own retained MQTT status heartbeat directly instead of querying `crucible-label-printer-status`, removing that service as a dependency.
 - Added slug and username resolution to identifier path segments. `{project_ref}` and `{instrument_ref}` accept the MFID or the case-insensitive slug, `{user_ref}` accepts an ORCID, service-account MFID, or username, and `{service_account_ref}` accepts the service-account MFID or username. Applies to every `/instruments/{instrument_ref}/...`, `/users/{user_ref}/...`, `/service_accounts/{service_account_ref}/...`, and `/projects/{project_ref}/users/{user_ref}` route. MFID and ORCID requests behave as before. Each path parameter now documents the forms it accepts in OpenAPI. See `docs/resource_identifier_routes.md`.
 - Added `instrument_id` filtering to `GET /datasets` and `GET /datasets/facets`, combinable with a matching `instrument_mfid` (422 if they disagree, 404 for an unknown slug).
@@ -90,6 +92,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Extended the announced 422 rejection date for undeclared `GET /users` query parameters to `@1799280000` (2027-01-07); the header on affected responses now carries the new date.
 - Renamed OpenAPI path parameters to match what they accept; request URLs are unchanged: `{dsid}`, `{dataset_id}`, `{parent_dataset_id}`, and `{child_dataset_id}` to `_mfid` names; `{sample_id}`, `{parent_sample_id}`, and `{child_sample_id}` to `_mfid` names; `{resource_id}` and `{unique_id}` under `/resources` to `{mfid}`; `{entity_id}` to `{entity_mfid}`; `{instrument_mfid}` to `{instrument_ref}`; `{user_id}` and `{orcid}` under `/users` and project membership to `{user_ref}`; `{unique_id}` and `{sa_unique_id}` for service accounts to `{service_account_ref}`; and `/project_graph/{project_id}` to `{project_ref}`. Clients generated from OpenAPI see new argument names.
 - `PUT` and `DELETE /resources/{mfid}/access/projects/{project_ref}` now accept a project MFID. They previously accepted only the slug and returned 404 for an MFID.
 - `POST /access_groups/{group_name}/join` and the `group_name` filter on `GET /join_requests` now accept a project MFID, and join-request responses return the project's stored slug.
@@ -141,7 +144,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Email in `{user_ref}` path segments. It still resolves, but emails in URLs are written to access logs; use the ORCID, MFID, or username.
 - `GET /users/by-username/{username}`. Use `GET /users/{user_ref}`.
 - `ThumbnailRead.dataset_id` (internal integer key) in favor of `dataset_mfid`, and `dataset_id` and `sample_id` on the dataset-sample link response in favor of `dataset_mfid` and `sample_mfid`.
-- Undeclared `GET /users` query parameters are now ignored instead of being applied as user-attribute filters. Affected responses carry `Deprecation: @1791244800` and name the ignored parameters in the server log; the parameters will be rejected with 422 at a future announced date. No `Sunset` header is sent.
+- The `resource_id` fields on `TransferOwnershipRead`, `DeletionRequestRead`, and `DeletionPreviewRead`, and on dataset, sample, instrument, and project detail `deletion_request` objects, in favor of the new `resource_mfid` twin. Both fields are returned with identical values.
+- The `dataset_id` and `file_id` filters on `GET /ingestion_requests` in favor of `dataset_mfid` and `file_mfid`. Both accept the same MFID values.
+- Undeclared `GET /users` query parameters are now ignored instead of being applied as user-attribute filters. Affected responses carry `Deprecation: @1799280000` and name the ignored parameters in the server log; the parameters will be rejected with 422 at that announced date. No `Sunset` header is sent.
 
 ### Security
 

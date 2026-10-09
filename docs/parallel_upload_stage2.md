@@ -12,7 +12,7 @@ Legacy completion rejects non-null protocols after checking ownership, before ex
 
 ## Integration and deployment gates
 
-Integration update: the completed auth changes from `origin/main` at `8e4d0ef` are included. The unapplied multipart foundation revision `b72f6c903a18` now follows the auth head `e92a6b1c730f`; processing revision `c83a7d014b29` follows the foundation. The combined branch has one Alembic head. No applied auth revision was rewritten and no shared migration was run.
+Integration update: the completed auth changes from `origin/main` at `8e4d0ef` are included. The unapplied multipart foundation revision `b72f6c903a18` now follows the staging head `b7e2d9c4a1f3`; processing revision `c83a7d014b29` follows the foundation. The combined branch has one Alembic head. No applied auth revision was rewritten and no shared migration was run.
 
 Apply the additive migration before deploying code that selects the new columns. Deploy the protocol guard to every instance before any new initiation is enabled. Existing client request/response schemas are unchanged. Once new sessions exist, do not roll back to binaries lacking the guard or remove the added columns; disable new initiation while retaining processing and cleanup support.
 
@@ -22,4 +22,4 @@ Next implement the dedicated storage client, signed-part routes, bounded manifes
 
 Passed 25 focused tests across `test_multipart_foundation.py`, `test_multipart_migration.py`, `test_gcs_multipart_endpoint.py`, and `test_database_deletion_contract.py`. PostgreSQL 16 in a disposable local container verified upgrade, legacy rows and inserts, uniqueness and state constraints, downgrade, and re-upgrade in a rolled-back temporary schema. SQLite tests verified legacy completion handling, cross-protocol rejection before storage/deletion, idempotency scope, invalid geometry/state rejection, and atomic dataset deletion cleanup intent. Existing legacy initiation and dataset deletion tests passed. The test container was removed afterward.
 
-`alembic heads` reports the single branch head `b72f6c903a18`; `git diff --check` and Pyflakes for the new configuration, migration, and test modules passed. These checks do not establish production readiness or validate the future storage client/worker. Tests used explicit dummy configuration with dotenv loading disabled and the original checkout's Python environment.
+`alembic heads` reports the single branch head `c83a7d014b29`; `git diff --check` and Pyflakes for the new configuration, migration, and test modules passed. These checks do not establish production readiness or validate the future storage client/worker. Tests used explicit dummy configuration with dotenv loading disabled and the original checkout's Python environment.

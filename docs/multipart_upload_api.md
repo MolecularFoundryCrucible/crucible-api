@@ -73,7 +73,7 @@ The ingestion message retains `filename` as the full bucket/object path and adds
 
 ## Deployment gates
 
-1. Auth integration is complete through `origin/main` at `8e4d0ef`. The migration chain is `e92a6b1c730f` (auth) -> `b72f6c903a18` -> `c83a7d014b29` (multipart head). Review both unapplied multipart revisions before release.
+1. Auth integration is complete through `origin/main` at `8e4d0ef`. The migration chain is `e92a6b1c730f` (auth) -> `b7e2d9c4a1f3` (staging slug indexes) -> `b72f6c903a18` -> `c83a7d014b29` (multipart head). Review both unapplied multipart revisions before release.
 2. Apply the additive migrations through the separately authorized release workflow before deploying the application and its updated `EXPECTED_DB_REVISIONS=c83a7d014b29` configuration. Coordinate readiness pins during the migration window, since existing deployments check exact schema revisions. Deploy the legacy completion guard to every instance before enabling initiation.
 3. Provision the permanent environment-specific bucket, private access controls, CORS, lifecycle policy, signer, and runtime impersonation grants. Test legacy-identity denial and dedicated-identity access in that environment.
 4. Deploy and observe the worker with initiation disabled. Configure edge request/body limits and a verification-worker replica count consistent with the database concurrency budget. Keep clocks synchronized for signed URLs and leases.

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from sqlmodel import Session
 
 from app.api.dependencies import get_engine
+from app.api.path_params import DatasetMfid
 from app.models.datasets import AssociatedFileRead
 from app.models.multipart import MultipartInitiate, MultipartParts, MultipartComplete, MultipartStatus, SignedPart, SignedParts, UploadedPart
 from app.services import multipart as service
@@ -24,8 +25,8 @@ def processing(response, request, dsid, upload_id):
     response.headers["Retry-After"] = "5"
 
 
-@router.post("/datasets/{dsid}/upload/multipart/initiate", response_model=MultipartStatus, responses={202: {"model": MultipartStatus}})
-def initiate(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, body: MultipartInitiate, response: Response, request: Request, idempotency_key: Annotated[str | None, Header(min_length=1, max_length=128)] = None):
+@router.post("/datasets/{dataset_mfid}/upload/multipart/initiate", response_model=MultipartStatus, responses={202: {"model": MultipartStatus}})
+def initiate(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, body: MultipartInitiate, response: Response, request: Request, idempotency_key: Annotated[str | None, Header(min_length=1, max_length=128)] = None):
     config = MultipartStorageConfig.from_env()
     if not config.enabled:
         raise HTTPException(503, "New multipart uploads are disabled", headers={"Retry-After": "60"})
@@ -35,8 +36,8 @@ def initiate(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str,
     return result
 
 
-@router.post("/datasets/{dsid}/upload/multipart/{upload_id}/parts", response_model=SignedParts)
-def sign_parts(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, upload_id: str, body: MultipartParts):
+@router.post("/datasets/{dataset_mfid}/upload/multipart/{upload_id}/parts", response_model=SignedParts)
+def sign_parts(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, upload_id: str, body: MultipartParts):
     config = MultipartStorageConfig.from_env()
     with Session(engine) as session:
         upload = service.owned(session, dsid, upload_id, auth_res, lock=True)
@@ -74,8 +75,8 @@ def sign_parts(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: st
         raise HTTPException(503, "Part signing unavailable; retry with the same checksums") from None
 
 
-@router.get("/datasets/{dsid}/upload/multipart/{upload_id}", response_model=MultipartStatus)
-def get_status(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, upload_id: str, part_number_marker: int = Query(default=0, ge=0, le=10000), limit: int = Query(default=1000, ge=1, le=1000)):
+@router.get("/datasets/{dataset_mfid}/upload/multipart/{upload_id}", response_model=MultipartStatus)
+def get_status(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, upload_id: str, part_number_marker: int = Query(default=0, ge=0, le=10000), limit: int = Query(default=1000, ge=1, le=1000)):
     with Session(engine) as session:
         upload = service.owned(session, dsid, upload_id, auth_res)
         result = service.status(session, upload)
@@ -93,8 +94,8 @@ def get_status(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: st
     return result
 
 
-@router.post("/datasets/{dsid}/upload/multipart/complete", response_model=AssociatedFileRead | MultipartStatus, responses={202: {"model": MultipartStatus}})
-def complete(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, body: MultipartComplete, response: Response, request: Request):
+@router.post("/datasets/{dataset_mfid}/upload/multipart/complete", response_model=AssociatedFileRead | MultipartStatus, responses={202: {"model": MultipartStatus}})
+def complete(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, body: MultipartComplete, response: Response, request: Request):
     with Session(engine) as session:
         upload = service.owned(session, dsid, body.upload_id, auth_res, lock=True)
         if upload.claimed_sha256 and upload.claimed_sha256 != body.sha256_hash:
@@ -123,8 +124,8 @@ def complete(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str,
     return result
 
 
-@router.delete("/datasets/{dsid}/upload/multipart/{upload_id}", response_model=MultipartStatus, responses={202: {"model": MultipartStatus}, 204: {"description": "Upload aborted"}})
-def abort(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, upload_id: str, response: Response, request: Request):
+@router.delete("/datasets/{dataset_mfid}/upload/multipart/{upload_id}", response_model=MultipartStatus, responses={202: {"model": MultipartStatus}, 204: {"description": "Upload aborted"}})
+def abort(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, upload_id: str, response: Response, request: Request):
     with Session(engine) as session:
         upload = service.owned(session, dsid, upload_id, auth_res, lock=True, check_access=False)
         if upload.state == "completed":

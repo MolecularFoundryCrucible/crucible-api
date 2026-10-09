@@ -88,15 +88,15 @@ The downscoped-token option is still a viable smaller client migration if client
 
 ## Proposed API contract
 
-Use `/datasets/{dsid}/upload/multipart` as the new namespace. This is distinct from the existing `/datasets/{dsid}/upload/initiate/multipart`. Endpoint names below are proposed. Existing routes and models retain their current meaning during the migration.
+Use `/datasets/{dataset_mfid}/upload/multipart` as the new namespace. This is distinct from the existing `/datasets/{dataset_mfid}/upload/initiate/multipart`. Endpoint names below are proposed. Existing routes and models retain their current meaning during the migration.
 
 | Operation | Proposed route | Contract |
 | --- | --- | --- |
-| Initiate | `POST /datasets/{dsid}/upload/multipart/initiate` | Reuse the `UploadInitiate` fields: `filename`, `size`, optional `sha256_hash`; return a new multipart response |
-| Authorize parts | `POST /datasets/{dsid}/upload/multipart/{upload_id}/parts` | Receive a bounded list of part numbers and CRC32C values; return signed PUT URLs, required headers, byte ranges, and expiry |
-| Status/resume | `GET /datasets/{dsid}/upload/multipart/{upload_id}` | Return session state and a paginated list of acknowledged parts; include the existing `AssociatedFileRead` when completed |
-| Complete | `POST /datasets/{dsid}/upload/multipart/complete` | Reuse `upload_id` and `sha256_hash` field names and add required `crc32c` in a new model; return `202` with status location while processing, or `200 AssociatedFileRead` when completed |
-| Abort | `DELETE /datasets/{dsid}/upload/multipart/{upload_id}` | Idempotent cancellation; return `202` while cleanup is pending, `204` when aborted; completed uploads require the normal file deletion workflow |
+| Initiate | `POST /datasets/{dataset_mfid}/upload/multipart/initiate` | Reuse the `UploadInitiate` fields: `filename`, `size`, optional `sha256_hash`; return a new multipart response |
+| Authorize parts | `POST /datasets/{dataset_mfid}/upload/multipart/{upload_id}/parts` | Receive a bounded list of part numbers and CRC32C values; return signed PUT URLs, required headers, byte ranges, and expiry |
+| Status/resume | `GET /datasets/{dataset_mfid}/upload/multipart/{upload_id}` | Return session state and a paginated list of acknowledged parts; include the existing `AssociatedFileRead` when completed |
+| Complete | `POST /datasets/{dataset_mfid}/upload/multipart/complete` | Reuse `upload_id` and `sha256_hash` field names and add required `crc32c` in a new model; return `202` with status location while processing, or `200 AssociatedFileRead` when completed |
+| Abort | `DELETE /datasets/{dataset_mfid}/upload/multipart/{upload_id}` | Idempotent cancellation; return `202` while cleanup is pending, `204` when aborted; completed uploads require the normal file deletion workflow |
 
 Keeping completion inside the new namespace avoids changing the legacy completion response to include asynchronous states. The shared implementation can still reuse authorization, validation, and file serialization helpers. Do not dispatch a new session through the legacy completion handler: reject protocol mismatches before inspecting or registering a blob.
 

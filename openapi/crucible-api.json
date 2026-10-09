@@ -13787,16 +13787,18 @@
         ]
       }
     },
-    "/datasets/{dsid}/upload/multipart/complete": {
+    "/datasets/{dataset_mfid}/upload/multipart/complete": {
       "post": {
-        "operationId": "complete_datasets__dsid__upload_multipart_complete_post",
+        "operationId": "complete_datasets__dataset_mfid__upload_multipart_complete_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -13842,7 +13844,7 @@
                       "$ref": "#/components/schemas/MultipartStatus"
                     }
                   ],
-                  "title": "Response Complete Datasets  Dsid  Upload Multipart Complete Post"
+                  "title": "Response Complete Datasets  Dataset Mfid  Upload Multipart Complete Post"
                 }
               }
             },
@@ -13908,16 +13910,18 @@
         ]
       }
     },
-    "/datasets/{dsid}/upload/multipart/initiate": {
+    "/datasets/{dataset_mfid}/upload/multipart/initiate": {
       "post": {
-        "operationId": "initiate_datasets__dsid__upload_multipart_initiate_post",
+        "operationId": "initiate_datasets__dataset_mfid__upload_multipart_initiate_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -14039,16 +14043,18 @@
         ]
       }
     },
-    "/datasets/{dsid}/upload/multipart/{upload_id}": {
+    "/datasets/{dataset_mfid}/upload/multipart/{upload_id}": {
       "delete": {
-        "operationId": "abort_datasets__dsid__upload_multipart__upload_id__delete",
+        "operationId": "abort_datasets__dataset_mfid__upload_multipart__upload_id__delete",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -14168,14 +14174,16 @@
         ]
       },
       "get": {
-        "operationId": "get_status_datasets__dsid__upload_multipart__upload_id__get",
+        "operationId": "get_status_datasets__dataset_mfid__upload_multipart__upload_id__get",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },
@@ -14278,16 +14286,18 @@
         ]
       }
     },
-    "/datasets/{dsid}/upload/multipart/{upload_id}/parts": {
+    "/datasets/{dataset_mfid}/upload/multipart/{upload_id}/parts": {
       "post": {
-        "operationId": "sign_parts_datasets__dsid__upload_multipart__upload_id__parts_post",
+        "operationId": "sign_parts_datasets__dataset_mfid__upload_multipart__upload_id__parts_post",
         "parameters": [
           {
+            "description": "Dataset MFID.",
             "in": "path",
-            "name": "dsid",
+            "name": "dataset_mfid",
             "required": true,
             "schema": {
-              "title": "Dsid",
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
               "type": "string"
             }
           },

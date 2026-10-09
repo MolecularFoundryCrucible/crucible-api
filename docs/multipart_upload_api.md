@@ -8,11 +8,11 @@ All routes accept either an existing Crucible API key or a Crucible access token
 
 | Method and path | Request | Success |
 | --- | --- | --- |
-| `POST /datasets/{dsid}/upload/multipart/initiate` | `filename`, positive integer `size`, optional lowercase `sha256_hash`; optional `Idempotency-Key` header | `202` while initializing, `200` for a retry of an initialized session or a verified deduplication hit |
-| `POST /datasets/{dsid}/upload/multipart/{upload_id}/parts` | `parts`: 1-64 objects containing `part_number` and `crc32c` | `200` signed PUT URLs, required headers, offsets, sizes, and expirations |
-| `GET /datasets/{dsid}/upload/multipart/{upload_id}` | Optional `part_number_marker` and `limit` (1-1000) | `200` session state, provider-acknowledged parts while uploading, pagination marker, completed file or failure code |
-| `POST /datasets/{dsid}/upload/multipart/complete` | `upload_id`, lowercase `sha256_hash`, canonical base64 `crc32c` | `202` while processing; `200 AssociatedFileRead` after trusted verification |
-| `DELETE /datasets/{dsid}/upload/multipart/{upload_id}` | No body | `202` while cleanup is pending; `204` after cleanup; `409` if already published |
+| `POST /datasets/{dataset_mfid}/upload/multipart/initiate` | `filename`, positive integer `size`, optional lowercase `sha256_hash`; optional `Idempotency-Key` header | `202` while initializing, `200` for a retry of an initialized session or a verified deduplication hit |
+| `POST /datasets/{dataset_mfid}/upload/multipart/{upload_id}/parts` | `parts`: 1-64 objects containing `part_number` and `crc32c` | `200` signed PUT URLs, required headers, offsets, sizes, and expirations |
+| `GET /datasets/{dataset_mfid}/upload/multipart/{upload_id}` | Optional `part_number_marker` and `limit` (1-1000) | `200` session state, provider-acknowledged parts while uploading, pagination marker, completed file or failure code |
+| `POST /datasets/{dataset_mfid}/upload/multipart/complete` | `upload_id`, lowercase `sha256_hash`, canonical base64 `crc32c` | `202` while processing; `200 AssociatedFileRead` after trusted verification |
+| `DELETE /datasets/{dataset_mfid}/upload/multipart/{upload_id}` | No body | `202` while cleanup is pending; `204` after cleanup; `409` if already published |
 
 Initiation is asynchronous: a database record reserves the filename and quota before the worker talks to GCS. Poll the returned `Location` until state is `uploading`. This also lets the worker recover an initiation whose provider response was lost. The 202 responses provide `Retry-After: 5`. Disabling new initiation leaves existing sessions usable for status, signing, completion, and abort.
 

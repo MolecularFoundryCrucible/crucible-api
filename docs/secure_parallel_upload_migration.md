@@ -220,7 +220,7 @@ Rollback should pause new initiation while continuing status, completion, and cl
 - Interrupted transfers resume; source-file changes are rejected; URL renewal works; more than 1,000 parts are listed correctly; the maximum configured size fits provider limits.
 - Browser CORS and signed content-length behavior are verified with actual clients. Oversized, missing, duplicated, replaced, and corrupt parts fail before publication.
 - Concurrent completion, completion versus abort, pod restarts, lost provider responses, and database commit failures converge to one published file or a recoverable cleanup state.
-- SHA-256 trust policy is explicit; unverified legacy/client hashes cannot silently become trusted deduplication evidence.
+- SHA-256 trust policy is explicit; unverified legacy/client hashes cannot silently become trusted deduplication evidence on the multipart route. The legacy initiate deduplication still matches unverified client-claimed hashes (audited in `docs/parallel_upload_security_review.md`); tightening it to the same verified-only rule is a cohort-rollout item, since the legacy route is retired with the compatibility window.
 - Downloads, ingestion, and deletion handling work with the new bucket and object keys. Lifecycle and reconciler tests demonstrate cleanup without deleting registered objects.
 
 The provider authorization/isolation experiment has passed against live GCS in disposable buckets; see the [stage 1 results and limitations](parallel_upload_stage1.md). Implementation can proceed with the additive database/storage foundation and contract tests. The production deployment checks and application recovery behavior remain to be established.

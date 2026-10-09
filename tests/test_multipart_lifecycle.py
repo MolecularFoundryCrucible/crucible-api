@@ -333,6 +333,33 @@ def test_claimed_hashes_do_not_short_circuit_initiation(flow):
     assert response.json()["existing_file"] is None
 
 
+def test_verified_hash_short_circuits_initiation(flow):
+    client, engine, _, _ = flow
+    identifier = publish(flow)
+    file_id = complete(flow, identifier).json()["mfid"]
+    with Session(engine) as session:
+        file = session.exec(select(AssociatedFile)).one()
+        file.sha256_verified_at = service.now()
+        session.add(file)
+        session.commit()
+    response = client.post(BASE + "/initiate", json={"filename": "another", "size": len(DATA), "sha256_hash": SHA})
+    assert response.status_code == 200, response.text
+    assert response.json()["existing_file"]["mfid"] == file_id
+
+
+def test_stranded_verifying_session_is_published_not_hot_looped(flow):
+    client, engine, storage, worker = flow
+    identifier = start(flow)
+    put(flow, identifier)
+    complete(flow, identifier)
+    change(engine, identifier, state="verifying")
+    assert worker.run_once()
+    assert row(engine, identifier).state == "completed"
+    assert storage.completions == 1
+    with Session(engine) as session:
+        assert len(session.exec(select(AssociatedFile)).all()) == 1
+
+
 @pytest.mark.parametrize("body", [{"filename": "../x", "size": 1}, {"filename": "/x", "size": 1}, {"filename": "x", "size": True}, {"filename": "x", "size": 1, "sha256_hash": "bad"}])
 def test_invalid_initiation_is_rejected(flow, body):
     assert flow[0].post(BASE + "/initiate", json=body).status_code == 422

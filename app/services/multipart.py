@@ -296,7 +296,7 @@ class MultipartWorker:
                 require_permission(session, worker_principal(session, current), current.dataset_mfid, Permission.CREATE)
             except HTTPException:
                 raise InvalidUpload("access_revoked") from None
-            if current.state != "finalizing":
+            if current.state not in ("finalizing", "verifying"):
                 raise LeaseLost()
             if session.exec(select(AssociatedFile.id).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.filename == current.associated_file_name)).first() is not None:
                 raise InvalidUpload("filename_conflict")
@@ -345,7 +345,7 @@ class MultipartWorker:
                             self.heartbeat(upload.upload_id)
                             self.storage.abort(upload, duplicate)
                     delay = 60
-                elif upload.state == "finalizing":
+                elif upload.state in ("finalizing", "verifying"):
                     self.finalize(upload)
                     delay = 3600
         except (LeaseLost, CleanupRequested):

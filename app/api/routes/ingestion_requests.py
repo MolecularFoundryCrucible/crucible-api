@@ -58,12 +58,12 @@ def list_ingestion_requests(
             .where(permission_filter(auth_res, Dataset, Permission.READ))
         )
 
-        effective_file_mfid = file_mfid or file_id
-        effective_dataset_mfid = dataset_mfid or dataset_id
+        file_mfid = file_mfid or file_id
+        dataset_mfid = dataset_mfid or dataset_id
 
-        if effective_file_mfid is not None:
+        if file_mfid is not None:
             af = session.exec(
-                select(AssociatedFile).where(AssociatedFile.mfid == effective_file_mfid)
+                select(AssociatedFile).where(AssociatedFile.mfid == file_mfid)
             ).one_or_none()
             if af is None:
                 raise HTTPException(status_code=404, detail="File not found")
@@ -75,8 +75,8 @@ def list_ingestion_requests(
 
             query = query.where(IngestionRequest.file_mfid == af.mfid)
 
-        elif effective_dataset_mfid is not None:
-            ds = session.exec(select(Dataset).where(Dataset.unique_id == effective_dataset_mfid)).one_or_none()
+        elif dataset_mfid is not None:
+            ds = session.exec(select(Dataset).where(Dataset.unique_id == dataset_mfid)).one_or_none()
             if ds is None:
                 raise HTTPException(status_code=404, detail="Dataset not found")
             require_permission(session, auth_res, ds.unique_id, Permission.READ)

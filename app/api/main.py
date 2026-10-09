@@ -11,7 +11,9 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from app.api.routes import multipart
 from app.build_info import api_version
+from app.utils.multipart_config import MultipartStorageConfig
 from app.api.dependencies import get_api_root_path
 from app.utils.auth_utils import PRIVILEGE_MODE_HEADER
 from app.utils.permissions import PrivilegeMode, PrivilegeModeSource
@@ -29,6 +31,7 @@ logger = logging.getLogger(__name__)
 # Uvicorn's raw query strings include OAuth callback codes; log_requests records safe request metadata.
 logging.getLogger("uvicorn.access").disabled = True
 
+multipart_storage_config = MultipartStorageConfig.from_env()
 api_root_path = get_api_root_path()
 app = FastAPI(
     root_path=api_root_path,
@@ -200,6 +203,7 @@ app.include_router(files.router)
 app.include_router(ingestion_requests.router)
 app.include_router(datasets.router)
 app.include_router(gcs_storage.router)
+app.include_router(multipart.router)
 app.include_router(resources.router)
 app.include_router(resource_graph.router)
 app.include_router(samples.router)
@@ -297,3 +301,11 @@ def custom_openapi():
 
 
 app.openapi = custom_openapi
+
+
+@app.middleware("http")
+async def multipart_no_store(request: Request, call_next):
+    response = await call_next(request)
+    if "/upload/multipart/" in request.url.path:
+        response.headers["Cache-Control"] = "no-store"
+    return response

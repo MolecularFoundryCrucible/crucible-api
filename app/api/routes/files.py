@@ -16,6 +16,7 @@ from app.models.core_models import (
     AssociatedFile,
     Dataset,
     IngestionRequest,
+    UploadSession,
 )
 from app.general_utils import get_secret, get_utc_isoformat
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
@@ -94,10 +95,11 @@ def get_file_download_link(auth_res: Annotated[Principal, Depends(authorize_user
         if af.storage_backend != "gcs":
             return {"url": None, "expires_in": None}
 
+        generation = af.storage_generation
         storage_path = _ensure_storage_path(af, ds.unique_id, session)
         session.commit()
 
-    url, expires_in = _generate_signed_url_link(storage_path)
+    url, expires_in = _generate_signed_url_link(storage_path, **({"generation": generation} if generation else {}))
     return {"url": url, "expires_in": expires_in}
 
 
@@ -113,7 +115,13 @@ def update_file(
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
         require_permission(session, auth_res, ds.unique_id, Permission.EDIT)
 
-        for field, value in updates.model_dump(exclude_unset=True).items():
+        changed = updates.model_dump(exclude_unset=True)
+        if any(name in changed and changed[name] != getattr(af, name) for name in ("size", "sha256_hash", "storage_path", "storage_backend")):
+            af.sha256_verified_at = None
+            af.storage_crc32c = None
+        if any(name in changed and changed[name] != getattr(af, name) for name in ("storage_path", "storage_backend")):
+            af.storage_generation = None
+        for field, value in changed.items():
             setattr(af, field, value)
         session.add(af)
         touch_resource_modification_time(session, ds.unique_id)
@@ -135,6 +143,12 @@ def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id
         ).all():
             session.delete(ir)
 
+        from app.services.multipart import now, save
+        for upload in session.exec(select(UploadSession).where(UploadSession.result_file_mfid == af.mfid, UploadSession.protocol == "gcs_xml_v1").with_for_update()).all():
+            upload.cleanup_requested_at = now()
+            upload.cleaned_at = None
+            upload.next_attempt_at = now()
+            save(session, upload)
         session.delete(af)
         touch_resource_modification_time(session, ds.unique_id)
         session.commit()
@@ -169,6 +183,9 @@ def create_file_ingestion_request(
                 detail=f"Ingestion is not supported for storage_backend='{af.storage_backend}' files.",
             )
 
+        from app.utils.multipart_config import MultipartStorageConfig
+        if af.storage_path and af.storage_path.partition("/")[0] == MultipartStorageConfig.from_env().bucket and af.storage_generation is None:
+            raise HTTPException(403, "Multipart storage requires a registered generation")
         RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
         ingestion_request = IngestionRequest(
             dataset_mfid=ds.unique_id,
@@ -185,6 +202,7 @@ def create_file_ingestion_request(
         ir_id = ingestion_request.id
         af_size = af.size
         af_storage_path = af.storage_path
+        af_generation = af.storage_generation
         ds_unique_id = ds.unique_id
 
     if status == 'requested':
@@ -194,6 +212,7 @@ def create_file_ingestion_request(
         send_pika_message(
             message=json.dumps({
                 "filename": af_storage_path,
+                **({"storage_generation": af_generation} if af_generation else {}),
                 "reqid": ir_id,
                 "dsid": ds_unique_id,
                 "ingestion_class": ingestion_class,

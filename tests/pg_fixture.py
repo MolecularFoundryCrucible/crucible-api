@@ -3,11 +3,15 @@
 Not a conftest: these helpers are imported explicitly by the two test modules
 that need a real Postgres, so the hermetic SQLite suite never touches them.
 
-Set CRUCIBLE_TEST_PG_URL to run those modules:
+Set CRUCIBLE_TEST_PG_URL to run those modules (pgvector is required for the
+ResourceEmbedding table, so use a pgvector image):
 
     docker run -d --rm --name crucible-pg-test \\
         -e POSTGRES_PASSWORD=test -e POSTGRES_DB=crucible_test \\
-        -p 55432:5432 postgres:16-alpine
+        -p 55432:5432 pgvector/pgvector:pg16
+
+    docker exec crucible-pg-test psql -U postgres -d crucible_test \\
+        -c "CREATE EXTENSION IF NOT EXISTS vector"
 
     CRUCIBLE_TEST_PG_URL=postgresql+psycopg2://postgres:test@127.0.0.1:55432/crucible_test \\
         .venv/bin/python -m pytest

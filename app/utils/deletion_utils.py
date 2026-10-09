@@ -1,7 +1,7 @@
 import logging
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, or_
+from sqlalchemy import delete, func, or_, update
 from sqlmodel import Session, select
 
 from app.models.core_models import (
@@ -203,7 +203,7 @@ def _delete_gcs_blobs_for_dataset(dataset_unique_id: str, associated_files: list
 
 
 def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Resource) -> None:
-    dataset = session.exec(select(Dataset).where(Dataset.unique_id == dataset_unique_id)).one_or_none()
+    dataset = session.exec(select(Dataset).where(Dataset.unique_id == dataset_unique_id).with_for_update()).one_or_none()
     if dataset is None:
         raise RuntimeError(f"Dataset row missing for resource {dataset_unique_id}")
 
@@ -215,7 +215,15 @@ def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Res
             ),
         )
     ))
-    session.execute(delete(UploadSession).where(UploadSession.dataset_mfid == dataset_unique_id))
+    session.execute(update(UploadSession).where(
+        UploadSession.dataset_mfid == dataset_unique_id,
+        UploadSession.protocol.is_not(None),
+        UploadSession.cleanup_requested_at.is_(None),
+    ).values(cleanup_requested_at=func.now(), next_attempt_at=func.now(), cleaned_at=None))
+    session.execute(delete(UploadSession).where(
+        UploadSession.dataset_mfid == dataset_unique_id,
+        UploadSession.protocol.is_(None),
+    ))
     session.execute(delete(AssociatedFile).where(AssociatedFile.dataset_id == dataset.id))
     session.execute(delete(DatasetKeywordLink).where(DatasetKeywordLink.dataset_id == dataset.id))
     session.execute(delete(Thumbnail).where(Thumbnail.dataset_id == dataset.id))

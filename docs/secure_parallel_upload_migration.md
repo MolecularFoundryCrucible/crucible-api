@@ -43,30 +43,6 @@ Keep review units independently understandable. Foundation code can be reviewed 
 
 Schema changes should first be tested against a disposable local database. Applying migrations, changing deployed IAM, or deploying to shared staging/production is a separate operation requiring explicit authorization under this repository's instructions. The earlier authorization for the stage 1 experiment does not authorize those later operations.
 
-## Working in parallel with the ORCID agent
-
-Worktree isolation was established on 2026-09-28. Multipart work uses `/home/roncofaber/software/crucible-api-multipart` on `feat/secure-multipart-upload`. The ORCID work keeps `/home/roncofaber/software/crucible-api` on `feat/hub-login-design`. The multipart proposal, review, probe scripts, and result files were transferred with hash verification and a backup; the other agent's changes and Git index were preserved. The ownership and integration rules below remain coordination proposals until acknowledged by the other agent.
-
-The multipart branch starts at the local reviewed `origin/staging` snapshot `f9fb3c7`. It does not include the unmerged ORCID feature commits. Use explicit commands in the multipart worktree for its edits, tests, and commits. Ignored environment files and credentials were not copied. Before implementation, refresh the integration base and configure an independent local test environment. A branch switch in the shared directory is not sufficient isolation. Codex supports separate worktrees for concurrent work; see the [official worktree guidance](https://learn.chatgpt.com/docs/environments/git-worktrees).
-
-| Area | Proposed ownership and integration rule |
-| --- | --- |
-| ORCID routes, login/token utilities, and auth documentation | ORCID agent owns these; multipart consumes the existing principal/permission interface |
-| New multipart route module, storage helper, worker, tests, and upload documentation | Multipart agent owns these in its separate worktree |
-| `app/models/core_models.py` | Multipart changes only `UploadSession` and `AssociatedFile`; reconcile with the auth model additions at integration |
-| `app/api/main.py` and `CHANGELOG.md` | Keep edits focused on route registration and the feature's own entry; resolve overlaps before merging |
-| `migrations/versions/` | Separate revision files; agree on merge order and preserve one linear head |
-| `openapi/crucible-api.json` and its checksum | Regenerate from the combined routes after integration; do not hand-merge generated JSON |
-| Dependency and lock files | Reuse the tested installed libraries; coordinate any dependency changes rather than mixing independent lockfile rewrites |
-
-Integration completed against `origin/main` commit `8e4d0ef`, which contains the reviewed ORCID workflow and rollout changes. The unapplied multipart foundation now follows auth revision `e92a6b1c730f`, and multipart processing remains the single head at `c83a7d014b29`. Applied auth revisions were left unchanged. Deployment and shared database migration remain separately authorized operations.
-
-Separate worktrees isolate source files and Git indexes, not databases, cloud IAM, ports, or credentials. Use independent local test databases and worktree-local configuration. Auth currently reserves ports 3000, 7777, and 7778 according to its design notes; select a different available port for multipart development. Share the stage 1 bucket names and signer as explicit experiment resources, and do not alter the other agent's credentials, API processes, or staging database. Coordinate deployments separately from code development.
-
-Each agent can now commit independently in its own worktree. Do not stage, stash, switch branches, or clean up files in the other agent's checkout. Shared Git objects and remote references still exist, so coordinate integration and pushes. Changes reach `main` through a reviewed branch/PR, never through a direct push.
-
-Suggested handoff to the ORCID agent: "Multipart work will use a separate worktree and reuse your authentication interface. It extends only UploadSession and AssociatedFile in core_models, plus focused router/OpenAPI/changelog edits. Please finalize the auth migration chain first; the upload revision will follow it. Keep shared staging migrations and local port reservations coordinated."
-
 ## Corrections to the earlier proposal
 
 1. The documented Python function `transfer_manager.upload_chunks_concurrently()` already uses XML multipart upload. The locally installed library also constructs `XMLMPUContainer`, initiates the upload, submits parts, and finalizes it. Calling this a parallel composite upload was incorrect. Stage 1 confirmed the installed Nano 2.1.2 call path with google-cloud-storage 3.4.1; deployed client versions still need inventory. [Google Python reference](https://docs.cloud.google.com/python/docs/reference/storage/latest/google.cloud.storage.transfer_manager)

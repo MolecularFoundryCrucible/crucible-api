@@ -37,11 +37,15 @@ def save(session, upload):
     session.add(upload)
 
 
-def authorize(session, principal, dsid):
+def demoted(session, principal):
     current = load_principal(session, principal.user_id)
     if current.is_platform_admin and not principal.is_platform_admin:
         current = replace(current, platform_role=PlatformRole.NONE)
-    require_permission(session, current, dsid, Permission.CREATE)
+    return current
+
+
+def authorize(session, principal, dsid):
+    require_permission(session, demoted(session, principal), dsid, Permission.CREATE)
 
 
 def owned(session, dsid, upload_id, principal, *, lock=False, check_access=True):
@@ -114,7 +118,7 @@ def initiate(engine, principal, dsid, body, key, config):
         if body.sha256_hash:
             existing = session.exec(select(AssociatedFile).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.sha256_hash == body.sha256_hash, AssociatedFile.size == body.size, AssociatedFile.sha256_verified_at.is_not(None))).first()
             if existing:
-                require_permission(session, load_principal(session, principal.user_id), dsid, Permission.READ)
+                require_permission(session, demoted(session, principal), dsid, Permission.READ)
                 return MultipartStatus(state="completed", existing_file=AssociatedFileRead.model_validate(existing, update={"dataset_mfid": dsid}))
         if session.exec(select(AssociatedFile.id).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.filename == body.filename)).first() is not None:
             raise HTTPException(409, "Filename already exists")
@@ -157,7 +161,7 @@ class MultipartWorker:
             busy = session.exec(select(func.count(UploadSession.id)).where(UploadSession.protocol == PROTOCOL, UploadSession.lease_expires_at > now())).one()
             if busy >= self.config.worker_concurrency:
                 return None
-            query = select(UploadSession).where(UploadSession.protocol == PROTOCOL, or_(UploadSession.lease_expires_at.is_(None), UploadSession.lease_expires_at < now()), or_(UploadSession.next_attempt_at.is_(None), UploadSession.next_attempt_at <= now())).order_by(UploadSession.next_attempt_at, UploadSession.id).with_for_update(skip_locked=True).limit(1)
+            query = select(UploadSession).where(UploadSession.protocol == PROTOCOL, or_(UploadSession.lease_expires_at.is_(None), UploadSession.lease_expires_at < now()), or_(UploadSession.next_attempt_at.is_(None), UploadSession.next_attempt_at <= now()), or_(UploadSession.cleaned_at.is_(None), UploadSession.cleanup_requested_at > UploadSession.cleaned_at)).order_by(UploadSession.next_attempt_at, UploadSession.id).with_for_update(skip_locked=True).limit(1)
             upload = session.exec(query).first()
             if upload is None:
                 return None

@@ -25,7 +25,7 @@ def pg_upload_engine():
     schema = "test_multipart_" + uuid4().hex
     with admin.begin() as connection:
         connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-    engine = create_engine(url, connect_args={"options": f"-csearch_path={schema}"})
+    engine = create_engine(url, connect_args={"options": f"-csearch_path={schema},public"})
     try:
         SQLModel.metadata.create_all(engine, tables=TEST_TABLES + [Keyword.__table__])
         with engine.begin() as connection:

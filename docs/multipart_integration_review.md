@@ -26,6 +26,7 @@ OpenAPI was regenerated from the combined application rather than hand-merged. E
 - Final PR review local suite: 1,363 passed, 69 environment-dependent skips; existing deprecation warnings remain.
 - After the completion privilege-mode fix, 50 multipart lifecycle and shared privilege-mode tests passed.
 - Disposable PostgreSQL: 9 auth and multipart migration/concurrency tests passed, including token exchange/refresh behavior, multipart admission/lease races, and multipart upgrade/downgrade round trips.
+- Current suite at HEAD: 1,546 passed with 71 environment-dependent skips; the multipart suite collects 56 tests.
 - Alembic has one head: `c83a7d014b29`, following `e92a6b1c730f -> b7e2d9c4a1f3 -> b72f6c903a18 -> c83a7d014b29`.
 - Pyflakes on the changed worker/test modules and generated-contract comparison passed.
 

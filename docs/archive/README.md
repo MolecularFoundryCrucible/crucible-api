@@ -8,3 +8,4 @@ These files preserve completed migrations, superseded audits, and legacy design 
 - [User creation reliability migration](user_creation_reliability_migration.md)
 - [Resource timestamp migration, September 2026](resource_timestamp_migration_2026-09.md)
 - [Legacy Crucible Hub design](hub_design_legacy.md)
+- [Hub API requirements review, September 2026](hub_api_requirements_review_2026-09.md)

@@ -208,6 +208,7 @@ def test_thumbnail_response_models_identify_normalized_jpeg():
     thumbnail = ThumbnailRead(
         id=1,
         dataset_id=2,
+        dataset_mfid="ds_1",
         thumbnail_name="preview.png",
         thumbnail_b64str="encoded",
     )

@@ -31,7 +31,7 @@ from app.models.users import UserPublicRead
 from app.services.resource_filters import resource_scope_predicates
 from app.utils.auth_utils import permission_filter
 from app.utils.cursor_utils import CursorError, filter_fingerprint, new_cursor, validate_cursor
-from app.utils.instrument_utils import resolve_instrument_mfids_to_references
+from app.utils.instrument_utils import resolve_instrument_filter_mfid, resolve_instrument_mfids_to_references
 from app.utils.permissions import Permission, Principal
 from app.utils.project_utils import resolve_project_filter_mfid, resolve_project_mfids_to_references
 
@@ -321,8 +321,9 @@ def list_dataset_facets(
             )
             .correlate(Dataset)
         )
+    instrument_mfid = resolve_instrument_filter_mfid(session, params.instrument_id, params.instrument_mfid)
     for filter_column, value in (
-        (Dataset.instrument_mfid, params.instrument_mfid),
+        (Dataset.instrument_mfid, instrument_mfid),
         (Dataset.session_name, params.session_name),
         (Dataset.measurement, params.measurement),
         (Dataset.data_format, params.data_format),

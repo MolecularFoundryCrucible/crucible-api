@@ -318,6 +318,10 @@ class HubLoginCode(SQLModel, table=True):
 
 
 class Project(SQLModel, table=True):
+    __table_args__ = (
+        Index("ux_project_project_id_lower", func.lower(text("project_id")), unique=True),
+    )
+
     id: Optional[int] = Field(default=None, primary_key=True)
     unique_id: Optional[str] = Field(default_factory=get_mfid_value, index=True, unique=True)
     project_id: str = Field(index=True, unique=True)
@@ -476,6 +480,10 @@ class DeletionAuditLog(SQLModel, table=True):
 # --- Instrument ---
 
 class Instrument(SQLModel, table=True):
+    __table_args__ = (
+        Index("ux_instrument_instrument_id_lower", func.lower(text("instrument_id")), unique=True),
+    )
+
     id: int = Field(default=None, primary_key=True)
     unique_id: Optional[str] = Field(default_factory=get_mfid_value, index=True, unique=True)
     instrument_id: Optional[str] = Field(default=None, index=True, unique=True)

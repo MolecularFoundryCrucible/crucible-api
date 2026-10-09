@@ -1,4 +1,4 @@
-from typing import Annotated, Optional, Sequence
+from typing import Annotated, Iterable, Optional, Sequence
 import logging
 import re
 import os
@@ -340,7 +340,8 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
                           manage_access_floor: Role = THRESHOLDS[Permission.MANAGE_ACL],
                           allow_peer_grants: bool = True,
                           status_permission: Optional[Permission] = Permission.DELETE,
-                          acl_rows: Optional[Sequence[tuple[int, Role]]] = None) -> ResourceCapabilities:
+                          acl_rows: Optional[Sequence[tuple[int, Role]]] = None,
+                          can_delete: bool = False) -> ResourceCapabilities:
     if acl_rows is None:
         acl_rows = fetch_acl_rows(session, mfid)
     actor_role = effective_role(principal, acl_rows)
@@ -359,6 +360,11 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
                 max_grant_role = target.db_value
                 break
 
+    may_delete = can_delete and (
+        _has_resource_permission(principal, acl_rows, Permission.DELETE)
+        or _has_resource_permission(principal, acl_rows, Permission.HARD_DELETE)
+    )
+
     return ResourceCapabilities(
         can_edit=_has_resource_permission(
             principal, acl_rows, Permission.EDIT),
@@ -370,6 +376,7 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
         ),
         can_transfer=_has_resource_permission(
             principal, acl_rows, Permission.TRANSFER),
+        can_delete=may_delete,
         max_grant_role=max_grant_role,
     )
 
@@ -491,24 +498,52 @@ def owner_affiliation_filter(principal: Principal, resource_model):
     )
 
 
-def project_owner_affiliation_filter(principal: Principal, project_model):
+def maintainer_affiliation_filter(principal: Principal, resource_model):
+    """Resources where the caller's own identity holds editor or admin."""
     from sqlalchemy import exists
-    from app.models.core_models import AccessGroup, User, UserAccessGroupLink
+    from app.models.core_models import AccessGroup, ResourceACL
     from app.utils.permissions import AccessGroupType
 
     return (
         exists()
         .where(
-            AccessGroup.group_name == project_model.unique_id,
-            AccessGroup.group_type == AccessGroupType.PROJECT.value,
-            UserAccessGroupLink.accessgroup_id == AccessGroup.id,
-            UserAccessGroupLink.role == Role.OWNER.db_value,
-            UserAccessGroupLink.user_id == User.id,
-            User.unique_id == principal.user_id,
+            ResourceACL.mfid == resource_model.unique_id,
+            ResourceACL.permission.in_((Role.EDITOR.db_value, Role.ADMIN.db_value)),
+            ResourceACL.accessgroup_id == AccessGroup.id,
+            AccessGroup.group_type == AccessGroupType.IDENTITY.value,
+            AccessGroup.group_name == principal.user_id,
         )
+        .select_from(ResourceACL, AccessGroup)
+        .correlate(resource_model)
+    )
+
+
+def project_member_filter(user_id: str, project_model, roles: Optional[Iterable[Role]] = None):
+    """Projects where `user_id` stands in the project's own access group,
+    optionally at one of `roles`."""
+    from sqlalchemy import exists
+    from app.models.core_models import AccessGroup, User, UserAccessGroupLink
+    from app.utils.permissions import AccessGroupType
+
+    conditions = [
+        AccessGroup.group_name == project_model.unique_id,
+        AccessGroup.group_type == AccessGroupType.PROJECT.value,
+        UserAccessGroupLink.accessgroup_id == AccessGroup.id,
+        UserAccessGroupLink.user_id == User.id,
+        User.unique_id == user_id,
+    ]
+    if roles:
+        conditions.append(UserAccessGroupLink.role.in_([Role.from_db(r).db_value for r in roles]))
+    return (
+        exists()
+        .where(*conditions)
         .select_from(AccessGroup, UserAccessGroupLink, User)
         .correlate(project_model)
     )
+
+
+def project_owner_affiliation_filter(principal: Principal, project_model):
+    return project_member_filter(principal.user_id, project_model, roles=(Role.OWNER,))
 
 
 def access_group_permission_filter(accessgroup_id: int, resource_model,
@@ -666,17 +701,3 @@ def access_selector_filter(session, caller: Principal, resource_model,
         filters.append(access_group_permission_filter(group.id, resource_model))
 
     return and_(*filters)
-
-
-def is_instrument_group_member(principal: Principal, session) -> bool:
-    """Whether the caller holds standing in any registered instrument's
-    operator group — named after the instrument's MFID (unique_id).
-    """
-    from app.models.core_models import Instrument
-
-    if not principal.groups:
-        return False
-    group_names = {g.group_name for g in principal.groups}
-    return session.exec(
-        select(Instrument).where(Instrument.unique_id.in_(group_names))
-    ).first() is not None

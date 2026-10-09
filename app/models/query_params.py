@@ -17,6 +17,8 @@ from app.models.resource_graph import (
     GraphRelationshipKind,
     GraphRelationshipTypeFilter,
 )
+from app.utils.permissions import PlatformRole
+from app.models.access import AccessPermission
 
 
 AFFILIATION_DESCRIPTION = (
@@ -39,6 +41,39 @@ class Affiliation(str, Enum):
     OWNER = "owner"
 
 
+class InstrumentAffiliation(str, Enum):
+    OWNER = "owner"
+    MAINTAINER = "maintainer"
+
+
+INSTRUMENT_AFFILIATION_DESCRIPTION = (
+    AFFILIATION_DESCRIPTION
+    + " maintainer matches instruments where the caller holds editor or admin on the instrument record."
+)
+MEMBER_REF_DESCRIPTION = (
+    "Projects where every listed user is a member. Accepts an ORCID, service-account MFID, "
+    "username, or email. Repeated values use AND semantics, like accessible_to_user. "
+    "Platform contributors and administrators may select another user; other callers only themselves."
+)
+SORT_DIRECTION_DESCRIPTION = (
+    "Direction for an explicit sort. Defaults to desc for created and updated, asc otherwise. "
+    "Supplying direction without sort returns 422."
+)
+PROJECT_SORT_DESCRIPTION = (
+    "Explicit ordering with unique_id as tie-breaker and nulls last. title is case-insensitive; "
+    "project_id uses the stored slug, matching the default order. Omit to keep the default "
+    "project_id ascending order."
+)
+INSTRUMENT_SORT_DESCRIPTION = (
+    "Explicit ordering with unique_id as tie-breaker and nulls last. instrument_id and name "
+    "(instrument_name) are case-insensitive. Omit to keep the default newest-first order."
+)
+INSTRUMENT_MEMBERS_DESCRIPTION = (
+    "Include people and projects holding a role on the instrument record. "
+    "Returned only to callers who hold a role on the instrument and to platform administrators."
+)
+
+
 class ResourceSort(str, Enum):
     CREATED = "created"
     UPDATED = "updated"
@@ -48,6 +83,20 @@ class ResourceSort(str, Enum):
 class SortDirection(str, Enum):
     ASC = "asc"
     DESC = "desc"
+
+
+class ProjectSort(str, Enum):
+    PROJECT_ID = "project_id"
+    TITLE = "title"
+    CREATED = "created"
+    UPDATED = "updated"
+
+
+class InstrumentSort(str, Enum):
+    INSTRUMENT_ID = "instrument_id"
+    NAME = "name"
+    CREATED = "created"
+    UPDATED = "updated"
 
 
 class FacetSort(str, Enum):
@@ -60,6 +109,21 @@ class InstrumentStatus(str, Enum):
     ACTIVE = "active"
     MAINTENANCE = "maintenance"
     DECOMMISSIONED = "decommissioned"
+
+
+class UserSearchField(str, Enum):
+    FIRST_NAME = "first_name"
+    LAST_NAME = "last_name"
+    USERNAME = "username"
+    UNIQUE_ID = "unique_id"
+    EMAIL = "email"
+
+
+class UserSort(str, Enum):
+    NAME = "name"
+    USERNAME = "username"
+    UNIQUE_ID = "unique_id"
+    EMAIL = "email"
 
 
 class DatasetFacetField(str, Enum):
@@ -105,6 +169,7 @@ class ProjectDetailQuery(StrictQueryModel):
 class InstrumentDetailQuery(StrictQueryModel):
     include_metadata: bool = False
     include_owner: bool = True
+    include_members: bool = Field(default=False, description=INSTRUMENT_MEMBERS_DESCRIPTION)
 
 
 class ResourceDetailQuery(SampleDetailQuery):
@@ -304,7 +369,11 @@ class DatasetListQuery(ResourceCollectionQuery):
     )
     instrument_mfid: Optional[str] = Field(
         default=None,
-        description="Filter datasets assigned to this canonical instrument MFID.",
+        description="Filter datasets assigned to this canonical instrument MFID. May be combined with a matching instrument_id.",
+    )
+    instrument_id: Optional[str] = Field(
+        default=None,
+        description="Filter datasets assigned to this instrument slug (case-insensitive). May be combined with a matching instrument_mfid.",
     )
     keyword: Optional[str] = None
     unique_id: Optional[str] = None
@@ -319,7 +388,13 @@ class DatasetListQuery(ResourceCollectionQuery):
         deprecated=True,
         description="Deprecated exact owner filter. Use owner_id, or affiliation=owner for the authenticated caller.",
     )] = None
-    instrument_name: Optional[str] = None
+    instrument_name: Annotated[Optional[str], Field(
+        deprecated=True,
+        description=(
+            "Deprecated display-name filter. Matches the registered instrument's current name, "
+            "or the stored label for datasets without a registered instrument. Use instrument_mfid."
+        ),
+    )] = None
     timestamp: Optional[str] = None
     size: Optional[int] = None
     data_format: Optional[str] = None
@@ -348,8 +423,8 @@ class DatasetListQuery(ResourceCollectionQuery):
             raise ValueError("data_format_is_null=true cannot be combined with data_format")
         if self.owner_id_is_null is True and (self.owner_id is not None or owner_orcid is not None):
             raise ValueError("owner_id_is_null=true cannot be combined with an exact owner filter")
-        if self.instrument_mfid_is_null is True and self.instrument_mfid is not None:
-            raise ValueError("instrument_mfid_is_null=true cannot be combined with instrument_mfid")
+        if self.instrument_mfid_is_null is True and (self.instrument_mfid is not None or self.instrument_id is not None):
+            raise ValueError("instrument_mfid_is_null=true cannot be combined with an instrument filter")
         if self.project_mfid_is_null is True and (self.project_id is not None or self.project_mfid is not None):
             raise ValueError("project_mfid_is_null=true cannot be combined with a project filter")
         return self
@@ -474,7 +549,8 @@ class ResourceFacetQuery(StrictQueryModel):
 class DatasetFacetQuery(ResourceFacetQuery):
     field: DatasetFacetField = Field(description="Dataset field to group into facet buckets.")
     sample_mfid: Optional[str] = None
-    instrument_mfid: Optional[str] = None
+    instrument_mfid: Optional[str] = Field(default=None, description="Instrument MFID. May be combined with a matching instrument_id.")
+    instrument_id: Optional[str] = Field(default=None, description="Instrument slug (case-insensitive). May be combined with a matching instrument_mfid.")
     session_name: Optional[str] = None
     measurement: Optional[str] = None
     data_format: Optional[str] = None
@@ -498,8 +574,8 @@ class DatasetFacetQuery(ResourceFacetQuery):
             raise ValueError("data_format_is_null=true cannot be combined with data_format")
         if self.owner_id_is_null is True and self.owner_id is not None:
             raise ValueError("owner_id_is_null=true cannot be combined with owner_id")
-        if self.instrument_mfid_is_null is True and self.instrument_mfid is not None:
-            raise ValueError("instrument_mfid_is_null=true cannot be combined with instrument_mfid")
+        if self.instrument_mfid_is_null is True and (self.instrument_mfid is not None or self.instrument_id is not None):
+            raise ValueError("instrument_mfid_is_null=true cannot be combined with an instrument filter")
         if self.project_mfid_is_null is True and (self.project_id is not None or self.project_mfid is not None):
             raise ValueError("project_mfid_is_null=true cannot be combined with a project filter")
         return self
@@ -559,6 +635,20 @@ class ProjectListQuery(StrictQueryModel):
         default=False,
         description="Include members for an exact project_id lookup when authorized.",
     )
+    member_ref: Optional[list[str]] = Field(
+        default=None,
+        min_length=1,
+        max_length=10,
+        description=MEMBER_REF_DESCRIPTION,
+    )
+    member_role: Optional[list[AccessPermission]] = Field(
+        default=None,
+        min_length=1,
+        max_length=5,
+        description="Restrict member_ref to these project roles. Repeated values use OR semantics. Requires member_ref.",
+    )
+    sort: Optional[ProjectSort] = Field(default=None, description=PROJECT_SORT_DESCRIPTION)
+    direction: Optional[SortDirection] = Field(default=None, description=SORT_DIRECTION_DESCRIPTION)
     limit: int = Field(default=100, ge=1, le=1000)
     cursor: Optional[str] = Field(
         default=None,
@@ -578,10 +668,22 @@ class ProjectListQuery(StrictQueryModel):
             raise ValueError("access selectors cannot contain blank values")
         return normalized
 
+    @field_validator("member_ref")
+    @classmethod
+    def validate_member_ref(cls, values):
+        if values is None:
+            return None
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("member_ref cannot contain blank values")
+        return normalized
+
     @model_validator(mode="after")
     def validate_combinations(self):
         if self.include_members and self.project_id is None:
             raise ValueError("include_members requires an exact project_id filter")
+        if self.member_role and not self.member_ref:
+            raise ValueError("member_role requires member_ref")
         return self
 
     def normalized_result_filters(self) -> dict:
@@ -589,21 +691,25 @@ class ProjectListQuery(StrictQueryModel):
             mode="json",
             exclude={
                 "cursor", "offset", "limit", "include_metadata",
-                "include_members", "include_total",
+                "include_members", "include_total", "sort", "direction",
             },
         )
 
 
 class InstrumentListQuery(StrictQueryModel):
     instrument_id: Optional[str] = Field(default=None, description="Exact instrument slug.")
-    affiliation: Optional[list[Affiliation]] = Field(
+    affiliation: Optional[list[InstrumentAffiliation]] = Field(
         default=None,
         min_length=1,
         max_length=5,
-        description=AFFILIATION_DESCRIPTION,
+        description=INSTRUMENT_AFFILIATION_DESCRIPTION,
     )
     include_metadata: bool = False
     include_owner: bool = False
+    include_members: bool = Field(
+        default=False,
+        description=INSTRUMENT_MEMBERS_DESCRIPTION + " Requires an exact instrument_id filter.",
+    )
     include_total: Optional[bool] = Field(
         default=None,
         description=(
@@ -611,6 +717,8 @@ class InstrumentListQuery(StrictQueryModel):
             "true always computes it and false always omits it."
         ),
     )
+    sort: Optional[InstrumentSort] = Field(default=None, description=INSTRUMENT_SORT_DESCRIPTION)
+    direction: Optional[SortDirection] = Field(default=None, description=SORT_DIRECTION_DESCRIPTION)
     limit: int = Field(default=100, ge=1, le=1000)
     cursor: Optional[str] = Field(
         default=None,
@@ -648,6 +756,8 @@ class InstrumentListQuery(StrictQueryModel):
             raise ValueError("owner_id and owner must identify the same owner")
         if self.affiliation and (self.owner_id is not None or owner is not None):
             raise ValueError("affiliation cannot be combined with an exact owner filter")
+        if self.include_members and self.instrument_id is None:
+            raise ValueError("include_members requires an exact instrument_id filter")
         return self
 
     def normalized_result_filters(self) -> dict:
@@ -655,13 +765,111 @@ class InstrumentListQuery(StrictQueryModel):
             mode="json",
             exclude={
                 "cursor", "offset", "limit", "include_metadata",
-                "include_owner", "include_total", "owner",
+                "include_owner", "include_members", "include_total", "owner",
+                "sort", "direction",
             },
         )
         values["owner_id"] = self.owner_id or self.__dict__.get("owner")
         if self.instrument_id is None and self.status is None:
             values["status"] = InstrumentStatus.ACTIVE.value
         return values
+
+
+class UserListQuery(BaseModel):
+    unique_id: Optional[str] = Field(
+        default=None,
+        description="Exact ORCID or service-account MFID.",
+    )
+    username: Optional[str] = Field(
+        default=None,
+        description="Exact username, matched case-insensitively.",
+    )
+    email: Optional[str] = Field(
+        default=None,
+        description="Exact email address, matched case-insensitively.",
+    )
+    permissive: bool = Field(
+        default=True,
+        description=(
+            "Matching mode for first_name and last_name. True is a "
+            "case-insensitive substring match, False an exact match."
+        ),
+    )
+    is_service_account: Optional[bool] = Field(
+        default=None,
+        description="Restrict results to service accounts or human users.",
+    )
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    q: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description=(
+            "Case-insensitive substring search. Searches the fields named in search_fields, "
+            "or by default first_name, last_name, username, unique_id, and, for platform "
+            "administrators, email."
+        ),
+    )
+    search_fields: Optional[list[UserSearchField]] = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Repeatable list of fields searched by q, with OR semantics. Requires q. "
+            "email is administrator only; other callers receive 403."
+        ),
+    )
+    platform_role: Optional[list[PlatformRole]] = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Repeatable platform-role filter, administrator only. "
+            "Repeated values use OR semantics. Other callers receive 403."
+        ),
+    )
+    include_total: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Exact authorization-filtered total. Omission preserves the "
+            "legacy behavior that always returns a total."
+        ),
+    )
+    limit: int = Field(default=100, ge=1, le=1000)
+    cursor: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=4096,
+        description="Opaque continuation cursor returned by a previous page.",
+    )
+    offset: int = Field(
+        default=0,
+        ge=0,
+        description="Compatibility offset. A supplied cursor takes precedence.",
+    )
+    sort: Optional[UserSort] = Field(
+        default=None,
+        description=(
+            "Explicit ordering, case-insensitive, with unique_id as tie-breaker and nulls last. "
+            "name sorts by last name then first name. email is administrator only. "
+            "Omission keeps the default last name, first name order."
+        ),
+    )
+    direction: SortDirection = Field(
+        default=SortDirection.ASC,
+        description="Direction for an explicit sort.",
+    )
+
+    @model_validator(mode="after")
+    def validate_search_fields(self):
+        if self.search_fields and self.q is None:
+            raise ValueError("search_fields requires q")
+        return self
+
+    def cursor_filters(self) -> dict:
+        return self.model_dump(
+            mode="json",
+            exclude={"cursor", "offset", "limit", "sort", "direction", "include_total"},
+        )
 
 
 class SearchQuery(StrictQueryModel):
@@ -716,6 +924,12 @@ class InstrumentSearchQuery(SearchQuery):
     status: Optional[InstrumentStatus] = Field(
         default=None,
         description="Restrict results to one lifecycle status.",
+    )
+    affiliation: Optional[list[InstrumentAffiliation]] = Field(
+        default=None,
+        min_length=1,
+        max_length=5,
+        description=INSTRUMENT_AFFILIATION_DESCRIPTION,
     )
     include_owner: bool = False
 

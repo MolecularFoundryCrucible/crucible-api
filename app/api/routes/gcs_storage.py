@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
+from app.api.path_params import DatasetMfid
 from app.general_utils import get_secret
 from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
@@ -193,10 +194,10 @@ def _create_upload_session(
 
 
 
-@router.post("/datasets/{dsid}/upload/initiate", response_model=UploadInitiateRead)
+@router.post("/datasets/{dataset_mfid}/upload/initiate", response_model=UploadInitiateRead)
 def initiate_resumable_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    dsid: str,
+    dsid: DatasetMfid,
     body: UploadInitiate,
 ):
     '''
@@ -204,7 +205,7 @@ def initiate_resumable_upload(
     Requires contributor access to the dataset.
     Returns an upload_id and a resumable_uri the client uses to PUT chunks directly to GCS
     (no API credentials needed for the chunk transfers).
-    Call POST /datasets/{dsid}/upload/complete when all chunks are uploaded.
+    Call POST /datasets/{dataset_mfid}/upload/complete when all chunks are uploaded.
     '''
     user_unique_id = auth_res.user_id
 
@@ -240,17 +241,17 @@ def initiate_resumable_upload(
     )
 
 
-@router.post("/datasets/{dsid}/upload/initiate/multipart", response_model=UploadMultipartInitiateRead)
+@router.post("/datasets/{dataset_mfid}/upload/initiate/multipart", response_model=UploadMultipartInitiateRead)
 def initiate_multipart_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    dsid: str,
+    dsid: DatasetMfid,
     body: UploadInitiate,
 ):
     '''
     Vend a short-lived GCS OAuth2 access token for parallel client-side uploads.
     Requires contributor access to the dataset.
     The client uses this token with google-cloud-storage transfer_manager.upload_chunks_concurrently().
-    Returns upload_id — pass it to POST /datasets/{dsid}/upload/complete after the transfer.
+    Returns upload_id — pass it to POST /datasets/{dataset_mfid}/upload/complete after the transfer.
     If existing_file is set, the file already exists; skip the upload entirely.
     '''
     user_unique_id = auth_res.user_id
@@ -277,10 +278,10 @@ def initiate_multipart_upload(
     )
 
 
-@router.post("/datasets/{dsid}/upload/complete", response_model=AssociatedFileRead)
+@router.post("/datasets/{dataset_mfid}/upload/complete", response_model=AssociatedFileRead)
 def complete_resumable_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    dsid: str,
+    dsid: DatasetMfid,
     body: UploadComplete,
 ):
     '''

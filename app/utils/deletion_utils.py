@@ -1,17 +1,176 @@
 import logging
-from sqlalchemy import delete, or_, update, func
+
+from fastapi import HTTPException
+from sqlalchemy import delete, func, or_, update
 from sqlmodel import Session, select
 
 from app.models.core_models import (
-    AssociatedFile, Dataset, DatasetKeywordLink, DatasetLink,
-    DatasetSampleLink, DeletionRequest, IngestionRequest, Resource,
-    ResourceACL, Sample, ScientificMetadataBinary,
-    SampleLink, Thumbnail, UploadSession,
+    AccessGroup, AccessGroupJoinRequest, AssociatedFile, Dataset,
+    DatasetKeywordLink, DatasetLink, DatasetSampleLink, DeletionRequest,
+    Instrument, IngestionRequest, Project, Resource, ResourceACL,
+    ResourceEmbedding, Sample, ScientificMetadataBinary, SampleLink,
+    Thumbnail, UploadSession, UserAccessGroupLink, UserProjectLink,
 )
 
 logger = logging.getLogger(__name__)
 
 from app.api.routes.gcs_storage import _DOWNLOAD_BUCKET
+from app.utils.permissions import AccessGroupType
+
+
+def _nonzero(counts: dict) -> dict:
+    return {kind: count for kind, count in counts.items() if count}
+
+
+def _project_deletion_summary(session: Session, project_mfid: str) -> dict:
+    project = session.exec(
+        select(Project).where(Project.unique_id == project_mfid)
+    ).one_or_none()
+    if project is None:
+        raise ValueError(f"Project row missing for resource {project_mfid}")
+    group = session.exec(
+        select(AccessGroup).where(
+            AccessGroup.group_name == project.unique_id,
+            AccessGroup.group_type == AccessGroupType.PROJECT.value,
+        )
+    ).one_or_none()
+    summary = {
+        "blocking": _nonzero({
+            "datasets": session.exec(
+                select(func.count(Dataset.id)).where(or_(
+                    Dataset.project_mfid == project.unique_id,
+                    Dataset.project_id == project.project_id,
+                ))
+            ).one(),
+            "samples": session.exec(
+                select(func.count(Sample.id)).where(
+                    Sample.project_mfid == project.unique_id
+                )
+            ).one(),
+        }),
+        "memberships_removed": 0,
+        "join_requests_removed": 0,
+        "removed_grants": [],
+    }
+    if group is not None:
+        summary["memberships_removed"] = session.exec(
+            select(func.count(UserAccessGroupLink.user_id)).where(
+                UserAccessGroupLink.accessgroup_id == group.id
+            )
+        ).one()
+        summary["join_requests_removed"] = session.exec(
+            select(func.count(AccessGroupJoinRequest.id)).where(
+                AccessGroupJoinRequest.accessgroup_id == group.id
+            )
+        ).one()
+        summary["removed_grants"] = [
+            grant for grant in _deleted_group_grants(session, group)
+            if grant["resource_mfid"] != project_mfid
+        ]
+    return summary
+
+
+def _instrument_deletion_summary(session: Session, instrument_mfid: str) -> dict:
+    instrument = session.exec(
+        select(Instrument).where(Instrument.unique_id == instrument_mfid)
+    ).one_or_none()
+    if instrument is None:
+        raise ValueError(f"Instrument row missing for resource {instrument_mfid}")
+    group = session.exec(
+        select(AccessGroup).where(
+            AccessGroup.group_name == instrument.unique_id,
+            AccessGroup.group_type == AccessGroupType.INSTRUMENT.value,
+        )
+    ).one_or_none()
+    summary = {
+        "blocking": _nonzero({
+            "datasets": session.exec(
+                select(func.count(Dataset.id)).where(or_(
+                    Dataset.instrument_mfid == instrument.unique_id,
+                    Dataset.instrument_id == instrument.id,
+                ))
+            ).one(),
+        }),
+        "service_accounts_unbound": 0,
+        "removed_grants": [],
+    }
+    if group is not None:
+        summary["service_accounts_unbound"] = session.exec(
+            select(func.count(UserAccessGroupLink.user_id)).where(
+                UserAccessGroupLink.accessgroup_id == group.id
+            )
+        ).one()
+        summary["removed_grants"] = [
+            grant for grant in _deleted_group_grants(session, group)
+            if grant["resource_mfid"] != instrument_mfid
+        ]
+    return summary
+
+
+def deletion_summary(session: Session, resource_type: str, mfid: str) -> dict:
+    """Blocking assignment counts plus what deleting a project or instrument would remove."""
+    if resource_type == "project":
+        return _project_deletion_summary(session, mfid)
+    if resource_type == "instrument":
+        return _instrument_deletion_summary(session, mfid)
+    raise ValueError(f"Deletion summary is not defined for resource type '{resource_type}'")
+
+
+def deletion_blockers(session: Session, resource_type: str, mfid: str) -> dict[str, int]:
+    if resource_type not in ("project", "instrument"):
+        return {}
+    return deletion_summary(session, resource_type, mfid)["blocking"]
+
+
+def deletion_preview_read(
+    resource_id: str,
+    resource_type: str,
+    deleted: bool,
+    summary: dict,
+):
+    from app.models.deletion import DeletionGrantRead, DeletableResourceType, DeletionPreviewRead
+
+    return DeletionPreviewRead(
+        resource_id=resource_id,
+        resource_mfid=resource_id,
+        resource_type=DeletableResourceType(resource_type),
+        deleted=deleted,
+        blocking=summary.get("blocking", {}),
+        memberships_removed=summary.get("memberships_removed", 0),
+        service_accounts_unbound=summary.get("service_accounts_unbound", 0),
+        join_requests_removed=summary.get("join_requests_removed", 0),
+        removed_grants=[
+            DeletionGrantRead(**grant) for grant in summary.get("removed_grants", [])
+        ],
+    )
+
+
+def assert_not_pending_deletion(session: Session, mfid: str) -> None:
+    active = session.exec(
+        select(DeletionRequest)
+        .where(DeletionRequest.resource_id == mfid)
+        .where(DeletionRequest.status.in_(["pending", "approved"]))
+    ).first()
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{mfid}' has an active deletion request "
+                f"(status: {active.status})."
+            ),
+        )
+
+
+def _deleted_group_grants(session: Session, group: AccessGroup) -> list[dict]:
+    rows = session.exec(
+        select(Resource.mfid, Resource.resource_type, ResourceACL.permission)
+        .join(Resource, Resource.mfid == ResourceACL.mfid)
+        .where(ResourceACL.accessgroup_id == group.id)
+    ).all()
+    return [
+        {"resource_mfid": mfid, "resource_type": resource_type, "permission": permission}
+        for mfid, resource_type, permission in rows
+    ]
 
 
 def _delete_gcs_blobs_for_dataset(dataset_unique_id: str, associated_files: list) -> None:
@@ -101,14 +260,101 @@ def _hard_delete_sample(sample_unique_id: str, session: Session, resource: Resou
     session.execute(delete(Resource).where(Resource.mfid == sample_unique_id))
 
 
-def hard_delete_resource(resource_id: str, session: Session, resource: Resource | None = None) -> None:
+def _hard_delete_project(project_unique_id: str, session: Session, resource: Resource) -> dict:
+    """Caller owns the transaction. Returns the deletion summary."""
+    project = session.exec(
+        select(Project).where(Project.unique_id == project_unique_id)
+    ).one_or_none()
+    if project is None:
+        raise RuntimeError(f"Project row missing for resource {project_unique_id}")
+
+    group = session.exec(
+        select(AccessGroup).where(
+            AccessGroup.group_name == project.unique_id,
+            AccessGroup.group_type == AccessGroupType.PROJECT.value,
+        )
+    ).one_or_none()
+
+    summary = _project_deletion_summary(session, project_unique_id)
+    if group is not None:
+        session.execute(delete(ResourceACL).where(
+            ResourceACL.accessgroup_id == group.id
+        ))
+        session.execute(delete(UserAccessGroupLink).where(
+            UserAccessGroupLink.accessgroup_id == group.id
+        ))
+        session.execute(delete(UserProjectLink).where(
+            UserProjectLink.project_id == project.project_id
+        ))
+        session.execute(delete(AccessGroupJoinRequest).where(
+            AccessGroupJoinRequest.accessgroup_id == group.id
+        ))
+        session.execute(delete(AccessGroup).where(AccessGroup.id == group.id))
+
+    session.execute(delete(ScientificMetadataBinary).where(
+        ScientificMetadataBinary.unique_id == project_unique_id
+    ))
+    session.execute(delete(ResourceACL).where(ResourceACL.mfid == project_unique_id))
+    session.execute(delete(DeletionRequest).where(
+        DeletionRequest.resource_id == project_unique_id
+    ))
+    session.execute(delete(Project).where(Project.id == project.id))
+    session.execute(delete(Resource).where(Resource.mfid == project_unique_id))
+    return summary
+
+
+def _hard_delete_instrument(instrument_unique_id: str, session: Session, resource: Resource) -> dict:
+    """Caller owns the transaction. Returns the deletion summary."""
+    instrument = session.exec(
+        select(Instrument).where(Instrument.unique_id == instrument_unique_id)
+    ).one_or_none()
+    if instrument is None:
+        raise RuntimeError(f"Instrument row missing for resource {instrument_unique_id}")
+
+    group = session.exec(
+        select(AccessGroup).where(
+            AccessGroup.group_name == instrument.unique_id,
+            AccessGroup.group_type == AccessGroupType.INSTRUMENT.value,
+        )
+    ).one_or_none()
+
+    summary = _instrument_deletion_summary(session, instrument_unique_id)
+    if group is not None:
+        session.execute(delete(ResourceACL).where(
+            ResourceACL.accessgroup_id == group.id
+        ))
+        session.execute(delete(UserAccessGroupLink).where(
+            UserAccessGroupLink.accessgroup_id == group.id
+        ))
+        session.execute(delete(AccessGroup).where(AccessGroup.id == group.id))
+
+    session.execute(delete(ScientificMetadataBinary).where(
+        ScientificMetadataBinary.unique_id == instrument_unique_id
+    ))
+    session.execute(delete(ResourceACL).where(ResourceACL.mfid == instrument_unique_id))
+    session.execute(delete(DeletionRequest).where(
+        DeletionRequest.resource_id == instrument_unique_id
+    ))
+    session.execute(delete(Instrument).where(Instrument.id == instrument.id))
+    session.execute(delete(Resource).where(Resource.mfid == instrument_unique_id))
+    return summary
+
+
+def hard_delete_resource(resource_id: str, session: Session, resource: Resource | None = None):
     """Delete a supported resource's database rows. Caller owns the transaction."""
     resource = resource or session.exec(select(Resource).where(Resource.mfid == resource_id)).one_or_none()
     if resource is None:
         raise RuntimeError(f"Resource {resource_id} not found")
+    session.execute(
+        delete(ResourceEmbedding).where(ResourceEmbedding.resource_mfid == resource_id)
+    )
     if resource.resource_type == "dataset":
         _hard_delete_dataset(resource_id, session, resource)
     elif resource.resource_type == "sample":
         _hard_delete_sample(resource_id, session, resource)
+    elif resource.resource_type == "project":
+        return _hard_delete_project(resource_id, session, resource)
+    elif resource.resource_type == "instrument":
+        return _hard_delete_instrument(resource_id, session, resource)
     else:
         raise ValueError(f"Unsupported resource type: {resource.resource_type}")

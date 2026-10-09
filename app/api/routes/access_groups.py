@@ -13,7 +13,7 @@ from app.models.join_requests import JoinRequestCreate, JoinRequestRead, JoinReq
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, require_platform_admin
 from app.utils.permissions import AccessGroupType, Principal, Role
-from app.utils.project_utils import is_project_member, is_project_owner, sql_add_user_to_project
+from app.utils.project_utils import is_project_member, is_project_owner, resolve_project_reference, sql_add_user_to_project
 
 router = APIRouter(tags=["access_groups"])
 engine = get_engine()
@@ -141,7 +141,7 @@ def request_to_join_access_group(
     '''
     user_unique_id = auth_res.user_id
     with Session(engine) as session:
-        proj = session.exec(select(Project).where(Project.project_id == group_name)).one_or_none()
+        proj = resolve_project_reference(group_name, session)
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Group {group_name} not found")
 
@@ -150,14 +150,14 @@ def request_to_join_access_group(
             AccessGroup.group_type == AccessGroupType.PROJECT.value,
         )).one_or_none()
         if ag is None:
-            raise HTTPException(status_code=409, detail=f"No access group for project '{group_name}'")
+            raise HTTPException(status_code=409, detail=f"No access group for project '{proj.project_id}'")
 
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        if is_project_member(user.id, group_name, session):
-            raise HTTPException(status_code=409, detail=f"Already a member of {group_name}.")
+        if is_project_member(user.id, proj.project_id, session):
+            raise HTTPException(status_code=409, detail=f"Already a member of {proj.project_id}.")
 
         existing_pending = session.exec(
             select(AccessGroupJoinRequest).where(
@@ -190,7 +190,7 @@ def request_to_join_access_group(
                 raise HTTPException(status_code=409, detail="A pending join request already exists for this group.")
             raise
         session.refresh(req)
-        return _to_join_request_read(req, group_name)
+        return _to_join_request_read(req, proj.project_id)
 
 
 @router.get("/join_requests", response_model=PaginatedResponse[JoinRequestRead])
@@ -220,7 +220,7 @@ def list_join_requests(
         filters = []
 
         if group_name:
-            proj = session.exec(select(Project).where(Project.project_id == group_name)).one_or_none()
+            proj = resolve_project_reference(group_name, session)
             ag = session.exec(select(AccessGroup).where(
                 AccessGroup.group_name == proj.unique_id,
                 AccessGroup.group_type == AccessGroupType.PROJECT.value,

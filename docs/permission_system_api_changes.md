@@ -4,6 +4,44 @@ Reference for the API v3 permission contract deployed to production. Verify `GET
 
 ## New routes
 
+### `PATCH /users/{user_ref}/platform_role`
+
+Human platform administrators only. Service-account callers receive 403 even when they hold `platform_role=admin`, and non-administrators receive 403.
+
+```
+Request:  { "platform_role": "none" | "contributor" | "admin" }   # extra=forbid; "support" is not accepted
+Response: UserRead with user_capabilities
+```
+
+`{user_ref}` accepts an ORCID, service-account MFID, or username, like every `/users/{user_ref}` route. A caller cannot change their own role (403). A service-account target returns 409 pointing at `PATCH /service_accounts/{service_account_ref}`. Demoting the last human platform administrator returns 409; the check locks every human administrator row inside the transaction, so concurrent demotions cannot remove the last one. An unknown user returns 404. Authority changes propagate through the in-process principal cache within `AUTH_CACHE_TTL` (default 60 seconds).
+
+### `DELETE /users/{user_ref}/apikey`
+
+Platform administrators only. Revokes every `ApiToken` row the user holds, invalidating the revoked keys in this worker's principal cache; other workers clear them when the TTL expires. Returns 204. An unknown user returns 404. Works for human users and service accounts.
+
+## Changed routes
+
+### `GET /users`
+
+Platform administrators receive the full directory on broad listings: `UserRead` items with email and `platform_role`, not scoped to shared groups. Non-administrators keep `UserPublicRead` items scoped to users who share an access group with them.
+
+The collection accepts a strict query model: `sort=name|username|unique_id|email` with `direction=asc|desc` (case-insensitive; name sorts by last name then first name; email is administrator only; omitting `sort` keeps the last name, first name order), `unique_id` as tie-breaker, nulls last, `include_total` (omission preserves the legacy behavior that always returns a total), signed opaque `cursor` pagination alongside `offset` with cursor precedence, `next_cursor` on responses, exact `unique_id`/`username`/`email` filters, `first_name`/`last_name` (permissive substring or exact), `q` (case-insensitive substring over first name, last name, username, unique ID, and for administrators email) with optional repeatable `search_fields` to choose the searched fields, `is_service_account`, and repeatable administrator-only `platform_role` (non-admin callers receive 403).
+
+Any other query parameter is ignored without filtering, and the response carries `Deprecation: @1799280000` (2027-01-07). The parameters will be rejected with 422 at that announced date. `?projects=x` and `?id=1` no longer filter or fail.
+
+`user_capabilities` is populated on singleton and exact lookups only and remains null on broad listings, `/users/search`, and `/users/resolve`:
+
+```
+UserCapabilities = {
+  can_view_private: bool,          # self or platform admin
+  can_edit_profile: bool,          # self or platform admin
+  can_manage_api_key: bool,        # platform admin only
+  can_change_platform_role: bool,  # human platform admin, human target, not self
+}
+```
+
+It is the reliable discriminator for what the caller may do to a user; do not infer capability from the presence of `email`. `UserRead` now also exposes `platform_role` to the user themselves and to platform administrators, and the singleton and exact platform-admin views expose non-secret `api_key_status` when a key exists.
+
 ### `POST /resources/{mfid}/transfer_ownership`
 
 `?confirm=true` to execute; omit to preview without writing anything.
@@ -28,7 +66,7 @@ Response: { "resource_id": str, "previous_project_id": str | null, "new_project_
 
 Datasets/samples only. Returns 400 for projects/instruments. Requires admin on the resource and contributor-or-above standing in the target project.
 
-### `POST /instruments/{instrument_mfid}/service_accounts/{sa_unique_id}` and `DELETE` (same path)
+### `POST /instruments/{instrument_ref}/service_accounts/{service_account_ref}` and `DELETE` (same path)
 
 ```
 No request body.
@@ -41,9 +79,9 @@ AccessGroupMemberRead = {
 }
 ```
 
-Requires admin on the instrument. In practice this is platform-admin only for now because no group otherwise holds admin on an instrument. `DELETE` on a binding that doesn't exist returns 404.
+Requires admin on the instrument: the instrument owner, admin maintainers, and platform administrators. Only service accounts can be bound. `DELETE` on a binding that doesn't exist returns 404. See [instrument access](instrument_access.md).
 
-### `GET /instruments/{instrument_mfid}/service_accounts`
+### `GET /instruments/{instrument_ref}/service_accounts`
 
 Returns the current service accounts bound to the instrument's operator group using the same `AccessGroupMemberRead` response as the binding routes. Requires admin on the instrument.
 
@@ -55,11 +93,11 @@ Returns the current service accounts bound to the instrument's operator group us
 
 Authenticated human users may create an instrument for themselves. Human platform administrators may create one for another registered identity. Service accounts cannot register instruments, including when they hold platform-admin status. `owner` is optional and uses the same flexible identity resolution as dataset and sample creation. Omit it to make the authenticated caller the owner. The deprecated `owner_orcid` field remains an exact canonical identity lookup, and providing both fields returns 422.
 
-Instrument display names preserve the casing supplied by the caller. Exact filters and dataset assignment by `instrument_id` remain case-insensitive. `PATCH /instruments/{instrument_mfid}` rejects explicit null values for `instrument_id`, `instrument_name`, and `location` with 422; omit a field to leave it unchanged.
+Instrument display names preserve the casing supplied by the caller. Exact filters and dataset assignment by `instrument_id` remain case-insensitive. `PATCH /instruments/{instrument_ref}` rejects explicit null values for `instrument_id`, `instrument_name`, and `location` with 422; omit a field to leave it unchanged.
 
 `GET /instruments/search` accepts an optional `status` query with `active`, `maintenance`, or `decommissioned`. Omitting the query preserves the existing behavior and searches across every status.
 
-The response exposes the canonical identity as `owner_orcid`, matching dataset and sample responses despite the legacy field name. Instrument singleton and generic resource reads populate `owner` with a public-safe user object by default; pass `include_owner=false` to omit it. Collection and search expansion remains opt-in with `include_owner=true` and uses one batched user query. The API creates an owner ACL for that identity as well as the separate editor ACL for the instrument operator group. Arbitrary labels such as `"facility"` are no longer valid owner values unless they resolve to a registered username. Instrument PATCH no longer accepts `owner`; use `POST /resources/{instrument_mfid}/transfer_ownership`.
+The response exposes the canonical identity as `owner_orcid`, matching dataset and sample responses despite the legacy field name. Instrument singleton and generic resource reads populate `owner` with a public-safe user object by default; pass `include_owner=false` to omit it. Collection and search expansion remains opt-in with `include_owner=true` and uses one batched user query. The API creates an owner ACL for that identity. The instrument operator group holds no grant on the instrument record. Maintainers are granted through the generic resource access routes, and `include_members=true` returns them to callers with a role on the instrument; see [instrument access](instrument_access.md). Arbitrary labels such as `"facility"` are no longer valid owner values unless they resolve to a registered username. Instrument PATCH no longer accepts `owner`; use `POST /resources/{instrument_mfid}/transfer_ownership`.
 
 Dataset, sample, project, and instrument detail responses now share an optional caller-specific `capabilities` object:
 
@@ -79,7 +117,7 @@ Dataset, sample, project, and instrument detail responses now share an optional 
 
 Body now rejects `project_lead_orcid`, `project_lead_email`, `project_lead_username` with **422** (`extra="forbid"`). Use `POST /resources/{mfid}/transfer_ownership` for leadership changes instead.
 
-`project_id` itself is now an accepted field and **renames the project**. It is validated the same way as at creation (format, reserved names, collision against other projects/access groups/instrument names), with 409 on collision and 422 on malformed input. It is safe to change at any time: every FK that names a project stores its MFID, never `project_id`, and every dataset/sample response resolves `project_id` live rather than from a stored value, so a rename never strands existing data under the old name. Accepted fields are now `project_id`, `organization`, `status`, `title`.
+`project_id` itself is now an accepted field and **renames the project**. It is validated the same way as at creation (format, reserved names, case-insensitive collision against other projects and access groups), with 409 on collision and 422 on malformed input. A rename may change only the casing of the project's own slug. It is safe to change at any time: every FK that names a project stores its MFID, never `project_id`, and every dataset/sample response resolves `project_id` live rather than from a stored value, so a rename never strands existing data under the old name. Accepted fields are now `project_id`, `organization`, `status`, `title`.
 
 ### `GET /resources/{mfid}/access`, `PUT/DELETE /resources/{mfid}/access/{kind}/{principal}`, `PUT/DELETE /resources/{mfid}/access/public`
 
@@ -122,7 +160,7 @@ Also a bug fix: membership detection for `?include_metadata=` and `?include_memb
 
 The exact collection lookup `GET /projects?project_id={slug}&include_members=true` supports the same authorized member expansion so clients can resolve a slug without a second canonical request. `include_members=true` without an exact `project_id` filter returns 422.
 
-### `POST/PATCH /projects/{project_ref}/users/{orcid}`
+### `POST/PATCH /projects/{project_ref}/users/{user_ref}`
 
 Both accept named role query values: `viewer`, `contributor`, `editor`, `admin`, and `owner`. Integer role values are no longer accepted. Both return **409** if `?role=owner` is requested. A project has exactly one owner, and appointing or changing one now only happens through `POST /resources/{mfid}/transfer_ownership`. Previously an existing owner could grant a second member `owner` via either route (or change their own standing away from it), silently desyncing `Project.project_lead_orcid` from who actually held owner standing.
 
@@ -130,15 +168,15 @@ Repeating `POST` for an existing member with the same requested role returns 200
 
 Membership management follows a strict hierarchy. Editors may add or change contributors and viewers, admins may manage editors and below, and owners may manage admins and below. A caller cannot modify a member at the caller's own role. Project `capabilities.max_grant_role` reports `contributor` for editors, `editor` for admins, and `admin` for owners.
 
-### `PATCH /datasets/{dsid}`
+### `PATCH /datasets/{dataset_mfid}`
 
 Body now rejects `owner_orcid` and `project_id` with **422**. Use `transfer_ownership` / `POST /resources/{mfid}/project` instead. Instrument reassignment is frozen until a dedicated atomic operation is available. The deprecated `instrument_name` and `instrument_id` fields accept only the current value for compatibility; changing or clearing either returns **409**. Other accepted fields are `dataset_name`, `data_format`, `measurement`, `data_type`, `session_name`, `timestamp`, and `public`.
 
-### `PATCH /samples/{sample_id}`
+### `PATCH /samples/{sample_mfid}`
 
 Same shape: `project_id` rejected with **422**. Accepted fields: `sample_name`, `sample_type`, `description`, `timestamp`, `public`.
 
-### `POST` / `PATCH` / `DELETE` `/projects/{project_ref}/users/{orcid}`
+### `POST` / `PATCH` / `DELETE` `/projects/{project_ref}/users/{user_ref}`
 
 All three now return the **full member list** instead of a single-user response:
 
@@ -148,20 +186,27 @@ Response: [ AccessGroupMemberRead, ... ]
 
 Every member record is public-safe and omits email. `PATCH` requires a `role` query param with no default; it was previously optional in shape. `DELETE` gains a 409 if the caller is the project lead trying to remove themselves ("Transfer leadership first").
 
-### `GET /users/{user_id}/projects`
+### `GET /users/{user_ref}/projects`
 
-Response is now `PaginatedResponse[Union[ProjectWithLead, ProjectMinimalRead]]`, decided server-side per caller:
+Response is `PaginatedResponse[ProjectWithLead]`:
 
-- self or platform admin → `ProjectWithLead`:
-  ```
-  { unique_id, project_id, organization, project_lead_orcid, status, title,
-    lead, scientific_metadata, creation_time, modification_time }
-  ```
-- caller with standing in any instrument group → `ProjectMinimalRead`:
-  ```
-  { unique_id: str, project_id: str, title: str | null }
-  ```
-- anyone else → 403
+```
+{ unique_id, project_id, organization, project_lead_orcid, status, title,
+  lead, scientific_metadata, creation_time, modification_time, role }
+```
+
+`role` is the target user's standing in that project's access group (`owner`, `admin`, `editor`, `contributor`, `viewer`), resolved in the page query.
+
+Available to the user themselves and to callers with `platform_role` `contributor` or `admin`, including service accounts. Anyone else receives 403. This is the same authority required to select another user with `accessible_to_user`. Instrument-group membership no longer grants access, and the former `ProjectMinimalRead` projection for instrument-group members has been removed.
+
+The route lists projects the user is a **member** of, through standing in the project's access group. It differs from `GET /projects?accessible_to_user={user_ref}`, which lists projects the user can **read**: membership plus projects reachable through explicit resource grants, and every project when the selected user holds `platform_role` `contributor` or `admin`. Both routes are retained; choose by the question being asked.
+
+| Question | Route |
+|---|---|
+| Which projects is this user a member of? | `GET /users/{user_ref}/projects` |
+| Which projects can this user read? | `GET /projects?accessible_to_user={user_ref}` |
+
+The two routes also differ in shape: `GET /users/{user_ref}/projects` uses offset pagination only, while `accessible_to_user` also accepts an MFID, ORCID, username, or email and supports the full `GET /projects` query contract.
 
 ### Resource lists for specified users and projects
 
@@ -176,15 +221,15 @@ GET /samples?accessible_to_project={project_a}&accessible_to_project={project_b}
 GET /projects?accessible_to_user={user_ref}&accessible_to_project={project_ref}
 ```
 
-`GET /users/{user_id}/datasets` and `GET /users/{user_id}/samples` are deprecated compatibility routes. They now use the same effective-role and deletion filtering as the canonical collections but retain their existing unpaginated `List[str]` MFID responses for current Nano clients.
+`GET /users/{user_ref}/datasets` and `GET /users/{user_ref}/samples` are deprecated compatibility routes. They now use the same effective-role and deletion filtering as the canonical collections but retain their existing unpaginated `List[str]` MFID responses for current Nano clients.
 
 ### User email disclosure
 
-Broad `GET /users` listings, batch user resolution, project lead, project membership, instrument operator, and access-group member responses use public-safe user schemas and never return email. Exact `GET /users?unique_id=`, `?username=`, or `?email=` lookups return the same authorized representation as `GET /users/{user_id}`: self and platform administrators may receive email, while other authenticated callers receive `UserPublicRead`.
+Broad `GET /users` listings, batch user resolution, project lead, project membership, instrument operator, and access-group member responses use public-safe user schemas and never return email. Exact `GET /users?unique_id=`, `?username=`, or `?email=` lookups return the same authorized representation as `GET /users/{user_ref}`: self and platform administrators may receive email, while other authenticated callers receive `UserPublicRead`.
 
 Email remains available through the authenticated caller's own profile, exact self lookups, exact platform-admin lookups, and authorized user mutation responses. Service-account status alone does not grant email disclosure. `POST /users/resolve` remains public-safe even when the request contains one identifier because it is a batch-resolution contract.
 
-### `GET /users/{user_id}/datasets/{dataset_mfid}`
+### `GET /users/{user_ref}/datasets/{dataset_mfid}`
 
 This route now reports the user's canonical effective access instead of the legacy `{read: bool, write: bool}` pair:
 
@@ -200,13 +245,13 @@ This route now reports the user's canonical effective access instead of the lega
 
 This is an intentional breaking response change for Nano's `client.users.check_dataset_access()` and `crucible user check-access` command. Those clients must read `effective_access` instead of the removed `read` and `write` fields.
 
-### `POST` / `DELETE` `/users/{user_id}/access_groups/{group_name}`
+### `POST` / `DELETE` `/users/{user_ref}/access_groups/{group_name}`
 
 Both generic membership operations are now deprecated in OpenAPI. They remain platform-admin-only compatibility routes for existing instrument and custom groups.
 
-The routes return **409** for identity groups and reserved system groups. A human or service account identity group is immutable membership containing only that identity at owner standing. They continue to return **400** for project groups and direct callers to `POST`/`DELETE /projects/{project_ref}/users/{orcid}`. POST now returns **404** for an unknown group instead of silently creating a custom group after a spelling mistake.
+The routes return **409** for identity groups and reserved system groups. A human or service account identity group is immutable membership containing only that identity at owner standing. They continue to return **400** for project groups and direct callers to `POST`/`DELETE /projects/{project_ref}/users/{user_ref}`. POST now returns **404** for an unknown group instead of silently creating a custom group after a spelling mistake.
 
-Nano Crucible's `client.users.add_to_access_group()` and `remove_from_access_group()`, including their service-account wrappers and CLI commands, use these deprecated paths. Instrument integrations should move to `POST`/`DELETE /instruments/{instrument_mfid}/service_accounts/{sa_unique_id}`. No instrument membership behavior changes in this API release.
+Nano Crucible's `client.users.add_to_access_group()` and `remove_from_access_group()`, including their service-account wrappers and CLI commands, use these deprecated paths. Instrument integrations should move to `POST`/`DELETE /instruments/{instrument_ref}/service_accounts/{service_account_ref}`. No instrument membership behavior changes in this API release.
 
 ### `POST /access_groups/{group_name}/join`
 
@@ -232,7 +277,7 @@ An ordinary human caller may create only for themselves. Platform contributors a
 
 `platform_role=contributor` grants platform-wide read and create access. New service accounts receive this role by default and can read projects and resources, create resources and child records, and use `accessible_to_user` for another registered identity. `is_service_account` alone grants no global access. Non-admin service accounts remain capped at contributor even when an ACL or group standing would otherwise grant a higher role. They cannot edit existing values, delete resources, manage ACLs, transfer ownership, register instruments, or use platform-administrator routes.
 
-`GET /account/profile` returns workflow capabilities for the authenticated principal. The flags describe whether the caller can manage service accounts, create projects, register instruments, create samples or datasets, and create for another identity. They are presentation guidance only; every operation remains independently authorized.
+`GET /account/profile` returns workflow capabilities for the authenticated principal. The flags describe whether the caller can manage service accounts and human users (`can_manage_users`), create projects, register instruments, create samples or datasets, and create for another identity. They are presentation guidance only; every operation remains independently authorized.
 
 Authenticated routes accept optional `Crucible-Privilege-Mode: normal|elevated`. Omission preserves existing behavior. Explicit normal mode removes the platform-administrator bypass for that request while retaining the caller's ACL-derived permissions. Explicit elevated mode is limited to human platform administrators. Service accounts cannot explicitly elevate.
 
@@ -240,15 +285,15 @@ Authenticated responses return the applied `Crucible-Privilege-Mode` and an `X-R
 
 `GET /account/profile` now includes `authorization.platform_role`, `authorization.effective_privilege_mode`, and `authorization.can_elevate`. Its existing `capabilities` describe permissions effective in the applied request mode.
 
-Platform administrators can use `GET /service_accounts` for a paginated, searchable directory and `GET /service_accounts/{unique_id}` for administrator-visible details. These responses expose `platform_role` and never expose the API key. The detail response includes non-secret key validity, creation date, and expiration date when a key exists. Project membership routes reject roles above contributor for a non-admin service account.
+Platform administrators can use `GET /service_accounts` for a paginated, searchable directory and `GET /service_accounts/{service_account_ref}` for administrator-visible details. These responses expose `platform_role` and never expose the API key. The detail response includes non-secret key validity, creation date, and expiration date when a key exists. Project membership routes reject roles above contributor for a non-admin service account.
 
-Human platform administrators can use `PATCH /service_accounts/{unique_id}` with `platform_role` set to `none`, `contributor`, or `admin`. Service accounts cannot call this route even when they currently hold `platform_role=admin`. The response returns the updated administrator-visible detail without an API key. Existing authenticated requests may retain the previous authority until the per-process principal cache expires; `AUTH_CACHE_TTL` defaults to 60 seconds.
+Human platform administrators can use `PATCH /service_accounts/{service_account_ref}` with `platform_role` set to `none`, `contributor`, or `admin`. Service accounts cannot call this route even when they currently hold `platform_role=admin`. The response returns the updated administrator-visible detail without an API key. Existing authenticated requests may retain the previous authority until the per-process principal cache expires; `AUTH_CACHE_TTL` defaults to 60 seconds.
 
 Authorized resource managers can use `GET /users/search?q={query}&is_service_account=true` for public-safe service-account autocomplete. The optional filter is applied before ranking and limiting. It does not expose administrative service-account fields.
 
 Project responses expose the acting principal's general `capabilities.max_grant_role`, while project member responses expose the stored membership role. A future target-aware membership contract may return effective role and assignable roles for a selected identity. Until then, clients should cap service-account choices at viewer and contributor and treat API authorization as authoritative.
 
-Responses that contain an API key send `Cache-Control: no-store`. Creation and rotation remain the preferred service-account credential flows; administrative retrieval through `POST /users/{user_id}/apikey` remains available for compatibility.
+Responses that contain an API key send `Cache-Control: no-store`. Creation and rotation remain the preferred service-account credential flows; administrative retrieval through `POST /users/{user_ref}/apikey` remains available for compatibility.
 
 Revision `7a1c4e8d2f90` adds the PostgreSQL enum value and must run before deploying code that creates service accounts with the new default. It does not change existing users. Existing service accounts with `platform_role=admin` must be moved to `contributor` individually after their ingestion workflow is verified, then removed from the legacy `admin` group.
 
@@ -300,7 +345,7 @@ Now requires **admin** on the parent dataset (`Permission.DELETE`), not editor (
 
 ### Ingestion requests and project dataset graphs
 
-`GET /ingestion_requests`, `GET /ingestion_requests/{reqid}`, and `GET /projects/{project_ref}/dataset_graph` now use the same ACL permission evaluator as the corresponding dataset routes. Viewing remains available to viewer-or-above callers. `POST /files/{file_id}/ingest` and its deprecated dataset-scoped alias now require contributor-or-above on the parent dataset; viewers previously passed an unintended read-only check and now receive 403.
+`GET /ingestion_requests`, `GET /ingestion_requests/{request_id}`, and `GET /projects/{project_ref}/dataset_graph` now use the same ACL permission evaluator as the corresponding dataset routes. Viewing remains available to viewer-or-above callers. `POST /files/{file_id}/ingest` and its deprecated dataset-scoped alias now require contributor-or-above on the parent dataset; viewers previously passed an unintended read-only check and now receive 403.
 
 These read routes no longer authorize from the legacy `Dataset.public` Boolean. Public visibility requires a viewer grant to the public access group, as it does elsewhere. Platform administrators can read private ingestion requests and see private datasets in project graphs without belonging to their access groups.
 

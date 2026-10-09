@@ -40,6 +40,50 @@ class DeletionReviewDecision(str, Enum):
 class DeletableResourceType(str, Enum):
     DATASET = "dataset"
     SAMPLE = "sample"
+    PROJECT = "project"
+    INSTRUMENT = "instrument"
+
+
+class DeletionGrantRead(SQLModel):
+    resource_mfid: str
+    resource_type: str
+    permission: str
+
+
+class DeletionPreviewRead(SQLModel):
+    """What deleting a project or instrument removes, or why it is blocked."""
+    resource_id: str = Field(deprecated=True, description="Deprecated. Use resource_mfid.")
+    resource_mfid: str
+    resource_type: DeletableResourceType
+    deleted: bool = Field(
+        description="False for a preview, true when the deletion executed.",
+    )
+    blocking: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Assigned datasets and samples that block deletion, keyed by entity "
+            "type. Empty when the resource is deletable."
+        ),
+    )
+    memberships_removed: int = Field(
+        default=0,
+        description="Project group members unlinked when a project is deleted.",
+    )
+    service_accounts_unbound: int = Field(
+        default=0,
+        description="Operator group service accounts unbound when an instrument is deleted.",
+    )
+    join_requests_removed: int = Field(
+        default=0,
+        description="Pending and reviewed join requests removed with a project's access group.",
+    )
+    removed_grants: list[DeletionGrantRead] = Field(
+        default_factory=list,
+        description=(
+            "Access grants held by the deleted access group on resources other "
+            "than the deleted resource itself."
+        ),
+    )
 
 
 class DeletionRequestCapabilities(SQLModel):
@@ -51,7 +95,8 @@ class DeletionRequestCapabilities(SQLModel):
 class DeletionRequestRead(SQLModel):
     """Deletion request with resource, project, and caller capability context."""
     id: int
-    resource_id: str
+    resource_id: str = Field(deprecated=True, description="Deprecated. Use resource_mfid.")
+    resource_mfid: str
     resource_type: Optional[str] = None
     resource_name: Optional[str] = None
     project_id: Optional[str] = None
@@ -66,6 +111,13 @@ class DeletionRequestRead(SQLModel):
     reviewer: Optional[UserPublicRead]
     reviewer_notes: Optional[str] = None
     capabilities: DeletionRequestCapabilities
+    preview: Optional[DeletionPreviewRead] = Field(
+        default=None,
+        description=(
+            "Project and instrument deletions only: what deleting the resource "
+            "removes, or why it is blocked. Null for datasets and samples."
+        ),
+    )
 
 
 class DeletionAuditLogRead(SQLModel):

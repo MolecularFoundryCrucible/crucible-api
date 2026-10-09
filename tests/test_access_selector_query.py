@@ -474,8 +474,9 @@ def test_access_selectors_are_repeated_openapi_arrays():
     }
     assert dataset_parameters["instrument_mfid"]["required"] is False
     assert dataset_parameters["instrument_mfid"]["description"] == (
-        "Filter datasets assigned to this canonical instrument MFID."
+        "Filter datasets assigned to this canonical instrument MFID. May be combined with a matching instrument_id."
     )
+    assert dataset_parameters["instrument_id"]["required"] is False
     assert dataset_parameters["sample_mfid"]["required"] is False
     assert dataset_parameters["sample_mfid"]["description"] == (
         "Filter datasets linked to this canonical sample MFID."
@@ -524,8 +525,8 @@ def test_access_selectors_are_repeated_openapi_arrays():
         for parameter in schema["paths"]["/instruments/search"]["get"]["parameters"]
     }
     assert instrument_search_parameters["owner_id"]["required"] is False
-    assert schema["paths"]["/samples/{sample_id}/datasets"]["get"]["deprecated"] is True
-    assert schema["paths"]["/datasets/{dsid}/samples"]["get"]["deprecated"] is True
+    assert schema["paths"]["/samples/{sample_mfid}/datasets"]["get"]["deprecated"] is True
+    assert schema["paths"]["/datasets/{dataset_mfid}/samples"]["get"]["deprecated"] is True
     for schema_name in ("DatasetResponse", "SampleResponse"):
         capabilities = schema["components"]["schemas"][schema_name]["properties"]["capabilities"]
         assert capabilities["anyOf"][0]["$ref"] == "#/components/schemas/ResourceCapabilities"
@@ -544,15 +545,15 @@ def test_access_selectors_are_repeated_openapi_arrays():
     for path in (
         "/datasets/{dataset_mfid}",
         "/samples/{sample_mfid}",
-        "/instruments/{instrument_mfid}",
-        "/resources/{resource_id}",
+        "/instruments/{instrument_ref}",
+        "/resources/{mfid}",
     ):
         parameters = {
             parameter["name"]: parameter
             for parameter in schema["paths"][path]["get"]["parameters"]
         }
         assert parameters["include_owner"]["schema"]["default"] is True
-    for path in ("/samples/{sample_mfid}", "/resources/{resource_id}"):
+    for path in ("/samples/{sample_mfid}", "/resources/{mfid}"):
         parameters = {
             parameter["name"]: parameter
             for parameter in schema["paths"][path]["get"]["parameters"]

@@ -36,7 +36,14 @@ class DatasetCreate(SQLModel):
         default=None,
         description="Canonical project MFID. May be combined with a matching project_id.",
     )
-    instrument_name: Optional[str] = None
+    instrument_name: Optional[str] = Field(
+        default=None,
+        deprecated=True,
+        description=(
+            "Deprecated. Display-name lookup used only when instrument_id and instrument_mfid are omitted; "
+            "returns 409 when the name matches more than one instrument. Use instrument_id or instrument_mfid."
+        ),
+    )
     instrument_id: Optional[str] = Field(
         default=None,
         description="Registered instrument slug. May be combined with a matching instrument_mfid.",
@@ -224,7 +231,11 @@ class ThumbnailUpdate(SQLModel):
 class ThumbnailRead(SQLModel):
     '''Response model for Thumbnail.'''
     id: int
-    dataset_id: int
+    dataset_id: int = Field(
+        deprecated=True,
+        description="Deprecated internal dataset key. Use dataset_mfid.",
+    )
+    dataset_mfid: str
     thumbnail_name: str
     thumbnail_b64str: str
     mime_type: Literal["image/jpeg"] = "image/jpeg"

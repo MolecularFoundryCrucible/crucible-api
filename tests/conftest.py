@@ -9,6 +9,7 @@ from app.models.core_models import (
     AssociatedFile, IngestionRequest, Project, UserProjectLink, Sample,
     DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
     DatasetLink, ApiToken, UploadSession, DeletionAuditLog, DatasetKeywordLink, Thumbnail,
+    ResourceEmbedding,
 )
 from app.utils.auth_utils import authenticate_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
@@ -26,6 +27,7 @@ import app.api.routes.resource_graph as resource_graph_routes
 import app.api.routes.samples as samples_routes
 import app.api.routes.service_accounts as service_accounts_routes
 import app.api.routes.users as users_routes
+import app.utils.gcs_record_utils as gcs_record_utils
 from fastapi.testclient import TestClient
 
 TEST_TABLES = [
@@ -36,6 +38,7 @@ TEST_TABLES = [
     Instrument.__table__, AccessGroupJoinRequest.__table__, DatasetSampleLink.__table__,
     SampleLink.__table__, DatasetLink.__table__, ApiToken.__table__, UploadSession.__table__,
     DeletionAuditLog.__table__, DatasetKeywordLink.__table__, Thumbnail.__table__,
+    ResourceEmbedding.__table__,
 ]
 
 
@@ -72,6 +75,13 @@ def db_engine():
     service_accounts_routes.engine = engine
     users_routes.engine = engine
     yield engine
+
+
+@pytest.fixture(autouse=True)
+def block_record_bucket(monkeypatch):
+    def _refuse():
+        raise RuntimeError("tests must not write to the record bucket")
+    monkeypatch.setattr(gcs_record_utils, "_get_client", _refuse)
 
 
 @pytest.fixture

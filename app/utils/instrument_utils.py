@@ -1,10 +1,11 @@
 import re
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import and_, exists, func, or_
 from sqlmodel import select
 
-from app.models.core_models import Instrument, Project
+from app.general_utils import is_valid_mfid
+from app.models.core_models import Dataset, Instrument, Project
 from app.models.instrument import InstrumentReferenceRead
 
 _INSTRUMENT_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{2,24}$')
@@ -41,6 +42,25 @@ def resolve_instrument_id_to_mfid(instrument_id: str, session) -> "str | None":
     return instrument.unique_id if instrument else None
 
 
+def instrument_id_matches(instrument_id: str):
+    return func.lower(Instrument.instrument_id) == instrument_id.lower()
+
+
+def resolve_instrument_reference(instrument_ref: str, session) -> Instrument | None:
+    if is_valid_mfid(instrument_ref):
+        query = select(Instrument).where(Instrument.unique_id == instrument_ref)
+    else:
+        query = select(Instrument).where(instrument_id_matches(instrument_ref))
+    return session.exec(query).one_or_none()
+
+
+def get_instrument_or_404(session, instrument_ref: str) -> Instrument:
+    instrument = resolve_instrument_reference(instrument_ref, session)
+    if instrument is None:
+        raise HTTPException(status_code=404, detail="Instrument not found")
+    return instrument
+
+
 def resolve_instrument_identifiers(
     session,
     instrument_id: str | None,
@@ -63,8 +83,6 @@ def resolve_instrument_identifiers(
         identifier = instrument_id
 
     if instrument is None:
-        if instrument_mfid is None:
-            raise HTTPException(status_code=400, detail=f"Instrument '{identifier}' is not registered")
         raise HTTPException(status_code=404, detail=f"Instrument '{identifier}' not found")
     if (
         instrument_id is not None
@@ -77,6 +95,20 @@ def resolve_instrument_identifiers(
     return instrument
 
 
+def resolve_instrument_filter_mfid(session, instrument_id: str | None, instrument_mfid: str | None) -> str | None:
+    if instrument_id is None:
+        return instrument_mfid
+    instrument = session.exec(select(Instrument).where(instrument_id_matches(instrument_id))).one_or_none()
+    if instrument is None:
+        raise HTTPException(status_code=404, detail=f"Instrument '{instrument_id}' not found")
+    if instrument_mfid is not None and instrument.unique_id != instrument_mfid:
+        raise HTTPException(
+            status_code=422,
+            detail="instrument_id and instrument_mfid identify different instruments",
+        )
+    return instrument.unique_id
+
+
 def resolve_instrument_mfids_to_ids(mfids, session) -> dict:
     """Batch mfid -> instrument_id, for response serialization. One query
     regardless of how many rows are being resolved."""
@@ -87,6 +119,28 @@ def resolve_instrument_mfids_to_ids(mfids, session) -> dict:
         select(Instrument.unique_id, Instrument.instrument_id).where(Instrument.unique_id.in_(mfid_set))
     ).all()
     return dict(rows)
+
+
+def dataset_instrument_fields(dataset, reference: "InstrumentReferenceRead | None") -> dict:
+    """Instrument fields for a dataset response, resolved from its instrument_mfid.
+    The stored instrument_name is a fallback for legacy datasets with no registered instrument."""
+    return {
+        "instrument_id": reference.instrument_id if reference else None,
+        "instrument_name": reference.instrument_name if reference else dataset.instrument_name,
+        "instrument": reference,
+    }
+
+
+def dataset_instrument_name_filter(instrument_name: str):
+    """Match the instrument name a dataset response displays: the registered
+    instrument's current name, or the stored label for a legacy dataset."""
+    return or_(
+        exists().where(
+            Instrument.unique_id == Dataset.instrument_mfid,
+            Instrument.instrument_name == instrument_name,
+        ).correlate(Dataset),
+        and_(Dataset.instrument_mfid.is_(None), Dataset.instrument_name == instrument_name),
+    )
 
 
 def resolve_instrument_mfids_to_references(mfids, session) -> dict[str, InstrumentReferenceRead]:

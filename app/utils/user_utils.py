@@ -147,6 +147,17 @@ def resolve_user_by_identifier(session, identifier: str) -> User:
     return resolve_user(session, username=identifier)
 
 
+def resolve_service_account_reference(session, ref: str) -> User:
+    if is_valid_mfid(ref):
+        query = select(User).where(User.unique_id == ref)
+    else:
+        query = select(User).where(User.username == ref.lower())
+    user = session.exec(query.where(User.is_service_account == True)).one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="Service account not found")
+    return user
+
+
 def resolve_create_owner(session, owner: str | None, owner_orcid: str | None, authenticated_user_id: str) -> User:
     if owner is not None:
         return resolve_user_by_identifier(session, owner)
@@ -245,7 +256,7 @@ def assign_projects_to_user(session, user_id: str, project_ids: List[str]) -> Di
     already_member = []
     not_found = []
     for project_id in sorted(set(project_id for project_id in project_ids if project_id)):
-        project = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
+        project = session.exec(select(Project).where(func.lower(Project.project_id) == project_id.lower())).one_or_none()
         if project is None:
             logger.warning("No project found for %s", project_id)
             not_found.append(project_id)

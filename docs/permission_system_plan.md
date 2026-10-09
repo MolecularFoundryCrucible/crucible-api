@@ -500,7 +500,7 @@ What managers keep regardless is `viewer` on *public* datasets, through the virt
 
 `POST /instruments` creates the instrument, its resource row and its operator group. It does **not** create a service account.
 
-Any authenticated human may create an instrument and becomes its owner when no owner is supplied. Platform administrators may create on behalf of another registered identity. Service accounts cannot register instruments. The owner's identity group receives `owner` on the instrument resource; the separate operator group receives `editor`, which remains subject to the service-account contributor ceiling.
+Any authenticated human may create an instrument and becomes its owner when no owner is supplied. Platform administrators may create on behalf of another registered identity. Service accounts cannot register instruments. The owner's identity group receives `owner` on the instrument resource. The separate operator group holds no grant on the instrument record; it receives `contributor` on datasets assigned to the instrument. See [instrument access](instrument_access.md).
 
 Minting one is a deliberate second step, so a live credential exists only where something is actually writing rather than for every instrument anyone ever registered. `POST /instruments?create_service_account=true` keeps the one-call ergonomics available for the common case without leaving unused keys lying around by default.
 

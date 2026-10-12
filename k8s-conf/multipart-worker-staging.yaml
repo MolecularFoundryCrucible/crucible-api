@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crucible-multipart-worker-staging
+  namespace: default
+  labels:
+    app: crucible-multipart-worker-staging
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: crucible-multipart-worker-staging
+  template:
+    metadata:
+      labels:
+        app: crucible-multipart-worker-staging
+    spec:
+      serviceAccountName: default
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      tolerations:
+        - effect: NoSchedule
+          key: kubernetes.io/arch
+          operator: Equal
+          value: amd64
+      containers:
+        - name: worker
+          image: us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-staging:latest
+          imagePullPolicy: Always
+          workingDir: /root
+          command: ["/root/.venv/bin/python", "-m", "scripts.multipart_worker"]
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: API_CONF_FILE
+              valueFrom:
+                configMapKeyRef:
+                  name: crucible-api-config-staging
+                  key: API_CONF_FILE
+            - name: DB_SERVER
+              valueFrom:
+                configMapKeyRef:
+                  name: crucible-api-config-staging
+                  key: db_server
+            - name: DB_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: crucible-api-config-staging
+                  key: db_username
+            - name: DB_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: crucible-api-config-staging
+                  key: db_database
+            - name: DB_POOL_SIZE
+              value: "2"
+            - name: DB_MAX_OVERFLOW
+              value: "0"
+            - name: PGCONNECT_TIMEOUT
+              value: "10"
+            - name: MULTIPART_UPLOAD_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: crucible-api-config-staging
+                  key: MULTIPART_UPLOAD_ENABLED
+            - name: MULTIPART_UPLOAD_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: crucible-api-config-staging
+                  key: MULTIPART_UPLOAD_BUCKET
+            - name: MULTIPART_UPLOAD_SIGNER
+              valueFrom:
+                configMapKeyRef:
+                  name: crucible-api-config-staging
+                  key: MULTIPART_UPLOAD_SIGNER
+            - name: MULTIPART_UPLOAD_PROJECT
+              valueFrom:
+                configMapKeyRef:
+                  name: crucible-api-config-staging
+                  key: MULTIPART_UPLOAD_PROJECT
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

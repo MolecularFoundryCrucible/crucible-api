@@ -68,4 +68,16 @@ steps:
       gcloud container clusters get-credentials crucible-cluster --region us-central1 --project '${PROJECT_ID}'
       bash scripts/deploy_hub_auth_cleanup.sh '${BRANCH_NAME}' '${_IMAGE_PATH}:${SHORT_SHA}'
 
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: deploy-multipart-worker
+    entrypoint: bash
+    args:
+    - -ceu
+    - |
+      manifest=k8s-conf/multipart-worker-${BRANCH_NAME}.yaml
+      if [[ -f "$$manifest" ]]; then
+        gcloud container clusters get-credentials crucible-cluster --region us-central1 --project '${PROJECT_ID}'
+        kubectl set image --local -f "$$manifest" 'worker=${_IMAGE_PATH}:${SHORT_SHA}' -o yaml | kubectl apply -f -
+      fi
+
 timeout: 600s

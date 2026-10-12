@@ -34,3 +34,9 @@ data:
   db_database: "crucible-staging"
   db_auth: "true"
   EXPECTED_DB_REVISIONS: "c83a7d014b29"
+
+  # multipart uploads
+  MULTIPART_UPLOAD_ENABLED: "true"
+  MULTIPART_UPLOAD_BUCKET: "mf-crucible-multipart-staging"
+  MULTIPART_UPLOAD_SIGNER: "crucible-mpu-signer-staging@mf-crucible.iam.gserviceaccount.com"
+  MULTIPART_UPLOAD_PROJECT: "mf-crucible"

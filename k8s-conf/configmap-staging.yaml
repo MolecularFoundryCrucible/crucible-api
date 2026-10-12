@@ -4,9 +4,9 @@ metadata:
   name: crucible-api-config-staging
   namespace: default
 data:
-  HUB_AUTH_ENABLED: "false"
+  HUB_AUTH_ENABLED: "true"
   HUB_AUTH_CLIENT_ID: "crucible-hub"
-  HUB_AUTH_CALLBACK_URI: ""
+  HUB_AUTH_CALLBACK_URI: "http://localhost:3000/hub/auth/callback"
   HUB_AUTH_PUBLIC_API_URL: "https://crucible.lbl.gov/testapi-staging"
   HUB_AUTH_ORCID_ISSUER: "https://orcid.org"
   HUB_AUTH_ORCID_CLIENT_ID: "APP-YDW1MRE405389PP0"

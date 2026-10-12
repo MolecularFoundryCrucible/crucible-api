@@ -15,7 +15,7 @@ from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import (
     AccessGroup, ApiToken, Dataset, Project, Sample, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
 )
-from app.utils.auth_utils import authorize_user, fetch_acl_rows, find_or_add_api_access, permission_filter, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
+from app.utils.auth_utils import API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
 from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor,
 )
@@ -29,7 +29,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import deletion_filter_for, table_obj_to_dict
-from app.utils.user_utils import assert_username_available, find_mf_user_proposals, resolve_user_by_identifier, sql_add_user_to_access_group
+from app.utils.user_utils import assert_profile_fields_available, commit_user, find_mf_user_proposals, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.models.users import AccountProfileUpdate, UserCreate, UserPublicRead, UserRead, UserUpdate
@@ -481,23 +481,45 @@ def _admin_key_status(session, caller: Principal, user: User) -> Optional[Servic
     return _key_status(token)
 
 
-@router.post("/users/{user_ref}/apikey", response_model=ApiKeyRead)
+def _admin_user_for_key(user_ref, auth_res):
+    user_id = _canonical_user_id(user_ref)
+    require_platform_admin(auth_res)
+    require_recent_authentication(auth_res)
+    with Session(engine) as session:
+        if session.exec(select(User.id).where(User.unique_id == user_id)).first() is None:
+            raise HTTPException(status_code=404, detail="User not found")
+    return user_id
+
+
+@router.post("/users/{user_ref}/apikey", response_model=ApiKeyRead, deprecated=True, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}, 409: {"description": "Hub sessions cannot read an existing key (`api_key_exists`)"}})
 def get_or_provision_user_apikey(
     user_ref: UserRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
     response: Response,
 ):
-    '''Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.'''
-    user_id = _canonical_user_id(user_ref)
-    require_platform_admin(auth_res)
+    '''Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.
 
-    with Session(engine) as session:
-        user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-
+    Deprecated: returning an existing key will stop when keys are stored hashed. Use
+    POST /users/{user_ref}/apikey/regenerate. Hub sessions already receive 409 when a key exists.
+    '''
+    user_id = _admin_user_for_key(user_ref, auth_res)
+    if auth_res.credential == "hub" and has_active_api_key(user_id, engine):
+        raise HTTPException(status_code=409, detail={"code": "api_key_exists", "message": "The user already has an API key; regenerate it instead"})
     response.headers["Cache-Control"] = "no-store"
+    response.headers["Deprecation"] = API_KEY_READ_DEPRECATION
     return ApiKeyRead(api_key=find_or_add_api_access(user_id, engine, regenerate=False))
+
+
+@router.post("/users/{user_ref}/apikey/regenerate", response_model=ApiKeyRead, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}})
+def regenerate_user_apikey(
+    user_ref: UserRef,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    response: Response,
+):
+    '''Issue a new API key for the user and revoke the previous one. Admin only. The key is returned only once.'''
+    user_id = _admin_user_for_key(user_ref, auth_res)
+    response.headers["Cache-Control"] = "no-store"
+    return ApiKeyRead(api_key=find_or_add_api_access(user_id, engine, regenerate=True))
 
 
 @router.get("/users/{user_ref}/apikey/verify", response_model=ApiKeyVerify)
@@ -533,7 +555,7 @@ def verify_user_apikey(user_ref: UserRef, auth_res: Annotated[Principal, Depends
             expires_at=expires_dt.date().isoformat(),
         )
 
-@router.post("/users", response_model=UserRead)
+@router.post("/users", response_model=UserRead, responses={409: {"description": "Identifier, username, or email already in use; username and email conflicts use `{\"detail\": {\"code\": \"already_in_use\", \"fields\": [...], \"message\": ...}}`"}})
 def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_info: UserCreate,
                 project_ids: Optional[List[str]] = Body(default=None)):
     require_platform_admin(auth_res)
@@ -560,8 +582,7 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
             raise HTTPException(status_code=409, detail=f"unique_id '{unique_id}' already exists")
         if session.exec(select(AccessGroup).where(AccessGroup.group_name == unique_id)).one_or_none() is not None:
             raise HTTPException(status_code=409, detail=f"Identity group '{unique_id}' already exists")
-        if user_info.username:
-            assert_username_available(session, user_info.username)
+        assert_profile_fields_available(session, username=user_info.username or None, email=user_info.email)
 
         projects = session.exec(
             select(Project).where(Project.project_id.in_(requested_project_ids))
@@ -631,7 +652,7 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
     return _user_read(auth_res, user, with_capabilities=True)
 
 
-@router.patch("/users/{user_ref}", response_model=UserRead)
+@router.patch("/users/{user_ref}", response_model=UserRead, responses={409: {"description": "Username or email already held by another user: `{\"detail\": {\"code\": \"already_in_use\", \"fields\": [\"username\", \"email\"], \"message\": ...}}`, listing every conflicting field"}})
 def update_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)], user_update: UserUpdate):
     '''Partially update a user record. Only fields provided in the request body are modified.'''
     user_id = _canonical_user_id(user_ref)
@@ -643,13 +664,12 @@ def update_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(author
             raise HTTPException(status_code=404, detail="User not found")
 
         update_data = user_update.model_dump(exclude_unset=True)
-        if "username" in update_data and update_data["username"] is not None:
-            assert_username_available(session, update_data["username"], exclude_orcid=user_id)
+        assert_profile_fields_available(session, username=update_data.get("username"), email=update_data.get("email"), exclude_orcid=user_id)
         for key, value in update_data.items():
             setattr(user, key, value)
 
         session.add(user)
-        session.commit()
+        commit_user(session)
         session.refresh(user)
         return _user_read(auth_res, user, with_capabilities=True)
 

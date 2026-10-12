@@ -95,10 +95,11 @@ def get_file_download_link(auth_res: Annotated[Principal, Depends(authorize_user
             return {"url": None, "expires_in": None}
 
         generation = af.storage_generation
+        filename = af.filename
         storage_path = _ensure_storage_path(af, ds.unique_id, session)
         session.commit()
 
-    url, expires_in = _generate_signed_url_link(storage_path, **({"generation": generation} if generation else {}))
+    url, expires_in = _generate_signed_url_link(storage_path, **({"generation": generation, "filename": filename} if generation else {}))
     return {"url": url, "expires_in": expires_in}
 
 
@@ -196,6 +197,7 @@ def create_file_ingestion_request(
         af_size = af.size
         af_storage_path = af.storage_path
         af_generation = af.storage_generation
+        af_filename = af.filename
         ds_unique_id = ds.unique_id
 
     if status == 'requested':
@@ -206,6 +208,7 @@ def create_file_ingestion_request(
             message=json.dumps({
                 "filename": af_storage_path,
                 **({"storage_generation": af_generation} if af_generation else {}),
+                "file_name": af_filename,
                 "reqid": ir_id,
                 "dsid": ds_unique_id,
                 "ingestion_class": ingestion_class,

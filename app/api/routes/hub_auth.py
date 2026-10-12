@@ -93,12 +93,13 @@ def begin_hub_login(
     state: str = Query(min_length=16, max_length=256),
     code_challenge: str = Query(min_length=43, max_length=43),
     code_challenge_method: str = Query(pattern="^S256$"),
+    max_age: int | None = Query(default=None, ge=0, le=86400, description="Maximum seconds since the user's last ORCID authentication. 0 forces ORCID to re-authenticate; use it before credential-creating operations that require a recent sign-in."),
     engine=Depends(get_engine),
 ) -> RedirectResponse:
     try:
         config = load_login_config()
         orcid_state, browser_secret, nonce = create_login(engine, config, client_id, redirect_uri, state, code_challenge)
-        destination = orcid_authorization_url(config, orcid_state, nonce)
+        destination = orcid_authorization_url(config, orcid_state, nonce, max_age)
     except HubLoginUnavailable:
         raise HTTPException(status_code=503, detail="Hub sign-in is unavailable")
     except InvalidHubLogin:
@@ -130,8 +131,8 @@ def finish_hub_login(
         transaction = consume_login(engine, state or "", request.cookies.get(LOGIN_COOKIE))
         if error is not None or code is None:
             raise InvalidHubLogin
-        orcid, given_name, family_name = exchange_orcid_code(config, code, transaction.nonce)
-        _, destination = create_handoff_code(engine, transaction, orcid, given_name, family_name)
+        orcid, given_name, family_name, auth_time = exchange_orcid_code(config, code, transaction.nonce)
+        _, destination = create_handoff_code(engine, transaction, orcid, given_name, family_name, auth_time=auth_time)
         response = _browser_headers(RedirectResponse(destination, status_code=302))
     except (HubLoginUnavailable, InvalidHubLogin, OAuthError, JoseError, requests.RequestException, ValueError, KeyError):
         response = _browser_headers(PlainTextResponse("Sign-in failed. Please return to the Hub and try again.", status_code=400))

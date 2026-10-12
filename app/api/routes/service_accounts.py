@@ -17,7 +17,7 @@ from app.models.users import (
     ServiceAccountPlatformRoleUpdate,
     ServiceAccountRead,
 )
-from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin
+from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin, require_recent_authentication
 from app.utils.permissions import AccessGroupType, PlatformRole, Principal, Role
 from app.utils.user_utils import assert_username_available, resolve_service_account_reference, sql_add_user_to_access_group
 
@@ -137,7 +137,7 @@ def update_service_account_platform_role(
         return _service_account_admin_detail(session, user)
 
 
-@router.post("/service_accounts", response_model=ServiceAccountRead)
+@router.post("/service_accounts", response_model=ServiceAccountRead, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}})
 def create_service_account(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     body: ServiceAccountCreate,
@@ -150,6 +150,7 @@ def create_service_account(
     Admin only.
     '''
     require_platform_admin(auth_res)
+    require_recent_authentication(auth_res)
 
     with Session(engine) as session:
         # Username must be unique across all users
@@ -202,7 +203,7 @@ def create_service_account(
     )
 
 
-@router.post("/service_accounts/{service_account_ref}/rotate_key", response_model=ServiceAccountRead)
+@router.post("/service_accounts/{service_account_ref}/rotate_key", response_model=ServiceAccountRead, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}})
 def rotate_service_account_key(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     service_account_ref: ServiceAccountRef,
@@ -214,6 +215,7 @@ def rotate_service_account_key(
     Admin only.
     '''
     require_platform_admin(auth_res)
+    require_recent_authentication(auth_res)
 
     with Session(engine) as session:
         user = resolve_service_account_reference(session, service_account_ref)

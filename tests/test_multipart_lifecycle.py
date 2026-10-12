@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import json
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -86,7 +87,8 @@ class MemoryStorage:
         self.deleted.append((upload.gcs_path, generation))
         self.objects.pop(upload.gcs_path)
 
-    def download(self, bucket, key, generation, expires_at):
+    def download(self, bucket, key, generation, expires_at, filename=None):
+        self.download_filename = filename
         assert generation == "7"
         assert key in self.objects
         return "https://download.example/pinned-generation-7"
@@ -187,11 +189,13 @@ def test_upload_resume_publish_retry_download_ingestion_and_delete(flow, monkeyp
     import app.services.multipart_storage as adapter
     monkeypatch.setattr(adapter, "get_multipart_storage", lambda: storage)
     assert client.get(f"/files/{file_id}/download_link").json()["url"].endswith("pinned-generation-7")
+    assert storage.download_filename == "data.bin"
     assert client.get("/datasets/ds/download_links").json()[file_id].endswith("pinned-generation-7")
     with patch("app.api.routes.files.send_pika_message") as send:
         response = client.post(f"/files/{file_id}/ingest")
         assert response.status_code == 200, response.text
         assert "dedicated/uploads/ds/" in send.call_args.kwargs["message"]
+        assert json.loads(send.call_args.kwargs["message"])["file_name"] == "data.bin"
     assert client.delete(BASE + f"/{identifier}").status_code == 409
     assert client.delete(f"/files/{file_id}").status_code == 200
     assert complete(flow, identifier).status_code == 410
@@ -449,7 +453,6 @@ def test_configured_upload_size_limit_is_preserved(flow, monkeypatch):
 
 
 def test_reference_client_resumes_after_lost_part_response(flow, tmp_path, monkeypatch, capsys):
-    import json
     from types import SimpleNamespace
     from scripts import multipart_upload_client as example
     client, _, storage = flow

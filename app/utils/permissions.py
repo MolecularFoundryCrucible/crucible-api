@@ -7,6 +7,7 @@ exhaustively. The fetch-and-raise layer lives in auth_utils.
 Design reference: docs/permission_system_plan.md
 """
 from dataclasses import dataclass, replace
+from datetime import datetime
 from enum import Enum, IntEnum
 from types import MappingProxyType
 from typing import Iterable, Mapping, Optional
@@ -104,6 +105,8 @@ class Principal:
     platform_role: PlatformRole = PlatformRole.NONE
     is_service_account: bool = False
     groups: tuple[GroupMembership, ...] = ()
+    credential: str = "api_key"
+    authenticated_at: Optional[datetime] = None
 
     @property
     def is_platform_admin(self) -> bool:
@@ -150,7 +153,7 @@ def resolve_authorization_context(
         raise PermissionError("Caller is not eligible for elevated mode")
 
     if requested_mode is None:
-        if actor.is_platform_admin:
+        if actor.is_platform_admin and actor.credential != "hub":
             return AuthorizationContext(
                 actor=actor,
                 principal=actor,
@@ -159,7 +162,7 @@ def resolve_authorization_context(
             )
         return AuthorizationContext(
             actor=actor,
-            principal=actor,
+            principal=replace(actor, platform_role=PlatformRole.NONE) if actor.is_platform_admin else actor,
             privilege_mode=PrivilegeMode.NORMAL,
             mode_source=PrivilegeModeSource.DEFAULT,
         )

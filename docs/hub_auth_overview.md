@@ -36,7 +36,7 @@ The API stores hashes of access tokens, refresh tokens, and handoff codes, not r
 
 ### 4. Use the Hub
 
-The Hub calls normal API routes with the access token. The API looks up `hubaccesstoken`, checks its expiry and `hubtokenfamily`, then loads the user and applies current permissions. Ordinary API requests do not create token rows or extend the family's lifetime. The Hub requests normal privilege mode for ordinary operations; sign-in does not itself elevate privileges.
+The Hub calls normal API routes with the access token. The API looks up `hubaccesstoken`, checks its expiry and `hubtokenfamily`, then loads the user and applies current permissions. Ordinary API requests do not create token rows or extend the family's lifetime. Hub sessions default to normal privilege mode when no `Crucible-Privilege-Mode` header is sent; administrators must request elevation explicitly. Creating an API key from a Hub session requires an ORCID sign-in within the last 10 minutes, measured from ORCID's `auth_time`; otherwise the API returns an RFC 9470 step-up challenge and the Hub re-authenticates with `max_age=0`. Hub sessions cannot read existing API keys. See [API-key retrieval and rotation](api_key_lifecycle_followup.md).
 
 ### 5. Refresh credentials
 

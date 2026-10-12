@@ -72,5 +72,17 @@ def test_delete_and_download_are_generation_pinned():
     blob.delete.assert_called_once_with(if_generation_match=123, timeout=60)
     storage.download("dedicated", upload().gcs_path, "123", now())
     assert blob.generate_signed_url.call_args.kwargs["generation"] == "123"
+    assert "response_disposition" not in blob.generate_signed_url.call_args.kwargs
+    storage.download("dedicated", upload().gcs_path, "123", now(), "results/scan 1.png")
+    assert blob.generate_signed_url.call_args.kwargs["response_disposition"] == "attachment; filename=\"scan 1.png\"; filename*=UTF-8''scan%201.png"
+    assert blob.generate_signed_url.call_args.kwargs["response_type"] == "image/png"
     with pytest.raises(StorageFailure):
         storage.download("legacy-bucket", "file", "123", now())
+
+
+def test_download_filename_has_safe_ascii_fallback():
+    from app.services.multipart_storage import content_disposition
+    assert content_disposition("Ångström map.png") == "attachment; filename=\"_ngstr_m map.png\"; filename*=UTF-8''%C3%85ngstr%C3%B6m%20map.png"
+    assert content_disposition('a"b\\c\r\n.txt') == "attachment; filename=\"a_b_c__.txt\"; filename*=UTF-8''a%22b%5Cc%0D%0A.txt"
+    assert content_disposition("ÅÖ") == "attachment; filename=\"__\"; filename*=UTF-8''%C3%85%C3%96"
+    assert content_disposition("") == "attachment; filename=\"download\"; filename*=UTF-8''download"

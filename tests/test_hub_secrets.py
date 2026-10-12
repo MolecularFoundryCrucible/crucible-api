@@ -89,7 +89,12 @@ def test_invalid_payloads_are_rejected(monkeypatch, manager, payload):
         hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET")
 
 
+def test_hub_auth_is_disabled_when_unset():
+    assert hub_secrets.hub_auth_enabled() is False
+
+
 def test_managed_secret_authenticates_client(monkeypatch, manager):
+    monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
     monkeypatch.setenv("HUB_AUTH_CLIENT_ID", "crucible-hub")
     assert require_hub_client(HTTPBasicCredentials(username="crucible-hub", password="test-secret-value")) == "crucible-hub"

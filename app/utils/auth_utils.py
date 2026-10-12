@@ -8,6 +8,7 @@ import requests
 import secrets
 import datetime
 from collections import namedtuple
+from dataclasses import replace
 from cachetools import TTLCache
 from jose import jwt, JWTError
 
@@ -21,7 +22,7 @@ from app.general_utils import  get_secret
 from app.api.dependencies import get_engine, get_api_path, get_api_url
 from app.models.core_models import ApiToken
 from app.models.resource import ResourceCapabilities
-from app.utils.hub_tokens import ACCESS_PREFIX, InvalidHubGrant, hub_access_user
+from app.utils.hub_tokens import ACCESS_PREFIX, InvalidHubGrant, hub_access_family
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, THRESHOLDS, GroupMembership, Permission, PlatformRole,
     Principal, PrivilegeMode, PrivilegeModeSource, Role, can_grant,
@@ -236,10 +237,11 @@ def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
     if apikey.startswith(ACCESS_PREFIX):
         with Session(engine) as session:
             try:
-                user_unique_id = hub_access_user(session, apikey)
+                family = hub_access_family(session, apikey)
             except InvalidHubGrant:
                 raise HTTPException(status_code=401, detail="Invalid or expired API credential.")
-            return load_principal(session, user_unique_id)
+            authenticated_at = family.auth_time.replace(tzinfo=family.auth_time.tzinfo or datetime.timezone.utc) if family.auth_time else None
+            return replace(load_principal(session, family.user_unique_id), credential="hub", authenticated_at=authenticated_at)
 
     cache_key = _auth_cache_key(apikey)
     with _auth_cache_lock:
@@ -610,6 +612,35 @@ def require_platform_admin(principal: Principal) -> None:
     if principal.is_platform_admin:
         return
     raise HTTPException(status_code=403, detail="Not authorized")
+
+
+STEP_UP_MAX_AGE = 600
+API_KEY_READ_DEPRECATION = "@1791763200"
+
+
+def require_recent_authentication(principal: Principal) -> None:
+    """Raise the RFC 9470 step-up challenge unless a Hub session's ORCID sign-in is recent. API keys are exempt."""
+    if principal.credential != "hub":
+        return
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if principal.authenticated_at is not None and now - principal.authenticated_at <= timedelta(seconds=STEP_UP_MAX_AGE):
+        return
+    raise HTTPException(
+        status_code=401,
+        detail={"code": "insufficient_user_authentication", "max_age": STEP_UP_MAX_AGE},
+        headers={"WWW-Authenticate": f'Bearer error="insufficient_user_authentication", error_description="Recent sign-in required", max_age="{STEP_UP_MAX_AGE}"'},
+    )
+
+
+def reject_hub_api_key_read(principal: Principal) -> None:
+    if principal.credential == "hub":
+        raise HTTPException(status_code=403, detail={"code": "api_key_read_not_allowed", "message": "Hub sessions cannot read API keys; regenerate a key instead"})
+
+
+def has_active_api_key(orcid: str, engine) -> bool:
+    one_year_ago = (date.today() - timedelta(365)).isoformat()
+    with Session(engine) as session:
+        return session.exec(select(ApiToken.token).where(ApiToken.user_unique_id == orcid, ApiToken.token_created > one_year_ago)).first() is not None
 
 
 def require_self_or_platform_admin(principal: Principal, orcid: str) -> None:

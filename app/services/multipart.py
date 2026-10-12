@@ -6,20 +6,26 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_, text
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from app.models.core_models import AssociatedFile, Dataset, UploadSession, User
 from app.models.datasets import AssociatedFileRead
 from app.models.multipart import MultipartStatus
+from app.services.multipart_storage import StorageFailure, UploadMissing
 from app.utils.auth_utils import load_principal, require_permission
 from app.utils.permissions import Permission, PlatformRole
 
 PROTOCOL = "gcs_xml_v1"
 PART_SIZE = 64 * 1024 ** 2
 TERMINAL = ("completed", "aborted", "expired", "failed")
-LEASE_SECONDS = 600
+SESSION_LIFETIME = timedelta(days=7)
+INITIATION_WINDOW = timedelta(minutes=10)
 logger = logging.getLogger(__name__)
+
+
+class InvalidUpload(Exception):
+    pass
 
 
 def now():
@@ -48,6 +54,10 @@ def authorize(session, principal, dsid):
     require_permission(session, demoted(session, principal), dsid, Permission.CREATE)
 
 
+def live():
+    return UploadSession.protocol == PROTOCOL, UploadSession.state.notin_(TERMINAL), UploadSession.expires_at > now().isoformat()
+
+
 def owned(session, dsid, upload_id, principal, *, lock=False, check_access=True):
     query = select(UploadSession).where(UploadSession.upload_id == upload_id)
     if lock:
@@ -68,11 +78,15 @@ def owned(session, dsid, upload_id, principal, *, lock=False, check_access=True)
     return upload
 
 
+def expired(upload):
+    return upload.state not in TERMINAL and utc(upload.expires_at) <= now()
+
+
 def active(upload):
-    if utc(upload.expires_at) <= now():
+    if expired(upload):
         raise HTTPException(410, "Upload session has expired")
-    if upload.cleanup_requested_at is not None or upload.state in ("aborting", "aborted", "expired", "failed"):
-        raise HTTPException(409, "Upload is being cleaned up or is terminal")
+    if upload.state in ("aborting", "aborted", "expired", "failed"):
+        raise HTTPException(409, "Upload is aborted or failed")
 
 
 def part_size(upload, number):
@@ -84,7 +98,7 @@ def trusted_hash():
 
 
 def filename_reserved(session, dsid, filename):
-    return session.exec(select(UploadSession.id).where(UploadSession.dataset_mfid == dsid, UploadSession.protocol == PROTOCOL, UploadSession.associated_file_name == filename, UploadSession.state.notin_(TERMINAL))).first() is not None
+    return session.exec(select(UploadSession.id).where(UploadSession.dataset_mfid == dsid, UploadSession.associated_file_name == filename, *live())).first() is not None
 
 
 def file_read(session, upload):
@@ -94,18 +108,15 @@ def file_read(session, upload):
     return AssociatedFileRead.model_validate(file, update={"dataset_mfid": upload.dataset_mfid})
 
 
-def worker_principal(session, upload):
-    principal = load_principal(session, upload.owner_user_id)
-    if principal.is_platform_admin and not (upload.part_manifest or {}).get("allow_global_admin", False):
-        principal = replace(principal, platform_role=PlatformRole.NONE)
-    return principal
-
-
 def status(session, upload):
-    return MultipartStatus(upload_id=upload.upload_id, state=upload.state, expires_at=utc(upload.expires_at), part_size=upload.part_size, part_count=upload.part_count, failure_code=upload.failure_code, existing_file=file_read(session, upload) if upload.state == "completed" else None)
+    return MultipartStatus(upload_id=upload.upload_id, state="expired" if expired(upload) else upload.state, expires_at=utc(upload.expires_at), part_size=upload.part_size, part_count=upload.part_count, failure_code=upload.failure_code, existing_file=file_read(session, upload) if upload.state == "completed" else None)
 
 
-def initiate(engine, principal, dsid, body, key, config):
+def unavailable(message):
+    return HTTPException(503, message, headers={"Retry-After": "5"})
+
+
+def reserve(engine, principal, dsid, body, key, config):
     if body.size > config.max_upload_bytes:
         raise HTTPException(413, "File exceeds the configured upload limit")
     fingerprint = hashlib.sha256(json.dumps(body.model_dump(), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -122,6 +133,9 @@ def initiate(engine, principal, dsid, body, key, config):
             if previous:
                 if previous.request_fingerprint != fingerprint:
                     raise HTTPException(409, "Idempotency key was already used for a different request")
+                if previous.state == "initiating" and not expired(previous):
+                    session.expunge(previous)
+                    return previous
                 return status(session, previous)
         if body.sha256_hash:
             existing = session.exec(select(AssociatedFile).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.sha256_hash == body.sha256_hash, AssociatedFile.size == body.size, AssociatedFile.sha256_verified_at.is_not(None))).first()
@@ -133,185 +147,149 @@ def initiate(engine, principal, dsid, body, key, config):
         if filename_reserved(session, dsid, body.filename):
             raise HTTPException(409, "Filename is reserved by another upload")
         for column, value, count_limit, byte_limit in ((UploadSession.owner_user_id, principal.user_id, config.owner_sessions, config.owner_bytes), (UploadSession.dataset_mfid, dsid, config.dataset_sessions, config.dataset_bytes)):
-            count, size = session.exec(select(func.count(UploadSession.id), func.coalesce(func.sum(UploadSession.size), 0)).where(column == value, UploadSession.protocol == PROTOCOL, or_(UploadSession.state.notin_(TERMINAL), (UploadSession.cleanup_requested_at.is_not(None) & UploadSession.cleaned_at.is_(None))))).one()
+            count, size = session.exec(select(func.count(UploadSession.id), func.coalesce(func.sum(UploadSession.size), 0)).where(column == value, *live())).one()
             if count >= count_limit or size + body.size > byte_limit:
                 raise HTTPException(429, "Upload reservation quota exceeded", headers={"Retry-After": "60"})
         identifier = uuid4().hex
-        upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, gcs_path=f"uploads/{dsid}/{identifier}/content", associated_file_name=body.filename, expires_at=(now() + timedelta(days=7)).isoformat(), size=body.size, protocol=PROTOCOL, bucket=config.bucket, state="initiating", part_size=PART_SIZE, part_count=(body.size + PART_SIZE - 1) // PART_SIZE, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=body.sha256_hash, part_manifest={"authorized": {}, "allow_global_admin": principal.is_platform_admin}, created_at=now(), updated_at=now(), version=0, next_attempt_at=now(), attempts=0)
+        upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, gcs_path=f"uploads/{dsid}/{identifier}/content", associated_file_name=body.filename, expires_at=(now() + INITIATION_WINDOW).isoformat(), size=body.size, protocol=PROTOCOL, bucket=config.bucket, state="initiating", part_size=PART_SIZE, part_count=(body.size + PART_SIZE - 1) // PART_SIZE, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=body.sha256_hash, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0)
         session.add(upload)
         session.commit()
-        return status(session, upload)
-
-
-class LeaseLost(Exception):
-    pass
-
-
-class CleanupRequested(Exception):
-    pass
-
-
-class InvalidUpload(Exception):
-    pass
-
-
-class MultipartWorker:
-    def __init__(self, engine, storage, config):
-        self.engine = engine
-        self.storage = storage
-        self.config = config
-        self.identity = uuid4().hex
-
-    def claim(self):
-        with Session(self.engine) as session:
-            if self.engine.dialect.name == "postgresql":
-                session.execute(text("SELECT pg_advisory_xact_lock(736190281)"))
-            busy = session.exec(select(func.count(UploadSession.id)).where(UploadSession.protocol == PROTOCOL, UploadSession.lease_expires_at > now())).one()
-            if busy >= self.config.worker_concurrency:
-                return None
-            query = select(UploadSession).where(UploadSession.protocol == PROTOCOL, or_(UploadSession.lease_expires_at.is_(None), UploadSession.lease_expires_at < now()), or_(UploadSession.next_attempt_at.is_(None), UploadSession.next_attempt_at <= now()), or_(UploadSession.cleaned_at.is_(None), UploadSession.cleanup_requested_at > UploadSession.cleaned_at)).order_by(UploadSession.next_attempt_at, UploadSession.id).with_for_update(skip_locked=True).limit(1)
-            upload = session.exec(query).first()
-            if upload is None:
-                return None
-            upload.lease_owner = self.identity
-            upload.lease_expires_at = now() + timedelta(seconds=LEASE_SECONDS)
-            save(session, upload)
-            session.commit()
-            session.refresh(upload)
-            session.expunge(upload)
-            return upload
-
-    def locked(self, session, identifier, allow_cleanup=False):
-        upload = session.exec(select(UploadSession).where(UploadSession.upload_id == identifier).with_for_update()).one()
-        if upload.lease_owner != self.identity or utc(upload.lease_expires_at) <= now():
-            raise LeaseLost()
-        if upload.cleanup_requested_at is not None and not allow_cleanup:
-            raise CleanupRequested()
+        session.refresh(upload)
+        session.expunge(upload)
         return upload
 
-    def heartbeat(self, identifier, allow_cleanup=False):
-        with Session(self.engine) as session:
-            upload = self.locked(session, identifier, allow_cleanup)
-            upload.lease_expires_at = now() + timedelta(seconds=LEASE_SECONDS)
-            session.add(upload)
-            session.commit()
 
-    def update(self, identifier, **values):
-        with Session(self.engine) as session:
-            upload = self.locked(session, identifier)
-            for key, value in values.items():
-                setattr(upload, key, value)
-            save(session, upload)
-            session.commit()
-            session.refresh(upload)
-            session.expunge(upload)
-            return upload
-
-    def release(self, identifier, delay=60, expected_schedule=None):
-        with Session(self.engine) as session:
-            upload = self.locked(session, identifier, True)
-            upload.lease_owner = None
-            upload.lease_expires_at = None
-            if expected_schedule is not None and utc(upload.next_attempt_at) != utc(expected_schedule):
-                delay = 0
-            upload.next_attempt_at = now() + timedelta(seconds=delay)
-            save(session, upload)
-            session.commit()
-
-    def fail(self, identifier, code):
-        with Session(self.engine) as session:
-            upload = self.locked(session, identifier, True)
-            upload.state = "failed"
-            upload.failure_code = code
-            upload.cleanup_requested_at = upload.cleanup_requested_at or now()
-            save(session, upload)
-            session.commit()
-
-    def check_access(self, upload):
-        with Session(self.engine) as session:
-            if session.exec(select(Dataset.id).where(Dataset.unique_id == upload.dataset_mfid)).first() is None:
-                raise InvalidUpload("dataset_deleted")
-            try:
-                require_permission(session, worker_principal(session, upload), upload.dataset_mfid, Permission.CREATE)
-            except HTTPException:
-                raise InvalidUpload("access_revoked") from None
-
-    def cleanup(self, upload):
-        self.heartbeat(upload.upload_id, True)
-        for provider_id in set(self.storage.uploads(upload)) | ({upload.provider_upload_id} if upload.provider_upload_id else set()):
-            self.heartbeat(upload.upload_id, True)
-            self.storage.abort(upload, provider_id)
-        metadata = self.storage.metadata(upload)
-        if metadata:
-            with Session(self.engine) as session:
-                current = self.locked(session, upload.upload_id, True)
-                registered = session.exec(select(AssociatedFile.id).where(AssociatedFile.storage_path == f"{upload.bucket}/{upload.gcs_path}", AssociatedFile.storage_generation.is_not(None))).first()
-                if registered is not None:
-                    raise InvalidUpload("cleanup_object_still_registered")
-                if current.storage_generation and current.storage_generation != metadata["generation"]:
-                    raise InvalidUpload("cleanup_generation_changed")
-            self.storage.delete(upload, metadata["generation"])
-        with Session(self.engine) as session:
-            current = self.locked(session, upload.upload_id, True)
-            current.cleaned_at = now()
-            if current.state not in ("failed", "expired", "completed"):
-                current.state = "aborted"
+def initiate(engine, storage, principal, dsid, body, key, config):
+    upload = reserve(engine, principal, dsid, body, key, config)
+    if isinstance(upload, MultipartStatus):
+        return upload
+    try:
+        identifiers = sorted(storage().uploads(upload))
+        provider_id = identifiers[0] if identifiers else storage().initiate(upload)
+    except StorageFailure:
+        raise unavailable("Storage is temporarily unavailable; retry with the same Idempotency-Key") from None
+    with Session(engine) as session:
+        current = session.exec(select(UploadSession).where(UploadSession.upload_id == upload.upload_id).with_for_update()).one()
+        if current.state == "initiating":
+            current.provider_upload_id = provider_id
+            current.state = "uploading"
+            current.expires_at = (now() + SESSION_LIFETIME).isoformat()
             save(session, current)
             session.commit()
+        return status(session, current)
 
-    def begin(self, upload):
-        self.heartbeat(upload.upload_id)
-        identifiers = sorted(self.storage.uploads(upload))
-        provider_id = identifiers[0] if identifiers else self.storage.initiate(upload)
-        upload = self.update(upload.upload_id, provider_upload_id=provider_id, state="uploading", attempts=0, failure_code=None)
-        for duplicate in identifiers[1:]:
-            self.heartbeat(upload.upload_id)
-            self.storage.abort(upload, duplicate)
 
-    def finalize(self, upload):
-        metadata = self.storage.metadata(upload)
-        if metadata is None:
-            manifest = dict(upload.part_manifest or {})
-            parts = manifest.get("frozen")
-            if parts is None:
-                parts, marker = [], 0
-                while True:
-                    self.heartbeat(upload.upload_id)
-                    page, marker = self.storage.list_parts(upload, marker)
-                    parts.extend(page)
-                    if len(parts) > upload.part_count:
-                        raise InvalidUpload("unexpected_parts")
-                    if marker is None:
-                        break
-                if [part["part_number"] for part in parts] != list(range(1, upload.part_count + 1)):
-                    raise InvalidUpload("missing_parts")
-                authorized = manifest.get("authorized", {})
-                if any(part["size"] != part_size(upload, part["part_number"]) or str(part["part_number"]) not in authorized for part in parts):
-                    raise InvalidUpload("part_size_or_authorization_mismatch")
-                manifest["frozen"] = parts
-                upload = self.update(upload.upload_id, part_manifest=manifest)
-            self.heartbeat(upload.upload_id)
-            self.storage.complete(upload, parts)
-            metadata = self.storage.metadata(upload)
-        if metadata is None:
-            raise InvalidUpload("completed_object_missing")
-        if metadata["size"] != upload.size or metadata["crc32c"] != upload.claimed_crc32c:
-            raise InvalidUpload("object_integrity_mismatch")
-        with Session(self.engine) as session:
-            dataset = session.exec(select(Dataset).where(Dataset.unique_id == upload.dataset_mfid).with_for_update()).one_or_none()
-            if dataset is None:
-                raise InvalidUpload("dataset_deleted")
-            current = self.locked(session, upload.upload_id)
-            if utc(current.expires_at) <= now():
-                raise InvalidUpload("session_expired")
+def assemble(storage, upload):
+    metadata = storage.metadata(upload)
+    if metadata is None:
+        parts, marker = [], 0
+        try:
+            while True:
+                page, marker = storage.list_parts(upload, marker)
+                parts.extend(page)
+                if len(parts) > upload.part_count:
+                    raise InvalidUpload("unexpected_parts")
+                if marker is None:
+                    break
+        except UploadMissing:
+            parts = None
+        if parts is not None:
+            if [part["part_number"] for part in parts] != list(range(1, upload.part_count + 1)):
+                raise InvalidUpload("missing_parts")
+            authorized = (upload.part_manifest or {}).get("authorized", {})
+            if any(part["size"] != part_size(upload, part["part_number"]) or str(part["part_number"]) not in authorized for part in parts):
+                raise InvalidUpload("part_size_or_authorization_mismatch")
             try:
-                require_permission(session, worker_principal(session, current), current.dataset_mfid, Permission.CREATE)
-            except HTTPException:
-                raise InvalidUpload("access_revoked") from None
-            if current.state not in ("finalizing", "verifying"):
-                raise LeaseLost()
-            if session.exec(select(AssociatedFile.id).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.filename == current.associated_file_name)).first() is not None:
-                raise InvalidUpload("filename_conflict")
+                storage.complete(upload, parts)
+            except UploadMissing:
+                pass
+        metadata = storage.metadata(upload)
+        if metadata is None:
+            raise InvalidUpload("provider_upload_missing")
+    if metadata["size"] != upload.size or metadata["crc32c"] != upload.claimed_crc32c:
+        raise InvalidUpload("object_integrity_mismatch")
+    return metadata
+
+
+def cleanup(engine, storage, upload):
+    for provider_id in set(storage.uploads(upload)) | ({upload.provider_upload_id} if upload.provider_upload_id else set()):
+        storage.abort(upload, provider_id)
+    metadata = storage.metadata(upload)
+    if metadata:
+        with Session(engine) as session:
+            registered = session.exec(select(AssociatedFile.id).where(AssociatedFile.storage_path == f"{upload.bucket}/{upload.gcs_path}", AssociatedFile.storage_generation.is_not(None))).first()
+        if registered is None:
+            storage.delete(upload, metadata["generation"])
+    with Session(engine) as session:
+        current = session.exec(select(UploadSession).where(UploadSession.upload_id == upload.upload_id).with_for_update()).one()
+        current.cleaned_at = now()
+        save(session, current)
+        session.commit()
+
+
+def fail(engine, storage, upload, code):
+    logger.warning("multipart_failed upload_id=%s code=%s", upload.upload_id, code)
+    with Session(engine) as session:
+        current = session.exec(select(UploadSession).where(UploadSession.upload_id == upload.upload_id).with_for_update()).one()
+        if current.state == "completed":
+            return current.state
+        if current.state not in TERMINAL:
+            current.state = "failed"
+            current.failure_code = code
+            save(session, current)
+            session.commit()
+        state = current.state
+    try:
+        cleanup(engine, storage, upload)
+    except StorageFailure:
+        logger.warning("multipart_cleanup_deferred upload_id=%s", upload.upload_id)
+    return state
+
+
+def complete(engine, storage, principal, dsid, body):
+    with Session(engine) as session:
+        upload = owned(session, dsid, body.upload_id, principal, lock=True)
+        if upload.claimed_sha256 and upload.claimed_sha256 != body.sha256_hash:
+            raise HTTPException(409, "SHA-256 claim cannot be changed")
+        if upload.claimed_crc32c and upload.claimed_crc32c != body.crc32c:
+            raise HTTPException(409, "CRC32C claim cannot be changed")
+        if upload.state == "completed":
+            return file_read(session, upload)
+        active(upload)
+        if upload.state == "uploading":
+            if len((upload.part_manifest or {}).get("authorized", {})) != upload.part_count:
+                raise HTTPException(409, "All parts must be authorized before completion")
+            upload.claimed_sha256 = body.sha256_hash
+            upload.claimed_crc32c = body.crc32c
+            upload.state = "finalizing"
+            save(session, upload)
+            session.commit()
+        elif upload.state != "finalizing":
+            raise HTTPException(409, "Upload is not ready for completion")
+        session.refresh(upload)
+        session.expunge(upload)
+    try:
+        metadata = assemble(storage(), upload)
+    except InvalidUpload as error:
+        if fail(engine, storage(), upload, str(error)) == "aborted":
+            raise HTTPException(409, "Upload was aborted during completion") from None
+        raise HTTPException(422, f"Upload failed verification: {error}") from None
+    except StorageFailure:
+        raise unavailable("Storage is temporarily unavailable; retry completion") from None
+    with Session(engine) as session:
+        dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid).with_for_update()).one_or_none()
+        current = session.exec(select(UploadSession).where(UploadSession.upload_id == upload.upload_id).with_for_update()).one()
+        if current.state == "completed":
+            return file_read(session, current)
+        if current.state != "finalizing":
+            raise HTTPException(409, "Upload was aborted during completion")
+        if dataset is None:
+            code = "dataset_deleted"
+        else:
+            authorize(session, principal, dsid)
+            conflict = session.exec(select(AssociatedFile.id).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.filename == current.associated_file_name)).first()
+            code = "filename_conflict" if conflict is not None else None
+        if code is None:
             file = AssociatedFile(dataset_id=dataset.id, filename=current.associated_file_name, storage_path=f"{current.bucket}/{current.gcs_path}", size=current.size, sha256_hash=current.claimed_sha256, storage_generation=metadata["generation"], storage_crc32c=current.claimed_crc32c)
             session.add(file)
             current.result_file_mfid = file.mfid
@@ -320,76 +298,32 @@ class MultipartWorker:
             current.failure_code = None
             save(session, current)
             session.commit()
+            result = file_read(session, current)
+    if code is not None:
+        fail(engine, storage(), upload, code)
+        raise HTTPException(409, f"Upload could not be published: {code}")
+    try:
+        for provider_id in storage().uploads(upload):
+            storage().abort(upload, provider_id)
+    except StorageFailure:
+        logger.warning("multipart_leftover_abort_deferred upload_id=%s", upload.upload_id)
+    return result
 
-    def run_once(self):
-        upload = self.claim()
-        if upload is None:
-            return False
-        delay = 0
-        logger.info("multipart_work upload_id=%s state=%s", upload.upload_id, upload.state)
-        try:
-            if upload.cleanup_requested_at is not None or upload.state in ("aborting", "aborted", "expired", "failed"):
-                self.cleanup(upload)
-                delay = 3600
-            elif upload.state == "completed":
-                for provider_id in self.storage.uploads(upload):
-                    self.heartbeat(upload.upload_id)
-                    self.storage.abort(upload, provider_id)
-                with Session(self.engine) as session:
-                    current = self.locked(session, upload.upload_id)
-                    current.cleaned_at = now()
-                    save(session, current)
-                    session.commit()
-                delay = 3600
-            elif utc(upload.expires_at) <= now():
-                with Session(self.engine) as session:
-                    current = self.locked(session, upload.upload_id)
-                    current.state = "expired"
-                    current.cleanup_requested_at = now()
-                    save(session, current)
-                    session.commit()
-            else:
-                self.check_access(upload)
-                if upload.state == "initiating":
-                    self.begin(upload)
-                    delay = 60
-                elif upload.state == "uploading":
-                    identifiers = self.storage.uploads(upload)
-                    if upload.provider_upload_id not in identifiers:
-                        raise InvalidUpload("provider_upload_missing")
-                    for duplicate in identifiers:
-                        if duplicate != upload.provider_upload_id:
-                            self.heartbeat(upload.upload_id)
-                            self.storage.abort(upload, duplicate)
-                    delay = 60
-                elif upload.state in ("finalizing", "verifying"):
-                    self.finalize(upload)
-                    delay = 3600
-        except (LeaseLost, CleanupRequested):
-            delay = 0
-        except InvalidUpload as error:
-            logger.warning("multipart_failed upload_id=%s code=%s", upload.upload_id, str(error))
-            if upload.cleanup_requested_at is not None:
-                with Session(self.engine) as session:
-                    current = self.locked(session, upload.upload_id, True)
-                    current.failure_code = str(error)
-                    save(session, current)
-                    session.commit()
-                delay = 3600
-            else:
-                self.fail(upload.upload_id, str(error))
-        except Exception:
-            logger.warning("multipart_retry upload_id=%s", upload.upload_id)
-            with Session(self.engine) as session:
-                current = self.locked(session, upload.upload_id, True)
-                current.attempts = (current.attempts or 0) + 1
-                current.failure_code = "provider_retry_pending"
-                save(session, current)
-                session.commit()
-                delay = min(3600, 5 * 2 ** min(current.attempts, 10))
-        finally:
-            try:
-                self.release(upload.upload_id, delay, upload.next_attempt_at)
-            except LeaseLost:
-                pass
-        return True
+
+def abort(engine, storage, principal, dsid, upload_id):
+    with Session(engine) as session:
+        upload = owned(session, dsid, upload_id, principal, lock=True, check_access=False)
+        if upload.state == "completed":
+            raise HTTPException(409, "Delete the completed file through the file API")
+        if upload.state in TERMINAL and upload.cleaned_at is not None:
+            return
+        if upload.state not in TERMINAL:
+            upload.state = "aborted"
+            save(session, upload)
+            session.commit()
+        session.refresh(upload)
+        session.expunge(upload)
+    try:
+        cleanup(engine, storage(), upload)
+    except StorageFailure:
+        raise unavailable("Storage cleanup is temporarily unavailable; retry the abort") from None

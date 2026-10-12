@@ -39,10 +39,10 @@ class Client:
         self.session = requests.Session()
         self.session.headers["Authorization"] = f"Bearer {token}"
 
-    def request(self, method, path, **kwargs):
+    def request(self, method, path, timeout=60, **kwargs):
         for _ in range(12):
             try:
-                response = self.session.request(method, self.api + path, timeout=(10, 60), allow_redirects=False, **kwargs)
+                response = self.session.request(method, self.api + path, timeout=(10, timeout), allow_redirects=False, **kwargs)
             except requests.RequestException:
                 time.sleep(5)
                 continue
@@ -53,13 +53,6 @@ class Client:
                 raise RuntimeError(f"API request failed with HTTP {response.status_code}")
             return response
         raise RuntimeError("API retry budget exhausted; rerun to resume")
-
-    def ready(self, base, identifier):
-        while True:
-            status = self.request("GET", f"{base}/{identifier}").json()
-            if status["state"] != "initiating":
-                return status
-            time.sleep(5)
 
 
 def put(path, part):
@@ -113,7 +106,7 @@ def main():
         record["upload_id"] = result["upload_id"]
         args.state.write_text(json.dumps(record))
     identifier = record["upload_id"]
-    status = client.ready(base, identifier)
+    status = client.request("GET", f"{base}/{identifier}").json()
     if status["state"] == "uploading":
         if status["part_size"] != part_size or status["part_count"] != len(checksums):
             raise RuntimeError("Unexpected session geometry")
@@ -126,19 +119,15 @@ def main():
                 break
             page = client.request("GET", f"{base}/{identifier}", params={"part_number_marker": marker}).json()
         remaining = [number for number in range(1, len(checksums) + 1) if number not in uploaded]
-        for offset in range(0, len(remaining), 64):
-            parts = [{"part_number": n, "crc32c": checksums[n - 1]} for n in remaining[offset:offset + 64]]
+        for offset in range(0, len(remaining), 32):
+            parts = [{"part_number": n, "crc32c": checksums[n - 1]} for n in remaining[offset:offset + 32]]
             signed = client.request("POST", f"{base}/{identifier}/parts", json={"parts": parts}).json()["parts"]
-            with ThreadPoolExecutor(max_workers=4) as pool:
+            with ThreadPoolExecutor(max_workers=8) as pool:
                 list(pool.map(lambda part: put(args.file, part), signed))
-    elif status["state"] not in {"finalizing", "verifying", "completed"}:
+    elif status["state"] not in {"finalizing", "completed"}:
         raise RuntimeError(f"Upload is {status['state']}: {status.get('failure_code')}")
-    while True:
-        response = client.request("POST", base + "/complete", json={"upload_id": identifier, "sha256_hash": sha, "crc32c": crc})
-        if response.status_code == 200:
-            print(json.dumps(response.json()))
-            break
-        time.sleep(5)
+    response = client.request("POST", base + "/complete", timeout=120, json={"upload_id": identifier, "sha256_hash": sha, "crc32c": crc})
+    print(json.dumps(response.json()))
 
 
 if __name__ == "__main__":

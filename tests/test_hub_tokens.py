@@ -445,3 +445,22 @@ def test_auth_time_flows_from_handoff_code_to_hub_principal(engine, monkeypatch)
     assert principal.authenticated_at == signed_in
     refreshed = refresh_hub_tokens(engine, pair.refresh_token, "crucible-hub")
     assert auth_utils._authorize_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=refreshed.access_token)).authenticated_at == signed_in
+
+
+def test_login_accepts_only_an_exact_configured_callback(engine, monkeypatch):
+    from app.utils.hub_login import HubLoginUnavailable, load_login_config
+    monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret")
+    monkeypatch.setenv("HUB_AUTH_PUBLIC_API_URL", "https://crucible.lbl.gov/testapi-staging")
+    monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "http://localhost:3000/hub/auth/callback, https://hub.example.org/hub/auth/callback")
+    config = load_login_config()
+    assert config.allowed_callbacks == ("http://localhost:3000/hub/auth/callback", "https://hub.example.org/hub/auth/callback")
+    for callback in config.allowed_callbacks:
+        create_login(engine, config, "crucible-hub", callback, "hub-state-123456789", "a" * 43)
+    for callback in ("http://localhost:3001/hub/auth/callback", "https://hub.example.org/hub/auth/callback/x", "http://localhost:3000/hub/auth/callback, https://hub.example.org/hub/auth/callback"):
+        with pytest.raises(InvalidHubLogin):
+            create_login(engine, config, "crucible-hub", callback, "hub-state-123456789", "a" * 43)
+    for configured in ("", " , ", "http://localhost:3000/cb,http://evil.example/cb"):
+        monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", configured)
+        with pytest.raises(HubLoginUnavailable):
+            load_login_config()

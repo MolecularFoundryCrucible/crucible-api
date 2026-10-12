@@ -64,7 +64,7 @@ Disabling `HUB_AUTH_ENABLED` stops login, exchange, refresh, and revoke operatio
 
 ## Extending this to other clients
 
-Yes, the design can be reused, especially by another trusted web application with a backend, including a Python web app. However, the current implementation supports only one configured client ID, shared client secret, and exact callback per API deployment. It is not yet a multi-client login service or a general OAuth authorization server. Changing those settings would replace the Hub's registration, not add another client.
+Yes, the design can be reused, especially by another trusted web application with a backend, including a Python web app. However, the current implementation supports only one configured client ID and shared client secret per API deployment, with a short list of exact callbacks. It is not yet a multi-client login service or a general OAuth authorization server. Changing those settings would replace the Hub's registration, not add another client.
 
 | Client type | Current support and extension path |
 | --- | --- |

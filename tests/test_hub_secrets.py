@@ -133,11 +133,11 @@ def test_orcid_reference_failure_does_not_use_legacy_secret(monkeypatch, manager
 
 
 @pytest.mark.parametrize("environment", ["main", "staging"])
-def test_deployment_references_only_and_disabled_by_default(environment):
+def test_deployment_references_only_and_enabled_only_on_staging(environment):
     config = yaml.safe_load((ROOT / f"k8s-conf/configmap-{environment}.yaml").read_text())["data"]
     deployment = yaml.safe_load((ROOT / f"k8s-conf/deployment-k8s-conf-{environment}.yaml").read_text())
     values = {entry["name"]: entry for entry in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
-    assert config["HUB_AUTH_ENABLED"] == "false"
+    assert config["HUB_AUTH_ENABLED"] == ("true" if environment == "staging" else "false")
     for key in config:
         if key.startswith("HUB_AUTH_"):
             assert values[key]["valueFrom"]["configMapKeyRef"] == {"name": f"crucible-api-config-{environment}", "key": key}
@@ -146,6 +146,6 @@ def test_deployment_references_only_and_disabled_by_default(environment):
         assert f"crucible-hub-{environment}-" in config[key + "_VERSION"]
         assert config[key + "_VERSION"].rsplit("/", 1)[1].isdigit()
     if environment == "staging":
-        assert config["HUB_AUTH_CALLBACK_URI"] == ""
+        assert config["HUB_AUTH_CALLBACK_URI"] == "http://localhost:3000/hub/auth/callback"
     else:
         assert config["HUB_AUTH_CALLBACK_URI"] == "https://crucible.lbl.gov/hub/auth/callback"

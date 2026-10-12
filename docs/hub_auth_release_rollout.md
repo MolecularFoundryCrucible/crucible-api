@@ -13,7 +13,7 @@ Both environments completed the migration sequence with explicit approval. Stagi
 
 Both deployments have one replica, a rolling update strategy, `maxUnavailable: 0`, and `maxSurge: 25%`. Both checked-in readiness settings now expect `e92a6b1c730f`. Do not repeat completed migrations or restore the old expected revision.
 
-The user confirmed sign-in, logout, and fresh sign-in using the Tailscale Hub against staging, and reported existing API clients working. Automatic refresh appears to work by user observation; no independent log verification was performed. Staging authentication was temporarily enabled with user approval of the documented ingress limitations. Checked-in configuration keeps it disabled, so subsequent staging builds reset that temporary setting. This acceptance does not extend to production.
+The user confirmed sign-in, logout, and fresh sign-in using the Tailscale Hub against staging, and reported existing API clients working. Automatic refresh appears to work by user observation; no independent log verification was performed. Staging authentication was first enabled temporarily with user approval of the documented ingress limitations. From 2026-10-12 the checked-in staging configuration keeps it enabled with the callback `http://localhost:3000/hub/auth/callback`, so builds no longer reset it. Developers run the Hub on port 3000 and open `http://localhost:3000`, forwarding the port (for example `ssh -L 3000:localhost:3000 <workstation>`) when the Hub runs on a remote machine. `HUB_AUTH_CALLBACK_URI` accepts a comma-separated list of exact callbacks if a deployed staging Hub is added later. Production stays disabled; this acceptance does not extend to it.
 
 ## Completed staging recovery
 

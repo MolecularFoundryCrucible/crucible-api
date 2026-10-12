@@ -38,6 +38,10 @@ class HubLoginConfig:
     orcid_issuer: str
 
     @property
+    def allowed_callbacks(self) -> tuple[str, ...]:
+        return tuple(uri.strip() for uri in self.callback_uri.split(",") if uri.strip())
+
+    @property
     def orcid_callback_uri(self) -> str:
         return f"{self.public_api_url}/auth/hub/callback"
 
@@ -59,9 +63,10 @@ def load_login_config() -> HubLoginConfig:
         raise HubLoginUnavailable
     if issuer not in {"https://orcid.org", "https://sandbox.orcid.org"}:
         raise HubLoginUnavailable
-    if not _trusted_public_url(callback_uri) or not _trusted_public_url(public_api_url):
+    config = HubLoginConfig(client_id, callback_uri, public_api_url.rstrip("/"), issuer)
+    if not config.allowed_callbacks or not all(map(_trusted_public_url, config.allowed_callbacks)) or not _trusted_public_url(public_api_url):
         raise HubLoginUnavailable
-    return HubLoginConfig(client_id, callback_uri, public_api_url.rstrip("/"), issuer)
+    return config
 
 
 def _trusted_public_url(value: str) -> bool:
@@ -88,7 +93,7 @@ def valid_challenge(value: str) -> bool:
 
 
 def create_login(engine, config: HubLoginConfig, client_id: str, callback_uri: str, hub_state: str, challenge: str, *, now: datetime | None = None) -> tuple[str, str, str]:
-    if client_id != config.client_id or callback_uri != config.callback_uri or not valid_challenge(challenge):
+    if client_id != config.client_id or callback_uri not in config.allowed_callbacks or not valid_challenge(challenge):
         raise InvalidHubLogin
     if not 16 <= len(hub_state) <= 256 or not hub_state.isascii():
         raise InvalidHubLogin

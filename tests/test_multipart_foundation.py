@@ -59,7 +59,7 @@ def test_new_session_constraints(db_engine, changes):
             session.commit()
 
 
-def test_dataset_deletion_preserves_cleanup_intent_atomically(db_engine):
+def test_dataset_deletion_removes_all_upload_sessions_atomically(db_engine):
     with Session(db_engine) as session:
         resource = Resource(mfid="ds", resource_type="dataset")
         session.add(resource)
@@ -71,11 +71,7 @@ def test_dataset_deletion_preserves_cleanup_intent_atomically(db_engine):
         assert len(session.exec(select(UploadSession)).all()) == 2
         _hard_delete_dataset("ds", session, resource)
         session.commit()
-        remaining = session.exec(select(UploadSession)).one()
-        assert remaining.protocol == "gcs_xml_v1"
-        assert remaining.provider_upload_id == "provider-id"
-        assert remaining.cleanup_requested_at is not None
-        assert remaining.state == "uploading"
+        assert session.exec(select(UploadSession)).all() == []
 
 
 def test_config_defaults_and_explicit_storage():

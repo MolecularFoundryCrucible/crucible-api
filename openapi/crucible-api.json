@@ -13836,43 +13836,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/AssociatedFileRead"
-                    },
-                    {
-                      "$ref": "#/components/schemas/MultipartStatus"
-                    }
-                  ],
-                  "title": "Response Complete Datasets  Dataset Mfid  Upload Multipart Complete Post"
+                  "$ref": "#/components/schemas/AssociatedFileRead"
                 }
               }
             },
             "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MultipartStatus"
-                }
-              }
-            },
-            "description": "Accepted",
             "headers": {
               "Cache-Control": {
                 "$ref": "#/components/headers/PrivateCacheControl"
@@ -13997,30 +13965,6 @@
               }
             }
           },
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MultipartStatus"
-                }
-              }
-            },
-            "description": "Accepted",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
           "422": {
             "content": {
               "application/json": {
@@ -14087,56 +14031,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MultipartStatus"
-                }
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MultipartStatus"
-                }
-              }
-            },
-            "description": "Accepted",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
           "204": {
-            "description": "Upload aborted",
+            "description": "Successful Response",
             "headers": {
               "Cache-Control": {
                 "$ref": "#/components/headers/PrivateCacheControl"

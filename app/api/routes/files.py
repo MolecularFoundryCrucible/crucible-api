@@ -16,7 +16,6 @@ from app.models.core_models import (
     AssociatedFile,
     Dataset,
     IngestionRequest,
-    UploadSession,
 )
 from app.general_utils import get_secret, get_utc_isoformat
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
@@ -143,12 +142,6 @@ def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id
         ).all():
             session.delete(ir)
 
-        from app.services.multipart import now, save
-        for upload in session.exec(select(UploadSession).where(UploadSession.result_file_mfid == af.mfid, UploadSession.protocol == "gcs_xml_v1").with_for_update()).all():
-            upload.cleanup_requested_at = now()
-            upload.cleaned_at = None
-            upload.next_attempt_at = now()
-            save(session, upload)
         session.delete(af)
         touch_resource_modification_time(session, ds.unique_id)
         session.commit()

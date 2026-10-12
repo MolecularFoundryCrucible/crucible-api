@@ -15,7 +15,6 @@ class MultipartStorageConfig:
     dataset_sessions: int = 32
     owner_bytes: int = 1024 ** 4
     dataset_bytes: int = 4 * 1024 ** 4
-    worker_concurrency: int = 2
     signing_interval_seconds: int = 5
 
     @classmethod
@@ -30,13 +29,13 @@ class MultipartStorageConfig:
             **{name: int(env.get("MULTIPART_" + name.upper(), str(default))) for name, default in {
                 "owner_sessions": 8, "dataset_sessions": 32,
                 "owner_bytes": 1024 ** 4, "dataset_bytes": 4 * 1024 ** 4,
-                "worker_concurrency": 2, "signing_interval_seconds": 5,
+                "signing_interval_seconds": 5,
             }.items()},
             bucket=env.get("MULTIPART_UPLOAD_BUCKET", "").strip() or None,
             signer_service_account=env.get("MULTIPART_UPLOAD_SIGNER", "").strip() or None,
             project=env.get("MULTIPART_UPLOAD_PROJECT", "").strip() or None,
         )
-        if min(config.max_upload_bytes, config.owner_sessions, config.dataset_sessions, config.owner_bytes, config.dataset_bytes, config.worker_concurrency, config.signing_interval_seconds) < 1:
+        if min(config.max_upload_bytes, config.owner_sessions, config.dataset_sessions, config.owner_bytes, config.dataset_bytes, config.signing_interval_seconds) < 1:
             raise ValueError("Multipart limits must be positive")
         if config.enabled and not all((config.bucket, config.signer_service_account, config.project)):
             raise ValueError("Multipart uploads require an explicit bucket, signer, and project")

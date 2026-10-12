@@ -52,6 +52,7 @@ from app.models.query_params import (
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
+from app.services import multipart
 from app.services.resource_details import ResourceDetailOptions, load_dataset_detail
 from app.services.resource_facets import list_dataset_facets
 from app.services.resource_filters import resource_scope_predicates
@@ -1472,13 +1473,17 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
             select(AssociatedFile).where(
                 AssociatedFile.sha256_hash == associated_file.sha256_hash,
                 AssociatedFile.dataset_id == ds.id,
+                multipart.trusted_hash(),
             )
-        ).one_or_none()
+        ).first()
         if af_obj is not None:
             return AssociatedFileRead.model_validate(
                 af_obj,
                 update={"dataset_mfid": ds.unique_id},
             )
+
+        if multipart.filename_reserved(session, dsid, associated_file.filename):
+            raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
 
         af_obj = AssociatedFile(
             **associated_file.model_dump(),

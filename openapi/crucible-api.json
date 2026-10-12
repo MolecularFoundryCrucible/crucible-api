@@ -8352,7 +8352,7 @@
             }
           },
           "409": {
-            "description": "Email or username is already in use by another user"
+            "description": "Username or email already held by another user: `{\"detail\": {\"code\": \"already_in_use\", \"fields\": [\"username\", \"email\"], \"message\": ...}}`, listing every conflicting field"
           },
           "422": {
             "content": {
@@ -25316,6 +25316,9 @@
               }
             }
           },
+          "409": {
+            "description": "Identifier, username, or email already in use; username and email conflicts use `{\"detail\": {\"code\": \"already_in_use\", \"fields\": [...], \"message\": ...}}`"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -25939,7 +25942,7 @@
             }
           },
           "409": {
-            "description": "Email or username is already in use by another user"
+            "description": "Username or email already held by another user: `{\"detail\": {\"code\": \"already_in_use\", \"fields\": [\"username\", \"email\"], \"message\": ...}}`, listing every conflicting field"
           },
           "422": {
             "content": {

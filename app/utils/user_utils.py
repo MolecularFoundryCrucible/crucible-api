@@ -77,27 +77,46 @@ def assert_username_available(session, username: str, exclude_orcid: Optional[st
     if exclude_orcid:
         q = q.where(User.unique_id != exclude_orcid)
     if session.exec(q).one_or_none() is not None:
-        raise HTTPException(status_code=409, detail="Username already taken")
+        raise fields_in_use(["username"])
 
 
-def assert_email_available(session, email: Optional[str], exclude_orcid: Optional[str] = None) -> None:
-    """Raise 409 if another user already has this email, compared case-insensitively."""
+def fields_in_use(fields: list[str]) -> HTTPException:
+    message = {("username",): "Username already taken", ("email",): "Email is already in use"}.get(tuple(fields), "Username and email are already in use")
+    return HTTPException(status_code=409, detail={"code": "already_in_use", "fields": fields, "message": message})
+
+
+def email_in_use(session, email: Optional[str], exclude_orcid: Optional[str] = None) -> bool:
     if email is None:
-        return
+        return False
     q = select(User.id).where(func.lower(User.email) == email.lower())
     if exclude_orcid:
         q = q.where(User.unique_id != exclude_orcid)
-    if session.exec(q).first() is not None:
-        raise HTTPException(status_code=409, detail="Email is already in use")
+    return session.exec(q).first() is not None
+
+
+def assert_profile_fields_available(session, *, username: Optional[str] = None, email: Optional[str] = None, exclude_orcid: Optional[str] = None) -> None:
+    """Raise one 409 listing every field (username, email) already held by another user."""
+    conflicts = []
+    if username is not None:
+        try:
+            assert_username_available(session, username, exclude_orcid=exclude_orcid)
+        except HTTPException:
+            conflicts.append("username")
+    if email_in_use(session, email, exclude_orcid):
+        conflicts.append("email")
+    if conflicts:
+        raise fields_in_use(conflicts)
 
 
 def commit_user(session) -> None:
-    """Commit, turning a concurrent email or username uniqueness conflict into a 409."""
+    """Commit, turning a concurrent email uniqueness conflict into the same 409."""
     try:
         session.commit()
-    except IntegrityError:
+    except IntegrityError as error:
         session.rollback()
-        raise HTTPException(status_code=409, detail="Email or username is already in use") from None
+        if "ux_user_email_lower" in str(error.orig):
+            raise fields_in_use(["email"]) from None
+        raise
 
 
 def is_username_available(session, username: str) -> bool:

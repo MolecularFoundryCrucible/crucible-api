@@ -7,7 +7,7 @@ Status: Implemented 2026-10-12 (migration `e5a1c8d93f27`). Requirement recorded 
 Email is optional and unverified, and it is used as a human-friendly identifier: `{user_ref}` path segments, the deprecated `email=` membership parameter, and project-lead fields resolve users by case-insensitive email. Because of that, a non-null email belongs to at most one user, including service accounts.
 
 - Writes trim surrounding whitespace, lowercase the address, and store blank values as null (`UserCreate`, `UserUpdate`, `AccountProfileUpdate`).
-- `POST /users`, `PATCH /users/{user_ref}`, and `PATCH /account/profile` return 409 `Email is already in use` when another user holds the address, without identifying that user. A concurrent conflicting write is rejected by the database index and also returns 409.
+- `POST /users`, `PATCH /users/{user_ref}`, and `PATCH /account/profile` return 409 with `{"detail": {"code": "already_in_use", "fields": ["email"], "message": "Email is already in use"}}` when another user holds the address, without identifying that user. A username conflict in the same request is listed in the same `fields` array. A concurrent conflicting write is rejected by the database index and also returns 409.
 - The partial unique index `ux_user_email_lower` on `lower(email)` allows any number of users without an email.
 - Hub sign-in identifies users by ORCID; matching email addresses never merge or link accounts. Uniqueness does not prove ownership of an address: the first account to set it keeps it until changed.
 

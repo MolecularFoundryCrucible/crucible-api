@@ -26,7 +26,7 @@ from app.utils.permissions import (
     has_global_permission,
     resolve_authorization_context,
 )
-from app.utils.user_utils import assert_email_available, assert_username_available, assign_projects_to_user, commit_user, find_mf_user_proposals
+from app.utils.user_utils import assert_profile_fields_available, assign_projects_to_user, commit_user, find_mf_user_proposals
 
 router = APIRouter(tags=["account"])
 engine = get_engine()
@@ -92,7 +92,7 @@ def get_account_profile(
         )
 
 
-@router.patch("/account/profile", response_model=UserRead, responses={409: {"description": "Email or username is already in use by another user"}})
+@router.patch("/account/profile", response_model=UserRead, responses={409: {"description": "Username or email already held by another user: `{\"detail\": {\"code\": \"already_in_use\", \"fields\": [\"username\", \"email\"], \"message\": ...}}`, listing every conflicting field"}})
 def update_account_profile(auth_res: Annotated[Principal, Depends(authorize_user)], user_update: AccountProfileUpdate):
     """Partially update the authenticated caller's own profile."""
     user_unique_id = auth_res.user_id
@@ -101,10 +101,7 @@ def update_account_profile(auth_res: Annotated[Principal, Depends(authorize_user
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
         update_data = user_update.model_dump(exclude_unset=True)
-        if "username" in update_data and update_data["username"] is not None:
-            assert_username_available(session, update_data["username"], exclude_orcid=user_unique_id)
-        if "email" in update_data:
-            assert_email_available(session, update_data["email"], exclude_orcid=user_unique_id)
+        assert_profile_fields_available(session, username=update_data.get("username"), email=update_data.get("email"), exclude_orcid=user_unique_id)
         for key, value in update_data.items():
             setattr(user, key, value)
         session.add(user)

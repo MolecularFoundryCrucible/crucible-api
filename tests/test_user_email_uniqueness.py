@@ -28,7 +28,7 @@ def test_profile_cannot_claim_another_users_email(client, auth_as, users, claime
     auth_as(ME)
     response = client.patch("/account/profile", json={"email": claimed})
     assert response.status_code == 409
-    assert response.json()["detail"] == "Email is already in use"
+    assert response.json()["detail"] == {"code": "already_in_use", "fields": ["email"], "message": "Email is already in use"}
     assert OTHER not in response.text
     assert email_of(users, ME) == "me@lbl.gov"
 
@@ -48,14 +48,15 @@ def test_admin_update_and_creation_reject_taken_emails(client, auth_as, users):
     assert client.patch(f"/users/{ME}", json={"email": "TAKEN@lbl.gov"}).status_code == 409
     created = client.post("/users", json={"user_info": {"first_name": "E", "last_name": "F", "username": "newperson", "email": "taken@lbl.gov"}, "project_ids": []})
     assert created.status_code == 409, created.text
-    assert created.json()["detail"] == "Email is already in use"
+    assert created.json()["detail"]["fields"] == ["email"]
 
 
 def test_concurrent_claim_is_rejected_by_the_database(client, auth_as, users, monkeypatch):
-    monkeypatch.setattr(account_routes, "assert_email_available", lambda *args, **kwargs: None)
+    monkeypatch.setattr(account_routes, "assert_profile_fields_available", lambda *args, **kwargs: None)
     auth_as(ME)
     response = client.patch("/account/profile", json={"email": "taken@lbl.gov"})
     assert response.status_code == 409
+    assert response.json()["detail"]["fields"] == ["email"]
     assert email_of(users, ME) == "me@lbl.gov"
 
 
@@ -66,3 +67,17 @@ def test_index_allows_many_null_emails_but_no_case_duplicates(db_engine):
         session.add_all([User(unique_id="0000-0000-0000-0010", first_name="", last_name="", email="x@lbl.gov"), User(unique_id="0000-0000-0000-0011", first_name="", last_name="", email="X@lbl.gov")])
         with pytest.raises(IntegrityError):
             session.commit()
+
+
+def test_username_and_email_conflicts_are_reported_together(client, auth_as, users):
+    with Session(users) as session:
+        other = session.exec(select(User).where(User.unique_id == OTHER)).one()
+        other.username = "taken"
+        session.add(other)
+        session.commit()
+    auth_as(ME)
+    response = client.patch("/account/profile", json={"username": "taken", "email": "taken@lbl.gov"})
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"code": "already_in_use", "fields": ["username", "email"], "message": "Username and email are already in use"}
+    response = client.patch("/account/profile", json={"username": "taken"})
+    assert response.json()["detail"] == {"code": "already_in_use", "fields": ["username"], "message": "Username already taken"}

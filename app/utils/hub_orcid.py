@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta, timezone
 
 import requests
 from authlib.integrations.requests_client import OAuth2Session
@@ -32,20 +33,22 @@ def _client(config: HubLoginConfig) -> OAuth2Session:
     )
 
 
-def orcid_authorization_url(config: HubLoginConfig, state: str, nonce: str) -> str:
+def orcid_authorization_url(config: HubLoginConfig, state: str, nonce: str, max_age: int | None = None) -> str:
+    reauthentication = {} if max_age is None else {"max_age": str(max_age), **({"prompt": "login"} if max_age == 0 else {})}
     with _client(config) as client:
         url, returned_state = client.create_authorization_url(
             f"{config.orcid_issuer}/oauth/authorize",
             state=state,
             redirect_uri=config.orcid_callback_uri,
             nonce=nonce,
+            **reauthentication,
         )
     if returned_state != state:
         raise InvalidHubLogin
     return url
 
 
-def exchange_orcid_code(config: HubLoginConfig, code: str, nonce: str) -> tuple[str, str | None, str | None]:
+def exchange_orcid_code(config: HubLoginConfig, code: str, nonce: str) -> tuple[str, str | None, str | None, datetime | None]:
     if not code or len(code) > 2048:
         raise InvalidHubLogin
     with _client(config) as client:
@@ -63,7 +66,7 @@ def exchange_orcid_code(config: HubLoginConfig, code: str, nonce: str) -> tuple[
     return verify_orcid_id_token(config, id_token, response.json(), nonce, token.get("access_token"))
 
 
-def verify_orcid_id_token(config: HubLoginConfig, id_token: str, jwks: dict, nonce: str, access_token: str | None = None) -> tuple[str, str | None, str | None]:
+def verify_orcid_id_token(config: HubLoginConfig, id_token: str, jwks: dict, nonce: str, access_token: str | None = None) -> tuple[str, str | None, str | None, datetime | None]:
     keys = KeySet.import_key_set(jwks)
     verified = jwt.decode(id_token, keys, algorithms=["RS256"])
     claims = CodeIDToken(
@@ -80,4 +83,11 @@ def verify_orcid_id_token(config: HubLoginConfig, id_token: str, jwks: dict, non
         },
     )
     claims.validate(leeway=30)
-    return claims["sub"], claims.get("given_name"), claims.get("family_name")
+    return claims["sub"], claims.get("given_name"), claims.get("family_name"), authentication_time(claims.get("auth_time"))
+
+
+def authentication_time(value) -> datetime | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    moment = datetime.fromtimestamp(value, timezone.utc)
+    return moment if moment <= datetime.now(timezone.utc) + timedelta(seconds=30) else None

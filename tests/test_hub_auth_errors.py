@@ -20,6 +20,7 @@ AUTH = ("crucible-hub", "test-client-secret")
 @pytest.fixture
 def client(monkeypatch, caplog):
     caplog.set_level(logging.WARNING, logger="httpx")
+    monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_ID", AUTH[0])
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", AUTH[1])
     monkeypatch.setitem(main.app.dependency_overrides, get_engine, lambda: object())

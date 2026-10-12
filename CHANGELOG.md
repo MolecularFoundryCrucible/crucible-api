@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Added `POST /account/apikey/regenerate` and the administrator route `POST /users/{user_ref}/apikey/regenerate`, which issue a new API key, revoke the previous one, and return the new key once.
+- Added an optional `max_age` parameter to `GET /auth/hub/login`, forwarded to ORCID (`0` also sends `prompt=login`) so the Hub can force a fresh ORCID sign-in. The ORCID `auth_time` is recorded on Hub login codes and token families (migration `d94e1f2a7b05`).
+- Multipart file download links now set the download filename and content type from the file record instead of the object key `content`.
+- Ingestion queue messages now include `file_name`, the file record's display filename, so consumers no longer depend on the object key for names or types.
 - Added a separate signed XML multipart upload API (`/datasets/{dataset_mfid}/upload/multipart/...`) with synchronous initiation and completion, bounded per-part URL authorization, resumable status, idempotent initiation and cancellation, and per-part and whole-object CRC32C verification. The API performs all storage calls inside the request, and a bucket lifecycle rule cleans abandoned uploads. New initiation defaults to disabled; legacy upload contracts remain supported. The completion SHA-256 is recorded with a null verification timestamp and excluded from trusted deduplication. Dedicated-bucket downloads and ingestion require server-recorded generations; file identity edits invalidate trusted checksum metadata. Added a resumable reference client and operator guide.
 
 - Added nullable multipart session and file verification metadata to existing tables and a legacy completion protocol guard. Dedicated storage configuration defaults to disabled; new multipart initiation remains disabled by default.
@@ -144,6 +148,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Deprecated
 
+- Reading an existing API key through `GET /account/apikey` and `POST /users/{user_ref}/apikey`. Both still work for API-key callers and return `Deprecation: @1791763200`; use the regenerate routes, which keep working once keys are stored hashed.
 - The `email` and `username` query parameters on `POST` and `DELETE /projects/{project_ref}/users/{user_ref}`. Put the username in the path instead.
 - Email in `{user_ref}` path segments. It still resolves, but emails in URLs are written to access logs; use the ORCID, MFID, or username.
 - `GET /users/by-username/{username}`. Use `GET /users/{user_ref}`.
@@ -154,6 +159,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- Hub sessions can no longer read existing API keys: `GET /account/apikey` returns 403 `api_key_read_not_allowed`, and `POST /users/{user_ref}/apikey` returns 409 `api_key_exists` instead of the existing key.
+- Creating an API key from a Hub session (regenerate routes, `POST /users/{user_ref}/apikey`, `POST /service_accounts`, `POST /service_accounts/{service_account_ref}/rotate_key`) requires an ORCID sign-in within the last 600 seconds, otherwise the API returns the RFC 9470 step-up challenge (401, `WWW-Authenticate: Bearer error="insufficient_user_authentication"`). API-key callers are unaffected.
+- Hub sessions default to normal privilege mode when `Crucible-Privilege-Mode` is omitted; API keys keep the elevated compatibility default for administrators.
+- `HUB_AUTH_ENABLED` now defaults to `false` when unset.
 - Non-administrators can no longer filter users by `platform_role`; the filter is administrator-only and other callers receive 403.
 - Removed the generic `GET /users` loop that turned any undeclared query parameter matching a `User` attribute into a filter, which let callers probe arbitrary columns including internal ones.
 

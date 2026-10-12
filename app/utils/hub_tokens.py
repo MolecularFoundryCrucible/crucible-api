@@ -59,12 +59,12 @@ def _issue_access(session: Session, family: HubTokenFamily, now: datetime) -> tu
     return token, expires_at
 
 
-def issue_hub_tokens(engine, user_unique_id: str, client_id: str, *, now: datetime | None = None) -> HubTokenPair:
+def issue_hub_tokens(engine, user_unique_id: str, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None) -> HubTokenPair:
     with Session(engine) as session, session.begin():
-        return issue_hub_tokens_in_session(session, user_unique_id, client_id, now=now)
+        return issue_hub_tokens_in_session(session, user_unique_id, client_id, now=now, auth_time=auth_time)
 
 
-def issue_hub_tokens_in_session(session: Session, user_unique_id: str, client_id: str, *, now: datetime | None = None) -> HubTokenPair:
+def issue_hub_tokens_in_session(session: Session, user_unique_id: str, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None) -> HubTokenPair:
     current = _now(now)
     user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
     if user is None or user.is_service_account:
@@ -76,6 +76,7 @@ def issue_hub_tokens_in_session(session: Session, user_unique_id: str, client_id
         created_at=current,
         expires_at=current + REFRESH_ABSOLUTE_LIFETIME,
         last_refreshed_at=current,
+        auth_time=auth_time,
     )
     session.add(family)
     session.flush()
@@ -157,6 +158,10 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
 
 
 def hub_access_user(session: Session, access_token: str, *, now: datetime | None = None) -> str:
+    return hub_access_family(session, access_token, now=now).user_unique_id
+
+
+def hub_access_family(session: Session, access_token: str, *, now: datetime | None = None) -> HubTokenFamily:
     if not access_token.startswith(ACCESS_PREFIX):
         raise InvalidHubGrant
     current = _now(now)
@@ -169,7 +174,7 @@ def hub_access_user(session: Session, access_token: str, *, now: datetime | None
     user = session.exec(select(User).where(User.unique_id == family.user_unique_id)).one_or_none()
     if user is None or user.is_service_account:
         raise InvalidHubGrant
-    return family.user_unique_id
+    return family
 
 
 def revoke_hub_tokens(engine, credential: str, client_id: str, *, now: datetime | None = None) -> None:

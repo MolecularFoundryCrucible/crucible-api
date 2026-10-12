@@ -128,7 +128,7 @@ def consume_login(engine, state: str, browser_secret: str | None, *, now: dateti
     return transaction
 
 
-def create_handoff_code(engine, transaction: HubLoginTransaction, orcid: str, given_name: str | None, family_name: str | None, *, now: datetime | None = None) -> tuple[str, str]:
+def create_handoff_code(engine, transaction: HubLoginTransaction, orcid: str, given_name: str | None, family_name: str | None, *, auth_time: datetime | None = None, now: datetime | None = None) -> tuple[str, str]:
     if not ORCID_PATTERN.fullmatch(orcid):
         raise InvalidHubLogin
     current = _now(now)
@@ -154,6 +154,7 @@ def create_handoff_code(engine, transaction: HubLoginTransaction, orcid: str, gi
             code_challenge=transaction.code_challenge,
             created_at=current,
             expires_at=current + CODE_LIFETIME,
+            auth_time=auth_time,
         ))
     return code, f"{transaction.callback_uri}?{urlencode({'code': code, 'state': transaction.hub_state})}"
 
@@ -170,4 +171,4 @@ def exchange_handoff_code(engine, code: str, verifier: str, client_id: str, call
         if grant.client_id != client_id or grant.callback_uri != callback_uri or not secrets.compare_digest(grant.code_challenge, challenge):
             raise InvalidHubGrant
         grant.consumed_at = current
-        return issue_hub_tokens_in_session(session, grant.user_unique_id, client_id, now=current)
+        return issue_hub_tokens_in_session(session, grant.user_unique_id, client_id, now=current, auth_time=_aware(grant.auth_time) if grant.auth_time else None)

@@ -7966,7 +7966,8 @@
     },
     "/account/apikey": {
       "get": {
-        "description": "Return the authenticated caller's current API key.",
+        "deprecated": true,
+        "description": "Return the authenticated caller's current API key.\n\nDeprecated: API keys will be stored hashed and become unreadable. Use\nPOST /account/apikey/regenerate, which returns a new key once.",
         "operationId": "get_account_apikey_account_apikey_get",
         "parameters": [
           {
@@ -8013,6 +8014,9 @@
               }
             }
           },
+          "403": {
+            "description": "Hub sessions cannot read API keys (`api_key_read_not_allowed`)"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -8030,6 +8034,80 @@
           }
         ],
         "summary": "Get Account Apikey",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/account/apikey/regenerate": {
+      "post": {
+        "description": "Issue a new API key for the caller and revoke the previous one. The key is returned only once.",
+        "operationId": "regenerate_account_apikey_account_apikey_regenerate_post",
+        "parameters": [
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyRead"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "401": {
+            "description": "Hub sessions need an ORCID sign-in within the last 10 minutes (`insufficient_user_authentication`, RFC 9470 challenge)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Regenerate Account Apikey",
         "tags": [
           "account"
         ]
@@ -8853,6 +8931,26 @@
               "pattern": "^S256$",
               "title": "Code Challenge Method",
               "type": "string"
+            }
+          },
+          {
+            "description": "Maximum seconds since the user's last ORCID authentication. 0 forces ORCID to re-authenticate; use it before credential-creating operations that require a recent sign-in.",
+            "in": "query",
+            "name": "max_age",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 86400,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Maximum seconds since the user's last ORCID authentication. 0 forces ORCID to re-authenticate; use it before credential-creating operations that require a recent sign-in.",
+              "title": "Max Age"
             }
           }
         ],
@@ -24508,6 +24606,9 @@
               }
             }
           },
+          "401": {
+            "description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -24761,6 +24862,9 @@
                 "$ref": "#/components/headers/CrucibleRequestId"
               }
             }
+          },
+          "401": {
+            "description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"
           },
           "422": {
             "content": {
@@ -26193,7 +26297,8 @@
         ]
       },
       "post": {
-        "description": "Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.",
+        "deprecated": true,
+        "description": "Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.\n\nDeprecated: returning an existing key will stop when keys are stored hashed. Use\nPOST /users/{user_ref}/apikey/regenerate. Hub sessions already receive 409 when a key exists.",
         "operationId": "get_or_provision_user_apikey_users__user_ref__apikey_post",
         "parameters": [
           {
@@ -26251,6 +26356,12 @@
               }
             }
           },
+          "401": {
+            "description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"
+          },
+          "409": {
+            "description": "Hub sessions cannot read an existing key (`api_key_exists`)"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -26268,6 +26379,91 @@
           }
         ],
         "summary": "Get Or Provision User Apikey",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/{user_ref}/apikey/regenerate": {
+      "post": {
+        "description": "Issue a new API key for the user and revoke the previous one. Admin only. The key is returned only once.",
+        "operationId": "regenerate_user_apikey_users__user_ref__apikey_regenerate_post",
+        "parameters": [
+          {
+            "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+            "in": "path",
+            "name": "user_ref",
+            "required": true,
+            "schema": {
+              "description": "User ORCID, service-account MFID, or username. Email still resolves but is deprecated in paths.",
+              "title": "User Ref",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyRead"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "401": {
+            "description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Regenerate User Apikey",
         "tags": [
           "users"
         ]

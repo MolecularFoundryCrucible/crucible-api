@@ -85,7 +85,7 @@ def _ensure_storage_path(af, dsid: str, session) -> str:
     return af.storage_path
 
 
-def _generate_signed_url_link(cloud_storage_path, expire_hours=1, generation=None):
+def _generate_signed_url_link(cloud_storage_path, expire_hours=1, generation=None, filename=None):
     """Return (signed_url, expires_in_seconds), or raise 404 if the blob does not exist."""
     bucket_name, _, blob_name = cloud_storage_path.partition("/")
     from app.utils.multipart_config import MultipartStorageConfig
@@ -95,7 +95,7 @@ def _generate_signed_url_link(cloud_storage_path, expire_hours=1, generation=Non
             raise HTTPException(403, "Multipart storage requires a registered generation")
         from app.services.multipart_storage import get_multipart_storage
         try:
-            url = get_multipart_storage().download(bucket_name, blob_name, generation, datetime.now(timezone.utc) + timedelta(hours=expire_hours))
+            url = get_multipart_storage().download(bucket_name, blob_name, generation, datetime.now(timezone.utc) + timedelta(hours=expire_hours), filename)
         except FileNotFoundError:
             raise HTTPException(404, "File not found in storage") from None
         except Exception:

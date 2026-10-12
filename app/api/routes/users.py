@@ -15,7 +15,7 @@ from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import (
     AccessGroup, ApiToken, Dataset, Project, Sample, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
 )
-from app.utils.auth_utils import authorize_user, fetch_acl_rows, find_or_add_api_access, permission_filter, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
+from app.utils.auth_utils import API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
 from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor,
 )
@@ -481,23 +481,45 @@ def _admin_key_status(session, caller: Principal, user: User) -> Optional[Servic
     return _key_status(token)
 
 
-@router.post("/users/{user_ref}/apikey", response_model=ApiKeyRead)
+def _admin_user_for_key(user_ref, auth_res):
+    user_id = _canonical_user_id(user_ref)
+    require_platform_admin(auth_res)
+    require_recent_authentication(auth_res)
+    with Session(engine) as session:
+        if session.exec(select(User.id).where(User.unique_id == user_id)).first() is None:
+            raise HTTPException(status_code=404, detail="User not found")
+    return user_id
+
+
+@router.post("/users/{user_ref}/apikey", response_model=ApiKeyRead, deprecated=True, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}, 409: {"description": "Hub sessions cannot read an existing key (`api_key_exists`)"}})
 def get_or_provision_user_apikey(
     user_ref: UserRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
     response: Response,
 ):
-    '''Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.'''
-    user_id = _canonical_user_id(user_ref)
-    require_platform_admin(auth_res)
+    '''Return the user's API key, minting one if they don't have it yet. Admin only. 404 if the user doesn't exist.
 
-    with Session(engine) as session:
-        user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-
+    Deprecated: returning an existing key will stop when keys are stored hashed. Use
+    POST /users/{user_ref}/apikey/regenerate. Hub sessions already receive 409 when a key exists.
+    '''
+    user_id = _admin_user_for_key(user_ref, auth_res)
+    if auth_res.credential == "hub" and has_active_api_key(user_id, engine):
+        raise HTTPException(status_code=409, detail={"code": "api_key_exists", "message": "The user already has an API key; regenerate it instead"})
     response.headers["Cache-Control"] = "no-store"
+    response.headers["Deprecation"] = API_KEY_READ_DEPRECATION
     return ApiKeyRead(api_key=find_or_add_api_access(user_id, engine, regenerate=False))
+
+
+@router.post("/users/{user_ref}/apikey/regenerate", response_model=ApiKeyRead, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}})
+def regenerate_user_apikey(
+    user_ref: UserRef,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    response: Response,
+):
+    '''Issue a new API key for the user and revoke the previous one. Admin only. The key is returned only once.'''
+    user_id = _admin_user_for_key(user_ref, auth_res)
+    response.headers["Cache-Control"] = "no-store"
+    return ApiKeyRead(api_key=find_or_add_api_access(user_id, engine, regenerate=True))
 
 
 @router.get("/users/{user_ref}/apikey/verify", response_model=ApiKeyVerify)

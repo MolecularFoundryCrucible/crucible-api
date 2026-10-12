@@ -1412,7 +1412,7 @@ def generate_dataset_download_links(
                 mfid_to_path[af.mfid] = None
                 continue
             try:
-                mfid_to_path[af.mfid] = (_ensure_storage_path(af, dsid, session), af.storage_generation)
+                mfid_to_path[af.mfid] = (_ensure_storage_path(af, dsid, session), af.storage_generation, af.filename)
             except HTTPException:
                 mfid_to_path[af.mfid] = None
         session.commit()
@@ -1424,8 +1424,8 @@ def generate_dataset_download_links(
             result[mfid] = None
             continue
         try:
-            path, generation = storage_path
-            url, _ = _generate_signed_url_link(path, **({"generation": generation} if generation else {}))
+            path, generation, filename = storage_path
+            url, _ = _generate_signed_url_link(path, **({"generation": generation, "filename": filename} if generation else {}))
             result[mfid] = url
         except HTTPException:
             result[mfid] = None

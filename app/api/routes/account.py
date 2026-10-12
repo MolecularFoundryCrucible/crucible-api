@@ -18,7 +18,7 @@ from app.models.users import (
     AccountProfileUpdate,
     UserRead,
 )
-from app.utils.auth_utils import authorize_user
+from app.utils.auth_utils import API_KEY_READ_DEPRECATION, authorize_user, find_or_add_api_access, reject_hub_api_key_read, require_recent_authentication
 from app.utils.permissions import (
     Permission,
     PlatformRole,
@@ -144,12 +144,18 @@ def get_account_join_requests(
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.get("/account/apikey", response_model=ApiKeyRead)
+@router.get("/account/apikey", response_model=ApiKeyRead, deprecated=True, responses={403: {"description": "Hub sessions cannot read API keys (`api_key_read_not_allowed`)"}})
 def get_account_apikey(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     response: Response,
 ):
-    """Return the authenticated caller's current API key."""
+    """Return the authenticated caller's current API key.
+
+    Deprecated: API keys will be stored hashed and become unreadable. Use
+    POST /account/apikey/regenerate, which returns a new key once.
+    """
+    reject_hub_api_key_read(auth_res)
+    response.headers["Deprecation"] = API_KEY_READ_DEPRECATION
     user_unique_id = auth_res.user_id
     with Session(engine) as session:
         token = session.exec(
@@ -160,6 +166,17 @@ def get_account_apikey(
             raise HTTPException(status_code=404, detail="No API key found")
         response.headers["Cache-Control"] = "no-store"
         return ApiKeyRead(api_key=token.token)
+
+
+@router.post("/account/apikey/regenerate", response_model=ApiKeyRead, responses={401: {"description": "Hub sessions need an ORCID sign-in within the last 10 minutes (`insufficient_user_authentication`, RFC 9470 challenge)"}})
+def regenerate_account_apikey(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    response: Response,
+):
+    """Issue a new API key for the caller and revoke the previous one. The key is returned only once."""
+    require_recent_authentication(auth_res)
+    response.headers["Cache-Control"] = "no-store"
+    return ApiKeyRead(api_key=find_or_add_api_access(auth_res.user_id, engine, regenerate=True))
 
 
 @router.get("/account/verify", response_model=ApiKeyVerify)

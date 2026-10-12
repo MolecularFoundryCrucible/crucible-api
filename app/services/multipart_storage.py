@@ -1,5 +1,7 @@
 import hashlib
+import mimetypes
 from functools import lru_cache
+from pathlib import PurePosixPath
 from urllib.parse import quote
 from xml.etree import ElementTree as ET
 
@@ -22,6 +24,12 @@ class UploadMissing(StorageFailure):
 
 def field(root, name):
     return root.findtext("{*}" + name)
+
+
+def content_disposition(basename):
+    fallback = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in basename).strip() or "download"
+    encoded = quote(basename, safe="") or "download"
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"
 
 
 class MultipartStorage:
@@ -157,12 +165,16 @@ class MultipartStorage:
         except NotFound:
             pass
 
-    def download(self, bucket, key, generation, expires_at):
+    def download(self, bucket, key, generation, expires_at, filename=None):
         self.check_bucket(bucket)
         blob = self.client.bucket(bucket).blob(key, generation=int(generation) if generation else None)
         if not blob.exists(timeout=60):
             raise FileNotFoundError()
-        return blob.generate_signed_url(version="v4", expiration=expires_at, method="GET", generation=generation, credentials=self.credentials)
+        presentation = {}
+        if filename:
+            basename = PurePosixPath(filename).name
+            presentation = {"response_disposition": content_disposition(basename), "response_type": mimetypes.guess_type(basename)[0] or "application/octet-stream"}
+        return blob.generate_signed_url(version="v4", expiration=expires_at, method="GET", generation=generation, credentials=self.credentials, **presentation)
 
 
 @lru_cache

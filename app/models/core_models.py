@@ -270,6 +270,7 @@ class HubTokenFamily(SQLModel, table=True):
     expires_at: datetime = Field(sa_type=DateTime(timezone=True))
     last_refreshed_at: datetime = Field(sa_type=DateTime(timezone=True))
     revoked_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    auth_time: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
 
 
 class HubRefreshToken(SQLModel, table=True):
@@ -315,6 +316,7 @@ class HubLoginCode(SQLModel, table=True):
     created_at: datetime = Field(sa_type=DateTime(timezone=True))
     expires_at: datetime = Field(sa_type=DateTime(timezone=True))
     consumed_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    auth_time: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
 
 
 class Project(SQLModel, table=True):

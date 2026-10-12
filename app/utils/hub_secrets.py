@@ -12,7 +12,7 @@ class HubSecretUnavailable(Exception):
 
 
 def hub_auth_enabled() -> bool:
-    return os.getenv("HUB_AUTH_ENABLED", "true").lower() == "true"
+    return os.getenv("HUB_AUTH_ENABLED", "false").lower() == "true"
 
 
 @lru_cache(maxsize=8)

@@ -122,3 +122,10 @@ def test_service_account_keys_require_a_recent_sign_in_for_hub_sessions(client, 
     assert_step_up(client.post("/service_accounts/robot/rotate_key", headers=headers))
     act_as("hub", admin=True)
     assert client.post("/service_accounts", json={"username": "robot"}, headers=headers).status_code == 200
+
+
+def test_admin_regenerate_issues_a_first_key(client, act_as, db_engine):
+    act_as("hub", admin=True)
+    response = client.post(f"/users/{OTHER}/apikey/regenerate", headers={"Crucible-Privilege-Mode": "elevated"})
+    assert response.status_code == 200
+    assert keys(db_engine, OTHER) == [response.json()["api_key"]]

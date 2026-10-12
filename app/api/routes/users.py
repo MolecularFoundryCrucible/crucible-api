@@ -29,7 +29,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import deletion_filter_for, table_obj_to_dict
-from app.utils.user_utils import assert_username_available, find_mf_user_proposals, resolve_user_by_identifier, sql_add_user_to_access_group
+from app.utils.user_utils import assert_email_available, assert_username_available, commit_user, find_mf_user_proposals, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.models.users import AccountProfileUpdate, UserCreate, UserPublicRead, UserRead, UserUpdate
@@ -584,6 +584,7 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
             raise HTTPException(status_code=409, detail=f"Identity group '{unique_id}' already exists")
         if user_info.username:
             assert_username_available(session, user_info.username)
+        assert_email_available(session, user_info.email)
 
         projects = session.exec(
             select(Project).where(Project.project_id.in_(requested_project_ids))
@@ -653,7 +654,7 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
     return _user_read(auth_res, user, with_capabilities=True)
 
 
-@router.patch("/users/{user_ref}", response_model=UserRead)
+@router.patch("/users/{user_ref}", response_model=UserRead, responses={409: {"description": "Email or username is already in use by another user"}})
 def update_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)], user_update: UserUpdate):
     '''Partially update a user record. Only fields provided in the request body are modified.'''
     user_id = _canonical_user_id(user_ref)
@@ -667,11 +668,13 @@ def update_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(author
         update_data = user_update.model_dump(exclude_unset=True)
         if "username" in update_data and update_data["username"] is not None:
             assert_username_available(session, update_data["username"], exclude_orcid=user_id)
+        if "email" in update_data:
+            assert_email_available(session, update_data["email"], exclude_orcid=user_id)
         for key, value in update_data.items():
             setattr(user, key, value)
 
         session.add(user)
-        session.commit()
+        commit_user(session)
         session.refresh(user)
         return _user_read(auth_res, user, with_capabilities=True)
 

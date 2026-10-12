@@ -33,7 +33,7 @@ data:
   db_username: "crucible-api-user"
   db_database: "crucible-staging"
   db_auth: "true"
-  EXPECTED_DB_REVISIONS: "d94e1f2a7b05"
+  EXPECTED_DB_REVISIONS: "e5a1c8d93f27"
 
   # multipart uploads
   MULTIPART_UPLOAD_ENABLED: "true"

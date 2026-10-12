@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 import requests
 from fastapi import HTTPException
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from app.general_utils import get_secret, is_orcid, is_valid_mfid
 from app.models.core_models import AccessGroup, Project, User
@@ -77,6 +78,26 @@ def assert_username_available(session, username: str, exclude_orcid: Optional[st
         q = q.where(User.unique_id != exclude_orcid)
     if session.exec(q).one_or_none() is not None:
         raise HTTPException(status_code=409, detail="Username already taken")
+
+
+def assert_email_available(session, email: Optional[str], exclude_orcid: Optional[str] = None) -> None:
+    """Raise 409 if another user already has this email, compared case-insensitively."""
+    if email is None:
+        return
+    q = select(User.id).where(func.lower(User.email) == email.lower())
+    if exclude_orcid:
+        q = q.where(User.unique_id != exclude_orcid)
+    if session.exec(q).first() is not None:
+        raise HTTPException(status_code=409, detail="Email is already in use")
+
+
+def commit_user(session) -> None:
+    """Commit, turning a concurrent email or username uniqueness conflict into a 409."""
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Email or username is already in use") from None
 
 
 def is_username_available(session, username: str) -> bool:

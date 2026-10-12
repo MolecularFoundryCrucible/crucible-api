@@ -8351,6 +8351,9 @@
               }
             }
           },
+          "409": {
+            "description": "Email or username is already in use by another user"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -25934,6 +25937,9 @@
                 "$ref": "#/components/headers/CrucibleRequestId"
               }
             }
+          },
+          "409": {
+            "description": "Email or username is already in use by another user"
           },
           "422": {
             "content": {

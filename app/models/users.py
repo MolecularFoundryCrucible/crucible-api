@@ -40,7 +40,7 @@ class UserCreate(SQLModel):
     def normalize_email(cls, v):
         if v is None:
             return v
-        return str(v).lower()
+        return str(v).strip().lower() or None
 
 
 class UserCapabilities(SQLModel):
@@ -130,7 +130,7 @@ class AccountProfileUpdate(SQLModel):
     def normalize_email(cls, v):
         if v is None:
             return v
-        return str(v).lower()
+        return str(v).strip().lower() or None
 
 
 class UserUpdate(SQLModel):
@@ -154,7 +154,7 @@ class UserUpdate(SQLModel):
     def normalize_email(cls, v):
         if v is None:
             return v
-        return str(v).lower()
+        return str(v).strip().lower() or None
 
 
 class ServiceAccountCreate(SQLModel):

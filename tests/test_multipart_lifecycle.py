@@ -623,3 +623,41 @@ def test_cleanup_protection_requires_server_recorded_generation(flow, generation
         assert storage.objects
         assert row(engine, identifier).failure_code == "cleanup_object_still_registered"
         assert row(engine, identifier).cleaned_at is None
+
+
+def test_unverified_multipart_hash_does_not_dedupe_legacy_paths(flow, monkeypatch):
+    client, _, _, _ = flow
+    publish(flow)
+    second = start(flow, filename="copy.bin")
+    put(flow, second)
+    assert complete(flow, second).status_code == 202
+    assert flow[3].run_once()
+    response = client.post("/datasets/ds/files", json={"filename": "legacy.bin", "size": len(DATA), "sha256_hash": SHA})
+    assert response.status_code == 200, response.text
+    assert response.json()["filename"] == "legacy.bin"
+    monkeypatch.setattr("app.api.routes.gcs_storage.engine", flow[1])
+    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda: ("token", "2030-01-01T00:00:00+00:00"))
+    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "other.bin", "size": len(DATA), "sha256_hash": SHA})
+    assert response.status_code == 200, response.text
+    assert response.json()["existing_file"]["filename"] == "legacy.bin"
+
+
+def test_legacy_paths_respect_multipart_filename_reservation(flow, monkeypatch):
+    client, _, _, _ = flow
+    start(flow)
+    response = client.post("/datasets/ds/files", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": "1" * 64})
+    assert response.status_code == 409
+    monkeypatch.setattr("app.api.routes.gcs_storage.engine", flow[1])
+    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda: ("token", "2030-01-01T00:00:00+00:00"))
+    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "data.bin", "size": len(DATA)})
+    assert response.status_code == 409
+
+
+def test_completed_session_is_swept_once(flow):
+    _, engine, storage, worker = flow
+    identifier = publish(flow)
+    change(engine, identifier, next_attempt_at=service.now())
+    assert worker.run_once()
+    assert row(engine, identifier).cleaned_at is not None
+    change(engine, identifier, next_attempt_at=service.now())
+    assert not worker.run_once()

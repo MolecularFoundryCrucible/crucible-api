@@ -159,6 +159,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Legacy upload initiation and `POST /datasets/{dataset_mfid}/files` no longer deduplicate against multipart files whose SHA-256 is an unverified client claim, and no longer return 500 when several files share a hash. Both, and legacy upload completion, now return 409 for a filename reserved by an active multipart upload instead of making that upload fail at publication.
+- Completed multipart sessions are swept for leftover provider uploads once instead of hourly forever, and part URLs within a signing batch are signed concurrently.
 - Prevented unverified catalog paths from blocking multipart orphan cleanup while retaining protection for server-registered file generations.
 
 - Packaged the multipart worker in the API image, preserved newly queued processing requests during worker release and completion-time privilege mode during background processing, and reconciled missing provider uploads into a recoverable failure. Integrated API-key and ORCID/OAuth access-token upload coverage and chained the unapplied multipart migrations after the completed auth migrations.

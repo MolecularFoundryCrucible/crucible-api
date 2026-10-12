@@ -79,6 +79,14 @@ def part_size(upload, number):
     return min(upload.part_size, upload.size - (number - 1) * upload.part_size)
 
 
+def trusted_hash():
+    return or_(AssociatedFile.storage_generation.is_(None), AssociatedFile.sha256_verified_at.is_not(None))
+
+
+def filename_reserved(session, dsid, filename):
+    return session.exec(select(UploadSession.id).where(UploadSession.dataset_mfid == dsid, UploadSession.protocol == PROTOCOL, UploadSession.associated_file_name == filename, UploadSession.state.notin_(TERMINAL))).first() is not None
+
+
 def file_read(session, upload):
     file = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == upload.result_file_mfid)).one_or_none()
     if file is None:
@@ -122,7 +130,7 @@ def initiate(engine, principal, dsid, body, key, config):
                 return MultipartStatus(state="completed", existing_file=AssociatedFileRead.model_validate(existing, update={"dataset_mfid": dsid}))
         if session.exec(select(AssociatedFile.id).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.filename == body.filename)).first() is not None:
             raise HTTPException(409, "Filename already exists")
-        if session.exec(select(UploadSession.id).where(UploadSession.dataset_mfid == dsid, UploadSession.protocol == PROTOCOL, UploadSession.associated_file_name == body.filename, UploadSession.state.notin_(TERMINAL))).first() is not None:
+        if filename_reserved(session, dsid, body.filename):
             raise HTTPException(409, "Filename is reserved by another upload")
         for column, value, count_limit, byte_limit in ((UploadSession.owner_user_id, principal.user_id, config.owner_sessions, config.owner_bytes), (UploadSession.dataset_mfid, dsid, config.dataset_sessions, config.dataset_bytes)):
             count, size = session.exec(select(func.count(UploadSession.id), func.coalesce(func.sum(UploadSession.size), 0)).where(column == value, UploadSession.protocol == PROTOCOL, or_(UploadSession.state.notin_(TERMINAL), (UploadSession.cleanup_requested_at.is_not(None) & UploadSession.cleaned_at.is_(None))))).one()
@@ -327,6 +335,11 @@ class MultipartWorker:
                 for provider_id in self.storage.uploads(upload):
                     self.heartbeat(upload.upload_id)
                     self.storage.abort(upload, provider_id)
+                with Session(self.engine) as session:
+                    current = self.locked(session, upload.upload_id)
+                    current.cleaned_at = now()
+                    save(session, current)
+                    session.commit()
                 delay = 3600
             elif utc(upload.expires_at) <= now():
                 with Session(self.engine) as session:

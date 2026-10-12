@@ -13,6 +13,7 @@ from app.general_utils import get_secret
 from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
 from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead, UploadMultipartInitiateRead
+from app.services import multipart
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
 from app.utils.sql_utils import add_or_update
@@ -156,16 +157,19 @@ def _validate_and_prepare_upload(
                 select(AssociatedFile).where(
                     AssociatedFile.dataset_id == ds.id,
                     AssociatedFile.sha256_hash == body.sha256_hash,
+                    multipart.trusted_hash(),
                 )
-            ).one_or_none()
+            ).first()
             if existing is not None:
                 return existing # TODO - this feels wrong, can return relative storage path, filename
 
-    from pathlib import PurePosixPath
-    parts = [p for p in PurePosixPath(body.filename).parts if p not in ("", "/", ".", "..")]
-    if not parts:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    safe_filename = str(PurePosixPath(*parts))
+        from pathlib import PurePosixPath
+        parts = [p for p in PurePosixPath(body.filename).parts if p not in ("", "/", ".", "..")]
+        if not parts:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        safe_filename = str(PurePosixPath(*parts))
+        if multipart.filename_reserved(session, dsid, safe_filename):
+            raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
     return f"{dsid}/{safe_filename}", safe_filename
 
 
@@ -314,6 +318,8 @@ def complete_resumable_upload(
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         require_permission(session, auth_res, dsid, Permission.CREATE)
+        if multipart.filename_reserved(session, dsid, us.associated_file_name):
+            raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
 
         try:
             blob = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).blob(us.gcs_path)

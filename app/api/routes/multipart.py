@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from typing import Annotated
 from urllib.parse import quote
@@ -63,14 +64,15 @@ def sign_parts(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
         session.refresh(upload)
         session.expunge(upload)
     expires_at = min(service.now() + timedelta(minutes=15), service.utc(upload.expires_at))
+    def sign(part):
+        size = service.part_size(upload, part.part_number)
+        url, headers = storage.sign_part(upload, part.part_number, part.crc32c, size, expires_at)
+        return SignedPart(part_number=part.part_number, url=url, headers=headers, offset=(part.part_number - 1) * upload.part_size, size=size, expires_at=expires_at)
+
     try:
         storage = get_multipart_storage()
-        result = []
-        for part in body.parts:
-            size = service.part_size(upload, part.part_number)
-            url, headers = storage.sign_part(upload, part.part_number, part.crc32c, size, expires_at)
-            result.append(SignedPart(part_number=part.part_number, url=url, headers=headers, offset=(part.part_number - 1) * upload.part_size, size=size, expires_at=expires_at))
-        return SignedParts(parts=result)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            return SignedParts(parts=list(pool.map(sign, body.parts)))
     except Exception:
         raise HTTPException(503, "Part signing unavailable; retry with the same checksums") from None
 

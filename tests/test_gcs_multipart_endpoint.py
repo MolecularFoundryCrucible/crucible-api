@@ -61,7 +61,8 @@ class TestInitiateMultipartUpload:
         mock_session_cls.return_value.__enter__.return_value = session
 
         exec_result = MagicMock()
-        exec_result.one_or_none.side_effect = [_make_mock_dataset(), None]
+        exec_result.one_or_none.side_effect = [_make_mock_dataset()]
+        exec_result.first.return_value = None
         session.exec.return_value = exec_result
 
         body = {"filename": "data.h5", "size": 1024 * 1024 * 64, "sha256_hash": "abc123"}
@@ -104,7 +105,8 @@ class TestInitiateMultipartUpload:
         existing_af.dataset.unique_id = "ds-001"
 
         exec_result = MagicMock()
-        exec_result.one_or_none.side_effect = [ds, existing_af]
+        exec_result.one_or_none.side_effect = [ds]
+        exec_result.first.side_effect = [existing_af]
         session.exec.return_value = exec_result
 
         body = {"filename": "data.h5", "size": 1024, "sha256_hash": "abc123"}
@@ -159,7 +161,8 @@ class TestInitiateMultipartUpload:
         mock_session_cls.return_value.__enter__.return_value = session
 
         exec_result = MagicMock()
-        exec_result.one_or_none.side_effect = [_make_mock_dataset(), None]
+        exec_result.one_or_none.side_effect = [_make_mock_dataset()]
+        exec_result.first.return_value = None
         session.exec.return_value = exec_result
 
         body = {"filename": "data.h5", "size": 1024, "sha256_hash": "abc123"}
@@ -180,7 +183,8 @@ class TestInitiateMultipartUpload:
         session = MagicMock()
         mock_session_cls.return_value.__enter__.return_value = session
         exec_result = MagicMock()
-        exec_result.one_or_none.side_effect = [_make_mock_dataset(), None]
+        exec_result.one_or_none.side_effect = [_make_mock_dataset()]
+        exec_result.first.return_value = None
         session.exec.return_value = exec_result
 
         body = {"filename": "/", "size": 1024}

@@ -28,6 +28,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Hub authentication security review](hub_auth_security_review.md): activation blockers, dispositions, and verified controls.
 - [Dependency security assessment](dependency_security_assessment.md): advisory reachability and staged upgrade batches.
 
+- [Release runbook: staging to main, October 2026](release_2026-10_staging_to_main.md): prerequisites, infrastructure, release-day sequence, smoke tests, and rollback for the multipart and storage release.
 - [Database migration guidance](../migrations/README.md): current schema and data migration safeguards.
 - [Production migration data follow-ups](production_migration_data_followups.md): unresolved legacy instrument references and ownership anomalies from the August 2026 migration.
 - [Kubernetes deployment notes](../k8s-conf/README.md): current metrics and PodMonitoring setup.

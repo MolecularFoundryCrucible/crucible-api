@@ -53,11 +53,14 @@ def test_deployments_wire_one_bucket_per_environment(environment, bucket):
     deployment = yaml.safe_load((ROOT / f"k8s-conf/deployment-k8s-conf-{environment}.yaml").read_text())
     values = {entry["name"]: entry for entry in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
     assert config["UPLOAD_BUCKET"] == bucket
-    for key in ("UPLOAD_BUCKET", "STORAGE_READ_BUCKETS", "MULTIPART_UPLOAD_BUCKET"):
+    for key in ("UPLOAD_BUCKET", "STORAGE_READ_BUCKETS", "MULTIPART_UPLOAD_ENABLED", "MULTIPART_UPLOAD_BUCKET", "MULTIPART_UPLOAD_SIGNER", "MULTIPART_UPLOAD_PROJECT"):
         if key in config:
             assert values[key]["valueFrom"]["configMapKeyRef"] == {"name": f"crucible-api-config-{environment}", "key": key}
+    assert config["MULTIPART_UPLOAD_ENABLED"] == "true"
+    assert config["MULTIPART_UPLOAD_BUCKET"] == bucket
+    assert config["MULTIPART_UPLOAD_SIGNER"] == f"crucible-mpu-signer-{'prod' if environment == 'main' else 'staging'}@mf-crucible.iam.gserviceaccount.com"
+    assert config["MULTIPART_UPLOAD_PROJECT"] == "mf-crucible"
     if environment == "staging":
-        assert config["MULTIPART_UPLOAD_BUCKET"] == bucket
         assert config["STORAGE_READ_BUCKETS"] == "mf-storage-prod"
     else:
-        assert "MULTIPART_UPLOAD_BUCKET" not in config
+        assert "STORAGE_READ_BUCKETS" not in config

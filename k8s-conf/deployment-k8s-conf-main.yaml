@@ -39,6 +39,26 @@ spec:
             configMapKeyRef:
               key: UPLOAD_BUCKET
               name: crucible-api-config-main
+        - name: "MULTIPART_UPLOAD_ENABLED"
+          valueFrom:
+            configMapKeyRef:
+              key: MULTIPART_UPLOAD_ENABLED
+              name: crucible-api-config-main
+        - name: "MULTIPART_UPLOAD_BUCKET"
+          valueFrom:
+            configMapKeyRef:
+              key: MULTIPART_UPLOAD_BUCKET
+              name: crucible-api-config-main
+        - name: "MULTIPART_UPLOAD_SIGNER"
+          valueFrom:
+            configMapKeyRef:
+              key: MULTIPART_UPLOAD_SIGNER
+              name: crucible-api-config-main
+        - name: "MULTIPART_UPLOAD_PROJECT"
+          valueFrom:
+            configMapKeyRef:
+              key: MULTIPART_UPLOAD_PROJECT
+              name: crucible-api-config-main
         - name: "HUB_AUTH_ENABLED"
           valueFrom:
             configMapKeyRef:

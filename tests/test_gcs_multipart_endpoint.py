@@ -102,6 +102,7 @@ class TestInitiateMultipartUpload:
         existing_af.sha256_hash = "abc123"
         existing_af.storage_backend = "gcs"
         existing_af.access_note = None
+        existing_af.storage_generation = None
         existing_af.dataset.unique_id = "ds-001"
 
         exec_result = MagicMock()

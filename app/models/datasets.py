@@ -1,5 +1,6 @@
+import hashlib
 from typing import List, Literal, Optional
-from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, computed_field, field_validator, model_validator
 from sqlmodel import SQLModel
 from app.general_utils import blank_to_none, is_valid_mfid
 from app.models.links import LinkedResource
@@ -249,6 +250,11 @@ class ThumbnailPreviewRead(SQLModel):
     mime_type: Literal["image/jpeg"] = "image/jpeg"
 
 
+def file_etag(storage_path, storage_generation, sha256_hash, size):
+    identity = f"{storage_path or ''}|{storage_generation or ''}|{sha256_hash}|{size}"
+    return '"' + hashlib.sha256(identity.encode()).hexdigest()[:32] + '"'
+
+
 class AssociatedFileCreate(SQLModel):
     '''Fields required to attach an associated file to a dataset.
     filename should be in the format {cloud-bucket}/{path-to-file}
@@ -285,6 +291,12 @@ class AssociatedFileRead(SQLModel):
     access_note: Optional[str] = None
     size: int
     sha256_hash: str
+    storage_generation: Optional[str] = Field(default=None, exclude=True)
+
+    @computed_field
+    @property
+    def etag(self) -> str:
+        return file_etag(self.storage_path, self.storage_generation, self.sha256_hash, self.size)
 
 
 class AssociatedFileUpdate(SQLModel):

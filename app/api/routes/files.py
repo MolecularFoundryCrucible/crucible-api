@@ -6,7 +6,7 @@ from typing import Annotated, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, join
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
@@ -75,13 +75,15 @@ def list_files(
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.get("/files/{file_id}", response_model=AssociatedFileRead)
-def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
-    '''Returns a single file by its MFID.'''
+@router.get("/files/{file_id}", response_model=AssociatedFileRead, responses={200: {"headers": {"ETag": {"description": "Content ETag of the file, the same value as the `etag` field; send it as `If-Match` when replacing the file", "schema": {"type": "string"}}}}})
+def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str, response: Response):
+    '''Returns a single file by its MFID, with its content ETag in the ETag header.'''
 
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
-        return AssociatedFileRead.model_validate(af, update={"dataset_mfid": ds.unique_id})
+        read = AssociatedFileRead.model_validate(af, update={"dataset_mfid": ds.unique_id})
+        response.headers["ETag"] = read.etag
+        return read
 
 
 @router.get("/files/{file_id}/download_link", responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})

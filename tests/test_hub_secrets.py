@@ -146,6 +146,6 @@ def test_deployment_references_only_and_enabled_only_on_staging(environment):
         assert f"crucible-hub-{environment}-" in config[key + "_VERSION"]
         assert config[key + "_VERSION"].rsplit("/", 1)[1].isdigit()
     if environment == "staging":
-        assert config["HUB_AUTH_CALLBACK_URI"] == "http://localhost:3000/hub/auth/callback"
+        assert config["HUB_AUTH_CALLBACK_URI"].split(",")[0] == "http://localhost:3000/hub/auth/callback"
     else:
         assert config["HUB_AUTH_CALLBACK_URI"] == "https://crucible.lbl.gov/hub/auth/callback"

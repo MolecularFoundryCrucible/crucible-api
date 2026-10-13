@@ -34,6 +34,11 @@ spec:
     spec:
       containers:
       - env:
+        - name: "UPLOAD_BUCKET"
+          valueFrom:
+            configMapKeyRef:
+              key: UPLOAD_BUCKET
+              name: crucible-api-config-main
         - name: "HUB_AUTH_ENABLED"
           valueFrom:
             configMapKeyRef:

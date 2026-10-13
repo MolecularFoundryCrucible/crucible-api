@@ -53,8 +53,10 @@ Set `CRUCIBLE_API_TOKEN` in the environment. The resume record contains a source
 
 | Variable | Default / purpose |
 | --- | --- |
+| `UPLOAD_BUCKET` | `mf-storage-prod`; the environment's single upload bucket, shared by legacy and multipart uploads (staging: `mf-storage-staging`) |
+| `STORAGE_READ_BUCKETS` | Optional comma-separated extra buckets that existing records may point at (staging: `mf-storage-prod`) |
 | `MULTIPART_UPLOAD_ENABLED` | `false`; controls new initiation only |
-| `MULTIPART_UPLOAD_BUCKET` | Required dedicated destination, never the legacy production bucket |
+| `MULTIPART_UPLOAD_BUCKET` | Required when enabled; must equal `UPLOAD_BUCKET` |
 | `MULTIPART_UPLOAD_SIGNER` | Required dedicated service-account email |
 | `MULTIPART_UPLOAD_PROJECT` | Required explicit project |
 | `MAX_UPLOAD_BYTES` | Existing application size limit, capped at 500 GiB for this protocol |
@@ -64,11 +66,11 @@ Set `CRUCIBLE_API_TOKEN` in the environment. The resume record contains a source
 | `MULTIPART_DATASET_BYTES` | 4 TiB reserved bytes |
 | `MULTIPART_SIGNING_INTERVAL_SECONDS` | 5 seconds per session |
 
-Application Default Credentials impersonate the configured dedicated signer using Google's authentication library. The legacy `GCS_SA` secret is never used by this adapter. The API runtime identity needs the token-creator grant on the signer, and the signer needs object and multipart permissions on the dedicated bucket. Never grant the legacy token identity access to this bucket, including through inherited IAM. [Google impersonation reference](https://google-auth.readthedocs.io/en/latest/reference/google.auth.impersonated_credentials.html)
+Application Default Credentials impersonate the configured dedicated signer using Google's authentication library. The legacy `GCS_SA` secret is never used by this adapter. The API runtime identity needs the token-creator grant on the signer, and the signer needs object and multipart permissions on the upload bucket. Multipart objects share the bucket with legacy objects under the reserved `{dataset_mfid}/_files/` segment; the downscoped legacy upload token excludes that segment, so legacy token holders cannot read or overwrite them. [Google impersonation reference](https://google-auth.readthedocs.io/en/latest/reference/google.auth.impersonated_credentials.html)
 
 The bucket lifecycle rule that aborts incomplete multipart uploads is required: it is the only cleanup for sessions that are abandoned or expire without an abort request. Set its age beyond the seven-day session lifetime. Failed verification and abort requests clean up immediately; when storage is unavailable during that cleanup, the lifecycle rule remains the fallback. Session records are retained; the scheduling columns `next_attempt_at`, `lease_owner`, `lease_expires_at`, `cleanup_requested_at`, and `attempts` are unused. Inspect `state`, `failure_code`, and `cleaned_at` for operations. GCS holds and retention can prevent object deletion and require operator intervention.
 
-The ingestion message retains `filename` as the full bucket/object path, adds `storage_generation` for new files, and carries the record's display name as `file_name`. External ingestion workers must accept the dedicated bucket, avoid relying on the object-key suffix as a file type, and honor the generation when reading. Consumers must take names and types from `file_name`, never from the object key, which is the opaque upload identifier. Explicit `ingestion_class` may be needed for consumers that previously inferred it from the filename. Deployed consumers currently mount only the legacy bucket, so ingesting multipart files needs a consumer update first.
+The ingestion message retains `filename` as the full bucket/object path, adds `storage_generation` for new files, and carries the record's display name as `file_name`. External ingestion workers must resolve the environment's upload bucket (and any `STORAGE_READ_BUCKETS`), avoid relying on the object-key suffix as a file type, and may read the live object because multipart objects are never overwritten. Consumers must take names and types from `file_name`, never from the object key, which is the opaque upload identifier. Explicit `ingestion_class` may be needed for consumers that previously inferred it from the filename. Consumers need a mount for each environment bucket and must take names from `file_name` before multipart files can be ingested.
 
 ## Deployment
 

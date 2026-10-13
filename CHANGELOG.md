@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-13
+
 ### Added
 
 - Added file content replacement: `POST /files/{file_mfid}/upload/multipart/initiate` starts a multipart replace of an existing GCS file (EDIT on its dataset, optional `If-Match` with the file's ETag or `*`, optional `Idempotency-Key`); parts, status, abort, and completion use the dataset's existing multipart routes, and completion returns the same file record with new content. A stale `If-Match` returns 412 `etag_mismatch`, a concurrent replace 409 `replace_in_progress`, a change during the upload 409 `file_changed`, and catalog-only records 400. Replaced legacy files move to the `{dataset_mfid}/_files/{upload_id}` layout. The previous object is retired by setting its `customTime`, and a bucket lifecycle rule deletes it after seven days. Requires migration `f3b7c2a91d04`.
@@ -104,6 +106,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Enabled Hub sign-in on production. The API load balancers now accept only the crucible.lbl.gov proxy, which reaches the API over internal load balancers and rate-limits the Hub authentication routes; clients using `https://crucible.lbl.gov/api/v3` are unaffected.
 - Production configuration enables signed multipart uploads into `mf-storage-prod` (`MULTIPART_UPLOAD_ENABLED`, `MULTIPART_UPLOAD_BUCKET`, `MULTIPART_UPLOAD_SIGNER` = `crucible-mpu-signer-prod`, `MULTIPART_UPLOAD_PROJECT`), taking effect when staging is promoted to main. See `docs/release_2026-10_staging_to_main.md`.
 - Multipart upload initiation with an existing filename now returns a structured 409 `{"code": "filename_exists", "file_mfid", "etag", "message": "Filename already exists"}` instead of a plain string, so clients can offer a replace.
 - Uploads now go to one bucket per environment, set by `UPLOAD_BUCKET` (default `mf-storage-prod`): legacy and multipart uploads share it, and `MULTIPART_UPLOAD_BUCKET` must equal it when multipart is enabled. Staging now writes to `mf-storage-staging` and keeps reading existing records from `mf-storage-prod` through the new optional `STORAGE_READ_BUCKETS`. Production configuration is unchanged. Ingestion consumers must mount and resolve the environment bucket.
@@ -176,7 +179,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Creating an API key from a Hub session (regenerate routes, `POST /users/{user_ref}/apikey`, `POST /service_accounts`, `POST /service_accounts/{service_account_ref}/rotate_key`) requires an ORCID sign-in within the last 600 seconds, otherwise the API returns the RFC 9470 step-up challenge (401, `WWW-Authenticate: Bearer error="insufficient_user_authentication"`). API-key callers are unaffected.
 - Hub sessions default to normal privilege mode when `Crucible-Privilege-Mode` is omitted; API keys keep the elevated compatibility default for administrators.
 - `HUB_AUTH_ENABLED` now defaults to `false` when unset.
-- `HUB_AUTH_CALLBACK_URI` accepts a comma-separated list of exact Hub callbacks; every entry must be HTTPS or an HTTP loopback address. Staging now enables Hub sign-in in its checked-in configuration with the local development callback `http://localhost:3000/hub/auth/callback`; production remains disabled.
+- `HUB_AUTH_CALLBACK_URI` accepts a comma-separated list of exact Hub callbacks; every entry must be HTTPS or an HTTP loopback address. Staging now enables Hub sign-in in its checked-in configuration with the local development callback `http://localhost:3000/hub/auth/callback`.
 - User email addresses are now unique, compared case-insensitively after trimming whitespace (migration `e5a1c8d93f27`, after auditing existing data with `migrations/data/20261012_audit_user_emails.py`). `PATCH /account/profile`, `PATCH /users/{user_ref}`, and `POST /users` return 409 without identifying the other account, so an address can no longer be claimed by a second account and redirect email-based member additions or access grants. Blank emails are stored as null. Emails remain optional and unverified.
 - Username and email conflicts now return a structured 409 detail, `{"code": "already_in_use", "fields": [...], "message": ...}`, listing every conflicting field, instead of the plain string `Username already taken`. Clients that print `detail` still show the message.
 - Non-administrators can no longer filter users by `platform_role`; the filter is administrator-only and other callers receive 403.

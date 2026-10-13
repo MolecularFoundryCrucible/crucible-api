@@ -96,7 +96,7 @@ def _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename
         obj = resolve_storage_object(storage_path, generation, dataset_mfid)
     except StorageLocationError as error:
         logger.warning("file_location_rejected file=%s dataset=%s reason=%s", file_mfid, dataset_mfid, error.reason)
-        raise HTTPException(status_code=409, detail=f"File storage location is not valid: {error.reason}") from None
+        raise HTTPException(status_code=409, detail=error.detail()) from None
     try:
         url = signed_download_url(_get_gcs_storage_client(), obj, filename, disposition)
     except FileNotFoundError:

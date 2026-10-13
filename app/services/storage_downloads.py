@@ -18,6 +18,9 @@ class StorageLocationError(Exception):
         super().__init__(reason)
         self.reason = reason
 
+    def detail(self):
+        return {"code": "storage_location_invalid", "reason": self.reason, "message": f"File storage location is not valid: {self.reason}"}
+
 
 @dataclass(frozen=True)
 class StorageObject:

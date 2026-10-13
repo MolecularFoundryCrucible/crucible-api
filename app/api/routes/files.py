@@ -84,7 +84,7 @@ def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: s
         return AssociatedFileRead.model_validate(af, update={"dataset_mfid": ds.unique_id})
 
 
-@router.get("/files/{file_id}/download_link")
+@router.get("/files/{file_id}/download_link", responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def get_file_download_link(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
@@ -172,7 +172,7 @@ def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id
 
 
 # ingestion
-@router.post("/files/{file_id}/ingest", response_model=IngestionRequest)
+@router.post("/files/{file_id}/ingest", response_model=IngestionRequest, responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def create_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
@@ -204,7 +204,7 @@ def create_file_ingestion_request(
             resolve_storage_object(af.storage_path, af.storage_generation, ds.unique_id)
         except StorageLocationError as error:
             logger.warning("file_location_rejected file=%s dataset=%s reason=%s", af.mfid, ds.unique_id, error.reason)
-            raise HTTPException(status_code=409, detail=f"File storage location is not valid: {error.reason}") from None
+            raise HTTPException(status_code=409, detail=error.detail()) from None
         RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
         ingestion_request = IngestionRequest(
             dataset_mfid=ds.unique_id,

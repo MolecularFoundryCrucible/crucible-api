@@ -104,7 +104,7 @@ def test_file_pointing_at_another_dataset_is_refused(client, db_engine, signer, 
     file_mfid = _file(db_engine, f"mf-storage-prod/{OTHER}/secret.pdf")
     response = client.get(f"/files/{file_mfid}/download_link")
     assert response.status_code == 409
-    assert response.json()["detail"] == "File storage location is not valid: outside_dataset"
+    assert response.json()["detail"] == {"code": "storage_location_invalid", "reason": "outside_dataset", "message": "File storage location is not valid: outside_dataset"}
     signer.bucket.assert_not_called()
 
 
@@ -112,7 +112,7 @@ def test_file_pointing_at_another_bucket_is_refused(client, db_engine, signer, a
     file_mfid = _file(db_engine, f"keys-and-certs/{DS}/key.json")
     response = client.get(f"/files/{file_mfid}/download_link")
     assert response.status_code == 409
-    assert response.json()["detail"] == "File storage location is not valid: bucket_not_allowed"
+    assert response.json()["detail"] == {"code": "storage_location_invalid", "reason": "bucket_not_allowed", "message": "File storage location is not valid: bucket_not_allowed"}
 
 
 def test_missing_object_returns_404(client, db_engine, signer, admin):
@@ -158,7 +158,7 @@ def test_ingest_refuses_a_file_outside_its_dataset(client, db_engine, admin):
     with patch("app.api.routes.files.send_pika_message") as send, patch("app.api.routes.files.get_secret", return_value="pw"):
         response = client.post(f"/files/{file_mfid}/ingest")
     assert response.status_code == 409
-    assert response.json()["detail"] == "File storage location is not valid: outside_dataset"
+    assert response.json()["detail"] == {"code": "storage_location_invalid", "reason": "outside_dataset", "message": "File storage location is not valid: outside_dataset"}
     send.assert_not_called()
     assert _ingestion_requests(db_engine) == []
 

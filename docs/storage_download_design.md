@@ -124,7 +124,7 @@ Known clients are unaffected: nano sets `storage_path` only for non-GCS backends
 | Object missing | 404 (unchanged) | `null` (unchanged) | n/a |
 | Signing fails | 503 (unchanged) | `null` (unchanged) | n/a |
 
-Rule failures are logged with file and dataset MFIDs only.
+A rule failure returns `{"detail": {"code": "storage_location_invalid", "reason": "<reason>", "message": "File storage location is not valid: <reason>"}}`, the same structured shape as the API's other 409 conflicts, so clients key on `code` rather than the message. Rule failures are logged with file and dataset MFIDs only.
 
 ## Testing
 

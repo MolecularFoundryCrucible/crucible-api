@@ -13,6 +13,7 @@ from app.models.core_models import AssociatedFile, Dataset, UploadSession, User
 from app.models.datasets import AssociatedFileRead
 from app.models.multipart import MultipartStatus
 from app.services.multipart_storage import StorageFailure, UploadMissing
+from app.services.storage_downloads import multipart_prefix
 from app.utils.auth_utils import load_principal, require_permission
 from app.utils.permissions import Permission, PlatformRole
 
@@ -151,7 +152,7 @@ def reserve(engine, principal, dsid, body, key, config):
             if count >= count_limit or size + body.size > byte_limit:
                 raise HTTPException(429, "Upload reservation quota exceeded", headers={"Retry-After": "60"})
         identifier = uuid4().hex
-        upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, gcs_path=f"uploads/{dsid}/{identifier}/content", associated_file_name=body.filename, expires_at=(now() + INITIATION_WINDOW).isoformat(), size=body.size, protocol=PROTOCOL, bucket=config.bucket, state="initiating", part_size=PART_SIZE, part_count=(body.size + PART_SIZE - 1) // PART_SIZE, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=body.sha256_hash, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0)
+        upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, gcs_path=f"{multipart_prefix(dsid)}{identifier}", associated_file_name=body.filename, expires_at=(now() + INITIATION_WINDOW).isoformat(), size=body.size, protocol=PROTOCOL, bucket=config.bucket, state="initiating", part_size=PART_SIZE, part_count=(body.size + PART_SIZE - 1) // PART_SIZE, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=body.sha256_hash, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0)
         session.add(upload)
         session.commit()
         session.refresh(upload)

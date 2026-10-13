@@ -192,6 +192,23 @@ class TestInitiateMultipartUpload:
         assert resp.status_code == 400
         assert "filename" in resp.json()["detail"].lower()
 
+    @patch('app.api.routes.gcs_storage.require_permission')
+    @patch('app.api.routes.gcs_storage.Session')
+    @patch('app.api.routes.gcs_storage._mint_upload_token')
+    def test_reserved_files_segment_is_rejected(self, mock_mint, mock_session_cls, mock_require_permission, client, app):
+        from app.utils.auth_utils import authorize_user
+        app.dependency_overrides[authorize_user] = _fake_auth
+        session = MagicMock()
+        mock_session_cls.return_value.__enter__.return_value = session
+        exec_result = MagicMock()
+        exec_result.one_or_none.side_effect = [_make_mock_dataset()]
+        exec_result.first.return_value = None
+        session.exec.return_value = exec_result
+        resp = client.post("/api/datasets/ds-001/upload/initiate/multipart", json={"filename": "_files/x.bin", "size": 10})
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Filenames starting with _files/ are reserved"
+        mock_mint.assert_not_called()
+
 
 class TestMintUploadToken:
 
@@ -222,6 +239,7 @@ class TestMintUploadToken:
         assert rule.available_permissions == ("inRole:roles/storage.objectAdmin",)
         assert rule.availability_condition.expression == (
             "resource.name.startsWith('projects/_/buckets/mf-storage-prod/objects/0abc/')"
+            " && !resource.name.startsWith('projects/_/buckets/mf-storage-prod/objects/0abc/_files/')"
         )
         downscoped_cls.return_value.refresh.assert_called_once()
 

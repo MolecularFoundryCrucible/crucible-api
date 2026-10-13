@@ -92,7 +92,7 @@ from app.utils.user_utils import resolve_create_owner
 from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
 from app.utils.deletion_utils import assert_not_pending_deletion
 from app.utils.gcs_record_utils import write_record, dataset_record
-from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
+from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
@@ -1390,6 +1390,10 @@ def delete_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)], ds
 def generate_dataset_download_links(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
+    disposition: Annotated[
+        Literal["attachment", "inline"],
+        Query(description="attachment (default) makes browsers save the file; inline asks them to display it when they can. Script-capable types (HTML, SVG, XML, +xml types, XSL) are always served as attachments."),
+    ] = "attachment",
 ):
     '''
     Returns signed GCS download URLs (1-hour expiry) for all files in the dataset,
@@ -1425,7 +1429,7 @@ def generate_dataset_download_links(
             continue
         try:
             path, generation, filename = storage_path
-            url, _ = _generate_signed_url_link(path, **({"generation": generation, "filename": filename} if generation else {}))
+            url, _ = _signed_download(mfid, dsid, path, generation, filename, disposition)
             result[mfid] = url
         except HTTPException:
             result[mfid] = None

@@ -696,6 +696,36 @@ class ProjectListQuery(StrictQueryModel):
         )
 
 
+class UserProjectListQuery(StrictQueryModel):
+    role: Optional[list[AccessPermission]] = Field(
+        default=None,
+        min_length=1,
+        max_length=5,
+        description="Restrict to projects where the user holds one of these roles. Repeated values use OR semantics.",
+    )
+    include_metadata: bool = False
+    include_total: Optional[bool] = Field(
+        default=None,
+        description="Exact total. Computed unless include_total=false.",
+    )
+    sort: Optional[ProjectSort] = Field(default=None, description=PROJECT_SORT_DESCRIPTION)
+    direction: Optional[SortDirection] = Field(default=None, description=SORT_DIRECTION_DESCRIPTION)
+    limit: int = Field(default=100, ge=1, le=1000)
+    cursor: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=4096,
+        description="Opaque continuation cursor returned by a previous page.",
+    )
+    offset: int = Field(default=0, ge=0)
+
+    def normalized_result_filters(self) -> dict:
+        return self.model_dump(
+            mode="json",
+            include={"role"},
+        )
+
+
 class InstrumentListQuery(StrictQueryModel):
     instrument_id: Optional[str] = Field(default=None, description="Exact instrument slug.")
     affiliation: Optional[list[InstrumentAffiliation]] = Field(

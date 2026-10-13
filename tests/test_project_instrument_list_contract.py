@@ -1,10 +1,10 @@
-"""GET /projects and GET /instruments: caller role, sorting, and the member filter."""
+"""GET /projects, GET /users/{user_ref}/projects and GET /instruments: caller role, sorting, and the member filter."""
 from datetime import datetime
 
 from sqlmodel import Session
 
 from app.models.core_models import (
-    AccessGroup, Instrument, Project, Resource, ResourceACL, User, UserAccessGroupLink,
+    AccessGroup, DeletionRequest, Instrument, Project, Resource, ResourceACL, User, UserAccessGroupLink,
 )
 from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, PlatformRole, Role
 
@@ -219,3 +219,52 @@ def test_instrument_sorts(client, db_engine, auth_as):
     assert walked == ["XRD-1", "xrd-2", "sem-9"]
     assert cursor is None
 
+
+
+def _user_projects(client, user="alice", **params):
+    return client.get(f"/users/{user}/projects", params=params)
+
+
+def test_user_projects_default_order_sorts_and_role_filter(client, db_engine, auth_as):
+    ids = _seed(db_engine)
+    _as_alice(auth_as, ids)
+
+    body = _user_projects(client).json()
+    assert [(item["project_id"], item["role"]) for item in body["items"]] == [("proj-a", "viewer"), ("proj-b", "owner")]
+    assert body["total"] == 2
+    assert _slugs(_user_projects(client, sort="title", direction="desc"), "project_id") == ["proj-b", "proj-a"]
+    assert _slugs(_user_projects(client, sort="updated"), "project_id") == ["proj-b", "proj-a"]
+    assert _slugs(_user_projects(client, role="owner"), "project_id") == ["proj-b"]
+    assert _slugs(_user_projects(client, role=["owner", "viewer"]), "project_id") == ["proj-a", "proj-b"]
+    assert _user_projects(client, direction="asc").status_code == 422
+    assert _user_projects(client, member_ref="bob").status_code == 422
+
+
+def test_user_projects_cursor_walk_and_optional_total(client, db_engine, auth_as):
+    ids = _seed(db_engine)
+    _as_alice(auth_as, ids, platform_role=PlatformRole.CONTRIBUTOR)
+
+    first = _user_projects(client, limit=1).json()
+    assert [item["project_id"] for item in first["items"]] == ["proj-a"]
+    second = _user_projects(client, limit=1, cursor=first["next_cursor"]).json()
+    assert [item["project_id"] for item in second["items"]] == ["proj-b"]
+    assert second["next_cursor"] is None
+    assert _user_projects(client, user="bob", limit=1, cursor=first["next_cursor"]).status_code == 422
+
+    no_total = _user_projects(client, include_total="false", limit=1).json()
+    assert no_total["total"] is None
+    assert no_total["next_cursor"] is not None
+    assert _slugs(_user_projects(client, user="bob"), "project_id") == ["proj-a"]
+    assert _user_projects(client, user="bob").json()["items"][0]["role"] == "editor"
+
+
+def test_user_projects_hide_pending_deletion(client, db_engine, auth_as):
+    ids = _seed(db_engine)
+    with Session(db_engine) as session:
+        session.add(DeletionRequest(resource_id=ids["proj-b"], requester_id=ALICE, status="pending"))
+        session.commit()
+    _as_alice(auth_as, ids)
+
+    body = _user_projects(client).json()
+    assert [item["project_id"] for item in body["items"]] == ["proj-a"]
+    assert body["total"] == 1

@@ -66,7 +66,7 @@ Keys are not named by file MFID: a future file replacement writes a new object a
 
 A GCS file's `storage_path` is `{bucket}/{key}`. It is servable when:
 
-1. `bucket` is an allowed read bucket: `mf-storage-prod` (the current legacy bucket constant) or the configured `MULTIPART_UPLOAD_BUCKET`.
+1. `bucket` is an allowed read bucket: the environment's `UPLOAD_BUCKET` (default `mf-storage-prod`), the configured `MULTIPART_UPLOAD_BUCKET` (which must equal it when multipart is enabled), or one of the optional `STORAGE_READ_BUCKETS` that older records point at.
 2. `key` starts with `{dataset_mfid}/`, where `dataset_mfid` is the dataset that owns the record.
 3. `key` has no `.` or `..` segment and no leading `/`. Empty segments are allowed because 3,769 production keys contain them and GCS treats them literally.
 4. A multipart key (`{dataset_mfid}/_files/...`) has a recorded `storage_generation`. Without one the object is not a published multipart file.
@@ -98,7 +98,7 @@ The default keeps legacy files downloading exactly as before, and now also makes
 
 ## Missing storage paths
 
-`_ensure_storage_path` keeps backfilling a missing `storage_path` by listing `{dataset_mfid}/` in `mf-storage-prod` and matching the basename. The backfilled value is stored by the download route before signing; the location rule is applied when the URL is signed, and before an ingestion request is created.
+`_ensure_storage_path` keeps backfilling a missing `storage_path` by listing `{dataset_mfid}/` in the environment's `UPLOAD_BUCKET` and matching the basename. The backfilled value is stored by the download route before signing; the location rule is applied when the URL is signed, and before an ingestion request is created.
 
 ## Writes
 

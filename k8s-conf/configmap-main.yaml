@@ -25,6 +25,9 @@ data:
   ANTHROPIC_BASE_URL: "https://api.cborg.lbl.gov"
   ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5"
 
+  # storage
+  UPLOAD_BUCKET: "mf-storage-prod"
+
   # database
   db_type: "postgresql"
   db_server: "172.31.16.10:5432"

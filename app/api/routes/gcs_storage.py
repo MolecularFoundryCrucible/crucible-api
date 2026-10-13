@@ -15,7 +15,7 @@ from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
 from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead, UploadMultipartInitiateRead
 from app.services import multipart
-from app.services.storage_downloads import DOWNLOAD_LIFETIME, LEGACY_BUCKET, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, signed_download_url
+from app.services.storage_downloads import DOWNLOAD_LIFETIME, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, signed_download_url, upload_bucket
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
 from app.utils.sql_utils import add_or_update
@@ -24,7 +24,7 @@ router = APIRouter(tags=["storage"])
 engine = get_engine()
 logger = logging.getLogger(__name__)
 
-_DOWNLOAD_BUCKET = LEGACY_BUCKET
+_DOWNLOAD_BUCKET = upload_bucket()
 _GCS_UPLOAD_API = "https://storage.googleapis.com/upload/storage/v1/b"
 _CHUNK_SIZE_HINT = 8 * 1024 * 1024  # 8 MiB — GCS recommended chunk multiple
 _MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 500 * 1024 ** 3))  # default 500 GiB

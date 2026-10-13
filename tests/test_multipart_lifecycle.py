@@ -103,6 +103,7 @@ def flow(db_engine, client, auth_as, monkeypatch):
     auth_as("owner", groups=[("owner-group", group_id, Role.OWNER)])
     monkeypatch.setattr(routes, "engine", db_engine)
     monkeypatch.setenv("MULTIPART_UPLOAD_ENABLED", "true")
+    monkeypatch.setenv("UPLOAD_BUCKET", "dedicated")
     monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", "dedicated")
     monkeypatch.setenv("MULTIPART_UPLOAD_SIGNER", "signer@example.iam.gserviceaccount.com")
     monkeypatch.setenv("MULTIPART_UPLOAD_PROJECT", "test-project")

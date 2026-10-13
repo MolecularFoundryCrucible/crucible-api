@@ -2,6 +2,8 @@ import os
 from dataclasses import dataclass
 from collections.abc import Mapping
 
+from app.services.storage_downloads import DEFAULT_UPLOAD_BUCKET
+
 
 @dataclass(frozen=True)
 class MultipartStorageConfig:
@@ -39,6 +41,7 @@ class MultipartStorageConfig:
             raise ValueError("Multipart limits must be positive")
         if config.enabled and not all((config.bucket, config.signer_service_account, config.project)):
             raise ValueError("Multipart uploads require an explicit bucket, signer, and project")
-        if config.bucket == "mf-storage-prod":
-            raise ValueError("Multipart uploads require a dedicated bucket")
+        upload_bucket = env.get("UPLOAD_BUCKET", "").strip() or DEFAULT_UPLOAD_BUCKET
+        if config.enabled and config.bucket != upload_bucket:
+            raise ValueError("Multipart uploads must use UPLOAD_BUCKET, the environment's single upload bucket")
         return config

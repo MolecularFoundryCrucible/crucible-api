@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 from google.api_core.exceptions import NotFound
 
-LEGACY_BUCKET = "mf-storage-prod"
+DEFAULT_UPLOAD_BUCKET = "mf-storage-prod"
 MULTIPART_SEGMENT = "_files"
 DOWNLOAD_LIFETIME = timedelta(hours=1)
 SCRIPT_CAPABLE_TYPES = frozenset({"text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml", "text/xsl"})
@@ -33,8 +33,13 @@ def multipart_prefix(dataset_mfid):
     return f"{dataset_mfid}/{MULTIPART_SEGMENT}/"
 
 
+def upload_bucket():
+    return os.environ.get("UPLOAD_BUCKET", "").strip() or DEFAULT_UPLOAD_BUCKET
+
+
 def allowed_buckets():
-    return {LEGACY_BUCKET, os.environ.get("MULTIPART_UPLOAD_BUCKET", "").strip()} - {""}
+    extra = {name.strip() for name in os.environ.get("STORAGE_READ_BUCKETS", "").split(",")}
+    return ({upload_bucket(), os.environ.get("MULTIPART_UPLOAD_BUCKET", "").strip()} | extra) - {""}
 
 
 def resolve_storage_object(storage_path, generation, dataset_mfid):

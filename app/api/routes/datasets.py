@@ -243,31 +243,22 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                 detail=f"Project '{requested_project_mfid}' not found",
             )
 
-        if not auth_res.is_platform_admin:
-            owner_orcid = dataset_details['owner_orcid']
+        if not has_global_permission(auth_res, Permission.CREATE):
+            if dataset_details['owner_orcid'] != user_unique_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only platform contributors and administrators may create a dataset on behalf of another user")
             proj_id = project.project_id if project is not None else requested_project_id
             if proj_id:
-                if (
-                    owner_orcid != user_unique_id
-                    and not has_global_permission(auth_res, Permission.CREATE)
-                ):
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Only platform contributors and administrators may create a dataset on behalf of another user")
                 standing = (
-                    project_standing_by_mfid(owner_orcid, project.unique_id, session)
+                    project_standing_by_mfid(user_unique_id, project.unique_id, session)
                     if project is not None
                     else None
                 )
                 if standing is None or standing < Role.CONTRIBUTOR:
                     raise HTTPException(
                         status_code=403,
-                        detail=f"'{owner_orcid}' must be contributor or above in project '{proj_id}' to create there")
-            elif owner_orcid != user_unique_id:
-                if not has_global_permission(auth_res, Permission.CREATE):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Creating on behalf of another user requires project_id, to verify their standing there")
+                        detail=f"Caller '{user_unique_id}' must be contributor or above in project '{proj_id}' to create there")
 
         if requested_project_id is not None or requested_project_mfid is not None:
             if project is None:

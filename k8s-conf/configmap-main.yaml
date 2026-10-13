@@ -6,7 +6,7 @@ metadata:
   labels:
     app: "crucible-api-main"
 data:
-  HUB_AUTH_ENABLED: "false"
+  HUB_AUTH_ENABLED: "true"
   HUB_AUTH_CLIENT_ID: "crucible-hub"
   HUB_AUTH_CALLBACK_URI: "https://crucible.lbl.gov/hub/auth/callback"
   HUB_AUTH_PUBLIC_API_URL: "https://crucible.lbl.gov/api/v3"

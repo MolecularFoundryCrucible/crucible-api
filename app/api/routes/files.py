@@ -22,7 +22,8 @@ from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import touch_resource_modification_time
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.pagination import PaginatedResponse
-from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
+from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
+from app.services.storage_downloads import StorageLocationError, resolve_storage_object
 
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
@@ -84,7 +85,14 @@ def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: s
 
 
 @router.get("/files/{file_id}/download_link")
-def get_file_download_link(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
+def get_file_download_link(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    file_id: str,
+    disposition: Annotated[
+        Literal["attachment", "inline"],
+        Query(description="attachment (default) makes browsers save the file; inline asks them to display it when they can. Script-capable types (HTML, SVG, XML, +xml types, XSL) are always served as attachments."),
+    ] = "attachment",
+):
     '''Returns a signed GCS download URL (1-hour expiry) for a single file.
     Returns url=None for files whose storage_backend is not "gcs" (catalog-only).'''
 
@@ -96,10 +104,12 @@ def get_file_download_link(auth_res: Annotated[Principal, Depends(authorize_user
 
         generation = af.storage_generation
         filename = af.filename
-        storage_path = _ensure_storage_path(af, ds.unique_id, session)
+        file_mfid = af.mfid
+        dataset_mfid = ds.unique_id
+        storage_path = _ensure_storage_path(af, dataset_mfid, session)
         session.commit()
 
-    url, expires_in = _generate_signed_url_link(storage_path, **({"generation": generation, "filename": filename} if generation else {}))
+    url, expires_in = _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename, disposition)
     return {"url": url, "expires_in": expires_in}
 
 
@@ -116,6 +126,18 @@ def update_file(
         require_permission(session, auth_res, ds.unique_id, Permission.EDIT)
 
         changed = updates.model_dump(exclude_unset=True)
+        if af.storage_generation is not None:
+            target_backend = changed.get("storage_backend", af.storage_backend)
+            target_path = changed.get("storage_path", af.storage_path)
+            if target_backend != "gcs" or target_path is None:
+                raise HTTPException(status_code=422, detail="storage_path is assigned by the upload API for GCS files")
+        if changed.get("storage_backend", af.storage_backend) == "gcs":
+            new_path = "storage_path" in changed and changed["storage_path"] not in (None, af.storage_path)
+            switched_with_path = af.storage_backend != "gcs" and changed.get("storage_path", af.storage_path) is not None
+            if new_path or switched_with_path:
+                raise HTTPException(status_code=422, detail="storage_path is assigned by the upload API for GCS files")
+            if any(name in changed and changed[name] != getattr(af, name) for name in ("size", "sha256_hash")):
+                raise HTTPException(status_code=422, detail="size and sha256_hash are determined by the stored object for GCS files")
         if any(name in changed and changed[name] != getattr(af, name) for name in ("size", "sha256_hash", "storage_path", "storage_backend")):
             af.sha256_verified_at = None
             af.storage_crc32c = None
@@ -177,9 +199,12 @@ def create_file_ingestion_request(
                 detail=f"Ingestion is not supported for storage_backend='{af.storage_backend}' files.",
             )
 
-        from app.utils.multipart_config import MultipartStorageConfig
-        if af.storage_path and af.storage_path.partition("/")[0] == MultipartStorageConfig.from_env().bucket and af.storage_generation is None:
-            raise HTTPException(403, "Multipart storage requires a registered generation")
+        _ensure_storage_path(af, ds.unique_id, session)
+        try:
+            resolve_storage_object(af.storage_path, af.storage_generation, ds.unique_id)
+        except StorageLocationError as error:
+            logger.warning("file_location_rejected file=%s dataset=%s reason=%s", af.mfid, ds.unique_id, error.reason)
+            raise HTTPException(status_code=409, detail=f"File storage location is not valid: {error.reason}") from None
         RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
         ingestion_request = IngestionRequest(
             dataset_mfid=ds.unique_id,

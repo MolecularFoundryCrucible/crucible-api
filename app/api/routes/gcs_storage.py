@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -14,14 +15,16 @@ from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
 from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead, UploadMultipartInitiateRead
 from app.services import multipart
+from app.services.storage_downloads import DOWNLOAD_LIFETIME, LEGACY_BUCKET, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, signed_download_url
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
 from app.utils.sql_utils import add_or_update
 
 router = APIRouter(tags=["storage"])
 engine = get_engine()
+logger = logging.getLogger(__name__)
 
-_DOWNLOAD_BUCKET = "mf-storage-prod"
+_DOWNLOAD_BUCKET = LEGACY_BUCKET
 _GCS_UPLOAD_API = "https://storage.googleapis.com/upload/storage/v1/b"
 _CHUNK_SIZE_HINT = 8 * 1024 * 1024  # 8 MiB — GCS recommended chunk multiple
 _MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 500 * 1024 ** 3))  # default 500 GiB
@@ -69,6 +72,8 @@ def _determine_storage_path(dataset_mfid, filename):
     basename = filename.split("/")[-1]
     ds_blobs = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).list_blobs(prefix=f'{dataset_mfid}/')
     for blob in ds_blobs:
+        if blob.name.startswith(multipart_prefix(dataset_mfid)):
+            continue
         if blob.name.endswith(basename):
             return f"{_DOWNLOAD_BUCKET}/{blob.name}"
     else:
@@ -85,36 +90,20 @@ def _ensure_storage_path(af, dsid: str, session) -> str:
     return af.storage_path
 
 
-def _generate_signed_url_link(cloud_storage_path, expire_hours=1, generation=None, filename=None):
-    """Return (signed_url, expires_in_seconds), or raise 404 if the blob does not exist."""
-    bucket_name, _, blob_name = cloud_storage_path.partition("/")
-    from app.utils.multipart_config import MultipartStorageConfig
-    config = MultipartStorageConfig.from_env()
-    if bucket_name == config.bucket:
-        if generation is None:
-            raise HTTPException(403, "Multipart storage requires a registered generation")
-        from app.services.multipart_storage import get_multipart_storage
-        try:
-            url = get_multipart_storage().download(bucket_name, blob_name, generation, datetime.now(timezone.utc) + timedelta(hours=expire_hours), filename)
-        except FileNotFoundError:
-            raise HTTPException(404, "File not found in storage") from None
-        except Exception:
-            raise HTTPException(503, "Download signing unavailable") from None
-        return url, expire_hours * 60 * 60
-    blob = _get_gcs_storage_client().bucket(bucket_name).blob(blob_name)
-
-    if not blob.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"File not found in storage: {cloud_storage_path}",
-        )
-
+def _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename, disposition="attachment"):
+    """Return (signed_url, expires_in_seconds) for a file record's object, enforcing the storage location rule."""
     try:
-        url = blob.generate_signed_url(version="v4", expiration=timedelta(hours=expire_hours), method="GET")
+        obj = resolve_storage_object(storage_path, generation, dataset_mfid)
+    except StorageLocationError as error:
+        logger.warning("file_location_rejected file=%s dataset=%s reason=%s", file_mfid, dataset_mfid, error.reason)
+        raise HTTPException(status_code=409, detail=f"File storage location is not valid: {error.reason}") from None
+    try:
+        url = signed_download_url(_get_gcs_storage_client(), obj, filename, disposition)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found in storage") from None
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not generate signed URL: {e}")
-
-    return url, expire_hours * 60 * 60
+        raise HTTPException(status_code=503, detail=f"Could not generate signed URL: {e}") from None
+    return url, int(DOWNLOAD_LIFETIME.total_seconds())
 
 
 
@@ -128,11 +117,12 @@ def _mint_upload_token(dsid: str) -> tuple[str, str]:
     if os.getenv("LEGACY_UPLOAD_TOKEN_DOWNSCOPE", "true").lower() == "false":
         scoped.refresh(Request())
         return scoped.token, scoped.expiry.isoformat()
+    prefix = f"projects/_/buckets/{_DOWNLOAD_BUCKET}/objects/{dsid}/"
     boundary = downscoped.CredentialAccessBoundary(rules=[downscoped.AccessBoundaryRule(
         available_resource=f"//storage.googleapis.com/projects/_/buckets/{_DOWNLOAD_BUCKET}",
         available_permissions=["inRole:roles/storage.objectAdmin"],
         availability_condition=downscoped.AvailabilityCondition(
-            expression=f"resource.name.startsWith('projects/_/buckets/{_DOWNLOAD_BUCKET}/objects/{dsid}/')",
+            expression=f"resource.name.startsWith('{prefix}') && !resource.name.startsWith('{prefix}{MULTIPART_SEGMENT}/')",
         ),
     )])
     narrowed = downscoped.Credentials(source_credentials=scoped, credential_access_boundary=boundary)
@@ -179,6 +169,8 @@ def _validate_and_prepare_upload(
         parts = [p for p in PurePosixPath(body.filename).parts if p not in ("", "/", ".", "..")]
         if not parts:
             raise HTTPException(status_code=400, detail="Invalid filename")
+        if parts[0] == MULTIPART_SEGMENT:
+            raise HTTPException(status_code=400, detail=f"Filenames starting with {MULTIPART_SEGMENT}/ are reserved")
         safe_filename = str(PurePosixPath(*parts))
         if multipart.filename_reserved(session, dsid, safe_filename):
             raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")

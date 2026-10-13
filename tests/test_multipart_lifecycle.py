@@ -2,12 +2,13 @@ import base64
 import hashlib
 import json
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import google_crc32c
 import pytest
 from sqlmodel import Session, select
 
+import app.api.routes.gcs_storage as gcs_storage
 from app.api.routes import multipart as routes
 from app.models.core_models import AccessGroup, AssociatedFile, Dataset, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
 from app.services import multipart as service
@@ -86,12 +87,6 @@ class MemoryStorage:
         assert self.objects[upload.gcs_path]["generation"] == generation
         self.deleted.append((upload.gcs_path, generation))
         self.objects.pop(upload.gcs_path)
-
-    def download(self, bucket, key, generation, expires_at, filename=None):
-        self.download_filename = filename
-        assert generation == "7"
-        assert key in self.objects
-        return "https://download.example/pinned-generation-7"
 
 
 @pytest.fixture
@@ -183,18 +178,23 @@ def test_upload_resume_publish_retry_download_ingestion_and_delete(flow, monkeyp
     assert storage.completions == 1
     assert client.get(BASE + f"/{identifier}").json()["existing_file"]["mfid"] == file_id
     file = files(engine)[0]
+    assert file.storage_path == f"dedicated/ds/_files/{identifier}"
     assert file.sha256_verified_at is None
     assert file.storage_generation == "7"
     assert file.sha256_hash == SHA
-    import app.services.multipart_storage as adapter
-    monkeypatch.setattr(adapter, "get_multipart_storage", lambda: storage)
+    signer = MagicMock()
+    signed_blob = signer.bucket.return_value.blob.return_value
+    signed_blob.content_type = "application/octet-stream"
+    signed_blob.generate_signed_url.return_value = "https://download.example/pinned-generation-7"
+    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: signer)
     assert client.get(f"/files/{file_id}/download_link").json()["url"].endswith("pinned-generation-7")
-    assert storage.download_filename == "data.bin"
+    assert signer.bucket.return_value.blob.call_args.kwargs["generation"] == 7
+    assert "filename*=UTF-8''data.bin" in signed_blob.generate_signed_url.call_args.kwargs["response_disposition"]
     assert client.get("/datasets/ds/download_links").json()[file_id].endswith("pinned-generation-7")
     with patch("app.api.routes.files.send_pika_message") as send:
         response = client.post(f"/files/{file_id}/ingest")
         assert response.status_code == 200, response.text
-        assert "dedicated/uploads/ds/" in send.call_args.kwargs["message"]
+        assert "dedicated/ds/_files/" in send.call_args.kwargs["message"]
         assert json.loads(send.call_args.kwargs["message"])["file_name"] == "data.bin"
     assert client.delete(BASE + f"/{identifier}").status_code == 409
     assert client.delete(f"/files/{file_id}").status_code == 200
@@ -334,9 +334,13 @@ def test_expiry_and_disabled_initiation(flow, monkeypatch):
 
 
 def test_claimed_hashes_do_not_short_circuit_initiation(flow):
-    client, _, _ = flow
-    identifier = publish(flow)
-    file_id = complete(flow, identifier).json()["mfid"]
+    client, engine, _ = flow
+    with Session(engine) as session:
+        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
+        af = AssociatedFile(filename="claimed.bin", storage_path="globus://endpoint/claimed.bin", storage_backend="globus", size=len(DATA), sha256_hash=SHA, dataset_id=dataset.id)
+        session.add(af)
+        session.commit()
+        file_id = af.mfid
     response = client.post(BASE + "/initiate", json={"filename": "another", "size": len(DATA), "sha256_hash": SHA})
     assert response.status_code == 200
     assert response.json()["existing_file"] is None
@@ -367,13 +371,18 @@ def test_invalid_initiation_is_rejected(flow, body):
     assert flow[0].post(BASE + "/initiate", json=body).status_code == 422
 
 
-def test_generation_cannot_be_forged_by_patching_storage_path(flow):
-    client, _, _ = flow
+def test_storage_path_cannot_be_forged(flow):
+    client, engine, _ = flow
     identifier = publish(flow)
     file_id = complete(flow, identifier).json()["mfid"]
-    assert client.patch(f"/files/{file_id}", json={"storage_path": "dedicated/uploads/someone-else/content"}).status_code == 200
-    assert client.get(f"/files/{file_id}/download_link").status_code == 403
-    assert client.post(f"/files/{file_id}/ingest").status_code == 403
+    assert client.patch(f"/files/{file_id}", json={"storage_path": "dedicated/someone-else/_files/x"}).status_code == 422
+    with Session(engine) as session:
+        record = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == file_id)).one()
+        record.storage_path = "dedicated/someone-else/_files/x"
+        session.add(record)
+        session.commit()
+    assert client.get(f"/files/{file_id}/download_link").status_code == 409
+    assert client.post(f"/files/{file_id}/ingest").status_code == 409
 
 
 def test_signing_batch_limits_and_expired_session_quota(flow, monkeypatch):

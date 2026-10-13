@@ -44,6 +44,10 @@ Reviewed the current GCS parallel upload initiation and completion routes, their
 - **Fix:** Add an explicit abort flow and a scheduled cleanup process that reconciles provider uploads and session rows. Configure bucket lifecycle cleanup as a fallback, and test interrupted large uploads.
 - **False-positive condition:** A separately managed cleanup job or bucket lifecycle rule may exist outside the repository; confirm it in the deployed environment.
 
+### PU-5: File records can point downloads at arbitrary objects
+
+- **Status (2026-10-13):** Fixed. Found during the storage review: `PATCH /files/{file_id}` accepted any `storage_path`, and download and ingestion signed or forwarded it with the project-owner `GCS_SA` identity. Downloads and ingestion now enforce the location rule in `app/services/storage_downloads.py`, and `PATCH` no longer changes where a GCS file's bytes live. See [storage location confinement](storage_download_design.md).
+
 ## Recommended release path
 
 The updated [secure parallel upload migration plan](secure_parallel_upload_migration.md) proposes separate routes, signed part URLs, and gradual client migration. The previous exact-object token proposal could not enforce server-only completion: uploading parts and completing a provider upload require the same core permissions in Google's [XML IAM table](https://docs.cloud.google.com/storage/docs/access-control/iam-xml). The proposal now compares both approaches, specifies storage isolation during coexistence, and corrects the protocol description using the [Python transfer-manager reference](https://docs.cloud.google.com/python/docs/reference/storage/latest/google.cloud.storage.transfer_manager). Provider authorization, overwrite behavior, integrity verification, and deployment settings still need staging validation.

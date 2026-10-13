@@ -36,6 +36,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Added non-secret `api_key_status` to the singleton and exact platform-admin view of a user, mirroring the service-account detail response.
 - Added the target user's standing `role` in each project's access group to `GET /users/{user_id}/projects` items.
 - Added `can_manage_users` to `GET /account/profile` capabilities, true for platform administrators.
+- Added the `GET /projects` collection contract to `GET /users/{user_ref}/projects`: `sort=project_id|title|created|updated` with `direction=asc|desc`, signed cursor pagination with `next_cursor` alongside the existing offset, `include_total`, `include_metadata`, and a repeatable `role` filter on the target user's role. Defaults are unchanged: `project_id` ascending order and an exact `total` unless `include_total=false`. Unknown query parameters now return 422.
 - Added permanent deletion of empty projects and instruments through both the reviewed request workflow (admin on the resource may request) and the direct forced path (owner or platform admin). A project or instrument with assigned datasets or samples is rejected with 409 and a structured `blocking` count detail, checked at request creation, at approval with the row locked inside the transaction, and at forced deletion.
 - Added a preview-and-confirm flow to `DELETE /resources/{resource_mfid}?force=true` for projects and instruments: without `confirm=true` it returns a `DeletionPreviewRead` describing blockers and what would be removed (group memberships, service-account bindings, join requests, cross-resource grants) and deletes nothing. Datasets and samples keep immediate forced deletion.
 - Added a `preview` field to project and instrument deletion-request responses describing what the deletion removes or why it is blocked.
@@ -171,6 +172,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- `GET /users/{user_ref}/projects` now hides projects with a pending or approved deletion request, matching `GET /projects`.
 - Legacy upload initiation and `POST /datasets/{dataset_mfid}/files` no longer deduplicate against multipart files whose SHA-256 is an unverified client claim, and no longer return 500 when several files share a hash. Both, and legacy upload completion, now return 409 for a filename reserved by an active multipart upload instead of making that upload fail at publication.
 - Part URLs within a multipart signing batch are signed concurrently.
 - `POST /datasets` with an `instrument_name` shared by more than one instrument now returns 409 instead of a server error.

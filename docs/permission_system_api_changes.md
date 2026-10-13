@@ -195,7 +195,7 @@ Response is `PaginatedResponse[ProjectWithLead]`:
   lead, scientific_metadata, creation_time, modification_time, role }
 ```
 
-`role` is the target user's standing in that project's access group (`owner`, `admin`, `editor`, `contributor`, `viewer`), resolved in the page query.
+`role` is the target user's standing in that project's access group (`owner`, `admin`, `editor`, `contributor`, `viewer`), resolved in the page query. Projects with a pending or approved deletion request are hidden.
 
 Available to the user themselves and to callers with `platform_role` `contributor` or `admin`, including service accounts. Anyone else receives 403. This is the same authority required to select another user with `accessible_to_user`. Instrument-group membership no longer grants access, and the former `ProjectMinimalRead` projection for instrument-group members has been removed.
 
@@ -206,7 +206,7 @@ The route lists projects the user is a **member** of, through standing in the pr
 | Which projects is this user a member of? | `GET /users/{user_ref}/projects` |
 | Which projects can this user read? | `GET /projects?accessible_to_user={user_ref}` |
 
-The two routes also differ in shape: `GET /users/{user_ref}/projects` uses offset pagination only, while `accessible_to_user` also accepts an MFID, ORCID, username, or email and supports the full `GET /projects` query contract.
+Both routes follow the shared collection contract in `docs/get_query_contract.md`: `sort` and `direction`, cursor and offset pagination, `include_total`, and `include_metadata`. `GET /users/{user_ref}/projects` also accepts a repeatable `role` filter on the target user's role.
 
 ### Resource lists for specified users and projects
 

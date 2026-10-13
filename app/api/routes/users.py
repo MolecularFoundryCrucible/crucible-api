@@ -1,6 +1,7 @@
 from datetime import datetime, date, timedelta, timezone
 from typing import Annotated, Dict, List, Optional, Union
 import logging
+from dataclasses import replace
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import DatasetMfid, UserRef
 from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import (
-    AccessGroup, ApiToken, Dataset, Project, Sample, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
+    AccessGroup, ApiToken, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
 )
 from app.utils.auth_utils import API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
 from app.utils.cursor_utils import (
@@ -32,13 +33,15 @@ from app.utils.sql_utils import deletion_filter_for, table_obj_to_dict
 from app.utils.user_utils import assert_profile_fields_available, commit_user, find_mf_user_proposals, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
+from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
+from app.api.routes.projects import PROJECT_PAGINATION
 from app.models.users import AccountProfileUpdate, UserCreate, UserPublicRead, UserRead, UserUpdate
 from app.models.response_schemas import ApiKeyRead, ApiKeyVerify
 from app.models.core_models import ApiToken
 from app.models.projects import ProjectWithLead
 from app.models.access_groups import AccessGroupRead
 from app.models.access import EffectiveAccess, EffectiveResourceAccessRead
-from app.models.query_params import SortDirection, UserListQuery, UserSearchField, UserSort
+from app.models.query_params import SortDirection, UserListQuery, UserProjectListQuery, UserSearchField, UserSort
 from app.models.users import (
     AccountCapabilities,
     ServiceAccountKeyStatus,
@@ -50,6 +53,7 @@ from app.models.users import (
 
 router = APIRouter(tags=["users"])
 engine = get_engine()
+USER_PROJECT_PAGINATION = replace(PROJECT_PAGINATION, kind="user_project")
 
 USER_COLLECTION_DEPRECATION = "@1799280000"
 USER_LIST_DECLARED_PARAMS = {
@@ -905,9 +909,12 @@ def remove_user_from_access_group(auth_res: Annotated[Principal, Depends(authori
 
 
 @router.get("/users/{user_ref}/projects", response_model=PaginatedResponse[ProjectWithLead])
-def read_projects_for_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)],
-                           limit: int = Query(default=100, ge=1, le=1000),
-                           offset: int = Query(default=0, ge=0)):
+def read_projects_for_user(
+    user_ref: UserRef,
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    params: Annotated[UserProjectListQuery, Query()],
+    request: Request = None,
+):
     '''
     Returns a paginated list of the projects the user is a member of, each with
     the user's standing role in that project's access group.
@@ -915,6 +922,9 @@ def read_projects_for_user(user_ref: UserRef, auth_res: Annotated[Principal, Dep
     contributor or admin, the same rule as accessible_to_user on GET /projects.
     Membership only: unlike GET /projects?accessible_to_user=, projects reached
     only through explicit resource grants are not included.
+    Pass role to restrict to the listed roles.
+    Pass sort=project_id|title|created|updated with direction=asc|desc to change the order.
+    Pass include_total=false to omit the exact count.
     '''
     user_id = _canonical_user_id(user_ref)
     with Session(engine) as session:
@@ -925,33 +935,59 @@ def read_projects_for_user(user_ref: UserRef, auth_res: Annotated[Principal, Dep
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
+        pagination = prepare_resource_pagination(
+            params=params,
+            query_params=request.query_params if request is not None else {},
+            spec=USER_PROJECT_PAGINATION,
+            result_filters={**params.normalized_result_filters(), "user_id": user_id},
+            user_id=auth_res.user_id,
+        )
         base = (
-            select(Project, UserAccessGroupLink.role)
+            select(Project, Resource, UserAccessGroupLink.role)
+            .join(Resource, Resource.mfid == Project.unique_id, isouter=True)
             .join(AccessGroup, AccessGroup.group_name == Project.unique_id)
             .join(UserAccessGroupLink, and_(
                 UserAccessGroupLink.accessgroup_id == AccessGroup.id,
                 UserAccessGroupLink.user_id == user.id,
             ))
+            .where(deletion_filter_for(Project))
         )
-        total = session.exec(select(func.count()).select_from(base.subquery())).one()
-        rows = session.exec(
-            base.options(selectinload(Project.resource))
-            .order_by(col(Project.project_id))
-            .offset(offset).limit(limit)
-        ).all()
+        if params.role:
+            base = base.where(UserAccessGroupLink.role.in_([Role.from_db(r.value).db_value for r in params.role]))
 
-        projects = [row[0] for row in rows]
-        roles = {row[0].project_id: row[1] for row in rows}
+        total = (
+            session.exec(select(func.count()).select_from(base.with_only_columns(Project.id).subquery())).one()
+            if params.include_total is not False
+            else None
+        )
+        page = execute_resource_page(session, base, pagination)
+        projects = [row[0] for row in page.rows]
+        metadata_by_mfid = {}
+        if params.include_metadata and projects:
+            metadata_by_mfid = {
+                smb.unique_id: smb.scientific_metadata
+                for smb in session.exec(
+                    select(ScientificMetadataBinary)
+                    .where(ScientificMetadataBinary.unique_id.in_([p.unique_id for p in projects]))
+                ).all()
+            }
         orcids = [p.project_lead_orcid for p in projects if p.project_lead_orcid]
         leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}
         items = [
             ProjectWithLead(
                 **proj.model_dump(),
                 lead=leads.get(proj.project_lead_orcid),
-                creation_time=proj.resource.creation_time if proj.resource else None,
-                modification_time=proj.resource.modification_time if proj.resource else None,
-                role=roles.get(proj.project_id) or "unknown",
+                creation_time=resource.creation_time if resource else None,
+                modification_time=resource.modification_time if resource else None,
+                scientific_metadata=metadata_by_mfid.get(proj.unique_id),
+                role=role or "unknown",
             )
-            for proj in projects
+            for proj, resource, role in page.rows
         ]
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+        return PaginatedResponse(
+            total=total,
+            limit=params.limit,
+            offset=params.offset if params.cursor is None else None,
+            items=items,
+            next_cursor=page.next_cursor,
+        )

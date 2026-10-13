@@ -244,26 +244,17 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
             project_reference = requested_project_mfid or requested_project_id
             raise HTTPException(status_code=404, detail=f"Project '{project_reference}' not found")
 
-        if not auth_res.is_platform_admin:
-            owner_orcid = resolved_owner_orcid or user_unique_id
+        if not has_global_permission(auth_res, Permission.CREATE):
+            if (resolved_owner_orcid or user_unique_id) != user_unique_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only platform contributors and administrators may create a sample on behalf of another user")
             if project is not None:
-                if (
-                    owner_orcid != user_unique_id
-                    and not has_global_permission(auth_res, Permission.CREATE)
-                ):
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Only platform contributors and administrators may create a sample on behalf of another user")
-                standing = project_standing_by_mfid(owner_orcid, project.unique_id, session)
+                standing = project_standing_by_mfid(user_unique_id, project.unique_id, session)
                 if standing is None or standing < Role.CONTRIBUTOR:
                     raise HTTPException(
                         status_code=403,
-                        detail=f"'{owner_orcid}' must be contributor or above in project '{project.project_id}' to create there")
-            elif owner_orcid != user_unique_id:
-                if not has_global_permission(auth_res, Permission.CREATE):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Creating on behalf of another user requires project_id, to verify their standing there")
+                        detail=f"Caller '{user_unique_id}' must be contributor or above in project '{project.project_id}' to create there")
 
         sample_details.pop('owner', None)
         sample_details['owner_orcid'] = resolved_owner_orcid

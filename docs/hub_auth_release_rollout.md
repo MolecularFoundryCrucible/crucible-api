@@ -41,11 +41,9 @@ If the application rollout fails after a successful migration, restore the previ
 
 ## Separate production activation gates
 
-### Deferred ingress changes
+### Ingress protection
 
-Decision recorded 2026-09-28: defer direct-backend bypass and proxy-to-API transport changes. Existing API access, client addresses, routing, authentication behavior, and performance must not be affected. Do not change load balancers, firewall rules, source-IP policy, proxy topology, or add per-request application processing as part of this deferred work. Reconsider only a separately reviewed, minimal change with compatibility and performance evidence; none has been established yet.
-
-This is a work deferral, not acceptance that the ingress is secure. Nginx-only limits do not prevent direct-backend bypass, and proxy-to-API transport protection remains unverified. The private Tailscale pilot may continue. Public Hub authentication stays disabled until these protections are implemented and verified or the user explicitly accepts the documented residual risks. No infrastructure or runtime change is authorized by this decision.
+Completed 2026-10-13 with user approval. The external API load balancers (`crucible-api-lb`, `crucible-api-staging-service`) accept only `crucible-web` (`34.136.124.37/32`), closing the direct-backend bypass. Nginx reaches the APIs over internal load balancers (`10.128.0.83:7777` main, `10.128.0.95:8889` staging) that accept only `10.128.0.9/32`. Nginx applies Cloudflare-aware rate limits, body caps, timeouts and no-store headers to the Hub authentication locations. Manifests are in `k8s-conf/load-balancer-service-{main,staging}.yaml`; the proxy side is in crucible-nginx `docs/api-upstream-and-hub-auth-limits.md`.
 
 ### Other activation requirements
 

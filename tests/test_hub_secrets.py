@@ -133,11 +133,11 @@ def test_orcid_reference_failure_does_not_use_legacy_secret(monkeypatch, manager
 
 
 @pytest.mark.parametrize("environment", ["main", "staging"])
-def test_deployment_references_only_and_enabled_only_on_staging(environment):
+def test_deployment_references_only_and_enabled(environment):
     config = yaml.safe_load((ROOT / f"k8s-conf/configmap-{environment}.yaml").read_text())["data"]
     deployment = yaml.safe_load((ROOT / f"k8s-conf/deployment-k8s-conf-{environment}.yaml").read_text())
     values = {entry["name"]: entry for entry in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
-    assert config["HUB_AUTH_ENABLED"] == ("true" if environment == "staging" else "false")
+    assert config["HUB_AUTH_ENABLED"] == "true"
     for key in config:
         if key.startswith("HUB_AUTH_"):
             assert values[key]["valueFrom"]["configMapKeyRef"] == {"name": f"crucible-api-config-{environment}", "key": key}

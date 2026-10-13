@@ -27,6 +27,10 @@ data:
 
   # storage
   UPLOAD_BUCKET: "mf-storage-prod"
+  MULTIPART_UPLOAD_ENABLED: "true"
+  MULTIPART_UPLOAD_BUCKET: "mf-storage-prod"
+  MULTIPART_UPLOAD_SIGNER: "crucible-mpu-signer-prod@mf-crucible.iam.gserviceaccount.com"
+  MULTIPART_UPLOAD_PROJECT: "mf-crucible"
 
   # database
   db_type: "postgresql"

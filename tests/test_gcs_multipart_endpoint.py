@@ -191,3 +191,62 @@ class TestInitiateMultipartUpload:
         resp = client.post("/api/datasets/ds-001/upload/initiate/multipart", json=body)
         assert resp.status_code == 400
         assert "filename" in resp.json()["detail"].lower()
+
+
+class TestMintUploadToken:
+
+    def _mint(self, monkeypatch, dsid="ds-001", flag=None):
+        from app.api.routes import gcs_storage
+        if flag is None:
+            monkeypatch.delenv("LEGACY_UPLOAD_TOKEN_DOWNSCOPE", raising=False)
+        else:
+            monkeypatch.setenv("LEGACY_UPLOAD_TOKEN_DOWNSCOPE", flag)
+        source = MagicMock()
+        scoped = MagicMock()
+        source.with_scopes.return_value = scoped
+        scoped.token, scoped.expiry = "broad", MagicMock(isoformat=lambda: "broad-expiry")
+        with patch.object(gcs_storage, "_get_gcs_credentials", return_value=source), \
+             patch("google.auth.downscoped.Credentials") as downscoped_cls:
+            downscoped_cls.return_value.token = "narrow"
+            downscoped_cls.return_value.expiry = MagicMock(isoformat=lambda: "narrow-expiry")
+            result = gcs_storage._mint_upload_token(dsid)
+        return result, downscoped_cls, scoped
+
+    def test_token_is_limited_to_the_dataset_prefix(self, monkeypatch):
+        result, downscoped_cls, scoped = self._mint(monkeypatch, dsid="0abc")
+        assert result == ("narrow", "narrow-expiry")
+        kwargs = downscoped_cls.call_args.kwargs
+        assert kwargs["source_credentials"] is scoped
+        (rule,) = kwargs["credential_access_boundary"].rules
+        assert rule.available_resource == "//storage.googleapis.com/projects/_/buckets/mf-storage-prod"
+        assert rule.available_permissions == ("inRole:roles/storage.objectAdmin",)
+        assert rule.availability_condition.expression == (
+            "resource.name.startsWith('projects/_/buckets/mf-storage-prod/objects/0abc/')"
+        )
+        downscoped_cls.return_value.refresh.assert_called_once()
+
+    def test_kill_switch_returns_the_service_account_token(self, monkeypatch):
+        result, downscoped_cls, scoped = self._mint(monkeypatch, flag="false")
+        assert result == ("broad", "broad-expiry")
+        downscoped_cls.assert_not_called()
+
+    @patch('app.api.routes.gcs_storage.require_permission')
+    @patch('app.api.routes.gcs_storage.Session')
+    def test_exchange_failure_returns_503(self, mock_session_cls, mock_require_permission, client, app, monkeypatch):
+        from app.api.routes import gcs_storage
+        from app.utils.auth_utils import authorize_user
+        app.dependency_overrides[authorize_user] = _fake_auth
+        monkeypatch.delenv("LEGACY_UPLOAD_TOKEN_DOWNSCOPE", raising=False)
+        session = MagicMock()
+        session.exec.return_value.one_or_none.return_value = _make_mock_dataset()
+        session.exec.return_value.first.return_value = None
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=session)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+        with patch.object(gcs_storage, "_get_gcs_credentials", return_value=MagicMock()), \
+             patch("google.auth.downscoped.Credentials") as downscoped_cls, \
+             patch.object(gcs_storage.multipart, "filename_reserved", return_value=False):
+            downscoped_cls.return_value.refresh.side_effect = RuntimeError("sts unreachable")
+            resp = client.post("/api/datasets/ds-001/upload/initiate/multipart",
+                               json={"filename": "a.bin", "size": 10})
+        assert resp.status_code == 503
+        assert "broad" not in resp.text

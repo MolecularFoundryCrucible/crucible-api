@@ -118,14 +118,26 @@ def _generate_signed_url_link(cloud_storage_path, expire_hours=1, generation=Non
 
 
 
-def _mint_upload_token() -> tuple[str, str]:
-    """Return (access_token, token_expiry_iso) by refreshing the service account credentials."""
+def _mint_upload_token(dsid: str) -> tuple[str, str]:
+    """Return (access_token, token_expiry_iso) limited to objects under {dsid}/ in the upload bucket."""
+    from google.auth import downscoped
     from google.auth.transport.requests import Request
     scoped = _get_gcs_credentials().with_scopes(
         ["https://www.googleapis.com/auth/devstorage.read_write"]
     )
-    scoped.refresh(Request())
-    return scoped.token, scoped.expiry.isoformat()
+    if os.getenv("LEGACY_UPLOAD_TOKEN_DOWNSCOPE", "true").lower() == "false":
+        scoped.refresh(Request())
+        return scoped.token, scoped.expiry.isoformat()
+    boundary = downscoped.CredentialAccessBoundary(rules=[downscoped.AccessBoundaryRule(
+        available_resource=f"//storage.googleapis.com/projects/_/buckets/{_DOWNLOAD_BUCKET}",
+        available_permissions=["inRole:roles/storage.objectAdmin"],
+        availability_condition=downscoped.AvailabilityCondition(
+            expression=f"resource.name.startsWith('projects/_/buckets/{_DOWNLOAD_BUCKET}/objects/{dsid}/')",
+        ),
+    )])
+    narrowed = downscoped.Credentials(source_credentials=scoped, credential_access_boundary=boundary)
+    narrowed.refresh(Request())
+    return narrowed.token, narrowed.expiry.isoformat()
 
 
 def _validate_and_prepare_upload(
@@ -266,7 +278,7 @@ def initiate_multipart_upload(
     gcs_path, safe_filename = result
 
     try:
-        access_token, token_expiry = _mint_upload_token()
+        access_token, token_expiry = _mint_upload_token(dsid)
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Could not generate GCS upload token: {e}")
 

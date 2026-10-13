@@ -1,8 +1,7 @@
-"""POST /datasets and POST /samples must verify the effective owner (not
-necessarily the caller) has >= contributor standing in the target project.
-Before this fix, owner_orcid arrived in the request body and was used
-unverified — any authenticated caller could attribute a resource to anyone,
-in any project.
+"""POST /datasets and POST /samples: platform contributors and administrators
+may create in any project, owned by themselves or anyone. Every other caller
+may create only records they own, and needs >= contributor standing in the
+target project.
 """
 from sqlmodel import Session, select
 
@@ -82,7 +81,7 @@ class TestCreateDataset:
             ds = session.exec(select(Dataset).where(Dataset.dataset_name == "d3")).one()
             assert ds.owner_orcid == "0000-0003"
 
-    def test_create_on_behalf_of_a_non_member_is_rejected(self, client, db_engine, auth_as):
+    def test_platform_contributor_may_create_for_a_non_member(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             _user(session, "0000-0004")
             _project_with_group(session, "proj_w", "0000-0004")
@@ -92,7 +91,22 @@ class TestCreateDataset:
         resp = client.post("/datasets", json={
             "dataset_name": "d4", "project_id": "proj_w", "owner_orcid": "0000-0004",
         })
-        assert resp.status_code == 403
+        assert resp.status_code == 200, resp.text
+        with Session(db_engine) as session:
+            assert session.exec(select(Dataset).where(Dataset.dataset_name == "d4")).one().owner_orcid == "0000-0004"
+
+    def test_service_account_may_create_its_own_dataset_in_a_project_it_is_not_in(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "sa-own-dataset")
+            _user(session, "0000-0004a")
+            _project_with_group(session, "proj_sa_own", "0000-0004a")
+            session.commit()
+
+        auth_as("sa-own-dataset", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
+        resp = client.post("/datasets", json={"dataset_name": "d4a", "project_id": "proj_sa_own"})
+        assert resp.status_code == 200, resp.text
+        with Session(db_engine) as session:
+            assert session.exec(select(Dataset).where(Dataset.dataset_name == "d4a")).one().owner_orcid == "sa-own-dataset"
 
     def test_no_project_and_different_owner_is_rejected(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
@@ -100,7 +114,7 @@ class TestCreateDataset:
 
         auth_as("sa-instrument-3", groups=[])
         resp = client.post("/datasets", json={"dataset_name": "d5", "owner_orcid": "0000-0005"})
-        assert resp.status_code == 400
+        assert resp.status_code == 403
 
     def test_human_cannot_create_for_another_project_member(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
@@ -180,6 +194,30 @@ class TestCreateSample:
         auth_as("0000-0011", groups=[("proj_s", ag_id, Role.VIEWER)])
         resp = client.post("/samples", json={"sample_name": "s1", "project_id": "proj_s"})
         assert resp.status_code == 403
+        assert resp.json()["detail"] == "Caller '0000-0011' must be contributor or above in project 'proj_s' to create there"
+
+    def test_human_platform_contributor_may_create_its_own_sample_in_any_project(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "0000-0011a")
+            _user(session, "0000-0011b")
+            _project_with_group(session, "proj_s_any", "0000-0011b")
+            session.commit()
+
+        auth_as("0000-0011a", groups=[], platform_role=PlatformRole.CONTRIBUTOR)
+        resp = client.post("/samples", json={"sample_name": "s1a", "project_id": "proj_s_any"})
+        assert resp.status_code == 200, resp.text
+
+    def test_platform_contributor_may_create_a_sample_for_a_non_member(self, client, db_engine, auth_as):
+        with Session(db_engine) as session:
+            _user(session, "0000-0011c")
+            _project_with_group(session, "proj_s_other", "0000-0011c")
+            session.commit()
+
+        auth_as("sa-instrument-4b", groups=[], platform_role=PlatformRole.CONTRIBUTOR, is_service_account=True)
+        resp = client.post("/samples", json={"sample_name": "s1c", "project_id": "proj_s_other", "owner_orcid": "0000-0011c"})
+        assert resp.status_code == 200, resp.text
+        with Session(db_engine) as session:
+            assert session.exec(select(Sample).where(Sample.sample_name == "s1c")).one().owner_orcid == "0000-0011c"
 
     def test_create_on_behalf_checks_the_named_owner(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
@@ -256,7 +294,7 @@ class TestCreateSample:
 
         auth_as("sa-instrument-7", groups=[])
         resp = client.post("/samples", json={"sample_name": "s3", "owner_orcid": "0000-0013"})
-        assert resp.status_code == 400
+        assert resp.status_code == 403
 
     def test_human_cannot_create_for_another_project_member(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
@@ -344,7 +382,7 @@ class TestCreateOnBehalfByIdentifier:
             ds = session.exec(select(Dataset).where(Dataset.dataset_name == "d21")).one()
             assert ds.owner_orcid == "0000-0022"
 
-    def test_owner_without_standing_is_still_rejected(self, client, db_engine, auth_as):
+    def test_owner_without_standing_is_allowed_for_platform_contributors(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             _user(session, "0000-0023")
             _project_with_group(session, "proj_id_3", "0000-0023")
@@ -354,7 +392,7 @@ class TestCreateOnBehalfByIdentifier:
         resp = client.post("/datasets", json={
             "dataset_name": "d22", "project_id": "proj_id_3", "owner": "0000-0023@x.com",
         })
-        assert resp.status_code == 403
+        assert resp.status_code == 200, resp.text
 
     def test_owner_and_owner_orcid_together_is_rejected(self, client, db_engine, auth_as):
         with Session(db_engine) as session:

@@ -57,6 +57,8 @@ class TestProjectTransfer:
         resp = client.post(f"/resources/{mfid}/transfer_ownership", json={"new_owner": "newlead"})
         assert resp.status_code == 200, resp.text
         body = resp.json()
+        assert body["resource_id"] == mfid
+        assert body["resource_mfid"] == mfid
         assert body["previous_owner"]["unique_id"] == "0000-0001"
         assert body["new_owner"]["unique_id"] == "0000-0002"
 

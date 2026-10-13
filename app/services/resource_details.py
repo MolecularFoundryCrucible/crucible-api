@@ -9,6 +9,7 @@ from app.models.access_groups import AccessGroupMemberRead
 from app.models.core_models import (
     AccessGroup,
     Dataset,
+    DeletionRequest,
     Instrument,
     Project,
     Resource,
@@ -27,7 +28,8 @@ from app.utils.auth_utils import (
     require_permission,
     resource_capabilities,
 )
-from app.services.resource_access import load_member_grants, may_view_members
+from app.services.resource_access import load_member_grants, may_view_members, record_role
+from app.utils.deletion_utils import deletion_blockers
 from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import Permission, Principal, Role
@@ -73,6 +75,12 @@ def _owner(session: Session, owner_id: str | None, include_owner: bool) -> UserP
         select(User).where(User.unique_id == owner_id)
     ).one_or_none()
     return UserPublicRead.model_validate(user) if user else None
+
+
+def _deletion_request_payload(deletion_request: DeletionRequest | None) -> dict | None:
+    if deletion_request is None:
+        return None
+    return {**deletion_request.model_dump(), "resource_mfid": deletion_request.resource_id}
 
 
 def load_project_members(session: Session, project_id: str) -> list[AccessGroupMemberRead]:
@@ -141,7 +149,7 @@ def load_dataset_detail(
         "creation_time": resource.creation_time if resource else None,
         "modification_time": resource.modification_time if resource else None,
         "scientific_metadata": _metadata(session, resource_id, options.include_metadata),
-        "deletion_request": deletion_request.model_dump() if deletion_request else None,
+        "deletion_request": _deletion_request_payload(deletion_request),
         "links": fetch_readable_links(
             session,
             principal,
@@ -226,7 +234,7 @@ def load_sample_detail(
         "creation_time": resource.creation_time if resource else None,
         "modification_time": resource.modification_time if resource else None,
         "scientific_metadata": _metadata(session, resource_id, options.include_metadata),
-        "deletion_request": deletion_request.model_dump() if deletion_request else None,
+        "deletion_request": _deletion_request_payload(deletion_request),
         "links": fetch_readable_links(
             session,
             principal,
@@ -268,6 +276,8 @@ def load_instrument_detail(
         ).one_or_none()
         if instrument is None:
             raise HTTPException(status_code=404, detail="Instrument not found")
+    acl_rows = fetch_acl_rows(session, resource_id)
+    deletion_request = get_active_deletion_request(session, resource_id)
     return InstrumentResponse.model_validate({
         **instrument.model_dump(exclude={"owner"}),
         "owner_orcid": instrument.owner,
@@ -279,9 +289,13 @@ def load_instrument_detail(
             session,
             principal,
             resource_id,
+            acl_rows=acl_rows,
+            can_delete=not deletion_blockers(session, "instrument", resource_id),
         ),
+        "deletion_request": _deletion_request_payload(deletion_request),
         "members": load_member_grants(session, resource_id)
         if options.include_members and may_view_members(session, principal, resource_id) else None,
+        "role": role.db_value if (role := record_role(principal, acl_rows)) is not None else None,
     })
 
 
@@ -304,6 +318,7 @@ def load_project_detail(
     resource = _resource(session, resource_id, resource)
     is_member = principal.is_platform_admin or principal.role_in(project.unique_id) is not None
     lead = _owner(session, project.project_lead_orcid, True)
+    deletion_request = get_active_deletion_request(session, resource_id)
     return ProjectWithLead(
         **project.model_dump(),
         lead=lead,
@@ -323,7 +338,10 @@ def load_project_detail(
             manage_access_floor=Role.EDITOR,
             allow_peer_grants=False,
             status_permission=Permission.EDIT,
+            can_delete=not deletion_blockers(session, "project", resource_id),
         ),
+        deletion_request=_deletion_request_payload(deletion_request),
+        role=role.db_value if (role := principal.role_in(project.unique_id)) is not None else None,
     )
 
 

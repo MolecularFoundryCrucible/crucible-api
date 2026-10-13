@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from unittest.mock import MagicMock
 
 from sqlalchemy import event
 from sqlmodel import Session
@@ -172,7 +173,7 @@ def test_file_detail_uses_authorized_dataset_without_lazy_load(db_engine):
         ),),
     )
     with _statement_count(db_engine) as statements:
-        response = files_routes.get_file(principal, "file-mfid")
+        response = files_routes.get_file(principal, "file-mfid", MagicMock())
 
     assert len(statements) == 2
     assert response.dataset_mfid == "file-dataset"

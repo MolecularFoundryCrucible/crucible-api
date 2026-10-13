@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 import requests
 from fastapi import HTTPException
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from app.general_utils import get_secret, is_orcid, is_valid_mfid
 from app.models.core_models import AccessGroup, Project, User
@@ -76,7 +77,46 @@ def assert_username_available(session, username: str, exclude_orcid: Optional[st
     if exclude_orcid:
         q = q.where(User.unique_id != exclude_orcid)
     if session.exec(q).one_or_none() is not None:
-        raise HTTPException(status_code=409, detail="Username already taken")
+        raise fields_in_use(["username"])
+
+
+def fields_in_use(fields: list[str]) -> HTTPException:
+    message = {("username",): "Username already taken", ("email",): "Email is already in use"}.get(tuple(fields), "Username and email are already in use")
+    return HTTPException(status_code=409, detail={"code": "already_in_use", "fields": fields, "message": message})
+
+
+def email_in_use(session, email: Optional[str], exclude_orcid: Optional[str] = None) -> bool:
+    if email is None:
+        return False
+    q = select(User.id).where(func.lower(User.email) == email.lower())
+    if exclude_orcid:
+        q = q.where(User.unique_id != exclude_orcid)
+    return session.exec(q).first() is not None
+
+
+def assert_profile_fields_available(session, *, username: Optional[str] = None, email: Optional[str] = None, exclude_orcid: Optional[str] = None) -> None:
+    """Raise one 409 listing every field (username, email) already held by another user."""
+    conflicts = []
+    if username is not None:
+        try:
+            assert_username_available(session, username, exclude_orcid=exclude_orcid)
+        except HTTPException:
+            conflicts.append("username")
+    if email_in_use(session, email, exclude_orcid):
+        conflicts.append("email")
+    if conflicts:
+        raise fields_in_use(conflicts)
+
+
+def commit_user(session) -> None:
+    """Commit, turning a concurrent email uniqueness conflict into the same 409."""
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        if "ux_user_email_lower" in str(error.orig):
+            raise fields_in_use(["email"]) from None
+        raise
 
 
 def is_username_available(session, username: str) -> bool:
@@ -145,6 +185,17 @@ def resolve_user_by_identifier(session, identifier: str) -> User:
     if is_orcid(identifier) or is_valid_mfid(identifier):
         return resolve_user(session, orcid=identifier)
     return resolve_user(session, username=identifier)
+
+
+def resolve_service_account_reference(session, ref: str) -> User:
+    if is_valid_mfid(ref):
+        query = select(User).where(User.unique_id == ref)
+    else:
+        query = select(User).where(User.username == ref.lower())
+    user = session.exec(query.where(User.is_service_account == True)).one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="Service account not found")
+    return user
 
 
 def resolve_create_owner(session, owner: str | None, owner_orcid: str | None, authenticated_user_id: str) -> User:

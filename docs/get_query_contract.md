@@ -10,6 +10,8 @@ Dataset, sample, project, and instrument collections use endpoint-specific query
 
 - `accessible_to_user` and `accessible_to_project` constrain effective access. Platform contributors and administrators may select another user or project; ordinary callers remain limited to themselves and projects where they hold standing.
 - Repeatable `affiliation=owner` selects resources authoritatively owned by the current caller.
+- Repeatable `member_ref` on `GET /projects` selects projects where every listed user holds standing in the project's access group (AND semantics, like `accessible_to_user`, with the same rule for selecting another user). It accepts an ORCID, service-account MFID, username, or email. Repeatable `member_role` restricts those memberships to the listed roles (OR semantics) and requires `member_ref`. Unlike `accessible_to_user`, `member_ref` excludes projects reached only through resource grants.
+- Project and instrument collection and singleton items include `role`: the caller's project membership role, or the caller's effective role on the instrument record. Public access is not a role. Bound instrument service accounts are operators and receive `null`.
 - `owner_id` is the preferred exact person or service-account owner filter. `owner_orcid` remains a deprecated alias on supported routes.
 - `project_id`, `project_mfid`, and `project_scope=assigned|shared|all` constrain project relationships on dataset and sample collections.
 - `creation_time_gte`, `creation_time_lte`, `modification_time_gte`, and `modification_time_lte` require timezone-aware values.
@@ -22,13 +24,13 @@ Repeated values use OR within one filter family. Different filter families compo
 
 Dataset and sample collections accept `sort=created|updated|name` and `direction=asc|desc`. Omitting `sort` preserves the legacy `unique_id DESC` order. Every order uses `unique_id` as a deterministic tie-breaker, and null primary values sort last.
 
-Projects retain `project_id ASC, unique_id ASC`. Instruments retain `creation_time DESC NULLS LAST, unique_id DESC`.
+Project collections accept `sort=project_id|title|created|updated` and instrument collections accept `sort=instrument_id|name|created|updated`, with `direction=asc|desc`. An explicit sort without `direction` defaults to `desc` for `created` and `updated` and `asc` otherwise; `direction` without `sort` returns 422. `title`, `instrument_id`, and `name` (the instrument display name) are case-insensitive; project `project_id` sorts by the stored slug. `updated` uses `modification_time`, falling back to `creation_time`. `GET /users/{user_ref}/projects` accepts the same project sorts. Omitting `sort` keeps the defaults: projects `project_id ASC, unique_id ASC`, instruments `creation_time DESC NULLS LAST, unique_id DESC`. The user collection accepts `sort=name|username|unique_id|email` with `direction=asc|desc` (default `asc`). All user sorts are case-insensitive, use `unique_id` as tie-breaker, and place nulls last; `name` sorts by last name then first name, and `email` is administrator only. Omitting `sort` is equivalent to `sort=name&direction=asc`.
 
 Mutable sorts are live views. An item can move between pages if its name or modification time changes during traversal. Clients should restart pagination after a mutation or refresh.
 
 ## Pagination
 
-All four collections retain offset pagination and support opaque cursor pagination. Dataset and sample routes also accept legacy raw MFID cursors only with the default order. New responses emit signed versioned cursors.
+All four collections retain offset pagination and support opaque cursor pagination. The user collection also supports both. Dataset and sample routes also accept legacy raw MFID cursors only with the default order. New responses emit signed versioned cursors.
 
 Cursors bind the continuation position to the authenticated principal, resource kind, sort, direction, and normalized result filters. Changing that context returns 422. Page size, representation expansion, and `include_total` may change while following a cursor. Every page reapplies authorization.
 
@@ -75,6 +77,16 @@ Dataset and sample list routes expose matching `*_is_null` filters. Omission doe
 
 Calendar facets remain deferred. The producer-supplied dataset `timestamp` is unconstrained text and is unsuitable for reliable server-side calendar grouping. A future calendar facet should use API-owned `creation_time` and explicit UTC semantics.
 
+## User collection
+
+`GET /users` uses its own query model. Exact `unique_id`, `username`, and `email` filters return the same authorized representation as the singleton route; broad listings return public-safe profiles scoped to users who share an access group, or the full directory with email and platform roles for platform administrators.
+
+Declared filters are `unique_id`, `username`, `email`, `first_name`, `last_name`, `q`, `search_fields`, `permissive`, `is_service_account`, and `platform_role`. `first_name` and `last_name` are case-insensitive substrings with `permissive=true` (the default) and exact otherwise. `q` is a case-insensitive substring search. By default it matches first name, last name, username, unique ID, and, for platform administrators only, email. Repeatable `search_fields` (`first_name`, `last_name`, `username`, `unique_id`, `email`) restricts `q` to the named fields with OR semantics and requires `q`; naming `email` is administrator only and other callers receive 403. `platform_role` is repeatable and administrator only; other callers receive 403. `include_total`, `limit`, `cursor`, `offset`, `sort`, and `direction` follow the shared collection behavior above.
+
+Any other query parameter is ignored without filtering. The response carries a `Deprecation: @1799280000` (2027-01-07) header and the ignored parameters are logged. The parameters will be rejected with 422 at that announced date. No `Sunset` header is sent.
+
+`user_capabilities` is populated for singleton and exact lookups only and remains null on broad listings, `/users/search`, and `/users/resolve`.
+
 ## Singleton GETs
 
 Singleton routes keep explicit representation controls such as `include_metadata`, `include_links`, `include_owner`, `include_members`, and the deprecated sample `include_datasets`. Collection filters, sorting, and pagination do not apply to singleton routes. Unknown parameters return 422.
@@ -96,7 +108,6 @@ Sorting and lifecycle time filters use API-owned `creation_time` and `modificati
 ## Deferred features
 
 - A unified dataset and sample collection with one global cursor
-- Additional project and instrument sort and filter parity
 - Cursor conversion for every remaining collection
 - Removal of offset pagination, legacy exact filters, or raw cursors
 - Generic query languages, arbitrary field selection, or broad expansion syntax

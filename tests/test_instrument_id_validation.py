@@ -119,10 +119,10 @@ class TestResolution:
             resolve_instrument_identifiers(session, "xrd-2", "m1")
         assert exc.value.status_code == 422
 
-    def test_resolve_unknown_instrument_id_preserves_400(self, session):
+    def test_resolve_unknown_instrument_id_is_404(self, session):
         with pytest.raises(HTTPException) as exc:
             resolve_instrument_identifiers(session, "missing", None)
-        assert exc.value.status_code == 400
+        assert exc.value.status_code == 404
 
     def test_resolve_unknown_instrument_mfid_is_404(self, session):
         with pytest.raises(HTTPException) as exc:

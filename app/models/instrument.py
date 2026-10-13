@@ -3,7 +3,7 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
 
 from app.general_utils import blank_to_none
-from app.models.access import AccessGrantRead
+from app.models.access import AccessGrantRead, AccessPermission
 from app.models.resource import ResourceCapabilities
 from app.models.timestamps import UtcDatetime
 from app.models.users import UserPublicRead
@@ -102,7 +102,15 @@ class InstrumentResponse(InstrumentRead):
     scientific_metadata: Optional[dict] = None
     status: Optional[str] = None
     capabilities: Optional[ResourceCapabilities] = None
+    deletion_request: Optional[dict] = None
     members: Optional[List[AccessGrantRead]] = Field(
         default=None,
         description="People and projects holding a role on the instrument record. Null unless requested and visible to the caller.",
+    )
+    role: Optional[AccessPermission] = Field(
+        default=None,
+        description=(
+            "The caller's effective role on the instrument record. Null when the caller holds none; "
+            "bound service accounts are operators, not record roles."
+        ),
     )

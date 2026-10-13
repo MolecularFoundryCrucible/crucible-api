@@ -63,6 +63,7 @@ class TestEditingTheRecord:
             "can_manage_access": False,
             "can_change_status": False,
             "can_transfer": False,
+            "can_delete": False,
             "max_grant_role": None,
         }
 

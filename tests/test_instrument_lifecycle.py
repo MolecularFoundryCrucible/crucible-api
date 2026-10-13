@@ -54,6 +54,7 @@ class TestCreateInstrument:
             "can_manage_access": True,
             "can_change_status": True,
             "can_transfer": True,
+            "can_delete": True,
             "max_grant_role": "admin",
         }
         generic_response = client.get(f"/resources/{mfid}")
@@ -145,14 +146,14 @@ class TestServiceAccountBinding:
     def test_bind_adds_sa_at_admin_standing(self, client, db_engine, auth_as):
         mfid = self._create_instrument(client, db_engine, auth_as)
         with Session(db_engine) as session:
-            _user(session, "sa-1", is_service_account=True)
+            _user(session, "0tp5sa00000000000000000001", is_service_account=True)
 
         auth_as("admin-5", groups=[], platform_role=PlatformRole.ADMIN)
-        resp = client.post(f"/instruments/{mfid}/service_accounts/sa-1")
+        resp = client.post(f"/instruments/{mfid}/service_accounts/0tp5sa00000000000000000001")
         assert resp.status_code == 200, resp.text
         members = resp.json()
         assert len(members) == 1
-        assert members[0]["unique_id"] == "sa-1"
+        assert members[0]["unique_id"] == "0tp5sa00000000000000000001"
         assert members[0]["role"] == "admin"
 
         with Session(db_engine) as session:
@@ -160,7 +161,7 @@ class TestServiceAccountBinding:
                 AccessGroup.group_name == mfid
             )).one()
         auth_as(
-            "sa-1",
+            "0tp5sa00000000000000000001",
             groups=[(mfid, group_id, Role.ADMIN)],
             is_service_account=True,
         )
@@ -171,6 +172,7 @@ class TestServiceAccountBinding:
             "can_manage_access": False,
             "can_change_status": False,
             "can_transfer": False,
+            "can_delete": False,
             "max_grant_role": None,
         }
 
@@ -185,39 +187,39 @@ class TestServiceAccountBinding:
 
     def test_bind_rejects_unknown_instrument(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
-            _user(session, "sa-2", is_service_account=True)
+            _user(session, "0tp5sa00000000000000000002", is_service_account=True)
 
         auth_as("admin-7", groups=[], platform_role=PlatformRole.ADMIN)
-        resp = client.post("/instruments/no-such-mfid/service_accounts/sa-2")
+        resp = client.post("/instruments/no-such-mfid/service_accounts/0tp5sa00000000000000000002")
         assert resp.status_code == 404
 
     def test_non_admin_cannot_bind(self, client, db_engine, auth_as):
         mfid = self._create_instrument(client, db_engine, auth_as)
         with Session(db_engine) as session:
-            _user(session, "sa-3", is_service_account=True)
+            _user(session, "0tp5sa00000000000000000003", is_service_account=True)
 
         auth_as("0000-0003", groups=[])
-        resp = client.post(f"/instruments/{mfid}/service_accounts/sa-3")
+        resp = client.post(f"/instruments/{mfid}/service_accounts/0tp5sa00000000000000000003")
         assert resp.status_code == 403
 
     def test_unbind_removes_the_sa(self, client, db_engine, auth_as):
         mfid = self._create_instrument(client, db_engine, auth_as)
         with Session(db_engine) as session:
-            _user(session, "sa-4", is_service_account=True)
+            _user(session, "0tp5sa00000000000000000004", is_service_account=True)
 
         auth_as("admin-8", groups=[], platform_role=PlatformRole.ADMIN)
-        client.post(f"/instruments/{mfid}/service_accounts/sa-4")
-        resp = client.delete(f"/instruments/{mfid}/service_accounts/sa-4")
+        client.post(f"/instruments/{mfid}/service_accounts/0tp5sa00000000000000000004")
+        resp = client.delete(f"/instruments/{mfid}/service_accounts/0tp5sa00000000000000000004")
         assert resp.status_code == 200, resp.text
         assert resp.json() == []
 
     def test_unbind_a_never_bound_sa_is_404(self, client, db_engine, auth_as):
         mfid = self._create_instrument(client, db_engine, auth_as)
         with Session(db_engine) as session:
-            _user(session, "sa-5", is_service_account=True)
+            _user(session, "0tp5sa00000000000000000005", is_service_account=True)
 
         auth_as("admin-9", groups=[], platform_role=PlatformRole.ADMIN)
-        resp = client.delete(f"/instruments/{mfid}/service_accounts/sa-5")
+        resp = client.delete(f"/instruments/{mfid}/service_accounts/0tp5sa00000000000000000005")
         assert resp.status_code == 404
 
 
@@ -375,13 +377,13 @@ class TestInstrumentIdOnDataset:
             "instrument_id and instrument_mfid identify different instruments"
         )
 
-    def test_create_dataset_with_unregistered_instrument_id_preserves_400(self, client, db_engine, auth_as):
+    def test_create_dataset_with_unregistered_instrument_id_is_404(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             _user(session, "0000-0011")
 
         auth_as("0000-0011", groups=[])
         resp = client.post("/datasets", json={"dataset_name": "d6", "instrument_id": "no-such-slug"})
-        assert resp.status_code == 400
+        assert resp.status_code == 404
 
     def test_create_dataset_with_unregistered_instrument_mfid_is_404(self, client, db_engine, auth_as):
         with Session(db_engine) as session:

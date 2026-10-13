@@ -190,31 +190,36 @@ def test_permissive_does_not_make_username_identity_query_partial(client, db_eng
     assert response.json()["items"] == []
 
 
-def test_nested_user_routes_document_canonical_user_id(client):
+def test_user_routes_document_user_ref(client):
     schema = client.get("/openapi.json").json()
     operations = (
-        ("/users/{user_id}/apikey", "post"),
-        ("/users/{user_id}/apikey/verify", "get"),
-        ("/users/{user_id}", "patch"),
-        ("/users/{user_id}/datasets", "get"),
-        ("/users/{user_id}/samples", "get"),
-        ("/users/{user_id}/datasets/{dataset_mfid}", "get"),
-        ("/users/{user_id}/access_groups/{group_name}", "post"),
-        ("/users/{user_id}/access_groups", "get"),
-        ("/users/{user_id}/access_groups/{group_name}", "delete"),
-        ("/users/{user_id}/projects", "get"),
+        ("/users/{user_ref}", "get"),
+        ("/users/{user_ref}", "patch"),
+        ("/users/{user_ref}/apikey", "post"),
+        ("/users/{user_ref}/apikey/verify", "get"),
+        ("/users/{user_ref}/apikey", "delete"),
+        ("/users/{user_ref}/platform_role", "patch"),
+        ("/users/{user_ref}/datasets", "get"),
+        ("/users/{user_ref}/samples", "get"),
+        ("/users/{user_ref}/datasets/{dataset_mfid}", "get"),
+        ("/users/{user_ref}/access_groups/{group_name}", "post"),
+        ("/users/{user_ref}/access_groups", "get"),
+        ("/users/{user_ref}/access_groups/{group_name}", "delete"),
+        ("/users/{user_ref}/projects", "get"),
+        ("/projects/{project_ref}/users/{user_ref}", "post"),
+        ("/projects/{project_ref}/users/{user_ref}", "patch"),
+        ("/projects/{project_ref}/users/{user_ref}", "delete"),
     )
 
     for path, method in operations:
-        parameter_names = {
-            parameter["name"]
+        parameters = {
+            parameter["name"]: parameter
             for parameter in schema["paths"][path][method]["parameters"]
             if parameter["in"] == "path"
         }
-        assert "user_id" in parameter_names
-        assert "orcid" not in parameter_names
-        assert "user_ref" not in parameter_names
+        assert "user_ref" in parameters
+        assert "username" in parameters["user_ref"]["description"]
+        assert "user_id" not in parameters
+        assert "orcid" not in parameters
 
-    assert "get" in schema["paths"]["/users/{user_id}"]
-    assert "patch" in schema["paths"]["/users/{user_id}"]
-    assert "/users/{user_ref}" not in schema["paths"]
+    assert "/users/{user_id}" not in schema["paths"]

@@ -82,12 +82,17 @@ def load_member_grants(session: Session, mfid: str) -> list[AccessGrantRead]:
     return sorted(grants, key=lambda grant: (-Role.from_db(grant.permission.value), grant.principal_id))
 
 
+def record_role(principal: Principal, acl_rows) -> Role | None:
+    """The principal's effective role on a resource record, ignoring public
+    access, which is visibility rather than a role."""
+    public_ids = {m.id for m in principal.groups if m.group_name == PUBLIC_GROUP_NAME}
+    return effective_role(principal, [(gid, role) for gid, role in acl_rows if gid not in public_ids])
+
+
 def may_view_members(session: Session, principal: Principal, mfid: str) -> bool:
     """Platform administrators and callers holding any role on the resource
     other than through public access."""
     if principal.is_platform_admin:
         return True
     from app.utils.auth_utils import fetch_acl_rows
-    public_ids = {m.id for m in principal.groups if m.group_name == PUBLIC_GROUP_NAME}
-    acl_rows = [(gid, role) for gid, role in fetch_acl_rows(session, mfid) if gid not in public_ids]
-    return effective_role(principal, acl_rows) is not None
+    return record_role(principal, fetch_acl_rows(session, mfid)) is not None

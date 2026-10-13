@@ -56,13 +56,37 @@ def test_username_must_be_unique_across_all_users(client, db_engine, auth_as):
 
 def test_explicit_unique_id_is_honored_and_collision_rejected(client, db_engine, auth_as):
     auth_as("admin-3", platform_role=PlatformRole.ADMIN)
+    fixed = "0tp5f0xedsa000000000000000"
 
-    resp = client.post("/service_accounts", json={"username": "fixed-id-bot", "unique_id": "sa-fixed-1"})
+    resp = client.post("/service_accounts", json={"username": "fixed-id-bot", "unique_id": fixed})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["unique_id"] == "sa-fixed-1"
+    assert resp.json()["unique_id"] == fixed
 
-    resp = client.post("/service_accounts", json={"username": "another-bot", "unique_id": "sa-fixed-1"})
+    resp = client.post("/service_accounts", json={"username": "another-bot", "unique_id": fixed})
     assert resp.status_code == 409
+
+
+def test_explicit_unique_id_must_be_mfid(client, db_engine, auth_as):
+    auth_as("admin-3", platform_role=PlatformRole.ADMIN)
+
+    resp = client.post("/service_accounts", json={"username": "bad-id-bot", "unique_id": "sa-fixed-1"})
+    assert resp.status_code == 422
+
+
+def test_explicit_unique_id_must_not_collide_with_a_resource_or_group(client, db_engine, auth_as):
+    from app.models.core_models import AccessGroup, Resource
+
+    resource_mfid = "0tp5res0000000000000000001"
+    group_mfid = "0tp5gr0000000000000000001a"
+    with Session(db_engine) as session:
+        session.add(Resource(mfid=resource_mfid, resource_type="dataset"))
+        session.add(AccessGroup(group_name=group_mfid, group_type="project"))
+        session.commit()
+    auth_as("admin-3", platform_role=PlatformRole.ADMIN)
+
+    for taken in (resource_mfid, group_mfid):
+        resp = client.post("/service_accounts", json={"username": f"bot-{taken[-4:]}", "unique_id": taken})
+        assert resp.status_code == 409, resp.text
 
 
 def test_rotate_key_issues_a_new_key(client, db_engine, auth_as):

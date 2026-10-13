@@ -8,6 +8,7 @@ from sqlalchemy.orm import joinedload
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
+from app.api.path_params import EntityMfid, ProjectRef
 from app.models.core_models import (
     Dataset, DatasetLink, DatasetSampleLink, Resource, Sample, SampleLink,
 )
@@ -20,8 +21,8 @@ router = APIRouter(tags=["entities"])
 engine = get_engine()
 
 
-@router.get("/entity_graph/{entity_id}")
-def entity_graph(entity_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/entity_graph/{entity_mfid}")
+def entity_graph(entity_id: EntityMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     Returns a NetworkX node-link graph of all samples and datasets connected to
     the given entity via sample lineage, dataset lineage, and sample-dataset
@@ -183,8 +184,8 @@ def entity_graph(entity_id: str, auth_res: Annotated[Principal, Depends(authoriz
         return json_graph.node_link_data(G)
 
 
-@router.get("/entity_graph_bfs/{entity_id}")
-def entity_graph_bfs(entity_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/entity_graph_bfs/{entity_mfid}")
+def entity_graph_bfs(entity_id: EntityMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     BFS-based implementation (kept for reference). Prefer /entity_graph/{entity_id}.
     Returns a NetworkX node-link graph of all samples and datasets connected to
@@ -750,9 +751,9 @@ def _parse_graph_rows(rows) -> dict:
     return {"directed": True, "multigraph": False, "graph": {}, "nodes": nodes, "edges": links}
 
 
-@router.get("/entity_graph_cte/{entity_id}")
+@router.get("/entity_graph_cte/{entity_mfid}")
 def entity_graph_cte(
-    entity_id: str,
+    entity_id: EntityMfid,
     auth_res: Annotated[Principal, Depends(authorize_user)],
     recursive: bool = False,
 ):
@@ -760,7 +761,7 @@ def entity_graph_cte(
     Returns the graph of entities connected to entity_id.
     By default returns only first-degree neighbours (direct parents, children,
     and cross-linked entities). Pass recursive=true for the full connected component.
-    Use /project_graph/{project_id} to get all entities in a project.
+    Use /project_graph/{project_ref} to get all entities in a project.
     """
 
     with Session(engine) as session:
@@ -795,22 +796,22 @@ def entity_graph_cte(
 
 
 # ---------------------------------------------------------------------------
-# GET /project_graph/{project_id}
+# GET /project_graph/{project_ref}
 # Returns all entities in the project regardless of connectivity.
 # ---------------------------------------------------------------------------
 
-@router.get("/project_graph/{project_id}")
+@router.get("/project_graph/{project_ref}")
 def project_graph(
-    project_id: str,
+    project_ref: ProjectRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
     """
-    Returns all authorized samples and datasets belonging to project_id
+    Returns all authorized samples and datasets belonging to the project
     as a single node-link graph.
     """
 
     with Session(engine) as session:
-        project = resolve_project_reference(project_id, session)
+        project = resolve_project_reference(project_ref, session)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
         project_mfid = project.unique_id

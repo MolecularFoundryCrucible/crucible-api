@@ -1,7 +1,7 @@
 from typing import Any, List, Literal, Optional
 from pydantic import AliasChoices, ConfigDict, Field, field_validator
 from sqlmodel import SQLModel
-from app.general_utils import is_orcid
+from app.general_utils import is_orcid, is_valid_mfid
 from app.utils.permissions import PlatformRole, PrivilegeMode
 from app.utils.user_utils import validate_username_format
 
@@ -40,7 +40,23 @@ class UserCreate(SQLModel):
     def normalize_email(cls, v):
         if v is None:
             return v
-        return str(v).lower()
+        return str(v).strip().lower() or None
+
+
+class UserCapabilities(SQLModel):
+    '''Caller-relative actions on one user record. Field name is user_capabilities,
+    not capabilities: a downstream client decodes any capabilities key on user
+    objects into a different required-field type.'''
+    can_view_private: bool
+    can_edit_profile: bool
+    can_manage_api_key: bool
+    can_change_platform_role: bool
+
+
+class ServiceAccountKeyStatus(SQLModel):
+    valid: bool
+    created_at: str
+    expires_at: str
 
 
 class UserRead(SQLModel):
@@ -50,10 +66,14 @@ class UserRead(SQLModel):
     unique_id: str
     username: Optional[str] = None
     is_service_account: Optional[bool] = False
+    platform_role: Optional[PlatformRole] = None
+    user_capabilities: Optional[UserCapabilities] = None
+    api_key_status: Optional[ServiceAccountKeyStatus] = None
 
 
 class AccountCapabilities(SQLModel):
     can_manage_service_accounts: bool
+    can_manage_users: bool
     can_create_project: bool
     can_register_instrument: bool
     can_create_sample: bool
@@ -81,6 +101,7 @@ class UserPublicRead(SQLModel):
     first_name: str
     last_name: str
     is_service_account: bool = False
+    user_capabilities: Optional[UserCapabilities] = None
 
     @field_validator("is_service_account", mode="before")
     @classmethod
@@ -109,7 +130,7 @@ class AccountProfileUpdate(SQLModel):
     def normalize_email(cls, v):
         if v is None:
             return v
-        return str(v).lower()
+        return str(v).strip().lower() or None
 
 
 class UserUpdate(SQLModel):
@@ -133,13 +154,13 @@ class UserUpdate(SQLModel):
     def normalize_email(cls, v):
         if v is None:
             return v
-        return str(v).lower()
+        return str(v).strip().lower() or None
 
 
 class ServiceAccountCreate(SQLModel):
     '''Request body for POST /service_accounts.
     username is required and must be unique across all users.
-    unique_id is optional — if omitted the server generates an mfid.
+    unique_id is optional and must be an MFID; if omitted the server generates one.
     '''
     username: str
     unique_id: Optional[str] = None
@@ -149,8 +170,21 @@ class ServiceAccountCreate(SQLModel):
     def check_username(cls, v):
         return validate_username_format(str(v))
 
+    @field_validator("unique_id")
+    @classmethod
+    def check_unique_id(cls, v):
+        if v is not None and not is_valid_mfid(v):
+            raise ValueError("unique_id must be a 26-character MFID")
+        return v
+
 
 class ServiceAccountPlatformRoleUpdate(SQLModel):
+    model_config = ConfigDict(extra="forbid")
+
+    platform_role: Literal["none", "contributor", "admin"]
+
+
+class UserPlatformRoleUpdate(SQLModel):
     model_config = ConfigDict(extra="forbid")
 
     platform_role: Literal["none", "contributor", "admin"]
@@ -174,12 +208,6 @@ class ServiceAccountAdminRead(SQLModel):
     email: Optional[str] = None
     is_service_account: bool = True
     platform_role: PlatformRole
-
-
-class ServiceAccountKeyStatus(SQLModel):
-    valid: bool
-    created_at: str
-    expires_at: str
 
 
 class ServiceAccountAdminDetail(ServiceAccountAdminRead):

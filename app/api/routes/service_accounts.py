@@ -6,7 +6,8 @@ from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.models.core_models import ApiToken, User
+from app.api.path_params import ServiceAccountRef
+from app.models.core_models import AccessGroup, ApiToken, Resource, User
 from app.models.pagination import PaginatedResponse
 from app.models.users import (
     ServiceAccountAdminDetail,
@@ -16,9 +17,9 @@ from app.models.users import (
     ServiceAccountPlatformRoleUpdate,
     ServiceAccountRead,
 )
-from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin
+from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin, require_recent_authentication
 from app.utils.permissions import AccessGroupType, PlatformRole, Principal, Role
-from app.utils.user_utils import assert_username_available, sql_add_user_to_access_group
+from app.utils.user_utils import assert_username_available, resolve_service_account_reference, sql_add_user_to_access_group
 
 router = APIRouter(tags=["service_accounts"])
 engine = get_engine()
@@ -100,28 +101,21 @@ def list_service_accounts(
     )
 
 
-@router.get("/service_accounts/{unique_id}", response_model=ServiceAccountAdminDetail)
+@router.get("/service_accounts/{service_account_ref}", response_model=ServiceAccountAdminDetail)
 def get_service_account(
-    unique_id: str,
+    service_account_ref: ServiceAccountRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
     """Return administrator-visible service-account details without a secret."""
     require_platform_admin(auth_res)
     with Session(engine) as session:
-        user = session.exec(
-            select(User).where(
-                User.unique_id == unique_id,
-                User.is_service_account == True,
-            )
-        ).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail="Service account not found")
+        user = resolve_service_account_reference(session, service_account_ref)
         return _service_account_admin_detail(session, user)
 
 
-@router.patch("/service_accounts/{unique_id}", response_model=ServiceAccountAdminDetail)
+@router.patch("/service_accounts/{service_account_ref}", response_model=ServiceAccountAdminDetail)
 def update_service_account_platform_role(
-    unique_id: str,
+    service_account_ref: ServiceAccountRef,
     body: ServiceAccountPlatformRoleUpdate,
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
@@ -134,14 +128,7 @@ def update_service_account_platform_role(
         )
 
     with Session(engine) as session:
-        user = session.exec(
-            select(User).where(
-                User.unique_id == unique_id,
-                User.is_service_account == True,
-            )
-        ).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail="Service account not found")
+        user = resolve_service_account_reference(session, service_account_ref)
 
         user.platform_role = body.platform_role
         session.add(user)
@@ -150,7 +137,7 @@ def update_service_account_platform_role(
         return _service_account_admin_detail(session, user)
 
 
-@router.post("/service_accounts", response_model=ServiceAccountRead)
+@router.post("/service_accounts", response_model=ServiceAccountRead, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}})
 def create_service_account(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     body: ServiceAccountCreate,
@@ -159,18 +146,23 @@ def create_service_account(
     '''
     Create a service account and return its API key.
     The API key is only returned once.
-    unique_id is optional; if omitted the server generates an mfid.
+    unique_id is optional and must be an MFID; if omitted the server generates one.
     Admin only.
     '''
     require_platform_admin(auth_res)
+    require_recent_authentication(auth_res)
 
     with Session(engine) as session:
         # Username must be unique across all users
         assert_username_available(session, body.username)
 
-        # If unique_id provided, check it doesn't already exist
         if body.unique_id:
-            if session.exec(select(User).where(User.unique_id == body.unique_id)).one_or_none():
+            taken = (
+                session.exec(select(User.id).where(User.unique_id == body.unique_id)).first()
+                or session.exec(select(Resource.mfid).where(Resource.mfid == body.unique_id)).first()
+                or session.exec(select(AccessGroup.id).where(AccessGroup.group_name == body.unique_id)).first()
+            )
+            if taken:
                 raise HTTPException(status_code=409, detail=f"unique_id '{body.unique_id}' already exists.")
             unique_id = body.unique_id
         else:
@@ -211,10 +203,10 @@ def create_service_account(
     )
 
 
-@router.post("/service_accounts/{unique_id}/rotate_key", response_model=ServiceAccountRead)
+@router.post("/service_accounts/{service_account_ref}/rotate_key", response_model=ServiceAccountRead, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}})
 def rotate_service_account_key(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    unique_id: str,
+    service_account_ref: ServiceAccountRef,
     response: Response,
 ):
     '''
@@ -223,13 +215,11 @@ def rotate_service_account_key(
     Admin only.
     '''
     require_platform_admin(auth_res)
+    require_recent_authentication(auth_res)
 
     with Session(engine) as session:
-        user = session.exec(
-            select(User).where(User.unique_id == unique_id, User.is_service_account == True)
-        ).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail="Service account not found.")
+        user = resolve_service_account_reference(session, service_account_ref)
+        unique_id = user.unique_id
         username = user.username
 
     api_key = find_or_add_api_access(unique_id, engine, regenerate=True)

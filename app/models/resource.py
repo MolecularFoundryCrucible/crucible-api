@@ -2,6 +2,7 @@
 # Table model lives in core_models.py
 from typing import Literal, Optional
 
+from pydantic import Field
 from sqlmodel import SQLModel
 
 from app.models.users import UserPublicRead
@@ -12,6 +13,7 @@ class ResourceCapabilities(SQLModel):
     can_manage_access: bool
     can_change_status: bool
     can_transfer: bool
+    can_delete: bool = False
     max_grant_role: Optional[Literal["viewer", "contributor", "editor", "admin"]] = None
 
 
@@ -26,17 +28,28 @@ class TransferOwnershipRequest(SQLModel):
 
 
 class TransferOwnershipRead(SQLModel):
-    resource_id: str
+    resource_id: str = Field(deprecated=True, description="Deprecated. Use resource_mfid.")
+    resource_mfid: str
     previous_owner: Optional[UserPublicRead] = None
     new_owner: UserPublicRead
 
 
 class ReassignProjectRequest(SQLModel):
     """Body for POST /resources/{mfid}/project."""
-    project_id: str
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Target project slug. May be combined with a matching project_mfid.",
+    )
+    project_mfid: Optional[str] = Field(
+        default=None,
+        description="Target project MFID. May be combined with a matching project_id.",
+    )
 
 
 class ReassignProjectRead(SQLModel):
     resource_id: str
+    resource_mfid: str
     previous_project_id: Optional[str] = None
+    previous_project_mfid: Optional[str] = None
     new_project_id: str
+    new_project_mfid: str

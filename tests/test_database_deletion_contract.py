@@ -121,6 +121,7 @@ def test_forced_deletion_requires_owner_not_admin(db_engine):
     with pytest.raises(HTTPException) as exc:
         deletion_routes.hard_delete_resource_route(
             resource_id="resource-to-delete",
+            background_tasks=None,
             auth_res=_principal(group_id),
             force=True,
         )
@@ -134,6 +135,7 @@ def test_forced_deletion_requires_explicit_true_flag(db_engine):
     with pytest.raises(HTTPException) as exc:
         deletion_routes.hard_delete_resource_route(
             resource_id="resource-to-delete",
+            background_tasks=None,
             auth_res=_principal(group_id),
             force=False,
         )
@@ -145,6 +147,7 @@ def test_owner_and_platform_admin_can_force_delete(db_engine):
     group_id, _ = _setup(db_engine)
     result = deletion_routes.hard_delete_resource_route(
         resource_id="resource-to-delete",
+        background_tasks=None,
         auth_res=_principal(group_id),
         force=True,
     )
@@ -153,6 +156,7 @@ def test_owner_and_platform_admin_can_force_delete(db_engine):
     group_id, _ = _setup(db_engine)
     result = deletion_routes.hard_delete_resource_route(
         resource_id="resource-to-delete",
+        background_tasks=None,
         auth_res=Principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
         force=True,
     )
@@ -165,6 +169,7 @@ def test_forced_deletion_rejects_unsupported_resource_before_audit(db_engine):
     with pytest.raises(HTTPException) as exc:
         deletion_routes.hard_delete_resource_route(
             resource_id="resource-to-delete",
+            background_tasks=None,
             auth_res=_principal(group_id),
             force=True,
         )
@@ -180,6 +185,7 @@ def test_forced_deletion_supports_samples(db_engine):
 
     deletion_routes.hard_delete_resource_route(
         resource_id="resource-to-delete",
+        background_tasks=None,
         auth_res=_principal(group_id),
         force=True,
     )
@@ -195,6 +201,7 @@ def test_forced_deletion_removes_resource_embeddings(db_engine, resource_type):
 
     deletion_routes.hard_delete_resource_route(
         resource_id="resource-to-delete",
+        background_tasks=None,
         auth_res=_principal(group_id),
         force=True,
     )

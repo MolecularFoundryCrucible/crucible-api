@@ -52,7 +52,7 @@ def test_gcs_backend_download_link_still_calls_generate_signed_url(client, db_en
     auth_as("0000-0000-0000-0001", groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
 
     with patch(
-        "app.api.routes.files._generate_signed_url_link",
+        "app.api.routes.files._signed_download",
         return_value=("https://signed.example/x", 3600),
     ) as mock_sign:
         resp = client.get(f"/files/{file_mfid}/download_link")
@@ -190,7 +190,7 @@ def test_non_gcs_single_file_download_link_returns_null_without_calling_gcs(clie
     auth_as("0000-0000-0000-0001",
             groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
 
-    with patch("app.api.routes.files._generate_signed_url_link") as mock_sign, \
+    with patch("app.api.routes.files._signed_download") as mock_sign, \
          patch("app.api.routes.files._ensure_storage_path") as mock_ensure:
         resp = client.get(f"/files/{file_mfid}/download_link")
 
@@ -234,7 +234,7 @@ def test_non_gcs_file_in_batch_download_links_is_null(client, db_engine, auth_as
     auth_as("0000-0000-0000-0001", groups=[(PUBLIC_GROUP_NAME, public_gid, Role.VIEWER)])
 
     with patch(
-        "app.api.routes.datasets._generate_signed_url_link",
+        "app.api.routes.datasets._signed_download",
         return_value=("https://signed.example/local.txt", 3600),
     ):
         resp = client.get("/datasets/ds_pub_3/download_links")

@@ -273,6 +273,7 @@ def test_dataset_relationship_and_owner_facets_are_resolved(client, db_engine, a
         "first_name": "Alice",
         "last_name": "Scientist",
         "is_service_account": False,
+        "user_capabilities": None,
     }
 
 

@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 logger = logging.getLogger(__name__)
 from sqlalchemy import and_, case, false, func, or_
@@ -10,10 +10,13 @@ from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
+from app.api.path_params import ResourceMfid
 from app.models.core_models import (
     Dataset,
     DeletionAuditLog,
     DeletionRequest,
+    Instrument,
+    Project,
     Resource,
     Sample,
     User,
@@ -22,6 +25,7 @@ from app.models.deletion import (
     DeletionAuditScope,
     DeletionAuditLogRead,
     DeletableResourceType,
+    DeletionPreviewRead,
     DeletionRequestCapabilities,
     DeletionRequestRead,
     DeletionRequestScope,
@@ -48,6 +52,7 @@ from app.utils.cursor_utils import (
     validate_cursor,
 )
 from app.utils.sql_utils import touch_resource_modification_time
+from app.utils.deletion_utils import deletion_preview_read, deletion_summary
 from app.general_utils import get_utc_isoformat
 
 router = APIRouter(tags=["deletion"])
@@ -69,7 +74,59 @@ def _resolve_project_refs(
             select(Sample).where(Sample.unique_id == resource_id)
         ).one_or_none()
         return (samp.project_id, samp.project_mfid) if samp else (None, None)
+    if resource_type == "project":
+        project = session.exec(
+            select(Project).where(Project.unique_id == resource_id)
+        ).one_or_none()
+        return (project.project_id, project.unique_id) if project else (None, None)
     return None, None
+
+
+def _raise_blocked(resource_id: str, resource_type: str, blockers: dict[str, int]) -> None:
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "detail": (
+                f"Cannot delete {resource_type} '{resource_id}': it still has "
+                f"assigned datasets or samples."
+            ),
+            "blocking": blockers,
+        },
+    )
+
+
+def _deletion_summary_read(
+    resource_id: str,
+    resource_type: str,
+    deleted: bool,
+    summary: dict,
+) -> DeletionPreviewRead:
+    return deletion_preview_read(resource_id, resource_type, deleted, summary)
+
+
+def _write_deletion_record(
+    background_tasks: Optional[BackgroundTasks],
+    resource_id: str,
+    resource_type: str,
+    resource_name: Optional[str],
+    actor: str,
+    summary: Optional[dict],
+) -> None:
+    """Best-effort final record.json write for a deleted project or instrument.
+    Tests block real GCS writes, so a missing client never raises here."""
+    if background_tasks is None:
+        return
+
+    from app.utils.gcs_record_utils import write_record
+
+    record = {
+        "unique_id": resource_id,
+        "resource_type": resource_type,
+        "resource_name": resource_name,
+        "status": "deleted",
+        "deletion": summary or {},
+    }
+    background_tasks.add_task(write_record, resource_id, record, actor, "delete")
 
 
 def _to_read(
@@ -80,15 +137,18 @@ def _to_read(
     requester: Optional[User],
     reviewer: Optional[User],
     can_review: bool = False,
+    preview: Optional[DeletionPreviewRead] = None,
 ) -> DeletionRequestRead:
     return DeletionRequestRead(
         **req.model_dump(),
+        resource_mfid=req.resource_id,
         resource_type=resource_type,
         project_id=project_id,
         project_mfid=project_mfid,
         requester=UserPublicRead.model_validate(requester) if requester else None,
         reviewer=UserPublicRead.model_validate(reviewer) if reviewer else None,
         capabilities=DeletionRequestCapabilities(can_review=can_review),
+        preview=preview,
     )
 
 
@@ -453,6 +513,10 @@ def get_deletion_request(
             resource_type,
             session,
         )
+        preview = None
+        if resource_type in ("project", "instrument"):
+            summary = deletion_summary(session, resource_type, req.resource_id)
+            preview = _deletion_summary_read(req.resource_id, resource_type, False, summary)
         return _to_read(
             req,
             resource_type,
@@ -461,6 +525,7 @@ def get_deletion_request(
             requester,
             reviewer,
             req.status == DeletionRequestStatus.PENDING.value and has_review_authority,
+            preview=preview,
         )
 
 
@@ -470,6 +535,7 @@ def review_deletion_request(
     request_id: int,
     status: DeletionReviewDecision,
     reviewer_notes: Optional[str] = None,
+    background_tasks: BackgroundTasks = None,
 ):
     """Review a pending request with effective Admin or Owner access.
 
@@ -509,7 +575,7 @@ def review_deletion_request(
                 detail="Request is already approved.",
             )
         resource_type = resource.resource_type if resource else None
-        if resource_type not in ("dataset", "sample"):
+        if resource_type not in ("dataset", "sample", "project", "instrument"):
             raise HTTPException(
                 status_code=400,
                 detail=f"Deletion is not supported for resource type '{resource_type}'.",
@@ -518,6 +584,24 @@ def review_deletion_request(
         # Approving a deletion is the deletion decision, so it sits at the same
         # bar as performing one: admin on the resource, or platform admin.
         require_permission(session, auth_res, req.resource_id, Permission.DELETE)
+
+        # Computed inside the transaction so data assigned after the request
+        # was created still blocks, and so the response reports what this
+        # approval actually removed. Blockers stop approval; rejecting the
+        # request stays allowed so the resource returns to normal reads.
+        summary = None
+        if resource_type in ("project", "instrument"):
+            entity_model = Project if resource_type == "project" else Instrument
+            session.exec(
+                select(entity_model).where(entity_model.unique_id == req.resource_id).with_for_update()
+            ).one_or_none()
+            summary = deletion_summary(session, resource_type, req.resource_id)
+        if (
+            summary is not None
+            and summary["blocking"]
+            and decision is DeletionReviewDecision.APPROVED
+        ):
+            _raise_blocked(req.resource_id, resource_type, summary["blocking"])
 
         # Update the request record.
         req.status = decision.value
@@ -530,16 +614,35 @@ def review_deletion_request(
             resource_type,
             session,
         )
+        if resource_type == "project":
+            resource_name = req.resource_name or project_id
+        elif resource_type == "instrument":
+            instrument = session.exec(
+                select(Instrument).where(Instrument.unique_id == req.resource_id)
+            ).one_or_none()
+            resource_name = req.resource_name or (instrument.instrument_name if instrument else None)
+        else:
+            resource_name = req.resource_name
         users = session.exec(
             select(User).where(User.unique_id.in_({req.requester_id, user_unique_id}))
         ).all()
         users_by_id = {user.unique_id: user for user in users}
 
+        preview = None
+        if summary is not None:
+            preview = _deletion_summary_read(
+                req.resource_id,
+                resource_type,
+                decision is DeletionReviewDecision.APPROVED,
+                summary,
+            )
+
         snapshot = DeletionRequestRead(
             id=req.id,
             resource_id=req.resource_id,
+            resource_mfid=req.resource_id,
             resource_type=resource_type,
-            resource_name=req.resource_name,
+            resource_name=resource_name,
             project_id=project_id,
             project_mfid=project_mfid,
             requester_id=req.requester_id,
@@ -560,13 +663,15 @@ def review_deletion_request(
             ),
             reviewer_notes=req.reviewer_notes,
             capabilities=DeletionRequestCapabilities(can_review=False),
+            preview=preview,
         )
 
         if decision is DeletionReviewDecision.APPROVED:
+            from app.utils.deletion_utils import hard_delete_resource
             audit = DeletionAuditLog(
                 resource_id=req.resource_id,
                 resource_type=resource_type,
-                resource_name=req.resource_name,
+                resource_name=resource_name,
                 project_id=project_id,
                 project_mfid=project_mfid,
                 requester_id=req.requester_id,
@@ -579,9 +684,17 @@ def review_deletion_request(
             )
             session.add(audit)
 
-            from app.utils.deletion_utils import hard_delete_resource
             hard_delete_resource(req.resource_id, session, resource)
             session.commit()
+            if summary is not None:
+                _write_deletion_record(
+                    background_tasks,
+                    req.resource_id,
+                    resource_type,
+                    resource_name,
+                    user_unique_id,
+                    summary,
+                )
         else:
             # Rejection makes the resource visible again in filtered list/search
             # results (deletion_filter_for excludes pending/approved requests) —
@@ -595,20 +708,31 @@ def review_deletion_request(
 # ---------------------------------------------------------------------------
 # DELETE /resources/{resource_id}
 # Owner or platform-admin direct deletion with explicit acknowledgement.
+# Projects and instruments preview first and delete only with confirm=true.
 # ---------------------------------------------------------------------------
-@router.delete("/resources/{resource_id}")
+@router.delete("/resources/{mfid}")
 def hard_delete_resource_route(
-    resource_id: str,
+    resource_id: ResourceMfid,
+    background_tasks: BackgroundTasks,
     auth_res: Annotated[Principal, Depends(authorize_user)],
     force: bool = Query(
         ...,
         description="Required acknowledgement for direct permanent deletion.",
     ),
+    confirm: bool = Query(
+        False,
+        description=(
+            "Required to actually delete a project or instrument. Omitting it "
+            "returns a preview and deletes nothing."
+        ),
+    ),
 ):
     """
-    Permanently delete a dataset or sample from the database without a deletion request.
+    Permanently delete a resource from the database without a deletion request.
     Requires force=true and resource owner or platform-admin authority.
-    Stored GCS objects are not deleted.
+    Datasets and samples delete immediately. Projects and instruments first
+    return a preview; pass confirm=true to execute the deletion, which still
+    requires them to be empty. Stored GCS objects are not deleted.
     """
     user_unique_id = auth_res.user_id
     if force is not True:
@@ -620,13 +744,61 @@ def hard_delete_resource_route(
         ).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
-        if resource.resource_type not in ("dataset", "sample"):
+        if resource.resource_type not in ("dataset", "sample", "project", "instrument"):
             raise HTTPException(
                 status_code=400,
                 detail=f"Deletion is not supported for resource type '{resource.resource_type}'.",
             )
 
         require_permission(session, auth_res, resource_id, Permission.HARD_DELETE)
+
+        if resource.resource_type in ("project", "instrument"):
+            resource_type = resource.resource_type
+            entity_model = Project if resource_type == "project" else Instrument
+            entity_query = select(entity_model).where(entity_model.unique_id == resource_id)
+            if confirm:
+                entity_query = entity_query.with_for_update()
+            entity = session.exec(entity_query).one_or_none()
+            if entity is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No {resource_type} row exists for resource '{resource_id}'.",
+                )
+            summary = deletion_summary(session, resource_type, resource_id)
+            if summary["blocking"]:
+                _raise_blocked(resource_id, resource_type, summary["blocking"])
+            if not confirm:
+                return _deletion_summary_read(resource_id, resource_type, False, summary)
+            resource_name = entity.project_id if resource_type == "project" else entity.instrument_name
+
+            audit = DeletionAuditLog(
+                resource_id=resource_id,
+                resource_type=resource_type,
+                resource_name=resource_name,
+                project_id=resource_name if resource_type == "project" else None,
+                project_mfid=resource_id if resource_type == "project" else None,
+                requester_id=user_unique_id,
+                reason="direct forced deletion",
+                request_time=None,
+                reviewer_id=user_unique_id,
+                reviewer_notes="force=True",
+                review_time=get_utc_isoformat(),
+                deleted_at=get_utc_isoformat(),
+            )
+            session.add(audit)
+
+            from app.utils.deletion_utils import hard_delete_resource
+            hard_delete_resource(resource_id, session, resource)
+            session.commit()
+            _write_deletion_record(
+                background_tasks,
+                resource_id,
+                resource_type,
+                resource_name,
+                user_unique_id,
+                summary,
+            )
+            return _deletion_summary_read(resource_id, resource_type, True, summary)
 
         # Resolve resource name from the entity before destroying rows
         resource_name = None

@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, exists, func, or_
 from sqlmodel import select
 
+from app.general_utils import is_valid_mfid
 from app.models.core_models import Dataset, Instrument, Project
 from app.models.instrument import InstrumentReferenceRead
 
@@ -41,6 +42,25 @@ def resolve_instrument_id_to_mfid(instrument_id: str, session) -> "str | None":
     return instrument.unique_id if instrument else None
 
 
+def instrument_id_matches(instrument_id: str):
+    return func.lower(Instrument.instrument_id) == instrument_id.lower()
+
+
+def resolve_instrument_reference(instrument_ref: str, session) -> Instrument | None:
+    if is_valid_mfid(instrument_ref):
+        query = select(Instrument).where(Instrument.unique_id == instrument_ref)
+    else:
+        query = select(Instrument).where(instrument_id_matches(instrument_ref))
+    return session.exec(query).one_or_none()
+
+
+def get_instrument_or_404(session, instrument_ref: str) -> Instrument:
+    instrument = resolve_instrument_reference(instrument_ref, session)
+    if instrument is None:
+        raise HTTPException(status_code=404, detail="Instrument not found")
+    return instrument
+
+
 def resolve_instrument_identifiers(
     session,
     instrument_id: str | None,
@@ -63,8 +83,6 @@ def resolve_instrument_identifiers(
         identifier = instrument_id
 
     if instrument is None:
-        if instrument_mfid is None:
-            raise HTTPException(status_code=400, detail=f"Instrument '{identifier}' is not registered")
         raise HTTPException(status_code=404, detail=f"Instrument '{identifier}' not found")
     if (
         instrument_id is not None
@@ -75,6 +93,20 @@ def resolve_instrument_identifiers(
             detail="instrument_id and instrument_mfid identify different instruments",
         )
     return instrument
+
+
+def resolve_instrument_filter_mfid(session, instrument_id: str | None, instrument_mfid: str | None) -> str | None:
+    if instrument_id is None:
+        return instrument_mfid
+    instrument = session.exec(select(Instrument).where(instrument_id_matches(instrument_id))).one_or_none()
+    if instrument is None:
+        raise HTTPException(status_code=404, detail=f"Instrument '{instrument_id}' not found")
+    if instrument_mfid is not None and instrument.unique_id != instrument_mfid:
+        raise HTTPException(
+            status_code=422,
+            detail="instrument_id and instrument_mfid identify different instruments",
+        )
+    return instrument.unique_id
 
 
 def resolve_instrument_mfids_to_ids(mfids, session) -> dict:

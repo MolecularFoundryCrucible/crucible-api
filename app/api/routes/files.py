@@ -6,7 +6,7 @@ from typing import Annotated, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, join
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
@@ -22,7 +22,8 @@ from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import touch_resource_modification_time
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.pagination import PaginatedResponse
-from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
+from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
+from app.services.storage_downloads import StorageLocationError, resolve_storage_object
 
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
@@ -74,17 +75,26 @@ def list_files(
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.get("/files/{file_id}", response_model=AssociatedFileRead)
-def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
-    '''Returns a single file by its MFID.'''
+@router.get("/files/{file_id}", response_model=AssociatedFileRead, responses={200: {"headers": {"ETag": {"description": "Content ETag of the file, the same value as the `etag` field; send it as `If-Match` when replacing the file", "schema": {"type": "string"}}}}})
+def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str, response: Response):
+    '''Returns a single file by its MFID, with its content ETag in the ETag header.'''
 
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
-        return AssociatedFileRead.model_validate(af, update={"dataset_mfid": ds.unique_id})
+        read = AssociatedFileRead.model_validate(af, update={"dataset_mfid": ds.unique_id})
+        response.headers["ETag"] = read.etag
+        return read
 
 
-@router.get("/files/{file_id}/download_link")
-def get_file_download_link(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
+@router.get("/files/{file_id}/download_link", responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
+def get_file_download_link(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    file_id: str,
+    disposition: Annotated[
+        Literal["attachment", "inline"],
+        Query(description="attachment (default) makes browsers save the file; inline asks them to display it when they can. Script-capable types (HTML, SVG, XML, +xml types, XSL) are always served as attachments."),
+    ] = "attachment",
+):
     '''Returns a signed GCS download URL (1-hour expiry) for a single file.
     Returns url=None for files whose storage_backend is not "gcs" (catalog-only).'''
 
@@ -94,10 +104,14 @@ def get_file_download_link(auth_res: Annotated[Principal, Depends(authorize_user
         if af.storage_backend != "gcs":
             return {"url": None, "expires_in": None}
 
-        storage_path = _ensure_storage_path(af, ds.unique_id, session)
+        generation = af.storage_generation
+        filename = af.filename
+        file_mfid = af.mfid
+        dataset_mfid = ds.unique_id
+        storage_path = _ensure_storage_path(af, dataset_mfid, session)
         session.commit()
 
-    url, expires_in = _generate_signed_url_link(storage_path)
+    url, expires_in = _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename, disposition)
     return {"url": url, "expires_in": expires_in}
 
 
@@ -113,7 +127,25 @@ def update_file(
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
         require_permission(session, auth_res, ds.unique_id, Permission.EDIT)
 
-        for field, value in updates.model_dump(exclude_unset=True).items():
+        changed = updates.model_dump(exclude_unset=True)
+        if af.storage_generation is not None:
+            target_backend = changed.get("storage_backend", af.storage_backend)
+            target_path = changed.get("storage_path", af.storage_path)
+            if target_backend != "gcs" or target_path is None:
+                raise HTTPException(status_code=422, detail="storage_path is assigned by the upload API for GCS files")
+        if changed.get("storage_backend", af.storage_backend) == "gcs":
+            new_path = "storage_path" in changed and changed["storage_path"] not in (None, af.storage_path)
+            switched_with_path = af.storage_backend != "gcs" and changed.get("storage_path", af.storage_path) is not None
+            if new_path or switched_with_path:
+                raise HTTPException(status_code=422, detail="storage_path is assigned by the upload API for GCS files")
+            if any(name in changed and changed[name] != getattr(af, name) for name in ("size", "sha256_hash")):
+                raise HTTPException(status_code=422, detail="size and sha256_hash are determined by the stored object for GCS files")
+        if any(name in changed and changed[name] != getattr(af, name) for name in ("size", "sha256_hash", "storage_path", "storage_backend")):
+            af.sha256_verified_at = None
+            af.storage_crc32c = None
+        if any(name in changed and changed[name] != getattr(af, name) for name in ("storage_path", "storage_backend")):
+            af.storage_generation = None
+        for field, value in changed.items():
             setattr(af, field, value)
         session.add(af)
         touch_resource_modification_time(session, ds.unique_id)
@@ -142,7 +174,7 @@ def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id
 
 
 # ingestion
-@router.post("/files/{file_id}/ingest", response_model=IngestionRequest)
+@router.post("/files/{file_id}/ingest", response_model=IngestionRequest, responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def create_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
@@ -156,7 +188,7 @@ def create_file_ingestion_request(
 
     Only 'requested' (dispatch to the ingestion queue) and 'not_requested' (record
     the file without dispatching) may be set here. Terminal states are written
-    afterwards via PATCH /ingestion_requests/{reqid}.
+    afterwards via PATCH /ingestion_requests/{request_id}.
     '''
 
     with Session(engine) as session:
@@ -169,6 +201,12 @@ def create_file_ingestion_request(
                 detail=f"Ingestion is not supported for storage_backend='{af.storage_backend}' files.",
             )
 
+        _ensure_storage_path(af, ds.unique_id, session)
+        try:
+            resolve_storage_object(af.storage_path, af.storage_generation, ds.unique_id)
+        except StorageLocationError as error:
+            logger.warning("file_location_rejected file=%s dataset=%s reason=%s", af.mfid, ds.unique_id, error.reason)
+            raise HTTPException(status_code=409, detail=error.detail()) from None
         RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
         ingestion_request = IngestionRequest(
             dataset_mfid=ds.unique_id,
@@ -185,6 +223,8 @@ def create_file_ingestion_request(
         ir_id = ingestion_request.id
         af_size = af.size
         af_storage_path = af.storage_path
+        af_generation = af.storage_generation
+        af_filename = af.filename
         ds_unique_id = ds.unique_id
 
     if status == 'requested':
@@ -194,6 +234,8 @@ def create_file_ingestion_request(
         send_pika_message(
             message=json.dumps({
                 "filename": af_storage_path,
+                **({"storage_generation": af_generation} if af_generation else {}),
+                "file_name": af_filename,
                 "reqid": ir_id,
                 "dsid": ds_unique_id,
                 "ingestion_class": ingestion_class,

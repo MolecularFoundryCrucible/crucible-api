@@ -29,9 +29,11 @@ class SampleWithDatasetsResponse(BaseModel):
     
 
 class DatasetSampleLinkResponse(BaseModel):
-    dataset_id: str
+    dataset_id: str = Field(deprecated=True, description="Deprecated. Use dataset_mfid.")
+    dataset_mfid: str
     dataset_name: str
-    sample_id: str
+    sample_id: str = Field(deprecated=True, description="Deprecated. Use sample_mfid.")
+    sample_mfid: str
     sample_name: str
     sample_type: Optional[str]
     class Config:

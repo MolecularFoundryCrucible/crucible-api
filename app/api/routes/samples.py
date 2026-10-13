@@ -12,6 +12,7 @@ from sqlalchemy.orm import joinedload
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
+from app.api.path_params import ChildSampleMfid, ParentSampleMfid, SampleMfid
 from app.general_utils import get_utc_datetime
 from app.models.core_models import (
     Dataset, DatasetSampleLink,
@@ -45,6 +46,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public
+from app.utils.deletion_utils import assert_not_pending_deletion
 
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
@@ -64,16 +66,18 @@ RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
 SAMPLE_PAGINATION = ResourcePaginationSpec(
     kind="sample",
     unique_id_column=Sample.unique_id,
-    created_sort=Resource.creation_time,
-    updated_sort=func.coalesce(Resource.modification_time, Resource.creation_time),
-    name_sort=func.lower(Sample.sample_name),
+    sorts={
+        "created": Resource.creation_time,
+        "updated": func.coalesce(Resource.modification_time, Resource.creation_time),
+        "name": func.lower(Sample.sample_name),
+    },
 )
 
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
-@router.post("/samples/{parent_sample_id}/children/{child_sample_id}", response_model=SampleLink)
-def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annotated[Principal, Depends(authorize_user)],
+@router.post("/samples/{parent_sample_mfid}/children/{child_sample_mfid}", response_model=SampleLink)
+def link_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id: ChildSampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                              relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
     '''
     Link two samples as parent and child.
@@ -125,8 +129,8 @@ def link_sample_parent_child(parent_sample_id, child_sample_id, auth_res: Annota
         return link
 
 
-@router.delete("/samples/{parent_sample_id}/children/{child_sample_id}")
-def unlink_sample_parent_child(parent_sample_id: str, child_sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.delete("/samples/{parent_sample_mfid}/children/{child_sample_mfid}")
+def unlink_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id: ChildSampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
     with Session(engine) as session:
         # Both, not either: the pre-role check passed on any one.
@@ -157,8 +161,8 @@ def unlink_sample_parent_child(parent_sample_id: str, child_sample_id: str, auth
         return {"message": f"Successfully unlinked {parent_sample_id} -> {child_sample_id}"}
 
 
-@router.patch('/samples/{sample_id}', response_model=SampleResponse)
-def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sample_id: str, updated_sample: SampleUpdate,
+@router.patch('/samples/{sample_mfid}', response_model=SampleResponse)
+def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sample_id: SampleMfid, updated_sample: SampleUpdate,
                   background_tasks: BackgroundTasks):
     '''
     Partially update a sample record. Only provided fields are modified.
@@ -240,31 +244,23 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
             project_reference = requested_project_mfid or requested_project_id
             raise HTTPException(status_code=404, detail=f"Project '{project_reference}' not found")
 
-        if not auth_res.is_platform_admin:
-            owner_orcid = resolved_owner_orcid or user_unique_id
+        if not has_global_permission(auth_res, Permission.CREATE):
+            if (resolved_owner_orcid or user_unique_id) != user_unique_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only platform contributors and administrators may create a sample on behalf of another user")
             if project is not None:
-                if (
-                    owner_orcid != user_unique_id
-                    and not has_global_permission(auth_res, Permission.CREATE)
-                ):
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Only platform contributors and administrators may create a sample on behalf of another user")
-                standing = project_standing_by_mfid(owner_orcid, project.unique_id, session)
+                standing = project_standing_by_mfid(user_unique_id, project.unique_id, session)
                 if standing is None or standing < Role.CONTRIBUTOR:
                     raise HTTPException(
                         status_code=403,
-                        detail=f"'{owner_orcid}' must be contributor or above in project '{project.project_id}' to create there")
-            elif owner_orcid != user_unique_id:
-                if not has_global_permission(auth_res, Permission.CREATE):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Creating on behalf of another user requires project_id, to verify their standing there")
+                        detail=f"Caller '{user_unique_id}' must be contributor or above in project '{project.project_id}' to create there")
 
         sample_details.pop('owner', None)
         sample_details['owner_orcid'] = resolved_owner_orcid
         sample_details['owner_user_id'] = owner_user.id
         if project is not None:
+            assert_not_pending_deletion(session, project.unique_id)
             sample_details['project_id'] = project.project_id
             sample_details['project_mfid'] = project.unique_id
 
@@ -675,9 +671,9 @@ def read_sample(
         )
 
 
-@router.get("/samples/{sample_id}/datasets", deprecated=True)
+@router.get("/samples/{sample_mfid}/datasets", deprecated=True)
 def list_sample_datasets(
-    sample_id: str,
+    sample_id: SampleMfid,
     auth_res: Annotated[Principal, Depends(authorize_user)],
     request: Request,
     response: Response,
@@ -740,8 +736,8 @@ def list_sample_datasets(
             return results
 
 
-@router.get("/samples/{child_sample_id}/parents", response_model=PaginatedResponse[SampleRead])
-def list_parent_samples(child_sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
+@router.get("/samples/{child_sample_mfid}/parents", response_model=PaginatedResponse[SampleRead])
+def list_parent_samples(child_sample_id: ChildSampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                         limit: int = Query(default=100, ge=1, le=1000),
                         offset: int = Query(default=0, ge=0),
                         relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
@@ -777,8 +773,8 @@ def list_parent_samples(child_sample_id: str, auth_res: Annotated[Principal, Dep
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.get("/samples/{parent_sample_id}/children", response_model=PaginatedResponse[SampleRead])
-def list_child_samples(parent_sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
+@router.get("/samples/{parent_sample_mfid}/children", response_model=PaginatedResponse[SampleRead])
+def list_child_samples(parent_sample_id: ParentSampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                        limit: int = Query(default=100, ge=1, le=1000),
                        offset: int = Query(default=0, ge=0),
                        relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
@@ -813,8 +809,8 @@ def list_child_samples(parent_sample_id: str, auth_res: Annotated[Principal, Dep
         }) for s in rows]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
-@router.get("/samples/{sample_id}/sample_graph")
-def sample_graph(sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/samples/{sample_mfid}/sample_graph")
+def sample_graph(sample_id: SampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     Returns a NetworkX node-link graph of all samples connected (via parent/child
     relationships) to the given sample. Loads all samples in the project and
@@ -867,8 +863,8 @@ def sample_graph(sample_id: str, auth_res: Annotated[Principal, Depends(authoriz
         return json_graph.node_link_data(G.subgraph(component_nodes))
 
 
-@router.get("/samples/{sample_id}/sample_graph_cte")
-def sample_graph_cte(sample_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/samples/{sample_mfid}/sample_graph_cte")
+def sample_graph_cte(sample_id: SampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     CTE-based implementation (kept for reference). Prefer /sample_graph.
     Returns a NetworkX node-link graph of all samples connected (via parent/child

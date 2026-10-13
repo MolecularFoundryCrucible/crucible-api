@@ -1,23 +1,20 @@
 # User email uniqueness
 
-Status: Accepted requirement, implementation deferred. Recorded 2026-09-28.
+Status: Implemented 2026-10-12 (migration `e5a1c8d93f27`). Requirement recorded 2026-09-28.
 
-## Current behavior
+## Behavior
 
-User email is nullable and has no unique constraint in the checked-in database model or migrations. User creation and updates do not reject duplicate emails. Some paths normalize email, but normalization is not uniqueness enforcement. Live database constraints and existing duplicate values have not been audited for this follow-up.
+Email is optional and unverified, and it is used as a human-friendly identifier: `{user_ref}` path segments, the deprecated `email=` membership parameter, and project-lead fields resolve users by case-insensitive email. Because of that, a non-null email belongs to at most one user, including service accounts.
 
-Hub sign-in identifies users by verified ORCID, not email. Matching email addresses must not automatically merge or link accounts.
+- Writes trim surrounding whitespace, lowercase the address, and store blank values as null (`UserCreate`, `UserUpdate`, `AccountProfileUpdate`).
+- `POST /users`, `PATCH /users/{user_ref}`, and `PATCH /account/profile` return 409 with `{"detail": {"code": "already_in_use", "fields": ["email"], "message": "Email is already in use"}}` when another user holds the address, without identifying that user. A username conflict in the same request is listed in the same `fields` array. A concurrent conflicting write is rejected by the database index and also returns 409.
+- The partial unique index `ux_user_email_lower` on `lower(email)` allows any number of users without an email.
+- Hub sign-in identifies users by ORCID; matching email addresses never merge or link accounts. Uniqueness does not prove ownership of an address: the first account to set it keeps it until changed.
 
-## Required behavior
+## Rollout
 
-Non-null user email addresses must be unique across users, including service accounts. Keep email optional unless a separate requirement changes that policy. Use consistent whitespace trimming and case-insensitive matching across creation, updates, imports, and lookups. Do not infer provider-specific equivalence by removing dots or plus-address suffixes.
+1. Run `migrations/data/20261012_audit_user_emails.py` (read-only by default) against the target database. It reports shared addresses by user identifier only, plus blank and whitespace-padded values.
+2. Resolve every shared address by hand: decide which account keeps it and clear or change the others. Never merge accounts automatically. `--commit` only nulls blank values and trims whitespace.
+3. Apply migration `e5a1c8d93f27`. It refuses to run while shared addresses remain and builds the index concurrently.
 
-## Implementation checklist
-
-1. Audit existing duplicate normalized emails, blank values, and live constraints without writing data. Resolve conflicts explicitly; do not silently merge accounts or overwrite addresses. Decide how existing blank strings become null.
-2. Enforce uniqueness in PostgreSQL through a matching Alembic revision, allowing multiple null emails. An application availability check alone is insufficient under concurrent writes. Plan index creation and rollout for the live service.
-3. Normalize all supported email writes consistently and return a documented HTTP 409 for conflicts, including concurrent database conflicts, without disclosing another account's identity.
-4. Test creation, updates, case and whitespace variants, unchanged self-updates, null emails, service accounts, and concurrent conflicting writes. Keep ORCID-based sign-in unchanged.
-5. Update OpenAPI descriptions, the changelog, and client guidance. Coordinate separately authorized Hub documentation and form-error handling updates. Rejecting duplicate writes changes previously accepted behavior and requires release communication.
-
-No enforcement, migration, or data changes were made when recording this requirement.
+The 2026-10-12 audit found one shared address (accounts `0000-0002-2788-194X` and `0000-0003-2692-1935`) and one blank value, identical on staging and production.

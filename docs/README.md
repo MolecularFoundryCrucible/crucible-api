@@ -14,7 +14,9 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Instrument and project identifier changes, October 2026](instrument_and_slug_changes_2026-10.md): client handoff for live instrument names, instrument maintainers, and case-insensitive project slugs.
 - [Resource timestamp policy](resource_timestamp_policy.md): database-owned creation and modification times and the separate producer timestamp field.
 - [Graph route migration](graph_routes_migration.md): current graph security behavior and deferred route consolidation.
-- [Remote file records](remote_file_records.md): implemented non-GCS file catalog behavior and deferred resource-generic attachment.
+- [Remote file records](remote_file_records.md): implemented non-GCS file catalog behavior and deferred resource-generic attachment and file-identifier naming.
+- [Storage location confinement](storage_download_design.md): the location rule for GCS file downloads and ingestion, download header policy, and the multipart `_files` object layout.
+- [File replacement](file_replace_design.md): replacing a GCS file's content through the multipart flow, ETags, and retirement of the previous object.
 - [Route package conventions](../app/api/routes/readme.md): route module and shared dependency guidance.
 
 ## Operations and accepted data follow-ups
@@ -26,6 +28,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Hub authentication security review](hub_auth_security_review.md): activation blockers, dispositions, and verified controls.
 - [Dependency security assessment](dependency_security_assessment.md): advisory reachability and staged upgrade batches.
 
+- [Release runbook: staging to main, October 2026](release_2026-10_staging_to_main.md): prerequisites, infrastructure, release-day sequence, smoke tests, and rollback for the multipart and storage release.
 - [Database migration guidance](../migrations/README.md): current schema and data migration safeguards.
 - [Production migration data follow-ups](production_migration_data_followups.md): unresolved legacy instrument references and ownership anomalies from the August 2026 migration.
 - [Kubernetes deployment notes](../k8s-conf/README.md): current metrics and PodMonitoring setup.
@@ -37,6 +40,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [`idtype` to `resource` rename](idtype_to_resource_rename.md)
 - [Project archiving](project_archiving.md)
 - [Secure parallel upload migration](secure_parallel_upload_migration.md)
+- [User deactivation](user_deactivation.md)
 - [Skipped route backlog](skipped_routes.md)
 
 These documents describe proposed or deferred work. They are not evidence that a route or schema exists. Confirm current behavior in OpenAPI and the implementation before building a client against a proposal.

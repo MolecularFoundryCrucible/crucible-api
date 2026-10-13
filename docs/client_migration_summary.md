@@ -45,6 +45,7 @@ Clients may remain handwritten, but their CI should compare declared routes and 
 - Project and instrument slugs are human-readable lookup values, not stable identifiers. New or renamed slugs must contain 3 to 25 characters.
 - Use a canonical singleton route when the input is an MFID. Use an exact collection filter when the input is a slug, username, or email. The collection result already contains the complete authorized representation, so do not resolve and then make a second GET.
 - Normal ACL grants stop at `admin`. The `owner` permission is exclusive and can only be changed through the ownership-transfer route.
+- User responses expose `platform_role` on private representations (`UserRead`, returned to the user themselves and to platform administrators) and `user_capabilities` on both private and public representations. `user_capabilities` is the reliable discriminator for what the caller may do to that user; do not infer capability from the presence of `email`. The field is named `user_capabilities`, not `capabilities`: any `capabilities` key on a user object decodes into a different required-field type in some clients. `AccountProfileRead` keeps its account-level `capabilities` object.
 - Canonical dataset, sample, project, and instrument detail responses include optional caller-specific `capabilities` for UI guidance. Exact project and instrument slug lookups also populate it. General collection, search, lineage, and embedded-resource results leave it null. Dataset, sample, instrument, and generic resource singleton GETs resolve the public-safe `owner` object by default; pass `include_owner=false` to omit it.
 - Relationship lists and graphs are permission-filtered. A client may receive 403 for an inaccessible starting resource or fewer related resources than before.
 - The deprecated dataset `source_folder` field no longer exists in create or read schemas. Use associated-file records for file locations.
@@ -69,18 +70,14 @@ The client should classify a supplied reference locally and issue one request.
 
 | Input | Request | Client result |
 |---|---|---|
-| Project MFID | `GET /projects/{mfid}` | Return the singleton response. |
-| Project slug | `GET /projects?project_id={slug}` | Return the only item, report not found for zero, and report an integrity error for more than one. Add `include_members=true` when the expanded authorized member list is needed. |
-| Instrument MFID | `GET /instruments/{mfid}` | Return the singleton response. |
-| Instrument slug | `GET /instruments?instrument_id={slug}` | Apply the same exact-result handling. |
-| Sample MFID | `GET /samples/{mfid}` | Return the singleton response. |
-| Dataset MFID | `GET /datasets/{mfid}` | Return the singleton response. |
-| Person ORCID | `GET /users/{orcid}` | Return the singleton response. |
-| Service-account MFID | `GET /users/{mfid}` | Return the singleton response. |
-| Username | `GET /users?username={username}` | Apply exact-result handling. |
-| Email | `GET /users?email={email}` | Apply exact-result handling. Another user's public-safe response does not echo the email. |
+| Project MFID or slug | `GET /projects/{project_ref}` | Return the singleton response. Add `include_members=true` when the expanded authorized member list is needed. |
+| Instrument MFID or slug | `GET /instruments/{instrument_ref}` | Return the singleton response. |
+| Sample MFID | `GET /samples/{sample_mfid}` | Return the singleton response. |
+| Dataset MFID | `GET /datasets/{dataset_mfid}` | Return the singleton response. |
+| Person ORCID, service-account MFID, or username | `GET /users/{user_ref}` | Return the singleton response. |
+| Email | `GET /users?email={email}` | Return the only item, report not found for zero, and report an integrity error for more than one. Another user's public-safe response does not echo the email. Email lookups may match more than one user until uniqueness is enforced; see [email uniqueness follow-up](email_uniqueness_followup.md). |
 
-The compatibility routes `GET /projects/{project_slug}`, `GET /users/{username}`, `GET /users/{email}`, and `GET /users/by-username/{username}` remain available temporarily. Compatible singleton responses include `Content-Location` pointing to the canonical route. New clients should not depend on these aliases.
+Singleton responses requested by slug or username include `Content-Location` pointing to the MFID or ORCID route. `GET /users/{email}` still resolves but email in paths is deprecated, as is `GET /users/by-username/{username}`. Exact collection filters (`GET /projects?project_id=`, `GET /instruments?instrument_id=`, `GET /users?username=`) remain available. See [resource identifier routes](resource_identifier_routes.md) for the full convention.
 
 Canonical resource detail responses, exact project and instrument slug-filter results, and supported create or update responses may include:
 
@@ -173,14 +170,14 @@ The legacy `POST` and `GET /resources/{mfid}/access_groups` routes are deprecate
 
 ## User and project membership calls
 
-- `POST`, `PATCH`, and `DELETE /projects/{project_ref}/users/{orcid}` now return the complete `AccessGroupMemberRead[]` member list. Member records include canonical identity, username, name, service-account status, and role, but never email.
+- `POST`, `PATCH`, and `DELETE /projects/{project_ref}/users/{user_ref}` now return the complete `AccessGroupMemberRead[]` member list. Member records include canonical identity, username, name, service-account status, and role, but never email.
 - `PATCH` requires an explicit `role` query parameter.
-- Project membership targets remain canonical ORCIDs or service-account MFIDs. Do not send a username in the `{orcid}` path position.
+- Project membership targets use `{user_ref}`: an ORCID, service-account MFID, or username. The `email` and `username` query overrides are deprecated.
 - `GET /projects/{project_ref}?include_members=true` returns public-safe member records only to project members and platform administrators. Other callers receive `members: null`.
 - `GET /projects?project_id={slug}&include_members=true` provides the same member expansion for one-request slug resolution. Using `include_members=true` without `project_id` returns 422.
-- Generic `POST` and `DELETE /users/{user_id}/access_groups/{group_name}` routes are deprecated. They reject identity and system groups, direct project membership to project routes, and reject adding human users to instrument groups.
-- Instrument service-account membership should use `POST` or `DELETE /instruments/{instrument_mfid}/service_accounts/{service_account_mfid}`.
-- Instrument maintainers are grants on the instrument record through `PUT` and `DELETE /resources/{instrument_mfid}/access/users/{user_ref}`. `GET /instruments/{instrument_mfid}?include_members=true` and `GET /instruments?instrument_id={slug}&include_members=true` return them to callers holding a role on the instrument and to platform administrators. `affiliation=maintainer` lists instruments where the caller holds editor or admin. See [instrument access](instrument_access.md).
+- Generic `POST` and `DELETE /users/{user_ref}/access_groups/{group_name}` routes are deprecated. They reject identity and system groups, direct project membership to project routes, and reject adding human users to instrument groups.
+- Instrument service-account membership should use `POST` or `DELETE /instruments/{instrument_ref}/service_accounts/{service_account_ref}`.
+- Instrument maintainers are grants on the instrument record through `PUT` and `DELETE /resources/{instrument_mfid}/access/users/{user_ref}`. `GET /instruments/{instrument_ref}?include_members=true` and `GET /instruments?instrument_id={slug}&include_members=true` return them to callers holding a role on the instrument and to platform administrators. `affiliation=maintainer` lists instruments where the caller holds editor or admin. See [instrument access](instrument_access.md).
 
 ## User resource access
 
@@ -195,11 +192,13 @@ GET /projects?accessible_to_user={user_ref}
 GET /projects?accessible_to_project={project_ref}
 ```
 
+`GET /users/{user_ref}/projects` lists only the projects a user is a member of, each with the user's standing `role` in that project's access group, while `GET /projects?accessible_to_user=` lists every project the user can read, including explicit grants and, for a selected platform contributor or administrator, all projects. Both require the same authority to inspect another user: `platform_role` `contributor` or `admin`. See [`GET /users/{user_ref}/projects`](permission_system_api_changes.md#get-usersuser_idprojects).
+
 References are resolved by the API, so users may be identified by MFID, ORCID, username, or email and projects by MFID or slug. Repeat parameters to request an intersection. All selectors use AND semantics, are deduplicated after resolution, and may total at most 10. They only narrow resources readable by the caller. With no selector, dataset and sample collections list resources accessible to the caller and the project collection retains its existing discovery behavior.
 
 Inspecting another user requires platform-admin authority. Inspecting a project requires membership in that project or platform-admin authority. An unknown principal returns 404, an unauthorized inspection returns 403, and more than 10 selectors returns 422.
 
-The unpaginated MFID-only routes `GET /users/{user_id}/datasets` and `GET /users/{user_id}/samples` remain as deprecated compatibility wrappers.
+The unpaginated MFID-only routes `GET /users/{user_ref}/datasets` and `GET /users/{user_ref}/samples` remain as deprecated compatibility wrappers.
 
 Relationship collections now use the canonical paginated collection routes:
 
@@ -249,11 +248,36 @@ Sample response models now expose the same nullable `ProjectReferenceRead` as `p
 
 - Broad user collection, batch resolution, project lead, project membership, instrument operator, and access-group member responses never contain email.
 - Exact `GET /users?unique_id=`, `?username=`, and `?email=` lookups return the same caller-authorized representation as the singleton route. Self and platform administrators may receive email; other callers receive the matching public-safe user with `unique_id`.
+- Platform administrators receive the full directory with email and platform roles on broad `GET /users` listings. Non-administrators keep the group-scoped public-safe listing.
 - `POST /users/resolve` continues to accept emails and returns public-safe user records keyed by canonical identifier.
 - Email is returned only for the authenticated user's own profile, an exact self lookup, an exact platform-admin lookup, or an authorized user mutation response.
 - Service-account status alone does not grant email disclosure. A service account may resolve an email without receiving it back.
+- Email lookups may match more than one user until uniqueness is enforced; see [email uniqueness follow-up](email_uniqueness_followup.md).
 
-`GET /users/{user_id}/datasets/{dataset_mfid}` now returns:
+## User collection queries and capabilities
+
+`GET /users` supports the shared collection contract: `sort=name|username|unique_id|email` with `direction=asc|desc` (omitting `sort` keeps the last name, first name order; `email` is administrator only), `include_total`, signed opaque `cursor` pagination alongside `offset`, and exact filters `unique_id`, `username`, and `email` plus `first_name`, `last_name` (permissive substring or exact), `q` with optional repeatable `search_fields`, `is_service_account`, and administrator-only repeatable `platform_role`. Searching email through `q` or `search_fields` is administrator only. A supplied cursor takes precedence over `offset`, and changing filters, sort, direction, or caller while following a cursor returns 422.
+
+Any undeclared query parameter is now ignored without filtering. The response carries a `Deprecation: @1799280000` (2027-01-07) header, and the parameters will be rejected with 422 at that announced date. `?projects=x` and `?id=1` no longer filter or fail.
+
+`user_capabilities` is populated on singleton and exact lookups:
+
+```json
+{
+  "can_view_private": true,
+  "can_edit_profile": true,
+  "can_manage_api_key": false,
+  "can_change_platform_role": false
+}
+```
+
+`can_view_private` and `can_edit_profile` are true for the user themselves and platform administrators. `can_manage_api_key` is true for platform administrators only. `can_change_platform_role` is true only for human platform administrators acting on a human who is not themselves. Use this object as the discriminator for action availability instead of checking for `email`. It is null on broad listings, `/users/search`, and `/users/resolve`. `platform_role` on `UserRead` is visible to the user themselves and to platform administrators.
+
+Human platform administrators manage a user's platform role through `PATCH /users/{user_ref}/platform_role` with `platform_role` set to `none`, `contributor`, or `admin`. Service-account callers receive 403, callers cannot change their own role, service-account targets return 409 pointing at `PATCH /service_accounts/{service_account_ref}`, and demoting the last human platform administrator returns 409. Authority changes propagate through the in-process principal cache within the configured `AUTH_CACHE_TTL`, which defaults to 60 seconds.
+
+Platform administrators can revoke every API key a user holds through `DELETE /users/{user_ref}/apikey`, which returns 204 and invalidates the revoked keys in the principal cache for up to the TTL. It works for human users and service accounts. The singleton and exact platform-admin user views also expose non-secret `api_key_status` (validity, creation date, expiration date) when a key exists.
+
+`GET /users/{user_ref}/datasets/{dataset_mfid}` now returns:
 
 ```json
 {
@@ -273,17 +297,17 @@ Replace uses of the removed `read` and `write` Booleans. `effective_access` is o
 - Create responses include canonical `owner_orcid`. The optional `owner` response field is an expanded public-safe user object, not an echo of the request string.
 - For datasets and samples, platform contributors and platform administrators may create for another registered identity. Ordinary human callers may create only for themselves. With `project_id` or `project_mfid`, the effective owner must be contributor-or-above in that project. Projectless create-on-behalf remains supported.
 - Service accounts created through `POST /service_accounts` default to `platform_role=contributor`. This role grants platform-wide read and create access and permits one user reference through `accessible_to_user` when listing that person's projects, samples, or datasets. The reference may be an MFID, ORCID, username, or email. Use the same reference as `owner` when creating for that person.
-- `GET /account/profile` includes a `capabilities` object for workflow presentation. Platform administrators can list and search service accounts through `GET /service_accounts`, then retrieve `platform_role` and non-secret key status through `GET /service_accounts/{unique_id}`. Project membership clients must not assign a role above contributor to a non-admin service account.
-- Human platform administrators can change a service account's authority through `PATCH /service_accounts/{unique_id}` with `platform_role` set to `none`, `contributor`, or `admin`. Service-account callers cannot use this route, including service accounts that currently hold `platform_role=admin`. Authorization changes propagate through the in-process principal cache within the configured `AUTH_CACHE_TTL`, which defaults to 60 seconds.
+- `GET /account/profile` includes a `capabilities` object for workflow presentation, including `can_manage_users` for platform administrators. Platform administrators can list and search service accounts through `GET /service_accounts`, then retrieve `platform_role` and non-secret key status through `GET /service_accounts/{service_account_ref}`. Project membership clients must not assign a role above contributor to a non-admin service account.
+- Human platform administrators can change a service account's authority through `PATCH /service_accounts/{service_account_ref}` with `platform_role` set to `none`, `contributor`, or `admin`. Service-account callers cannot use this route, including service accounts that currently hold `platform_role=admin`. Authorization changes propagate through the in-process principal cache within the configured `AUTH_CACHE_TTL`, which defaults to 60 seconds.
 - Resource-manager identity pickers can use `GET /users/search?q={query}&is_service_account=true` to search public-safe service-account profiles without requiring platform-administrator access. Omitting `is_service_account` preserves mixed user and service-account search.
 - Initial scientific metadata for a newly created resource must use `POST /resources/{mfid}/metadata`. `PATCH` remains an editor operation for merging into an existing metadata record.
 - Non-GCS associated files may include `storage_path` in `POST /datasets/{dataset_mfid}/files`. Clients should create the complete catalog-only record in one request instead of creating it and then patching the location.
 - `crucible-upload-uis/prefect_backend.py` currently maps its `owner_orcid` argument to the removed `owner_user_id` request key. That client must send `owner` or `owner_orcid`; otherwise its intended researcher owner is discarded before the request and the authenticated service account becomes owner.
 - `POST /projects` accepts either one existing explicit lead field or the flexible `project_lead` field. Sending both forms, or neither form, returns 400.
 - `PATCH /projects/{project_ref}` accepts `project_id`, `organization`, `status`, and `title`. Updating `project_id` renames the project slug without changing its MFID.
-- `PATCH /datasets/{dsid}` accepts dataset descriptive and publication fields but not owner or project reassignment.
-- `PATCH /samples/{sample_id}` accepts sample descriptive and publication fields but not project reassignment.
-- `PATCH /instruments/{instrument_mfid}` no longer accepts `owner`. Use the ownership-transfer route.
+- `PATCH /datasets/{dataset_mfid}` accepts dataset descriptive and publication fields but not owner or project reassignment.
+- `PATCH /samples/{sample_mfid}` accepts sample descriptive and publication fields but not project reassignment.
+- `PATCH /instruments/{instrument_ref}` no longer accepts `owner`. Use the ownership-transfer route.
 - Platform administrators may create an ORCID-less human through `POST /users` by omitting `unique_id`; the API returns a generated MFID and sets `is_service_account=false`. Supplied `unique_id` or `orcid` values must be ORCIDs. Human user create and update payloads no longer accept `is_service_account`. Retrieve a test user's key through `POST /users/{mfid}/apikey`.
 - Resource creation now fails atomically with 409 when a required owner, project, or public access group is missing. Clients should surface the error and must not assume that a partial resource was created.
 
@@ -301,7 +325,7 @@ The existing `POST /users` compatibility body remains wrapped:
 }
 ```
 
-Use the returned `unique_id` MFID for canonical user routes. To authenticate as that user during staging tests, a platform administrator can retrieve its key once with `POST /users/{unique_id}/apikey`.
+Use the returned `unique_id` MFID for canonical user routes. To authenticate as that user during staging tests, a platform administrator can retrieve its key once with `POST /users/{user_ref}/apikey`.
 
 ## Files and ingestion
 

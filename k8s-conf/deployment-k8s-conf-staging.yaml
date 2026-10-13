@@ -129,6 +129,36 @@ spec:
             configMapKeyRef:
               key: ANTHROPIC_DEFAULT_HAIKU_MODEL
               name: crucible-api-config-staging
+        - name: "UPLOAD_BUCKET"
+          valueFrom:
+            configMapKeyRef:
+              key: UPLOAD_BUCKET
+              name: crucible-api-config-staging
+        - name: "STORAGE_READ_BUCKETS"
+          valueFrom:
+            configMapKeyRef:
+              key: STORAGE_READ_BUCKETS
+              name: crucible-api-config-staging
+        - name: "MULTIPART_UPLOAD_ENABLED"
+          valueFrom:
+            configMapKeyRef:
+              key: MULTIPART_UPLOAD_ENABLED
+              name: crucible-api-config-staging
+        - name: "MULTIPART_UPLOAD_BUCKET"
+          valueFrom:
+            configMapKeyRef:
+              key: MULTIPART_UPLOAD_BUCKET
+              name: crucible-api-config-staging
+        - name: "MULTIPART_UPLOAD_SIGNER"
+          valueFrom:
+            configMapKeyRef:
+              key: MULTIPART_UPLOAD_SIGNER
+              name: crucible-api-config-staging
+        - name: "MULTIPART_UPLOAD_PROJECT"
+          valueFrom:
+            configMapKeyRef:
+              key: MULTIPART_UPLOAD_PROJECT
+              name: crucible-api-config-staging
         image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-staging:latest"
         imagePullPolicy: Always
         name: "crucible-api-container"

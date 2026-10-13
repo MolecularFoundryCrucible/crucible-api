@@ -9,6 +9,7 @@ from sqlalchemy.sql import and_, exists
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
+from app.api.path_params import ResourceMfid
 from app.general_utils import get_utc_datetime
 from app.models.core_models import (
     AccessGroup,
@@ -23,6 +24,7 @@ from app.models.access import AccessGrantRead, AccessGrantWrite
 from app.models.access_groups import AccessGroupRead
 from app.models.datasets import DatasetResponse, ScientificMetadataBinaryRead
 from app.models.deletion import DeletionRequestCapabilities, DeletionRequestRead
+from app.utils.deletion_utils import deletion_preview_read, deletion_summary
 from app.models.instrument import InstrumentResponse
 from app.models.links import LinkedResource
 from app.models.projects import ProjectWithLead
@@ -56,7 +58,7 @@ from app.utils.permissions import (
 from app.utils.sql_utils import add_or_update, set_public, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
 from app.utils.link_utils import fetch_readable_links
-from app.utils.project_utils import is_project_group, project_id_matches
+from app.utils.project_utils import is_project_group, resolve_project_identifiers, resolve_project_reference
 from app.utils.user_utils import resolve_user_by_identifier
 from app.utils.cursor_utils import (
     CursorError,
@@ -334,10 +336,10 @@ def search_resource_metadata_v2(
     return PaginatedResponse(limit=limit, items=items)
 
 
-@router.get("/resources/{resource_id}", response_model=Union[DatasetResponse, SampleResponse, InstrumentResponse, ProjectWithLead])
+@router.get("/resources/{mfid}", response_model=Union[DatasetResponse, SampleResponse, InstrumentResponse, ProjectWithLead])
 def get_resource(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    resource_id: str,
+    resource_id: ResourceMfid,
     params: Annotated[ResourceDetailQuery, Query()],
 ):
     """
@@ -368,8 +370,8 @@ def get_resource(
         )
 
 
-@router.get("/resources/{resource_id}/links", response_model=List[LinkedResource])
-def get_resource_links(resource_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/resources/{mfid}/links", response_model=List[LinkedResource])
+def get_resource_links(resource_id: ResourceMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     """
     Returns the immediate links for a resource (dataset or sample):
     parent/child via lineage and associated resources.
@@ -403,8 +405,8 @@ def get_resource_links(resource_id: str, auth_res: Annotated[Principal, Depends(
         )
 
 
-@router.get("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
-def read_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: str):
+@router.get("/resources/{mfid}/metadata", response_model=ScientificMetadataBinaryRead)
+def read_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: ResourceMfid):
     with Session(engine) as session:
         resource = session.exec(
             select(Resource)
@@ -422,8 +424,8 @@ def read_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user
         return resource.scientific_metadata
 
 
-@router.post("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
-def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: str, scientific_md: dict,
+@router.post("/resources/{mfid}/metadata", response_model=ScientificMetadataBinaryRead)
+def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: ResourceMfid, scientific_md: dict,
                              background_tasks: BackgroundTasks, overwrite: bool = False):
     '''Creates initial metadata with contributor access. Replacing metadata requires editor access.'''
     user_unique_id = auth_res.user_id
@@ -465,8 +467,8 @@ def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
         return new_md_obj
 
 
-@router.patch("/resources/{unique_id}/metadata", response_model=ScientificMetadataBinaryRead)
-def update_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: str, scientific_md_updates: dict,
+@router.patch("/resources/{mfid}/metadata", response_model=ScientificMetadataBinaryRead)
+def update_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: ResourceMfid, scientific_md_updates: dict,
                              background_tasks: BackgroundTasks):
     user_unique_id = auth_res.user_id
 
@@ -501,16 +503,18 @@ def update_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
         return new_md_obj
 
 
-@router.post("/resources/{resource_id}/delete", response_model=DeletionRequestRead)
+@router.post("/resources/{mfid}/delete", response_model=DeletionRequestRead)
 def create_deletion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    resource_id: str,
+    resource_id: ResourceMfid,
     reason: Optional[str] = None,
 ):
     '''
-    Request deletion of a resource. Requires contributor access to the resource.
-    Pending requests hide the resource from ordinary discovery until rejected.
-    Returns 409 if an active deletion request already exists for this resource.
+    Request deletion of a resource. Requires contributor access for datasets and
+    samples, admin for projects and instruments. Pending requests hide the
+    resource from ordinary discovery until rejected.
+    Returns 409 if an active deletion request already exists for this resource,
+    or if a project or instrument still has assigned datasets or samples.
     '''
     requester_id = auth_res.user_id
     with Session(engine) as session:
@@ -520,20 +524,29 @@ def create_deletion_request(
         if resource is None:
             raise HTTPException(status_code=404, detail=f"Resource {resource_id} not found.")
 
-        if resource.resource_type not in ("dataset", "sample"):
+        if resource.resource_type not in ("dataset", "sample", "project", "instrument"):
             raise HTTPException(
                 status_code=400,
                 detail=f"Deletion requests are not supported for resource type '{resource.resource_type}'."
             )
 
         acl_rows = fetch_acl_rows(session, resource_id)
-        require_permission(
-            session,
-            auth_res,
-            resource_id,
-            Permission.CREATE,
-            acl_rows=acl_rows,
-        )
+        if resource.resource_type in ("project", "instrument"):
+            require_permission(
+                session,
+                auth_res,
+                resource_id,
+                Permission.DELETE,
+                acl_rows=acl_rows,
+            )
+        else:
+            require_permission(
+                session,
+                auth_res,
+                resource_id,
+                Permission.CREATE,
+                acl_rows=acl_rows,
+            )
 
         existing = session.exec(
             select(DeletionRequest)
@@ -545,6 +558,20 @@ def create_deletion_request(
                 status_code=409,
                 detail=f"A deletion request for {resource_id} already exists (status: {existing.status}).",
             )
+
+        if resource.resource_type in ("project", "instrument"):
+            blocking = deletion_summary(session, resource.resource_type, resource_id)["blocking"]
+            if blocking:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "detail": (
+                            f"Cannot delete {resource.resource_type} '{resource_id}': "
+                            f"it still has assigned datasets or samples."
+                        ),
+                        "blocking": blocking,
+                    },
+                )
 
         resource_name = None
         project_id = None
@@ -561,6 +588,16 @@ def create_deletion_request(
                 resource_name = samp.sample_name
                 project_id = samp.project_id
                 project_mfid = samp.project_mfid
+        elif resource.resource_type == "project":
+            project = session.exec(select(Project).where(Project.unique_id == resource_id)).one_or_none()
+            if project is not None:
+                resource_name = project.project_id
+                project_id = project.project_id
+                project_mfid = project.unique_id
+        elif resource.resource_type == "instrument":
+            instrument = session.exec(select(Instrument).where(Instrument.unique_id == resource_id)).one_or_none()
+            if instrument is not None:
+                resource_name = instrument.instrument_name
 
         deletion_req = DeletionRequest(
             resource_id=resource_id,
@@ -590,8 +627,15 @@ def create_deletion_request(
         requester = session.exec(
             select(User).where(User.unique_id == requester_id)
         ).one_or_none()
+        preview = None
+        if resource.resource_type in ("project", "instrument"):
+            summary = deletion_summary(session, resource.resource_type, resource_id)
+            preview = deletion_preview_read(
+                resource_id, resource.resource_type, False, summary
+            )
         return DeletionRequestRead(
             **deletion_req.model_dump(),
+            resource_mfid=deletion_req.resource_id,
             resource_type=deletion_req.resource.resource_type if deletion_req.resource else None,
             project_id=project_id,
             project_mfid=project_mfid,
@@ -602,6 +646,7 @@ def create_deletion_request(
                     auth_res, acl_rows, Permission.DELETE
                 )
             ),
+            preview=preview,
         )
 
 
@@ -725,8 +770,7 @@ def _resolve_grantee(session, kind: str, principal: str):
         group_name = user.unique_id
         group_type = AccessGroupType.IDENTITY.value
     elif kind == "projects":
-        proj = session.exec(select(Project).where(
-            project_id_matches(principal))).one_or_none()
+        proj = resolve_project_reference(principal, session)
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project '{principal}' not found")
         group_name = proj.unique_id
@@ -1055,6 +1099,7 @@ def transfer_ownership(mfid: str, body: TransferOwnershipRequest,
             previous_owner = _current_owner(session, resource, mfid)
             return TransferOwnershipRead(
                 resource_id=mfid,
+                resource_mfid=mfid,
                 previous_owner=UserPublicRead.model_validate(previous_owner) if previous_owner else None,
                 new_owner=UserPublicRead.model_validate(new_owner),
             )
@@ -1069,6 +1114,7 @@ def transfer_ownership(mfid: str, body: TransferOwnershipRequest,
 
         return TransferOwnershipRead(
             resource_id=mfid,
+            resource_mfid=mfid,
             previous_owner=UserPublicRead.model_validate(previous_owner) if previous_owner else None,
             new_owner=UserPublicRead.model_validate(new_owner),
         )
@@ -1087,8 +1133,8 @@ def _current_project_grants(session, mfid: str) -> List[tuple]:
 def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
                               auth_res: Annotated[Principal, Depends(authorize_user)],
                               confirm: bool = False):
-    if body.project_id is None:
-        raise HTTPException(status_code=422, detail="project_id is required")
+    if body.project_id is None and body.project_mfid is None:
+        raise HTTPException(status_code=422, detail="project_id or project_mfid is required")
 
     with Session(engine) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
@@ -1100,25 +1146,34 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
 
         require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
 
-        new_proj = session.exec(select(Project).where(project_id_matches(body.project_id))).one_or_none()
+        new_proj = resolve_project_identifiers(session, body.project_id, body.project_mfid)
         if new_proj is None:
-            raise HTTPException(status_code=404, detail=f"Project '{body.project_id}' not found")
+            raise HTTPException(status_code=404,
+                                detail=f"Project '{body.project_id or body.project_mfid}' not found")
         require_permission(session, auth_res, new_proj.unique_id, Permission.CREATE)
+        from app.utils.deletion_utils import assert_not_pending_deletion
+        assert_not_pending_deletion(session, new_proj.unique_id)
 
         current_grants = _current_project_grants(session, mfid)
-        previous_project_id = None
+        prev_proj = None
         if current_grants:
             _, prev_ag = current_grants[0]
             prev_proj = session.exec(select(Project).where(Project.unique_id == prev_ag.group_name)).one_or_none()
-            previous_project_id = prev_proj.project_id if prev_proj else None
+        result = ReassignProjectRead(
+            resource_id=mfid,
+            resource_mfid=mfid,
+            previous_project_id=prev_proj.project_id if prev_proj else None,
+            previous_project_mfid=prev_proj.unique_id if prev_proj else None,
+            new_project_id=new_proj.project_id,
+            new_project_mfid=new_proj.unique_id,
+        )
 
         if not confirm:
-            return ReassignProjectRead(resource_id=mfid, previous_project_id=previous_project_id,
-                                       new_project_id=body.project_id)
+            return result
 
         new_ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == new_proj.unique_id)).one_or_none()
         if new_ag is None:
-            raise HTTPException(status_code=409, detail=f"No access group for project '{body.project_id}'")
+            raise HTTPException(status_code=409, detail=f"No access group for project '{new_proj.project_id}'")
 
         for acl, _ in current_grants:
             session.delete(acl)
@@ -1128,12 +1183,11 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
         entity_model = Dataset if resource.resource_type == "dataset" else Sample
         entity = session.exec(select(entity_model).where(entity_model.unique_id == mfid)).one_or_none()
         if entity is not None:
-            entity.project_id = body.project_id
+            entity.project_id = new_proj.project_id
             entity.project_mfid = new_proj.unique_id
             session.add(entity)
 
         touch_resource_modification_time(session, mfid)
         session.commit()
 
-        return ReassignProjectRead(resource_id=mfid, previous_project_id=previous_project_id,
-                                   new_project_id=body.project_id)
+        return result

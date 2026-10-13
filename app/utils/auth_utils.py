@@ -1,4 +1,4 @@
-from typing import Annotated, Optional, Sequence
+from typing import Annotated, Iterable, Optional, Sequence
 import logging
 import re
 import os
@@ -8,6 +8,7 @@ import requests
 import secrets
 import datetime
 from collections import namedtuple
+from dataclasses import replace
 from cachetools import TTLCache
 from jose import jwt, JWTError
 
@@ -21,7 +22,7 @@ from app.general_utils import  get_secret
 from app.api.dependencies import get_engine, get_api_path, get_api_url
 from app.models.core_models import ApiToken
 from app.models.resource import ResourceCapabilities
-from app.utils.hub_tokens import ACCESS_PREFIX, InvalidHubGrant, hub_access_user
+from app.utils.hub_tokens import ACCESS_PREFIX, InvalidHubGrant, hub_access_family
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, THRESHOLDS, GroupMembership, Permission, PlatformRole,
     Principal, PrivilegeMode, PrivilegeModeSource, Role, can_grant,
@@ -236,10 +237,11 @@ def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
     if apikey.startswith(ACCESS_PREFIX):
         with Session(engine) as session:
             try:
-                user_unique_id = hub_access_user(session, apikey)
+                family = hub_access_family(session, apikey)
             except InvalidHubGrant:
                 raise HTTPException(status_code=401, detail="Invalid or expired API credential.")
-            return load_principal(session, user_unique_id)
+            authenticated_at = family.auth_time.replace(tzinfo=family.auth_time.tzinfo or datetime.timezone.utc) if family.auth_time else None
+            return replace(load_principal(session, family.user_unique_id), credential="hub", authenticated_at=authenticated_at)
 
     cache_key = _auth_cache_key(apikey)
     with _auth_cache_lock:
@@ -340,7 +342,8 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
                           manage_access_floor: Role = THRESHOLDS[Permission.MANAGE_ACL],
                           allow_peer_grants: bool = True,
                           status_permission: Optional[Permission] = Permission.DELETE,
-                          acl_rows: Optional[Sequence[tuple[int, Role]]] = None) -> ResourceCapabilities:
+                          acl_rows: Optional[Sequence[tuple[int, Role]]] = None,
+                          can_delete: bool = False) -> ResourceCapabilities:
     if acl_rows is None:
         acl_rows = fetch_acl_rows(session, mfid)
     actor_role = effective_role(principal, acl_rows)
@@ -359,6 +362,11 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
                 max_grant_role = target.db_value
                 break
 
+    may_delete = can_delete and (
+        _has_resource_permission(principal, acl_rows, Permission.DELETE)
+        or _has_resource_permission(principal, acl_rows, Permission.HARD_DELETE)
+    )
+
     return ResourceCapabilities(
         can_edit=_has_resource_permission(
             principal, acl_rows, Permission.EDIT),
@@ -370,6 +378,7 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
         ),
         can_transfer=_has_resource_permission(
             principal, acl_rows, Permission.TRANSFER),
+        can_delete=may_delete,
         max_grant_role=max_grant_role,
     )
 
@@ -511,24 +520,32 @@ def maintainer_affiliation_filter(principal: Principal, resource_model):
     )
 
 
-def project_owner_affiliation_filter(principal: Principal, project_model):
+def project_member_filter(user_id: str, project_model, roles: Optional[Iterable[Role]] = None):
+    """Projects where `user_id` stands in the project's own access group,
+    optionally at one of `roles`."""
     from sqlalchemy import exists
     from app.models.core_models import AccessGroup, User, UserAccessGroupLink
     from app.utils.permissions import AccessGroupType
 
+    conditions = [
+        AccessGroup.group_name == project_model.unique_id,
+        AccessGroup.group_type == AccessGroupType.PROJECT.value,
+        UserAccessGroupLink.accessgroup_id == AccessGroup.id,
+        UserAccessGroupLink.user_id == User.id,
+        User.unique_id == user_id,
+    ]
+    if roles:
+        conditions.append(UserAccessGroupLink.role.in_([Role.from_db(r).db_value for r in roles]))
     return (
         exists()
-        .where(
-            AccessGroup.group_name == project_model.unique_id,
-            AccessGroup.group_type == AccessGroupType.PROJECT.value,
-            UserAccessGroupLink.accessgroup_id == AccessGroup.id,
-            UserAccessGroupLink.role == Role.OWNER.db_value,
-            UserAccessGroupLink.user_id == User.id,
-            User.unique_id == principal.user_id,
-        )
+        .where(*conditions)
         .select_from(AccessGroup, UserAccessGroupLink, User)
         .correlate(project_model)
     )
+
+
+def project_owner_affiliation_filter(principal: Principal, project_model):
+    return project_member_filter(principal.user_id, project_model, roles=(Role.OWNER,))
 
 
 def access_group_permission_filter(accessgroup_id: int, resource_model,
@@ -595,6 +612,35 @@ def require_platform_admin(principal: Principal) -> None:
     if principal.is_platform_admin:
         return
     raise HTTPException(status_code=403, detail="Not authorized")
+
+
+STEP_UP_MAX_AGE = 600
+API_KEY_READ_DEPRECATION = "@1791763200"
+
+
+def require_recent_authentication(principal: Principal) -> None:
+    """Raise the RFC 9470 step-up challenge unless a Hub session's ORCID sign-in is recent. API keys are exempt."""
+    if principal.credential != "hub":
+        return
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if principal.authenticated_at is not None and now - principal.authenticated_at <= timedelta(seconds=STEP_UP_MAX_AGE):
+        return
+    raise HTTPException(
+        status_code=401,
+        detail={"code": "insufficient_user_authentication", "max_age": STEP_UP_MAX_AGE},
+        headers={"WWW-Authenticate": f'Bearer error="insufficient_user_authentication", error_description="Recent sign-in required", max_age="{STEP_UP_MAX_AGE}"'},
+    )
+
+
+def reject_hub_api_key_read(principal: Principal) -> None:
+    if principal.credential == "hub":
+        raise HTTPException(status_code=403, detail={"code": "api_key_read_not_allowed", "message": "Hub sessions cannot read API keys; regenerate a key instead"})
+
+
+def has_active_api_key(orcid: str, engine) -> bool:
+    one_year_ago = (date.today() - timedelta(365)).isoformat()
+    with Session(engine) as session:
+        return session.exec(select(ApiToken.token).where(ApiToken.user_unique_id == orcid, ApiToken.token_created > one_year_ago)).first() is not None
 
 
 def require_self_or_platform_admin(principal: Principal, orcid: str) -> None:
@@ -686,17 +732,3 @@ def access_selector_filter(session, caller: Principal, resource_model,
         filters.append(access_group_permission_filter(group.id, resource_model))
 
     return and_(*filters)
-
-
-def is_instrument_group_member(principal: Principal, session) -> bool:
-    """Whether the caller holds standing in any registered instrument's
-    operator group — named after the instrument's MFID (unique_id).
-    """
-    from app.models.core_models import Instrument
-
-    if not principal.groups:
-        return False
-    group_names = {g.group_name for g in principal.groups}
-    return session.exec(
-        select(Instrument).where(Instrument.unique_id.in_(group_names))
-    ).first() is not None

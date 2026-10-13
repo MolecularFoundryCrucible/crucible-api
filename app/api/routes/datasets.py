@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
+from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
 from app.general_utils import get_secret, get_utc_datetime
 from app.models.core_models import (
     AccessGroup,
@@ -51,6 +52,7 @@ from app.models.query_params import (
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
+from app.services import multipart
 from app.services.resource_details import ResourceDetailOptions, load_dataset_detail
 from app.services.resource_facets import list_dataset_facets
 from app.services.resource_filters import resource_scope_predicates
@@ -74,6 +76,7 @@ from app.utils.project_utils import (
 from app.utils.instrument_utils import (
     dataset_instrument_fields,
     dataset_instrument_name_filter,
+    resolve_instrument_filter_mfid,
     resolve_instrument_identifiers,
     resolve_instrument_mfids_to_references,
 )
@@ -87,8 +90,9 @@ from app.utils.search_utils import (
 )
 from app.utils.user_utils import resolve_create_owner
 from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
+from app.utils.deletion_utils import assert_not_pending_deletion
 from app.utils.gcs_record_utils import write_record, dataset_record
-from app.api.routes.gcs_storage import _ensure_storage_path, _generate_signed_url_link
+from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 
 router = APIRouter(tags=["datasets"])
 engine = get_engine()
@@ -96,9 +100,11 @@ RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
 DATASET_PAGINATION = ResourcePaginationSpec(
     kind="dataset",
     unique_id_column=Dataset.unique_id,
-    created_sort=Resource.creation_time,
-    updated_sort=func.coalesce(Resource.modification_time, Resource.creation_time),
-    name_sort=func.lower(Dataset.dataset_name),
+    sorts={
+        "created": Resource.creation_time,
+        "updated": func.coalesce(Resource.modification_time, Resource.creation_time),
+        "name": func.lower(Dataset.dataset_name),
+    },
 )
 LARGE_THUMBNAIL_LOOKUP_WARNING_SIZE = int(
     os.environ.get("THUMBNAIL_LARGE_LOOKUP_WARNING_SIZE", "1000")
@@ -129,8 +135,8 @@ def _normalize_thumbnail_input(dsid: str, thumbnail_b64str: str) -> str:
         raise HTTPException(status_code=500, detail="Unable to process thumbnail image") from exc
 
 
-@router.post("/datasets/{dsid}/carrier_segmentation")
-def request_carrier_segmentation(dsid, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.post("/datasets/{dataset_mfid}/carrier_segmentation")
+def request_carrier_segmentation(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
     msg = {
         "dsid": dsid,
@@ -145,8 +151,8 @@ def request_carrier_segmentation(dsid, auth_res: Annotated[Principal, Depends(au
     )
     return
 
-@router.post("/datasets/{dsid}/insitu_spec_aggregation")
-def request_insitu_aggregation(dsid, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.post("/datasets/{dataset_mfid}/insitu_spec_aggregation")
+def request_insitu_aggregation(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
     msg = {
         "dsid": dsid,
@@ -161,8 +167,8 @@ def request_insitu_aggregation(dsid, auth_res: Annotated[Principal, Depends(auth
     )
     return
 
-@router.post("/datasets/{dsid}/rga_analysis")
-def request_rga_analysis(dsid, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.post("/datasets/{dataset_mfid}/rga_analysis")
+def request_rga_analysis(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
     if dataset is None:
@@ -182,8 +188,8 @@ def request_rga_analysis(dsid, auth_res: Annotated[Principal, Depends(authorize_
     )
     return
 
-@router.post("/datasets/{dsid}/mosaic_stitch")
-def request_mosaic_stitch(dsid, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.post("/datasets/{dataset_mfid}/mosaic_stitch")
+def request_mosaic_stitch(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
     if dataset is None:
@@ -237,35 +243,27 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                 detail=f"Project '{requested_project_mfid}' not found",
             )
 
-        if not auth_res.is_platform_admin:
-            owner_orcid = dataset_details['owner_orcid']
+        if not has_global_permission(auth_res, Permission.CREATE):
+            if dataset_details['owner_orcid'] != user_unique_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only platform contributors and administrators may create a dataset on behalf of another user")
             proj_id = project.project_id if project is not None else requested_project_id
             if proj_id:
-                if (
-                    owner_orcid != user_unique_id
-                    and not has_global_permission(auth_res, Permission.CREATE)
-                ):
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Only platform contributors and administrators may create a dataset on behalf of another user")
                 standing = (
-                    project_standing_by_mfid(owner_orcid, project.unique_id, session)
+                    project_standing_by_mfid(user_unique_id, project.unique_id, session)
                     if project is not None
                     else None
                 )
                 if standing is None or standing < Role.CONTRIBUTOR:
                     raise HTTPException(
                         status_code=403,
-                        detail=f"'{owner_orcid}' must be contributor or above in project '{proj_id}' to create there")
-            elif owner_orcid != user_unique_id:
-                if not has_global_permission(auth_res, Permission.CREATE):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Creating on behalf of another user requires project_id, to verify their standing there")
+                        detail=f"Caller '{user_unique_id}' must be contributor or above in project '{proj_id}' to create there")
 
         if requested_project_id is not None or requested_project_mfid is not None:
             if project is None:
                 raise HTTPException(status_code=404, detail=f"Project '{requested_project_id}' not found")
+            assert_not_pending_deletion(session, project.unique_id)
             dataset_details['project_id'] = project.project_id
             dataset_details['project_mfid'] = project.unique_id
 
@@ -293,6 +291,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                             "instrument. Use instrument_id or instrument_mfid."))
             instrument = matches[0]
         if instrument is not None:
+            assert_not_pending_deletion(session, instrument.unique_id)
             dataset_details['instrument_id'] = instrument.id
             dataset_details['instrument_mfid'] = instrument.unique_id
 
@@ -370,8 +369,8 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         })
 
 
-@router.patch("/datasets/{dsid}", response_model=DatasetResponse)
-def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, updated_dataset: DatasetUpdate,
+@router.patch("/datasets/{dataset_mfid}", response_model=DatasetResponse)
+def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, updated_dataset: DatasetUpdate,
                    background_tasks: BackgroundTasks):
     '''
     Partially update a dataset record. Only provided fields are modified.
@@ -458,8 +457,8 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
         })
 
 
-@router.put("/datasets/{dsid}/instrument", response_model=DatasetInstrumentRead)
-def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str,
+@router.put("/datasets/{dataset_mfid}/instrument", response_model=DatasetInstrumentRead)
+def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid,
                               assignment: DatasetInstrumentAssign,
                               background_tasks: BackgroundTasks):
     '''
@@ -490,6 +489,7 @@ def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_u
 
         instrument = resolve_instrument_identifiers(
             session, assignment.instrument_id, assignment.instrument_mfid)
+        assert_not_pending_deletion(session, instrument.unique_id)
 
         previous_instrument = None
         if ds.instrument_mfid is not None:
@@ -638,6 +638,8 @@ def list_datasets(
     with Session(engine) as session:
         filter_project_mfid = resolve_project_filter_mfid(
             session, project_id, project_mfid)
+        instrument_mfid = resolve_instrument_filter_mfid(
+            session, params.instrument_id, instrument_mfid)
         linked_sample_id = None
         if sample_mfid is not None:
             linked_sample_id = session.exec(
@@ -931,8 +933,8 @@ def read_dataset(
         )
 
 
-@router.post("/datasets/{parent_dataset_id}/children/{child_dataset_id}", response_model=DatasetLink)
-def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Annotated[Principal, Depends(authorize_user)],
+@router.post("/datasets/{parent_dataset_mfid}/children/{child_dataset_mfid}", response_model=DatasetLink)
+def link_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_dataset_id: ChildDatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                               relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
     '''
     Link two datasets as parent and child.
@@ -984,8 +986,8 @@ def link_dataset_parent_child(parent_dataset_id, child_dataset_id, auth_res: Ann
         return link
 
 
-@router.delete("/datasets/{parent_dataset_id}/children/{child_dataset_id}")
-def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.delete("/datasets/{parent_dataset_mfid}/children/{child_dataset_mfid}")
+def unlink_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_dataset_id: ChildDatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
     with Session(engine) as session:
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
@@ -1021,8 +1023,8 @@ def unlink_dataset_parent_child(parent_dataset_id: str, child_dataset_id: str, a
         return {"message": f"Successfully unlinked {parent_dataset_id} -> {child_dataset_id}"}
 
 
-@router.get("/datasets/{child_dataset_id}/parents", response_model=PaginatedResponse[DatasetRead])
-def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
+@router.get("/datasets/{child_dataset_mfid}/parents", response_model=PaginatedResponse[DatasetRead])
+def list_parent_datasets(child_dataset_id: ChildDatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                          limit: int = Query(default=100, ge=1, le=1000),
                          offset: int = Query(default=0, ge=0),
                          relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
@@ -1063,8 +1065,8 @@ def list_parent_datasets(child_dataset_id: str, auth_res: Annotated[Principal, D
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.get("/datasets/{parent_dataset_id}/children", response_model=PaginatedResponse[DatasetRead])
-def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)],
+@router.get("/datasets/{parent_dataset_mfid}/children", response_model=PaginatedResponse[DatasetRead])
+def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                         limit: int = Query(default=100, ge=1, le=1000),
                         offset: int = Query(default=0, ge=0),
                         relationship_type: Optional[Literal["is_derived_from", "is_part_of"]] = Query(default=None)):
@@ -1107,8 +1109,8 @@ def list_child_datasets(parent_dataset_id: str, auth_res: Annotated[Principal, D
 
 
 
-@router.delete('/datasets/{dsid}/samples/{sample_id}')
-def unlink_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, sample_id: str):
+@router.delete('/datasets/{dataset_mfid}/samples/{sample_mfid}')
+def unlink_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, sample_id: SampleMfid):
 
     with Session(engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
@@ -1145,8 +1147,12 @@ def unlink_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)
 
 
 
-@router.get("/datasets/{dsid}/thumbnails", response_model=List[ThumbnailRead])
-def read_thumbnails(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str):
+def _thumbnail_read(thumbnail: Thumbnail, dataset_mfid: str) -> ThumbnailRead:
+    return ThumbnailRead.model_validate(thumbnail, update={"dataset_mfid": dataset_mfid})
+
+
+@router.get("/datasets/{dataset_mfid}/thumbnails", response_model=List[ThumbnailRead])
+def read_thumbnails(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid):
     '''
     Returns a list of thumbnail objects associated with the dataset ID provided
     '''
@@ -1164,7 +1170,7 @@ def read_thumbnails(auth_res: Annotated[Principal, Depends(authorize_user)], dsi
             .where(Thumbnail.dataset_id == ds.id)
             .order_by(Thumbnail.id)
         ).all()
-        return ds_thumbnails
+        return [_thumbnail_read(tn, ds.unique_id) for tn in ds_thumbnails]
 
 
 @router.post(
@@ -1238,9 +1244,9 @@ def get_first_thumbnails(
             for t in first_thumbnails
         }
     
-@router.post("/datasets/{dsid}/thumbnails", response_model=ThumbnailRead)
+@router.post("/datasets/{dataset_mfid}/thumbnails", response_model=ThumbnailRead)
 def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
-                  dsid: str,
+                  dsid: DatasetMfid,
                   thumbnail: ThumbnailCreate):
     '''
     Adds a thumbnail to a dataset. Repeated uploads of the same normalized image
@@ -1296,17 +1302,16 @@ def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
 
         session.commit()
         session.refresh(tn_obj)
-
-    return(tn_obj)
+        return _thumbnail_read(tn_obj, ds.unique_id)
 
 
 @router.patch(
-    "/datasets/{dsid}/thumbnails/{thumbnail_id}",
+    "/datasets/{dataset_mfid}/thumbnails/{thumbnail_id}",
     response_model=ThumbnailRead,
 )
 def update_thumbnail(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    dsid: str,
+    dsid: DatasetMfid,
     thumbnail_id: int,
     update: ThumbnailUpdate,
 ):
@@ -1341,14 +1346,14 @@ def update_thumbnail(
         touch_resource_modification_time(session, dsid)
         session.commit()
         session.refresh(thumbnail)
-        return thumbnail
+        return _thumbnail_read(thumbnail, dsid)
 
 
 @router.delete(
-    "/datasets/{dsid}/thumbnails/{thumbnail_id}",
+    "/datasets/{dataset_mfid}/thumbnails/{thumbnail_id}",
     response_model=dict[str, str],
 )
-def delete_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, thumbnail_id: int):
+def delete_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, thumbnail_id: int):
     '''Removes a thumbnail from a dataset and deletes it.'''
 
     with Session(engine) as session:
@@ -1372,10 +1377,14 @@ def delete_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)], ds
         return {"message": f"Thumbnail {thumbnail_id} deleted from dataset {dsid}"}
 
 
-@router.get("/datasets/{dsid}/download_links")
+@router.get("/datasets/{dataset_mfid}/download_links")
 def generate_dataset_download_links(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    dsid: str,
+    dsid: DatasetMfid,
+    disposition: Annotated[
+        Literal["attachment", "inline"],
+        Query(description="attachment (default) makes browsers save the file; inline asks them to display it when they can. Script-capable types (HTML, SVG, XML, +xml types, XSL) are always served as attachments."),
+    ] = "attachment",
 ):
     '''
     Returns signed GCS download URLs (1-hour expiry) for all files in the dataset,
@@ -1398,7 +1407,7 @@ def generate_dataset_download_links(
                 mfid_to_path[af.mfid] = None
                 continue
             try:
-                mfid_to_path[af.mfid] = _ensure_storage_path(af, dsid, session)
+                mfid_to_path[af.mfid] = (_ensure_storage_path(af, dsid, session), af.storage_generation, af.filename)
             except HTTPException:
                 mfid_to_path[af.mfid] = None
         session.commit()
@@ -1410,15 +1419,16 @@ def generate_dataset_download_links(
             result[mfid] = None
             continue
         try:
-            url, _ = _generate_signed_url_link(storage_path)
+            path, generation, filename = storage_path
+            url, _ = _signed_download(mfid, dsid, path, generation, filename, disposition)
             result[mfid] = url
         except HTTPException:
             result[mfid] = None
     return result
 
 
-@router.get("/datasets/{dsid}/files", response_model=List[AssociatedFileRead])
-def read_associated_files(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str):
+@router.get("/datasets/{dataset_mfid}/files", response_model=List[AssociatedFileRead])
+def read_associated_files(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid):
     '''
     Returns a list of the files associated with the dataset ID provided.
     '''
@@ -1437,14 +1447,14 @@ def read_associated_files(auth_res: Annotated[Principal, Depends(authorize_user)
         return [AssociatedFileRead.model_validate(f, update={"dataset_mfid": f.dataset.unique_id}) for f in files]
 
 
-@router.post("/datasets/{dsid}/files", response_model=AssociatedFileRead)
+@router.post("/datasets/{dataset_mfid}/files", response_model=AssociatedFileRead)
 def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
-                        dsid: str,
+                        dsid: DatasetMfid,
                         associated_file: AssociatedFileCreate):
     '''
     Adds a file record to a dataset.
     Creates the record if one with the same sha256_hash and dataset does not already exist.
-    Use POST /datasets/{dsid}/files/{file_id}/ingest to trigger ingestion.
+    Use POST /datasets/{dataset_mfid}/files/{file_id}/ingest to trigger ingestion.
     Requires contributor access. A repeated hash returns the existing record unchanged.
     '''
 
@@ -1458,13 +1468,17 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
             select(AssociatedFile).where(
                 AssociatedFile.sha256_hash == associated_file.sha256_hash,
                 AssociatedFile.dataset_id == ds.id,
+                multipart.trusted_hash(),
             )
-        ).one_or_none()
+        ).first()
         if af_obj is not None:
             return AssociatedFileRead.model_validate(
                 af_obj,
                 update={"dataset_mfid": ds.unique_id},
             )
+
+        if multipart.filename_reserved(session, dsid, associated_file.filename):
+            raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
 
         af_obj = AssociatedFile(
             **associated_file.model_dump(),
@@ -1484,10 +1498,10 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
         return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": af_obj.dataset.unique_id})
 
 
-@router.post("/datasets/{dsid}/files/{file_id}/ingest", response_model=IngestionRequest, deprecated = True)
+@router.post("/datasets/{dataset_mfid}/files/{file_id}/ingest", response_model=IngestionRequest, deprecated = True, responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def create_ds_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    dsid: str,
+    dsid: DatasetMfid,
     file_id: str,
     ingestion_class: Optional[str] = None,
     status: Literal['requested', 'not_requested'] = 'requested',
@@ -1501,8 +1515,8 @@ def create_ds_file_ingestion_request(
     return create_file_ingestion_request(auth_res, file_id, ingestion_class, status)
 
 
-@router.get("/datasets/{dsid}/keywords", response_model=List[Keyword])
-def list_keywords_for_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str):
+@router.get("/datasets/{dataset_mfid}/keywords", response_model=List[Keyword])
+def list_keywords_for_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid):
 
 
     with Session(engine) as session:
@@ -1518,8 +1532,8 @@ def list_keywords_for_dataset(auth_res: Annotated[Principal, Depends(authorize_u
         return ds_keywords
 
 
-@router.post("/datasets/{dsid}/keywords", response_model=Keyword)
-def add_keyword(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, keyword: str):
+@router.post("/datasets/{dataset_mfid}/keywords", response_model=Keyword)
+def add_keyword(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, keyword: str):
     '''
     Adds a keyword to a dataset. If the keyword exists, it will simply add the existing keyword to the dataset object.
     Otherwise, the keyword will be created and then added to the dataset.
@@ -1554,8 +1568,20 @@ def add_keyword(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: s
         return(kw_obj)
 
 
-@router.post("/datasets/{dsid}/samples/{sample_id}", response_model=DatasetSampleLinkResponse)
-def link_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: str, sample_id: str):
+def _dataset_sample_link_response(ds: Dataset, samp: Sample) -> DatasetSampleLinkResponse:
+    return DatasetSampleLinkResponse(
+        dataset_id=ds.unique_id,
+        dataset_mfid=ds.unique_id,
+        dataset_name=ds.dataset_name,
+        sample_id=samp.unique_id,
+        sample_mfid=samp.unique_id,
+        sample_type=samp.sample_type,
+        sample_name=samp.sample_name,
+    )
+
+
+@router.post("/datasets/{dataset_mfid}/samples/{sample_mfid}", response_model=DatasetSampleLinkResponse)
+def link_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, sample_id: SampleMfid):
     '''Links a dataset to a readable sample in the same project with contributor access.
 
     Cross-project links retain the editor requirement on both resources.
@@ -1578,34 +1604,28 @@ def link_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)],
             )
         ).one_or_none()
         if link is not None:
-            return DatasetSampleLinkResponse(
-                dataset_id=ds.unique_id,
-                dataset_name=ds.dataset_name,
-                sample_id=samp.unique_id,
-                sample_type=samp.sample_type,
-                sample_name=samp.sample_name,
-            )
+            return _dataset_sample_link_response(ds, samp)
 
         session.add(DatasetSampleLink(sample_id=samp.id, dataset_id=ds.id))
 
         touch_resource_modification_time(session, dsid)
         touch_resource_modification_time(session, sample_id)
         session.commit()
-        return DatasetSampleLinkResponse(dataset_id=ds.unique_id, dataset_name=ds.dataset_name, sample_id=samp.unique_id, sample_type=samp.sample_type, sample_name=samp.sample_name)
+        return _dataset_sample_link_response(ds, samp)
 
 
 @router.get(
-    "/datasets/{dsid}/samples",
+    "/datasets/{dataset_mfid}/samples",
     response_model=PaginatedResponse[SampleRead],
     deprecated=True,
 )
-def read_samples_in_dataset(dsid: str, auth_res: Annotated[Principal, Depends(authorize_user)],
+def read_samples_in_dataset(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                             response: Response,
                             limit: int = Query(default=100, ge=1, le=1000),
                             offset: int = Query(default=0, ge=0)):
     '''
     Returns a paginated list of samples associated with the dataset ID provided.
-    Deprecated: use GET /samples?dataset_mfid={dsid}.
+    Deprecated: use GET /samples?dataset_mfid={dataset_mfid}.
     '''
     response.headers["Deprecation"] = RELATIONSHIP_ROUTE_DEPRECATION
     with Session(engine) as session:
@@ -1634,8 +1654,8 @@ def read_samples_in_dataset(dsid: str, auth_res: Annotated[Principal, Depends(au
         }) for s in samples]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
-@router.get("/datasets/{dataset_id}/dataset_graph")
-def dataset_graph(dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/datasets/{dataset_mfid}/dataset_graph")
+def dataset_graph(dataset_id: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     Returns a NetworkX node-link graph of all datasets connected (via parent/child
     relationships) to the given dataset. Loads all authorized datasets in the
@@ -1692,8 +1712,8 @@ def dataset_graph(dataset_id: str, auth_res: Annotated[Principal, Depends(author
         return json_graph.node_link_data(G.subgraph(component_nodes))
 
 
-@router.get("/datasets/{dataset_id}/dataset_graph_cte")
-def dataset_graph_cte(dataset_id: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/datasets/{dataset_mfid}/dataset_graph_cte")
+def dataset_graph_cte(dataset_id: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''
     CTE-based implementation (kept for reference). Prefer /dataset_graph.
     Returns a NetworkX node-link graph of all datasets connected (via parent/child

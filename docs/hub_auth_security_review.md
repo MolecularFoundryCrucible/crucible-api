@@ -30,7 +30,7 @@ Disposition for findings 1 and 2, recorded 2026-09-28: infrastructure changes ar
 
 ### 3. A Hub access token can retrieve an existing long-lived API key
 
-Disposition on 2026-09-28: the user deferred enforcement and retained current behavior. The intended direction is to retire existing-key retrieval and retain rotation. See [API-key lifecycle follow-up](api_key_lifecycle_followup.md), including the unresolved fresh-authentication requirement for rotation. This risk is documented, not remediated.
+Update 2026-10-12: mitigated for Hub sessions. Hub tokens can no longer read existing keys, and creating a key from a Hub session requires a recent ORCID sign-in; key reading is deprecated for API-key callers. See [API-key lifecycle](api_key_lifecycle_followup.md). Original disposition on 2026-09-28: the user deferred enforcement and retained current behavior. The intended direction is to retire existing-key retrieval and retain rotation. See [API-key lifecycle follow-up](api_key_lifecycle_followup.md), including the unresolved fresh-authentication requirement for rotation. This risk is documented, not remediated.
 
 - Rule: FASTAPI-AUTHZ-001, credential privilege restriction. Severity: High if Hub-token expiry/revocation is intended to bound compromise duration; requires an explicit product decision.
 - Evidence: `app/utils/auth_utils.py:234` accepts a Hub token and returns the same principal used by legacy clients. `app/api/routes/account.py:135` accepts that principal and returns `token.token` at line 150 without credential-type restrictions or fresh authentication. Legacy key validity is up to a year (`app/utils/auth_utils.py:97`).

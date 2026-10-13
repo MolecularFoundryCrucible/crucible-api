@@ -5,10 +5,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from sqlmodel import Session
 
+import app.api.routes.gcs_storage as gcs_storage
 from app.api.dependencies import get_engine
 from app.api.path_params import DatasetMfid
 from app.models.datasets import AssociatedFileRead
-from app.models.multipart import MultipartComplete, MultipartInitiate, MultipartParts, MultipartStatus, SignedPart, SignedParts, UploadedPart
+from app.models.multipart import MultipartComplete, MultipartInitiate, MultipartParts, MultipartReplace, MultipartStatus, SignedPart, SignedParts, UploadedPart
 from app.services import multipart as service
 from app.services.multipart_storage import get_multipart_storage, StorageFailure, UploadMissing
 from app.utils.auth_utils import authorize_user
@@ -19,12 +20,21 @@ router = APIRouter(tags=["storage"])
 engine = get_engine()
 
 
-@router.post("/datasets/{dataset_mfid}/upload/multipart/initiate", response_model=MultipartStatus)
+@router.post("/datasets/{dataset_mfid}/upload/multipart/initiate", response_model=MultipartStatus, responses={409: {"description": "A file with this filename already exists in the dataset: `{\"detail\": {\"code\": \"filename_exists\", \"file_mfid\": ..., \"etag\": ..., \"message\": ...}}`; replace it through `POST /files/{file_mfid}/upload/multipart/initiate`. Other conflicts (filename reserved, reused Idempotency-Key) return a plain string detail"}})
 def initiate(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, body: MultipartInitiate, idempotency_key: Annotated[str | None, Header(min_length=1, max_length=128)] = None):
     config = MultipartStorageConfig.from_env()
     if not config.enabled:
         raise HTTPException(503, "New multipart uploads are disabled", headers={"Retry-After": "60"})
     return service.initiate(engine, get_multipart_storage, auth_res, dsid, body, idempotency_key, config)
+
+
+@router.post("/files/{file_mfid}/upload/multipart/initiate", response_model=MultipartStatus, responses={400: {"description": "The file is a catalog-only (non-GCS) record; edit it with `PATCH /files/{file_id}`"}, 409: {"description": "Another replace of this file is in progress: `{\"detail\": {\"code\": \"replace_in_progress\", \"upload_id\": ..., \"message\": ...}}`. A reused Idempotency-Key with a different request returns a plain string detail"}, 412: {"description": "If-Match does not match the file's current ETag: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}})
+def initiate_replace(auth_res: Annotated[Principal, Depends(authorize_user)], file_mfid: str, body: MultipartReplace, idempotency_key: Annotated[str | None, Header(min_length=1, max_length=128)] = None, if_match: Annotated[str | None, Header()] = None):
+    """Start replacing an existing GCS file's content. Requires EDIT on its dataset. Upload parts and complete through the dataset's multipart routes; completion keeps the file MFID and filename. Send If-Match with the file's ETag to refuse the replace when the file has changed; `If-Match: *` matches any ETag."""
+    config = MultipartStorageConfig.from_env()
+    if not config.enabled:
+        raise HTTPException(503, "New multipart uploads are disabled", headers={"Retry-After": "60"})
+    return service.initiate_replace(engine, get_multipart_storage, auth_res, file_mfid, body, idempotency_key, if_match, config, backfill=gcs_storage._ensure_storage_path)
 
 
 @router.post("/datasets/{dataset_mfid}/upload/multipart/{upload_id}/parts", response_model=SignedParts)
@@ -88,7 +98,7 @@ def get_status(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
 
 @router.post("/datasets/{dataset_mfid}/upload/multipart/complete", response_model=AssociatedFileRead)
 def complete(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, body: MultipartComplete):
-    return service.complete(engine, get_multipart_storage, auth_res, dsid, body)
+    return service.complete(engine, get_multipart_storage, auth_res, dsid, body, retire=lambda path, generation, retired_at: gcs_storage._retire_object(path, generation, retired_at))
 
 
 @router.delete("/datasets/{dataset_mfid}/upload/multipart/{upload_id}", status_code=204)

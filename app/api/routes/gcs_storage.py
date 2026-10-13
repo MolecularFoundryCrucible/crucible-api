@@ -15,7 +15,7 @@ from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
 from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead, UploadMultipartInitiateRead
 from app.services import multipart
-from app.services.storage_downloads import DOWNLOAD_LIFETIME, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, signed_download_url, upload_bucket
+from app.services.storage_downloads import DOWNLOAD_LIFETIME, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, retire_object, signed_download_url, upload_bucket
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
 from app.utils.sql_utils import add_or_update
@@ -70,7 +70,7 @@ def _determine_storage_path(dataset_mfid, filename):
     folder and return the storage path for the file. 
     """
     basename = filename.split("/")[-1]
-    ds_blobs = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).list_blobs(prefix=f'{dataset_mfid}/')
+    ds_blobs = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
     for blob in ds_blobs:
         if blob.name.startswith(multipart_prefix(dataset_mfid)):
             continue
@@ -81,6 +81,11 @@ def _determine_storage_path(dataset_mfid, filename):
             status_code=404,
             detail="File not found in production storage",
         )
+
+def _retire_object(storage_path, generation, retired_at):
+    bucket, _, key = storage_path.partition("/")
+    return retire_object(_get_gcs_storage_client(), bucket, key, generation, retired_at)
+
 
 def _ensure_storage_path(af, dsid: str, session) -> str:
     """Backfill storage_path from GCS if not set. Returns the storage_path."""

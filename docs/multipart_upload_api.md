@@ -43,6 +43,10 @@ The completion SHA-256 claim is recorded unverified (`sha256_verified_at` stays 
 
 Current ownership and CREATE permission are checked for status, signing, and completion, using the request's privilege mode. Owners may abort after dataset access is revoked. Already issued URLs remain usable until expiry or provider abort. Completed sessions retain their file identifier for retries; if that file has been deleted, completion returns 410. Deleting a file or hard-deleting a dataset removes database records only, as on the legacy routes; storage objects are not deleted. Editing file identity metadata clears trust metadata; changing its location clears its registered generation. Downloads and ingestion serve only objects under the file's own dataset in an allowed bucket, and multipart objects additionally require that internal generation; see [storage location confinement](storage_download_design.md).
 
+## Replacing a file
+
+`POST /files/{file_mfid}/upload/multipart/initiate` replaces an existing GCS file's content through this same multipart flow: the caller needs EDIT on the file's dataset, may send `If-Match` with the file's current `etag` (or `*` for any) to refuse a stale replace, and parts, status, abort, and completion use the dataset's existing routes. A stale `If-Match` returns 412 `etag_mismatch`, a concurrent replace on the same file 409 `replace_in_progress`, a change to the file (including its generation, hash, size, or backend) between initiation and completion 409 `file_changed`, lost EDIT before completion 403 `permission_revoked`, and a catalog-only (non-GCS) file 400. Completion keeps the file's MFID and filename and returns the same `AssociatedFileRead` with the new content and `etag`. The previous object is retired rather than deleted immediately; see [file replacement](file_replace_design.md) for the full flow, ETag definition, and retirement rules.
+
 ## Reference client
 
 `python -m scripts.multipart_upload_client --api https://host/api-root --dataset DATASET_MFID --file data.h5 --state upload-resume.json`
@@ -67,6 +71,8 @@ Set `CRUCIBLE_API_TOKEN` in the environment. The resume record contains a source
 | `MULTIPART_SIGNING_INTERVAL_SECONDS` | 5 seconds per session |
 
 Application Default Credentials impersonate the configured dedicated signer using Google's authentication library. The legacy `GCS_SA` secret is never used by this adapter. The API runtime identity needs the token-creator grant on the signer, and the signer needs object and multipart permissions on the upload bucket. Multipart objects share the bucket with legacy objects under the reserved `{dataset_mfid}/_files/` segment; the downscoped legacy upload token excludes that segment, so legacy token holders cannot read or overwrite them. [Google impersonation reference](https://google-auth.readthedocs.io/en/latest/reference/google.auth.impersonated_credentials.html)
+
+The environment bucket also needs a lifecycle rule `{"action": {"type": "Delete"}, "condition": {"daysSinceCustomTime": 7}}` that removes objects retired by a file replacement.
 
 The bucket lifecycle rule that aborts incomplete multipart uploads is required: it is the only cleanup for sessions that are abandoned or expire without an abort request. Set its age beyond the seven-day session lifetime. Failed verification and abort requests clean up immediately; when storage is unavailable during that cleanup, the lifecycle rule remains the fallback. Session records are retained; the scheduling columns `next_attempt_at`, `lease_owner`, `lease_expires_at`, `cleanup_requested_at`, and `attempts` are unused. Inspect `state`, `failure_code`, and `cleaned_at` for operations. GCS holds and retention can prevent object deletion and require operator intervention.
 

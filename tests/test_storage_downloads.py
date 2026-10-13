@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,6 +9,7 @@ from app.services.storage_downloads import (
     StorageObject,
     download_headers,
     resolve_storage_object,
+    retire_object,
     signed_download_url,
 )
 
@@ -156,3 +157,43 @@ def test_missing_object_raises_file_not_found():
     with pytest.raises(FileNotFoundError):
         signed_download_url(client, StorageObject("bucket", f"{DS}/a.txt", None), "a.txt")
     blob.generate_signed_url.assert_not_called()
+
+
+WHEN = datetime(2026, 10, 13, tzinfo=timezone.utc)
+
+
+def assert_bounded(call, **expected):
+    kwargs = dict(call.kwargs)
+    retry = kwargs.pop("retry")
+    assert kwargs == {**expected, "timeout": 30}
+    assert retry._timeout == 30
+
+
+def test_retire_object_sets_custom_time_pinned_to_generation():
+    client = MagicMock()
+    blob = client.bucket.return_value.blob.return_value
+    assert retire_object(client, "bucket", f"{DS}/a.txt", "7", WHEN) is True
+    client.bucket.return_value.blob.assert_called_once_with(f"{DS}/a.txt")
+    assert blob.custom_time == WHEN
+    blob.patch.assert_called_once()
+    assert_bounded(blob.patch.call_args, if_generation_match=7)
+    blob.reload.assert_not_called()
+
+
+def test_retire_object_reads_the_generation_of_a_legacy_object():
+    client = MagicMock()
+    blob = client.bucket.return_value.blob.return_value
+    blob.generation = 42
+    assert retire_object(client, "bucket", f"{DS}/a.txt", None, WHEN) is True
+    blob.reload.assert_called_once()
+    assert_bounded(blob.reload.call_args)
+    blob.patch.assert_called_once()
+    assert_bounded(blob.patch.call_args, if_generation_match=42)
+
+
+def test_retire_object_missing_object_is_false():
+    client = MagicMock()
+    blob = client.bucket.return_value.blob.return_value
+    blob.reload.side_effect = NotFound("gone")
+    assert retire_object(client, "bucket", f"{DS}/a.txt", None, WHEN) is False
+    blob.patch.assert_not_called()

@@ -16,6 +16,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Graph route migration](graph_routes_migration.md): current graph security behavior and deferred route consolidation.
 - [Remote file records](remote_file_records.md): implemented non-GCS file catalog behavior and deferred resource-generic attachment and file-identifier naming.
 - [Storage location confinement](storage_download_design.md): the location rule for GCS file downloads and ingestion, download header policy, and the multipart `_files` object layout.
+- [File replacement](file_replace_design.md): replacing a GCS file's content through the multipart flow, ETags, and retirement of the previous object.
 - [Route package conventions](../app/api/routes/readme.md): route module and shared dependency guidance.
 
 ## Operations and accepted data follow-ups

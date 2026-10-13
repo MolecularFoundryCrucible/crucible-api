@@ -546,6 +546,8 @@ class UploadSession(SQLModel, table=True):
     request_fingerprint: Optional[str] = None
     claimed_sha256: Optional[str] = None
     result_file_mfid: Optional[str] = None
+    replace_file_mfid: Optional[str] = Field(default=None, index=True)
+    replace_base_etag: Optional[str] = None
     storage_generation: Optional[str] = None
     failure_code: Optional[str] = None
     lease_owner: Optional[str] = None

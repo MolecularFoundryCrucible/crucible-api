@@ -37,6 +37,12 @@ class MultipartInitiate(BaseModel):
         return value
 
 
+class MultipartReplace(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    size: int = Field(gt=0, le=500 * 1024 ** 3, strict=True)
+    sha256_hash: SHA256 | None = None
+
+
 class MultipartPart(BaseModel):
     model_config = ConfigDict(extra="forbid")
     part_number: int = Field(ge=1, le=10000, strict=True)

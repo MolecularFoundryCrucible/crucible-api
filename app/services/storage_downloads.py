@@ -6,6 +6,7 @@ from pathlib import PurePosixPath
 from urllib.parse import quote
 
 from google.api_core.exceptions import NotFound
+from google.cloud.storage.retry import DEFAULT_RETRY
 
 DEFAULT_UPLOAD_BUCKET = "mf-storage-prod"
 MULTIPART_SEGMENT = "_files"
@@ -81,3 +82,16 @@ def signed_download_url(client, obj, filename, disposition="attachment"):
     if content_type:
         overrides["response_type"] = content_type
     return blob.generate_signed_url(version="v4", expiration=DOWNLOAD_LIFETIME, method="GET", generation=obj.generation, **overrides)
+
+
+def retire_object(client, bucket, key, generation, retired_at):
+    blob = client.bucket(bucket).blob(key)
+    if generation is None:
+        try:
+            blob.reload(timeout=30, retry=DEFAULT_RETRY.with_timeout(30))
+        except NotFound:
+            return False
+        generation = blob.generation
+    blob.custom_time = retired_at
+    blob.patch(if_generation_match=int(generation), timeout=30, retry=DEFAULT_RETRY.with_timeout(30))
+    return True

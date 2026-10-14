@@ -20,8 +20,8 @@ All routes accept either an existing Crucible API key or a Crucible access token
   "upload_protocol": "xml-multipart-signed-v1",
   "state": "uploading",
   "expires_at": "2026-10-19T12:00:00Z",
-  "part_size": 67108864,
-  "part_count": 2,
+  "part_size": 16777216,
+  "part_count": 8,
   "parts": [],
   "next_part_number_marker": null,
   "existing_file": null,
@@ -33,7 +33,7 @@ Session states are `uploading`, `completed`, `aborted`, `failed`, and `expired`.
 
 The object key is server-generated and independent of the logical filename. Objects are stored at `{dataset_mfid}/_files/{upload_id}`; the `_files` segment is reserved, so legacy uploads cannot write there and legacy tokens cannot reach it. Filenames must be relative paths without empty or dot segments, backslashes, or control characters. New sessions reject an existing or reserved filename with 409, and the legacy upload and file-registration routes reject a filename reserved by an active multipart session. An idempotency key is scoped to owner, dataset, and protocol; changing its request fields returns 409. Keep the same key across initiation retries: a retry after a lost response reuses the provider upload instead of creating another. Sessions expire after seven days; an initiation that never completes its storage call releases its reservation after ten minutes.
 
-Parts are fixed at 64 MiB, except the final part. Maximum file size is 500 GiB. Compute the canonical base64 CRC32C of each part before requesting its URL. Once authorized, that checksum cannot change. A URL signs PUT, the exact destination, upload ID, part number, checksum header, and expected content length. URLs expire after at most 15 minutes and never after session expiry; refresh expired URLs with the same checksums. The batch endpoint enforces a configurable per-session interval (five seconds by default), plus an owner session quota that bounds aggregate issuance. Request about 32 URLs per call and upload about 8 parts concurrently so the signing interval does not cap throughput.
+The API chooses the part size per session and returns it as `part_size`: the file size divided by 8, rounded up to a whole MiB, between 8 MiB and 64 MiB, so files up to 512 MiB split into about 8 parts. Every part is exactly `part_size` bytes except the final one. Plan parts from the returned `part_size`, not a client-side constant. Maximum file size is 500 GiB. Compute the canonical base64 CRC32C of each part before requesting its URL. Once authorized, that checksum cannot change. A URL signs PUT, the exact destination, upload ID, part number, checksum header, and expected content length. URLs expire after at most 15 minutes and never after session expiry; refresh expired URLs with the same checksums. The batch endpoint enforces a configurable per-session interval (five seconds by default), plus an owner session quota that bounds aggregate issuance. Request about 32 URLs per call and upload about 8 parts concurrently so the signing interval does not cap throughput.
 
 Send every header returned for a part except `Content-Length`; do not hard-code provider header names. In browsers pass the exact Blob slice as the body and let the browser set `Content-Length`. Bucket CORS must allow the chosen frontend origins, PUT, and the returned request headers. Signed URLs are bearer capabilities: keep them out of logs, analytics, persistent resume files, and error reporting. The provider part-upload contract is documented by [Google](https://docs.cloud.google.com/storage/docs/xml-api/put-object-multipart).
 

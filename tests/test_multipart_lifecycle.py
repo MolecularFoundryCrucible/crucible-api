@@ -1149,3 +1149,28 @@ def test_backfill_listing_is_bounded(monkeypatch):
     monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: client)
     assert gcs_storage._determine_storage_path("ds", "legacy.bin").endswith("/ds/legacy.bin")
     client.bucket.return_value.list_blobs.assert_called_once_with(prefix="ds/", timeout=30)
+
+
+MIB = 1024 ** 2
+
+
+@pytest.mark.parametrize("size, expected", [
+    (1, 8 * MIB),
+    (64 * MIB, 8 * MIB),
+    (64 * MIB + 1, 9 * MIB),
+    (75_000_000, 9 * MIB),
+    (300 * MIB, 38 * MIB),
+    (512 * MIB, 64 * MIB),
+    (500 * 1024 ** 3, 64 * MIB),
+])
+def test_part_size_targets_eight_parallel_parts(size, expected):
+    assert service.choose_part_size(size) == expected
+
+
+def test_initiate_returns_adaptive_part_size(flow):
+    client, _, _ = flow
+    size = 75_000_000
+    response = client.post(BASE + "/initiate", json={"filename": "medium.bin", "size": size})
+    assert response.status_code == 200, response.text
+    assert response.json()["part_size"] == 9 * MIB
+    assert response.json()["part_count"] == 8

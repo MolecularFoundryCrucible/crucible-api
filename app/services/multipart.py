@@ -21,7 +21,10 @@ from app.utils.permissions import Permission, PlatformRole
 from app.utils.sql_utils import touch_resource_modification_time
 
 PROTOCOL = "gcs_xml_v1"
-PART_SIZE = 64 * 1024 ** 2
+MIB = 1024 ** 2
+MIN_PART_SIZE = 8 * MIB
+PART_SIZE = 64 * MIB
+PARALLEL_PARTS = 8
 TERMINAL = ("completed", "aborted", "expired", "failed")
 SESSION_LIFETIME = timedelta(days=7)
 INITIATION_WINDOW = timedelta(minutes=10)
@@ -132,13 +135,18 @@ def idempotent(session, principal, dsid, key, fingerprint):
     return status(session, previous)
 
 
+def choose_part_size(size):
+    return min(PART_SIZE, max(MIN_PART_SIZE, -(-size // (PARALLEL_PARTS * MIB)) * MIB))
+
+
 def new_session(session, principal, dsid, size, key, fingerprint, claimed_sha256, config, filename, replace_file_mfid=None, replace_base_etag=None):
     for column, value, count_limit, byte_limit in ((UploadSession.owner_user_id, principal.user_id, config.owner_sessions, config.owner_bytes), (UploadSession.dataset_mfid, dsid, config.dataset_sessions, config.dataset_bytes)):
         count, reserved = session.exec(select(func.count(UploadSession.id), func.coalesce(func.sum(UploadSession.size), 0)).where(column == value, *live())).one()
         if count >= count_limit or reserved + size > byte_limit:
             raise HTTPException(429, "Upload reservation quota exceeded", headers={"Retry-After": "60"})
     identifier = uuid4().hex
-    upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, gcs_path=f"{multipart_prefix(dsid)}{identifier}", associated_file_name=filename, expires_at=(now() + INITIATION_WINDOW).isoformat(), size=size, protocol=PROTOCOL, bucket=config.bucket, state="initiating", part_size=PART_SIZE, part_count=(size + PART_SIZE - 1) // PART_SIZE, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=claimed_sha256, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0, replace_file_mfid=replace_file_mfid, replace_base_etag=replace_base_etag)
+    part_size = choose_part_size(size)
+    upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, gcs_path=f"{multipart_prefix(dsid)}{identifier}", associated_file_name=filename, expires_at=(now() + INITIATION_WINDOW).isoformat(), size=size, protocol=PROTOCOL, bucket=config.bucket, state="initiating", part_size=part_size, part_count=(size + part_size - 1) // part_size, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=claimed_sha256, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0, replace_file_mfid=replace_file_mfid, replace_base_etag=replace_base_etag)
     session.add(upload)
     session.commit()
     session.refresh(upload)

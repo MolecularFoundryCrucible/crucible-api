@@ -14,6 +14,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `GET /health/ready` stays ready when the database schema is ahead of the running build (newer additive migrations applied before a deploy) and reports `database.schema_state` (`current`, `ahead`, `behind`, `mismatch`); it is not ready only when a migration the build needs is missing. Running a migration before its deploy no longer takes the old pods out of service. The image now includes `migrations/versions/` to tell the cases apart.
+- Successful `/health`, `/health/live`, `/health/ready`, and `/metrics` requests are no longer written to the request log (failures still are), and these routes are excluded from the HTTP request metrics.
 - Request log lines now end with `actor=<user id> credential=<api_key|hub>` (`actor=- credential=-` for unauthenticated requests), so a request can be traced to its caller.
 - Multipart upload sessions now choose their part size from the file size: the size divided by 8, rounded up to a whole MiB, between 8 MiB and 64 MiB, so files up to 512 MiB upload as about 8 parallel parts instead of one 64 MiB part. The size is returned as `part_size` from initiation and status, as before; clients must plan parts from it rather than assume 64 MiB. Sessions already in progress keep their size.
 

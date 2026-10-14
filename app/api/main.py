@@ -202,6 +202,9 @@ async def reject_unstorable_json(request: Request, call_next):
     return await call_next(request)
 
 
+QUIET_ROUTES = {"/health", "/health/live", "/health/ready", "/metrics"}
+
+
 def _caller(request: Request) -> tuple[str, str]:
     context = getattr(request.state, "authorization_context", None)
     actor = context.actor if context is not None else getattr(request.state, "authenticated_actor", None)
@@ -253,10 +256,13 @@ async def log_requests(request: Request, call_next):
     if _is_hub_auth_request(request):
         response.headers.update(HUB_AUTH_HEADERS)
     duration_ms = (time.perf_counter() - started) * 1000
+    route = _route_template(request)
+    if response.status_code < 400 and route in QUIET_ROUTES:
+        return response
     logger.info(
         "%s %s %s %.3fms request_id=%s actor=%s credential=%s",
         request.method,
-        _route_template(request),
+        route,
         response.status_code,
         duration_ms,
         request.state.request_id,
@@ -266,7 +272,7 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-Instrumentator().instrument(app).expose(app)
+Instrumentator(excluded_handlers=["^/metrics$", "^/health(/.*)?$"]).instrument(app).expose(app)
 
 app.include_router(account.router)
 app.include_router(auth.router)

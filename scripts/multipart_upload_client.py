@@ -108,7 +108,10 @@ def main():
     identifier = record["upload_id"]
     status = client.request("GET", f"{base}/{identifier}").json()
     if status["state"] == "uploading":
-        if status["part_size"] != part_size or status["part_count"] != len(checksums):
+        if status["part_size"] != part_size:
+            part_size = status["part_size"]
+            _, _, checksums = scan(args.file, part_size)
+        if status["part_count"] != len(checksums):
             raise RuntimeError("Unexpected session geometry")
         uploaded = set()
         page = status

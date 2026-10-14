@@ -9,7 +9,7 @@ from sqlalchemy import delete, exists, func, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_utc_datetime, is_orcid
+from app.general_utils import get_utc_datetime, if_match_satisfied, is_orcid
 from app.models.core_models import AccessGroupJoinRequest, ApiToken, Dataset, DeletionRequest, Instrument, Project, Resource, Sample, User, UserPreferences, UserRecentResource
 from app.models.preferences import MAX_DOCUMENT_BYTES, PREFERENCES_SCHEMA_VERSION, PreferencesDocument, PreferencesRead, RecentResourceRead, RecentResourceRecord, serialized_size
 from app.models.join_requests import JoinRequestRead
@@ -260,7 +260,7 @@ def update_account_preferences(auth_res: Annotated[Principal, Depends(authorize_
             user_id = _caller_id(session, auth_res)
             row = session.exec(select(UserPreferences).where(UserPreferences.user_id == user_id).with_for_update()).one_or_none()
             current = _preferences_etag(row.revision if row else 0)
-            if if_match is not None and if_match.strip() != "*" and if_match != current:
+            if not if_match_satisfied(if_match, current):
                 raise HTTPException(status_code=412, detail={"code": "etag_mismatch", "etag": current, "message": "Preferences changed since the given ETag"})
             merged = _merge_patch(row.preferences if row else {}, patch)
             try:

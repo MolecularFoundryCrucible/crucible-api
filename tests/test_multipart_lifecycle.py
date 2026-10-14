@@ -658,6 +658,12 @@ def test_replace_initiation_creates_a_session_for_the_file(flow):
     assert session.gcs_path == f"ds/_files/{session.upload_id}"
 
 
+def test_replace_accepts_a_weakened_if_match(flow):
+    file = published_file(flow)
+    response = replace_start(flow, file["mfid"], headers={"If-Match": f'"other", W/{file["etag"]}'})
+    assert response.status_code == 200, response.text
+
+
 def test_replace_if_match_mismatch_is_412(flow):
     file = published_file(flow)
     response = replace_start(flow, file["mfid"], headers={"If-Match": '"stale"'})

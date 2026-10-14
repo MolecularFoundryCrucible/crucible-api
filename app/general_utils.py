@@ -158,3 +158,10 @@ def checkhash(file):
         fdata = f.read() 
         readable_hash = hashlib.sha256(fdata).hexdigest()
     return(readable_hash)
+
+
+def if_match_satisfied(if_match, current_etag):
+    if if_match is None or if_match.strip() == "*":
+        return True
+    current = current_etag.removeprefix("W/")
+    return any(candidate.strip().removeprefix("W/") == current for candidate in if_match.split(","))

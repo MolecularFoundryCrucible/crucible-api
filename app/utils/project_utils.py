@@ -75,6 +75,14 @@ def resolve_project_id_to_mfid(proj_id: str, session) -> "str | None":
     return project.unique_id if project else None
 
 
+def project_not_found(project_id: Optional[str], project_mfid: Optional[str]) -> HTTPException:
+    reference = project_mfid or project_id
+    detail = f"Project '{reference}' not found"
+    if project_mfid is None and project_id is not None and is_valid_mfid(project_id):
+        detail += ". project_id takes the project slug; pass an MFID as project_mfid."
+    return HTTPException(status_code=404, detail=detail)
+
+
 def resolve_project_identifiers(
     session,
     project_id: Optional[str],

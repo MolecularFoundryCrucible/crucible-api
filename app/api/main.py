@@ -140,6 +140,79 @@ def _audit_privileged_request(
     )
 
 
+UNSTORABLE_ERROR_LIMIT = 20
+
+
+class _NonFiniteNumber:
+    def __init__(self, literal):
+        self.literal = literal
+
+
+def _unsupported_reason(text: str):
+    for character in text:
+        code = ord(character)
+        if code == 0:
+            return "NUL characters (\\u0000) cannot be stored; remove them before sending"
+        if 0xD800 <= code <= 0xDFFF:
+            return "unpaired UTF-16 surrogates are not valid Unicode text"
+        if 0xFDD0 <= code <= 0xFDEF or (code & 0xFFFE) == 0xFFFE:
+            return "Unicode noncharacters are not allowed in JSON text"
+    return None
+
+
+def _printable(key: str) -> str:
+    return "".join(c if _unsupported_reason(c) is None else f"\\u{ord(c):04x}" for c in key)
+
+
+def _unstorable(value, location=("body",)):
+    if isinstance(value, _NonFiniteNumber):
+        return [(location, "invalid_number", f"{value.literal} is not valid JSON; send null for a missing value")]
+    if isinstance(value, str):
+        reason = _unsupported_reason(value)
+        return [(location, "unsupported_character", reason)] if reason else []
+    found = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            child = location + (_printable(key),)
+            reason = _unsupported_reason(key)
+            if reason:
+                found.append((child, "unsupported_character", reason))
+            found.extend(_unstorable(item, child))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            found.extend(_unstorable(item, location + (index,)))
+    return found
+
+
+@app.middleware("http")
+async def reject_unstorable_json(request: Request, call_next):
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type == "application/json" or content_type.endswith("+json"):
+        body = await request.body()
+        if body:
+            try:
+                problems = _unstorable(json.loads(body, parse_constant=_NonFiniteNumber))
+            except ValueError:
+                problems = []
+            if problems:
+                return JSONResponse(status_code=422, content={"detail": [
+                    {"type": kind, "loc": list(location), "msg": message}
+                    for location, kind, message in problems[:UNSTORABLE_ERROR_LIMIT]
+                ]})
+    return await call_next(request)
+
+
+QUIET_ROUTES = {"/health", "/health/live", "/health/ready", "/metrics"}
+
+
+def _caller(request: Request) -> tuple[str, str]:
+    context = getattr(request.state, "authorization_context", None)
+    actor = context.actor if context is not None else getattr(request.state, "authenticated_actor", None)
+    if actor is None:
+        return "-", "-"
+    return actor.user_id, actor.credential
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     request.state.request_id = str(uuid.uuid4())
@@ -149,12 +222,13 @@ async def log_requests(request: Request, call_next):
     except Exception as error:
         duration_ms = (time.perf_counter() - started) * 1000
         logger.info(
-            "%s %s %s %.3fms request_id=%s",
+            "%s %s %s %.3fms request_id=%s actor=%s credential=%s",
             request.method,
             _route_template(request),
             500,
             duration_ms,
             request.state.request_id,
+            *_caller(request),
         )
         _audit_privileged_request(request, 500, duration_ms)
         if _is_hub_auth_request(request):
@@ -182,19 +256,23 @@ async def log_requests(request: Request, call_next):
     if _is_hub_auth_request(request):
         response.headers.update(HUB_AUTH_HEADERS)
     duration_ms = (time.perf_counter() - started) * 1000
+    route = _route_template(request)
+    if response.status_code < 400 and route in QUIET_ROUTES:
+        return response
     logger.info(
-        "%s %s %s %.3fms request_id=%s",
+        "%s %s %s %.3fms request_id=%s actor=%s credential=%s",
         request.method,
-        _route_template(request),
+        route,
         response.status_code,
         duration_ms,
         request.state.request_id,
+        *_caller(request),
     )
     _audit_privileged_request(request, response.status_code, duration_ms)
     return response
 
 
-Instrumentator().instrument(app).expose(app)
+Instrumentator(excluded_handlers=["^/metrics$", "^/health(/.*)?$"]).instrument(app).expose(app)
 
 app.include_router(account.router)
 app.include_router(auth.router)

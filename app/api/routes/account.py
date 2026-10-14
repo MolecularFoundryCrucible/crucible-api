@@ -208,6 +208,7 @@ def verify_account_apikey(auth_res: Annotated[Principal, Depends(authorize_user)
             valid=True,
             created_at=created_dt.date().isoformat(),
             expires_at=expires_dt.date().isoformat(),
+            last_used_at=token.last_used_at,
         )
 
 

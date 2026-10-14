@@ -70,7 +70,7 @@ class ResourcePage:
 
 
 def _default_direction(sort_name: str) -> str:
-    return "desc" if sort_name in ("created", "updated") else "asc"
+    return "desc" if sort_name in ("created", "updated", "activity", "last_active") else "asc"
 
 
 def prepare_resource_pagination(

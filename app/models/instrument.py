@@ -99,6 +99,7 @@ class InstrumentResponse(InstrumentRead):
     resource_type: Optional[str] = "instrument"
     creation_time: Optional[UtcDatetime] = None
     modification_time: Optional[UtcDatetime] = None
+    last_activity_at: Optional[UtcDatetime] = None
     scientific_metadata: Optional[dict] = None
     status: Optional[str] = None
     capabilities: Optional[ResourceCapabilities] = None

@@ -112,3 +112,9 @@ def test_unknown_caller_gets_404(me, auth_as):
     auth_as("0000-0002-0000-0099")
     assert me.get(URL).status_code == 404
     assert patch(me, {"theme": "dark"}).status_code == 404
+
+
+def test_if_match_ignores_weak_prefix_added_by_proxies(me):
+    assert patch(me, {"theme": "dark"}, if_match='W/"p0"').status_code == 200
+    assert patch(me, {"theme": "light"}, if_match='"p9", W/"p1"').headers["ETag"] == '"p2"'
+    assert patch(me, {"theme": "system"}, if_match='W/"p1"').status_code == 412

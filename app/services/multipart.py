@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
+from app.general_utils import if_match_satisfied
 from app.models.core_models import AssociatedFile, Dataset, UploadSession, User
 from app.models.datasets import AssociatedFileRead, file_etag
 from app.models.multipart import MultipartStatus
@@ -235,7 +236,7 @@ def reserve_replace(engine, principal, file_mfid, body, key, if_match, config, b
             if previous is not None:
                 return previous
         seen_etag = file_etag(file.storage_path, file.storage_generation, file.sha256_hash, file.size)
-        if if_match is not None and if_match.strip() != "*" and if_match != seen_etag:
+        if not if_match_satisfied(if_match, seen_etag):
             raise HTTPException(412, {"code": "etag_mismatch", "etag": seen_etag, "message": "File has changed since the given ETag"})
         backfilled = False
         if not file.storage_path and backfill is not None:

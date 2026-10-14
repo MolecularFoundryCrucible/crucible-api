@@ -15,6 +15,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Multipart upload sessions now choose their part size from the file size: the size divided by 8, rounded up to a whole MiB, between 8 MiB and 64 MiB, so files up to 512 MiB upload as about 8 parallel parts instead of one 64 MiB part. The size is returned as `part_size` from initiation and status, as before; clients must plan parts from it rather than assume 64 MiB. Sessions already in progress keep their size.
 
+### Fixed
+
+- `If-Match` on `PATCH /account/preferences` and `POST /files/{file_mfid}/upload/multipart/initiate` now ignores a `W/` prefix and accepts a comma-separated list. Cloudflare weakens ETags on compressed responses, so clients echoing the received ETag got 412 on every write.
+
 ## [3.1.0] - 2026-10-13
 
 ### Added

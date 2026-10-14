@@ -13,10 +13,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Request log lines now end with `actor=<user id> credential=<api_key|hub>` (`actor=- credential=-` for unauthenticated requests), so a request can be traced to its caller.
 - Multipart upload sessions now choose their part size from the file size: the size divided by 8, rounded up to a whole MiB, between 8 MiB and 64 MiB, so files up to 512 MiB upload as about 8 parallel parts instead of one 64 MiB part. The size is returned as `part_size` from initiation and status, as before; clients must plan parts from it rather than assume 64 MiB. Sessions already in progress keep their size.
 
 ### Fixed
 
+- JSON request bodies that PostgreSQL cannot store, or that are not valid I-JSON (RFC 7493), are rejected with 422 instead of failing with 500, with one entry per location (up to 20): NUL characters (`\u0000`), unpaired UTF-16 surrogates, and Unicode noncharacters in any key or string (`type: unsupported_character`), and the non-standard number literals `NaN`, `Infinity`, and `-Infinity` (`type: invalid_number`; send `null` for a missing value). Binary instrument headers, such as Digital Surf `.sur` files, pad text fields with NUL, so parsers must remove it before sending.
+- Creating a dataset with a `project_id` that matches no project returns 404 instead of 403, as samples already did; when the value is an MFID, the message explains that `project_id` takes the project slug and an MFID belongs in `project_mfid`.
 - `If-Match` on `PATCH /account/preferences` and `POST /files/{file_mfid}/upload/multipart/initiate` now ignores a `W/` prefix and accepts a comma-separated list. Cloudflare weakens ETags on compressed responses, so clients echoing the received ETag got 412 on every write.
 
 ## [3.1.0] - 2026-10-13

@@ -510,13 +510,10 @@ class TestProjectMfidOnDataset:
             assert dataset.project_id == "proj_mfid_only_1"
             assert dataset.project_mfid == project_mfid
 
-    def test_create_dataset_with_nonexistent_project_id_is_403_for_a_regular_user(self, client, db_engine, auth_as):
-        """A non-admin caller with no standing in a nonexistent project hits
-        the standing check first — 403, not 404 (see test_create_on_behalf.py
-        for the platform-admin case, which does reach the 404)."""
+    def test_create_dataset_with_nonexistent_project_id_is_404_for_a_regular_user(self, client, db_engine, auth_as):
         with Session(db_engine) as session:
             _user(session, "0000-0016")
 
         auth_as("0000-0016", groups=[])
         resp = client.post("/datasets", json={"dataset_name": "d11", "project_id": "no-such-project"})
-        assert resp.status_code == 403
+        assert resp.status_code == 404

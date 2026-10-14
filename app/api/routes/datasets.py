@@ -68,6 +68,7 @@ from app.utils.auth_utils import (
 from app.utils.permissions import (
     AccessGroupType, Permission, Principal, Role, has_global_permission)
 from app.utils.project_utils import (
+    project_not_found,
     project_standing_by_mfid,
     resolve_project_filter_mfid,
     resolve_project_identifiers,
@@ -237,32 +238,22 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
             requested_project_id,
             requested_project_mfid,
         )
-        if requested_project_mfid is not None and project is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Project '{requested_project_mfid}' not found",
-            )
+        if project is None and (requested_project_id is not None or requested_project_mfid is not None):
+            raise project_not_found(requested_project_id, requested_project_mfid)
 
         if not has_global_permission(auth_res, Permission.CREATE):
             if dataset_details['owner_orcid'] != user_unique_id:
                 raise HTTPException(
                     status_code=403,
                     detail="Only platform contributors and administrators may create a dataset on behalf of another user")
-            proj_id = project.project_id if project is not None else requested_project_id
-            if proj_id:
-                standing = (
-                    project_standing_by_mfid(user_unique_id, project.unique_id, session)
-                    if project is not None
-                    else None
-                )
+            if project is not None:
+                standing = project_standing_by_mfid(user_unique_id, project.unique_id, session)
                 if standing is None or standing < Role.CONTRIBUTOR:
                     raise HTTPException(
                         status_code=403,
-                        detail=f"Caller '{user_unique_id}' must be contributor or above in project '{proj_id}' to create there")
+                        detail=f"Caller '{user_unique_id}' must be contributor or above in project '{project.project_id}' to create there")
 
-        if requested_project_id is not None or requested_project_mfid is not None:
-            if project is None:
-                raise HTTPException(status_code=404, detail=f"Project '{requested_project_id}' not found")
+        if project is not None:
             assert_not_pending_deletion(session, project.unique_id)
             dataset_details['project_id'] = project.project_id
             dataset_details['project_mfid'] = project.unique_id

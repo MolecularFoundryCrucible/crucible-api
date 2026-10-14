@@ -34,6 +34,7 @@ from app.utils.instrument_utils import dataset_instrument_fields, resolve_instru
 from app.utils.link_utils import require_link_create_permissions
 from app.utils.permissions import Principal, Permission, Role, has_global_permission
 from app.utils.project_utils import (
+    project_not_found,
     project_standing_by_mfid,
     resolve_project_filter_mfid,
     resolve_project_identifiers,
@@ -241,8 +242,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
             requested_project_id is not None
             or requested_project_mfid is not None
         ):
-            project_reference = requested_project_mfid or requested_project_id
-            raise HTTPException(status_code=404, detail=f"Project '{project_reference}' not found")
+            raise project_not_found(requested_project_id, requested_project_mfid)
 
         if not has_global_permission(auth_res, Permission.CREATE):
             if (resolved_owner_orcid or user_unique_id) != user_unique_id:

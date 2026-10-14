@@ -29,6 +29,7 @@ def test_readiness_reports_build_and_schema_provenance(monkeypatch):
             "status": "ok",
             "latency_ms": 2.5,
             "schema_revisions": ["head_a", "head_b"],
+            "schema_state": "current",
         },
     }
 
@@ -54,6 +55,7 @@ def test_readiness_reports_database_failure(monkeypatch):
             "status": "error",
             "latency_ms": None,
             "schema_revisions": [],
+            "schema_state": None,
         },
     }
 
@@ -70,6 +72,7 @@ def test_readiness_rejects_unexpected_schema_revision(monkeypatch):
         "status": "error",
         "latency_ms": 2.5,
         "schema_revisions": ["head_a"],
+        "schema_state": "mismatch",
     }
 
 
@@ -121,3 +124,65 @@ def test_liveness_remains_minimal():
 def test_api_version_uses_project_metadata(monkeypatch):
     monkeypatch.delenv("API_VERSION", raising=False)
     assert api_version() == "3.1.0"
+
+
+HEAD = "b644cf2e7240"
+PREVIOUS = "d7b51bd885fc"
+
+
+def test_readiness_stays_ready_when_the_database_is_ahead(monkeypatch):
+    monkeypatch.setenv("EXPECTED_DB_REVISIONS", HEAD)
+    monkeypatch.setattr(misc, "_check_db", lambda: ("ok", 2.5, ["fffffffffff0"]))
+    response = misc.readiness()
+    assert response.status_code == 200
+    assert _response_body(response)["database"]["schema_state"] == "ahead"
+
+
+def test_readiness_fails_when_the_database_is_behind(monkeypatch):
+    monkeypatch.setenv("EXPECTED_DB_REVISIONS", HEAD)
+    monkeypatch.setattr(misc, "_check_db", lambda: ("ok", 2.5, [PREVIOUS]))
+    response = misc.readiness()
+    assert response.status_code == 503
+    assert _response_body(response)["database"]["schema_state"] == "behind"
+
+
+def test_readiness_reports_current_schema(monkeypatch):
+    monkeypatch.setenv("EXPECTED_DB_REVISIONS", HEAD)
+    monkeypatch.setattr(misc, "_check_db", lambda: ("ok", 2.5, [HEAD]))
+    response = misc.readiness()
+    assert response.status_code == 200
+    assert _response_body(response)["database"]["schema_state"] == "current"
+
+
+def test_readiness_rejects_an_unknown_revision_when_not_expecting_this_builds_head(monkeypatch):
+    monkeypatch.setenv("EXPECTED_DB_REVISIONS", PREVIOUS)
+    monkeypatch.setattr(misc, "_check_db", lambda: ("ok", 2.5, ["fffffffffff0"]))
+    response = misc.readiness()
+    assert response.status_code == 503
+    assert _response_body(response)["database"]["schema_state"] == "mismatch"
+
+
+def test_probe_and_scrape_requests_are_not_logged_when_successful(client, caplog):
+    with caplog.at_level("INFO", logger="app.api.main"):
+        client.get("/health/live")
+        client.get("/metrics")
+        client.get("/openapi.json")
+    lines = [record.getMessage() for record in caplog.records if record.name == "app.api.main"]
+    assert not any(line.startswith(("GET /health/live ", "GET /metrics ")) for line in lines)
+    assert any(line.startswith("GET /openapi.json ") for line in lines)
+
+
+def test_probe_failures_are_still_logged(client, caplog, monkeypatch):
+    monkeypatch.setattr(misc, "_check_db", lambda: ("error", None, []))
+    with caplog.at_level("INFO", logger="app.api.main"):
+        client.get("/health/ready")
+    assert any(record.getMessage().startswith("GET /health/ready 503 ") for record in caplog.records if record.name == "app.api.main")
+
+
+def test_probes_are_excluded_from_request_metrics(client):
+    client.get("/health/live")
+    client.get("/health/ready")
+    body = client.get("/metrics").text
+    assert 'handler="/health/live"' not in body
+    assert 'handler="/health/ready"' not in body
+    assert 'handler="/metrics"' not in body

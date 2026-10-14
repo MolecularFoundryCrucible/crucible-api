@@ -17,6 +17,7 @@ class DatabaseReadinessResponse(BaseModel):
     status: Literal["ok", "error"]
     latency_ms: float | None
     schema_revisions: list[str]
+    schema_state: Literal["current", "ahead", "behind", "mismatch"] | None = None
 
 
 class ReadinessResponse(BaseModel):

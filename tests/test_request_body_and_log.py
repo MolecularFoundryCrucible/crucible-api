@@ -19,8 +19,8 @@ def test_request_log_names_the_authenticated_caller(client, auth_as, caplog):
 
 def test_request_log_marks_anonymous_requests(client, caplog):
     with caplog.at_level("INFO", logger="app.api.main"):
-        client.get("/health/live")
-    line = next(line for line in _request_lines(caplog) if line.startswith("GET /health/live "))
+        client.get("/openapi.json")
+    line = next(line for line in _request_lines(caplog) if line.startswith("GET /openapi.json "))
     assert line.endswith(" actor=- credential=-")
 
 

@@ -79,6 +79,7 @@ def test_if_match_on_missing_row(me):
     {"hub": "not-an-object"},
     {"hub": {"blob": "x" * 5000}},
     {"theme": ["dark"]},
+    {"record_recent_resources": "no"},
 ])
 def test_invalid_documents_are_rejected(me, body):
     response = patch(me, body)

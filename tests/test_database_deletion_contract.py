@@ -13,6 +13,8 @@ from app.models.core_models import (
     ResourceACL,
     ResourceEmbedding,
     Sample,
+    User,
+    UserRecentResource,
 )
 from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role
 
@@ -208,3 +210,25 @@ def test_forced_deletion_removes_resource_embeddings(db_engine, resource_type):
 
     with Session(db_engine) as session:
         assert session.exec(select(ResourceEmbedding)).all() == []
+
+
+@pytest.mark.parametrize("resource_type", ["dataset", "sample"])
+def test_forced_deletion_removes_recent_resource_entries(db_engine, resource_type):
+    from app.general_utils import get_utc_datetime
+    group_id, _ = _setup(db_engine, resource_type=resource_type)
+    with Session(db_engine) as session:
+        user = User(first_name="Recent", last_name="Viewer", email=None, unique_id="0000-0003-0000-0001", username="recent")
+        session.add(user)
+        session.commit()
+        session.add(UserRecentResource(user_id=user.id, resource_mfid="resource-to-delete", viewed_at=get_utc_datetime()))
+        session.commit()
+
+    deletion_routes.hard_delete_resource_route(
+        resource_id="resource-to-delete",
+        background_tasks=None,
+        auth_res=_principal(group_id),
+        force=True,
+    )
+
+    with Session(db_engine) as session:
+        assert session.exec(select(UserRecentResource)).all() == []

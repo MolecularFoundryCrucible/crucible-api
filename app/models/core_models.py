@@ -269,6 +269,14 @@ class UserPreferences(SQLModel, table=True):
     updated_at: datetime = Field(sa_type=DateTime(timezone=True))
 
 
+class UserRecentResource(SQLModel, table=True):
+    __table_args__ = (Index("ix_userrecentresource_user_viewed", "user_id", "viewed_at"),)
+
+    user_id: int = Field(sa_column=Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True))
+    resource_mfid: str = Field(sa_column=Column(String, ForeignKey("idtype.mfid", ondelete="CASCADE"), primary_key=True))
+    viewed_at: datetime = Field(sa_type=DateTime(timezone=True))
+
+
 class HubTokenFamily(SQLModel, table=True):
     __table_args__ = (Index("ix_hubtokenfamily_expiry", "expires_at", "id"),)
 

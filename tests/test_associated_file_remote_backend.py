@@ -1,6 +1,7 @@
 from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from app.utils.permissions import PUBLIC_GROUP_NAME, PlatformRole, Role
 from app.models.core_models import Resource, Dataset, AssociatedFile, AccessGroup, ResourceACL
@@ -118,10 +119,16 @@ def test_associated_file_read_and_update_schemas_have_new_fields():
         size=1, sha256_hash="h1",
     )
     assert read.storage_backend == "gcs"
+    assert set(AssociatedFileCreate.model_fields) == {
+        "filename", "size", "sha256_hash", "storage_backend", "storage_path", "access_note",
+    }
 
     update = AssociatedFileUpdate()
     assert update.storage_backend is None
     assert update.access_note is None
+    assert set(AssociatedFileUpdate.model_fields) == {
+        "filename", "storage_path", "storage_backend", "access_note", "size", "sha256_hash",
+    }
 
 
 def _grant_write_access(db_engine, dsid, user_id):
@@ -343,3 +350,128 @@ def test_contributor_can_reach_ingestion_request_validation(client, db_engine, a
 
     assert resp.status_code == 400, resp.text
     assert "globus" in resp.json()["detail"]
+
+
+def test_non_gcs_distinct_filenames_preserve_duplicate_content(client, db_engine, auth_as):
+    user_id = "0000-0000-0000-0001"
+    group_id = _grant_write_access(db_engine, "ds_duplicate_filenames", user_id)
+    auth_as(user_id, groups=[("ds_duplicate_filenames", group_id)])
+    common = {"size": 42, "sha256_hash": "same", "storage_backend": "globus"}
+
+    first = client.post("/datasets/ds_duplicate_filenames/files", json={**common, "filename": "001/PARS.out"})
+    second = client.post("/datasets/ds_duplicate_filenames/files", json={**common, "filename": "002/PARS.out"})
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["mfid"] != second.json()["mfid"]
+
+
+def test_non_gcs_retry_ignores_storage_path_and_access_note(client, db_engine, auth_as):
+    user_id = "0000-0000-0000-0001"
+    group_id = _grant_write_access(db_engine, "ds_filename_retry", user_id)
+    auth_as(user_id, groups=[("ds_filename_retry", group_id)])
+    original = {
+        "filename": "results/result.dat", "size": 42, "sha256_hash": "first",
+        "storage_backend": "globus", "storage_path": "globus://first", "access_note": "original",
+    }
+    first = client.post("/datasets/ds_filename_retry/files", json=original)
+    retry = client.post(
+        "/datasets/ds_filename_retry/files",
+        json={**original, "storage_path": "globus://retry", "access_note": "retry note"},
+    )
+
+    assert first.status_code == 200, first.text
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["mfid"] == first.json()["mfid"]
+    assert retry.json()["storage_path"] == "globus://first"
+    assert retry.json()["access_note"] == "original"
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [("size", 99), ("sha256_hash", "replacement"), ("storage_backend", "lawrencium")],
+)
+def test_non_gcs_same_filename_conflict_preserves_original(client, db_engine, auth_as, field, replacement):
+    user_id = "0000-0000-0000-0001"
+    group_id = _grant_write_access(db_engine, "ds_filename_conflict", user_id)
+    auth_as(user_id, groups=[("ds_filename_conflict", group_id)])
+    original = {
+        "filename": "results/result.dat", "size": 42, "sha256_hash": "first",
+        "storage_backend": "globus", "access_note": "original",
+    }
+    created = client.post("/datasets/ds_filename_conflict/files", json=original)
+    conflict = client.post("/datasets/ds_filename_conflict/files", json={**original, field: replacement})
+
+    assert created.status_code == 200, created.text
+    assert conflict.status_code == 409, conflict.text
+    read = client.get(f"/files/{created.json()['mfid']}")
+    assert read.status_code == 200
+    assert read.json()["sha256_hash"] == "first"
+    assert read.json()["access_note"] == "original"
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["", "/file", "../file", "a/../file", "a/./file", "a//file", "a/", "a/\x1f", "a/\x7f"],
+)
+def test_non_gcs_rejects_noncanonical_filenames(client, db_engine, auth_as, filename):
+    user_id = "0000-0000-0000-0001"
+    group_id = _grant_write_access(db_engine, "ds_bad_filename", user_id)
+    auth_as(user_id, groups=[("ds_bad_filename", group_id)])
+
+    response = client.post(
+        "/datasets/ds_bad_filename/files",
+        json={"filename": filename, "size": 1, "sha256_hash": "h", "storage_backend": "globus"},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_non_gcs_database_unique_index_and_patch_guards(client, db_engine, auth_as):
+    with Session(db_engine) as session:
+        ds = Dataset(unique_id="ds_db_constraints", dataset_name="test")
+        session.add(ds)
+        session.commit()
+        session.refresh(ds)
+        session.add(AssociatedFile(filename="same", storage_backend="globus", size=1, sha256_hash="1", dataset_id=ds.id))
+        session.commit()
+        session.add(AssociatedFile(filename="same", storage_backend="globus", size=1, sha256_hash="2", dataset_id=ds.id))
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+        session.add(AssociatedFile(filename="bad\x1fname", storage_backend="globus", size=1, sha256_hash="3", dataset_id=ds.id))
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+    user_id = "0000-0000-0000-0001"
+    group_id = _grant_write_access(db_engine, "ds_patch_identity", user_id)
+    auth_as(user_id, groups=[("ds_patch_identity", group_id)])
+    created = client.post(
+        "/datasets/ds_patch_identity/files",
+        json={"filename": "dir/file", "size": 1, "sha256_hash": "h", "storage_backend": "globus"},
+    )
+    assert created.status_code == 200, created.text
+    mfid = created.json()["mfid"]
+    assert client.patch(f"/files/{mfid}", json={"filename": "other/file"}).status_code == 409
+    assert client.patch(f"/files/{mfid}", json={"storage_backend": "gcs"}).status_code == 409
+
+
+def test_gcs_retains_hash_identity_and_filename_behavior(client, db_engine, auth_as):
+    user_id = "0000-0000-0000-0001"
+    group_id = _grant_write_access(db_engine, "ds_gcs_legacy", user_id)
+    auth_as(user_id, groups=[("ds_gcs_legacy", group_id)])
+    first = client.post(
+        "/datasets/ds_gcs_legacy/files",
+        json={"filename": "../legacy.txt", "size": 1, "sha256_hash": "gcs-hash"},
+    )
+    retry = client.post(
+        "/datasets/ds_gcs_legacy/files",
+        json={"filename": "other.txt", "size": 2, "sha256_hash": "gcs-hash"},
+    )
+
+    assert first.status_code == 200, first.text
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["mfid"] == first.json()["mfid"]
+    updated = client.patch(f"/files/{first.json()['mfid']}", json={"filename": "/changed.txt"})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["filename"] == "/changed.txt"

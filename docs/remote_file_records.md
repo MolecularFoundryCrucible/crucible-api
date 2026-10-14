@@ -20,6 +20,10 @@ Let a dataset's `AssociatedFile` entries catalog files that live outside GCS —
 
 Existing rows were migrated to `storage_backend='gcs'` through the column default, preserving their behavior.
 
+For non-GCS `POST /datasets/{dataset_mfid}/files`, `(dataset_id, filename)` is the natural key. The `filename` must be a nonempty canonical POSIX relative path: leading/trailing/repeated `/`, absolute paths, `.`/`..` components, and ASCII controls (U+0000–U+001F, U+007F) are rejected without normalization. Unicode and ordinary spaces are allowed. A retry is idempotent only when `filename`, `size`, `sha256_hash`, and `storage_backend` all match; it returns the original row without modifying `storage_path` or `access_note`. A different value for any of those fields at the same filename returns `409 Conflict`, preserving the original row. Distinct filenames may therefore have identical content hashes. GCS retains its existing hash-based behavior.
+
+For non-GCS files, `filename` is immutable through `PATCH /files/{file_id}`: it may be omitted or repeated unchanged, but cannot be changed. PATCH also cannot move a record between the GCS and non-GCS backend classes; GCS retains its existing filename behavior.
+
 ## API Behavior
 
 - `GET /files/{file_id}/download_link` and `GET /datasets/{dataset_mfid}/download_links` return a `null` URL for non-GCS files, with **no change to either route's response shape** — a client checks `storage_backend` (via `GET /files/{file_id}` / `GET /datasets/{dataset_mfid}/files`) to know what to expect, rather than the download-link routes growing new fields.

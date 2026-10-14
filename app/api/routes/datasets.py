@@ -9,6 +9,7 @@ import networkx as nx
 from networkx.readwrite import json_graph
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import exists, func, join, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from sqlmodel import and_, or_, Session, select
@@ -1442,11 +1443,11 @@ def read_associated_files(auth_res: Annotated[Principal, Depends(authorize_user)
 def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
                         dsid: DatasetMfid,
                         associated_file: AssociatedFileCreate):
-    '''
-    Adds a file record to a dataset.
-    Creates the record if one with the same sha256_hash and dataset does not already exist.
-    Use POST /datasets/{dataset_mfid}/files/{file_id}/ingest to trigger ingestion.
-    Requires contributor access. A repeated hash returns the existing record unchanged.
+    '''Adds a file record to a dataset.
+
+    GCS retains its hash-based behavior. Non-GCS records are identified by
+    dataset-relative filename: exact retries return the original row, while a
+    conflicting redefinition is rejected without modification.
     '''
 
     with Session(engine) as session:
@@ -1455,38 +1456,92 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
             raise HTTPException(status_code=404, detail="Dataset not found")
         require_permission(session, auth_res, dsid, Permission.CREATE)
 
+        if associated_file.storage_backend == "gcs":
+            af_obj = session.exec(
+                select(AssociatedFile).where(
+                    AssociatedFile.sha256_hash == associated_file.sha256_hash,
+                    AssociatedFile.dataset_id == ds.id,
+                    multipart.trusted_hash(),
+                )
+            ).first()
+            if af_obj is not None:
+                return AssociatedFileRead.model_validate(
+                    af_obj,
+                    update={"dataset_mfid": ds.unique_id},
+                )
+
+            if multipart.filename_reserved(session, dsid, associated_file.filename):
+                raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
+
+            af_obj = AssociatedFile(
+                **associated_file.model_dump(),
+                dataset_id=ds.id,
+            )
+
+            if af_obj not in ds.associated_files:
+                ds.associated_files.append(af_obj)
+                session.add(ds)
+
+            ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
+            if ri:
+                ri.modification_time = get_utc_datetime()
+
+            session.commit()
+            session.refresh(af_obj)
+            return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": af_obj.dataset.unique_id})
+
         af_obj = session.exec(
             select(AssociatedFile).where(
-                AssociatedFile.sha256_hash == associated_file.sha256_hash,
                 AssociatedFile.dataset_id == ds.id,
-                multipart.trusted_hash(),
+                AssociatedFile.filename == associated_file.filename,
+                AssociatedFile.storage_backend != "gcs",
             )
-        ).first()
+        ).one_or_none()
+        retry_fields = ("filename", "size", "sha256_hash", "storage_backend")
         if af_obj is not None:
-            return AssociatedFileRead.model_validate(
-                af_obj,
-                update={"dataset_mfid": ds.unique_id},
+            if all(getattr(af_obj, field) == getattr(associated_file, field) for field in retry_fields):
+                return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": ds.unique_id})
+            raise HTTPException(
+                status_code=409,
+                detail="A non-GCS file is already registered at this filename with different metadata.",
             )
 
         if multipart.filename_reserved(session, dsid, associated_file.filename):
             raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
 
-        af_obj = AssociatedFile(
-            **associated_file.model_dump(),
-            dataset_id=ds.id,
-        )
-
-        if af_obj not in ds.associated_files:
-            ds.associated_files.append(af_obj)
-            session.add(ds)
+        af_obj = AssociatedFile(**associated_file.model_dump(), dataset_id=ds.id)
+        session.add(af_obj)
+        try:
+            session.flush()
+        except IntegrityError:
+            # A concurrent request may have inserted this identity after our
+            # lookup. Re-read it and apply the same idempotency/conflict rule.
+            session.rollback()
+            af_obj = session.exec(
+                select(AssociatedFile).where(
+                    AssociatedFile.dataset_id == ds.id,
+                    AssociatedFile.filename == associated_file.filename,
+                    AssociatedFile.storage_backend != "gcs",
+                )
+            ).one_or_none()
+            if af_obj is not None and all(
+                getattr(af_obj, field) == getattr(associated_file, field)
+                for field in retry_fields
+            ):
+                return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": ds.unique_id})
+            if af_obj is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A non-GCS file is already registered at this filename with different metadata.",
+                )
+            raise
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
             ri.modification_time = get_utc_datetime()
-
         session.commit()
         session.refresh(af_obj)
-        return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": af_obj.dataset.unique_id})
+        return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": dsid})
 
 
 @router.post("/datasets/{dataset_mfid}/files/{file_id}/ingest", response_model=IngestionRequest, deprecated = True, responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})

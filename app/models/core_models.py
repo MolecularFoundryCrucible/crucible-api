@@ -39,9 +39,38 @@ class Thumbnail(SQLModel, table=True):
 
 
 class AssociatedFile(SQLModel, table=True):
+    __table_args__ = (
+        CheckConstraint(
+            "storage_backend = 'gcs' OR ("
+            "filename <> '' AND filename NOT LIKE '/%' AND filename NOT LIKE '%/' "
+            "AND filename NOT LIKE '%//%' AND filename NOT IN ('.', '..') "
+            "AND filename NOT LIKE './%' AND filename NOT LIKE '../%' "
+            "AND filename NOT LIKE '%/./%' AND filename NOT LIKE '%/../%' "
+            "AND filename NOT LIKE '%/.' AND filename NOT LIKE '%/..')",
+            name="ck_associatedfile_non_gcs_filename_path",
+        ),
+        CheckConstraint(
+            "storage_backend = 'gcs' OR filename !~ E'[\\x01-\\x1F\\x7F]'",
+            name="ck_associatedfile_non_gcs_filename_controls",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "storage_backend = 'gcs' OR filename NOT GLOB "
+            "'*[' || char(1) || '-' || char(31) || char(127) || ']*'",
+            name="ck_associatedfile_non_gcs_filename_controls_sqlite",
+        ).ddl_if(dialect="sqlite"),
+        Index(
+            "uq_associatedfile_non_gcs_dataset_filename",
+            "dataset_id",
+            "filename",
+            unique=True,
+            postgresql_where=text("storage_backend <> 'gcs'"),
+            sqlite_where=text("storage_backend <> 'gcs'"),
+        ),
+    )
+
     id: Optional[int] = Field(default=None, primary_key=True)
     mfid: str = Field(default_factory=get_mfid_value, unique=True, index=True)
-    filename: str                        # relative path within the dataset: "{safe_filename}"
+    filename: str                        # non-GCS identity; GCS retains its existing behavior
     storage_path: Optional[str] = None  # GCS bucket/blob path when storage_backend="gcs"; a backend-specific location string otherwise
     storage_backend: str = Field(default="gcs")  # "gcs" triggers signed-URL generation; any other value is catalog-only
     access_note: Optional[str] = None    # how to access this file when there's no self-service path (non-gcs backends)

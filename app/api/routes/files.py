@@ -128,6 +128,20 @@ def update_file(
         require_permission(session, auth_res, ds.unique_id, Permission.EDIT)
 
         changed = updates.model_dump(exclude_unset=True)
+        if (
+            af.storage_backend != "gcs"
+            and "filename" in changed
+            and changed["filename"] != af.filename
+        ):
+            raise HTTPException(status_code=409, detail="filename is immutable for non-GCS files")
+        if (
+            "storage_backend" in changed
+            and (af.storage_backend == "gcs") != (changed["storage_backend"] == "gcs")
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="storage_backend cannot transition between GCS and non-GCS",
+            )
         if af.storage_generation is not None:
             target_backend = changed.get("storage_backend", af.storage_backend)
             target_path = changed.get("storage_path", af.storage_path)

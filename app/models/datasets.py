@@ -255,13 +255,24 @@ def file_etag(storage_path, storage_generation, sha256_hash, size):
     return '"' + hashlib.sha256(identity.encode()).hexdigest()[:32] + '"'
 
 
+def validate_non_gcs_filename(value: str) -> str:
+    """Validate a canonical, nonempty POSIX relative filename."""
+    if not value:
+        raise ValueError("filename must not be empty")
+    if any(ord(character) <= 0x1F or ord(character) == 0x7F for character in value):
+        raise ValueError("filename must not contain ASCII control characters")
+    if value.startswith("/") or value.endswith("/") or "//" in value:
+        raise ValueError("filename must be a canonical relative POSIX path")
+    if any(component in {".", ".."} for component in value.split("/")):
+        raise ValueError("filename must not contain '.' or '..' components")
+    return value
+
+
 class AssociatedFileCreate(SQLModel):
     '''Fields required to attach an associated file to a dataset.
-    filename should be in the format {cloud-bucket}/{path-to-file}
-    Ingestion is currently only supported for files in the crucible-uploads cloud-bucket.
-    storage_backend defaults to "gcs"; any other value marks this as a catalog-only
-    reference to a file living outside GCS (e.g. an HPC partition or Globus path) —
-    Crucible does not verify existence or broker access for non-gcs files.
+
+    For non-GCS files, filename is the canonical relative path and identity
+    within a dataset. GCS behavior remains hash-based.
     '''
     filename: str
     size: int
@@ -277,6 +288,8 @@ class AssociatedFileCreate(SQLModel):
     def validate_storage_path(self):
         if self.storage_backend == "gcs" and self.storage_path is not None:
             raise ValueError("storage_path is assigned by the upload API for GCS files")
+        if self.storage_backend != "gcs":
+            self.filename = validate_non_gcs_filename(self.filename)
         return self
 
 

@@ -251,7 +251,7 @@ def get_account_preferences(auth_res: Annotated[Principal, Depends(authorize_use
         return _preferences_read(row, response)
 
 
-@router.patch("/account/preferences", response_model=PreferencesRead, responses={412: {"description": "If-Match does not match the current revision: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}, 422: {"description": "The patch is not an object, or the merged document has an unknown key, an invalid value, or exceeds a size limit"}})
+@router.patch("/account/preferences", response_model=PreferencesRead, responses={200: {"headers": {"ETag": {"description": "New preferences revision", "schema": {"type": "string"}}}}, 412: {"description": "If-Match does not match the current revision: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}, 422: {"description": "The patch is not an object, or the merged document has an unknown key, an invalid value, or exceeds a size limit"}})
 def update_account_preferences(auth_res: Annotated[Principal, Depends(authorize_user)], response: Response, patch: Annotated[Any, Body()], if_match: Annotated[Optional[str], Header()] = None):
     """Merge a JSON Merge Patch (RFC 7396) into the caller's preferences: `null` removes a key. Send `If-Match` with the ETag from GET to refuse the change when another write happened first; `If-Match: *` matches any revision."""
     if not isinstance(patch, dict):

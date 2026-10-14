@@ -8,7 +8,7 @@ from app.models.core_models import (
     AccessGroup, AccessGroupJoinRequest, AssociatedFile, Dataset,
     DatasetKeywordLink, DatasetLink, DatasetSampleLink, DeletionRequest,
     Instrument, IngestionRequest, Project, Resource, ResourceACL,
-    ResourceEmbedding, Sample, ScientificMetadataBinary, SampleLink,
+    ResourceEmbedding, Sample, ScientificMetadataBinary, SampleLink, UserRecentResource,
     Thumbnail, UploadSession, UserAccessGroupLink, UserProjectLink,
 )
 
@@ -339,6 +339,9 @@ def hard_delete_resource(resource_id: str, session: Session, resource: Resource 
         raise RuntimeError(f"Resource {resource_id} not found")
     session.execute(
         delete(ResourceEmbedding).where(ResourceEmbedding.resource_mfid == resource_id)
+    )
+    session.execute(
+        delete(UserRecentResource).where(UserRecentResource.resource_mfid == resource_id)
     )
     if resource.resource_type == "dataset":
         _hard_delete_dataset(resource_id, session, resource)

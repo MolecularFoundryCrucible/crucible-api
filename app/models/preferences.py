@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 PREFERENCES_SCHEMA_VERSION = 1
 MAX_NAMESPACE_BYTES = 4 * 1024
@@ -19,6 +19,7 @@ class PreferencesDocument(BaseModel):
 
     theme: Optional[Literal["light", "dark", "system"]] = None
     default_record_kind: Optional[Literal["samples", "datasets"]] = None
+    record_recent_resources: Optional[bool] = None
     hub: Optional[dict[str, Any]] = None
 
     @field_validator("hub")
@@ -34,3 +35,17 @@ class PreferencesRead(BaseModel):
     revision: int
     updated_at: Optional[datetime] = None
     preferences: dict[str, Any]
+
+
+class RecentResourceRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resource_mfid: str = Field(min_length=1, max_length=64)
+
+
+class RecentResourceRead(BaseModel):
+    resource_mfid: str
+    resource_type: Literal["dataset", "sample", "project", "instrument"]
+    name: Optional[str] = None
+    project_id: Optional[str] = None
+    viewed_at: datetime

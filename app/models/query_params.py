@@ -56,17 +56,20 @@ MEMBER_REF_DESCRIPTION = (
     "Platform contributors and administrators may select another user; other callers only themselves."
 )
 SORT_DIRECTION_DESCRIPTION = (
-    "Direction for an explicit sort. Defaults to desc for created and updated, asc otherwise. "
+    "Direction for an explicit sort. Defaults to desc for created, updated, activity, and last_active, asc otherwise. "
     "Supplying direction without sort returns 422."
 )
 PROJECT_SORT_DESCRIPTION = (
     "Explicit ordering with unique_id as tie-breaker and nulls last. title is case-insensitive; "
-    "project_id uses the stored slug, matching the default order. Omit to keep the default "
+    "project_id uses the stored slug, matching the default order. activity is the last change to the "
+    "project's datasets, samples, files, or membership, recorded at most hourly. Omit to keep the default "
     "project_id ascending order."
 )
+ACTIVE_SINCE_DESCRIPTION = "Only records with activity at or after this time. Activity is recorded at most hourly."
 INSTRUMENT_SORT_DESCRIPTION = (
     "Explicit ordering with unique_id as tie-breaker and nulls last. instrument_id and name "
-    "(instrument_name) are case-insensitive. Omit to keep the default newest-first order."
+    "(instrument_name) are case-insensitive. activity is the last time a dataset recorded on the "
+    "instrument changed, recorded at most hourly. Omit to keep the default newest-first order."
 )
 INSTRUMENT_MEMBERS_DESCRIPTION = (
     "Include people and projects holding a role on the instrument record. "
@@ -90,6 +93,7 @@ class ProjectSort(str, Enum):
     TITLE = "title"
     CREATED = "created"
     UPDATED = "updated"
+    ACTIVITY = "activity"
 
 
 class InstrumentSort(str, Enum):
@@ -97,6 +101,7 @@ class InstrumentSort(str, Enum):
     NAME = "name"
     CREATED = "created"
     UPDATED = "updated"
+    ACTIVITY = "activity"
 
 
 class FacetSort(str, Enum):
@@ -124,6 +129,7 @@ class UserSort(str, Enum):
     USERNAME = "username"
     UNIQUE_ID = "unique_id"
     EMAIL = "email"
+    LAST_ACTIVE = "last_active"
 
 
 class DatasetFacetField(str, Enum):
@@ -647,6 +653,7 @@ class ProjectListQuery(StrictQueryModel):
         max_length=5,
         description="Restrict member_ref to these project roles. Repeated values use OR semantics. Requires member_ref.",
     )
+    active_since: Optional[datetime] = Field(default=None, description=ACTIVE_SINCE_DESCRIPTION)
     sort: Optional[ProjectSort] = Field(default=None, description=PROJECT_SORT_DESCRIPTION)
     direction: Optional[SortDirection] = Field(default=None, description=SORT_DIRECTION_DESCRIPTION)
     limit: int = Field(default=100, ge=1, le=1000)
@@ -778,6 +785,7 @@ class InstrumentListQuery(StrictQueryModel):
         default=None,
         description="Restrict results to one lifecycle status.",
     )
+    active_since: Optional[datetime] = Field(default=None, description=ACTIVE_SINCE_DESCRIPTION)
 
     @model_validator(mode="after")
     def validate_affiliation(self):
@@ -849,6 +857,18 @@ class UserListQuery(BaseModel):
             "email is administrator only; other callers receive 403."
         ),
     )
+    active_since: Optional[datetime] = Field(
+        default=None,
+        description="Users active at or after this time (hourly precision). Administrator only.",
+    )
+    inactive_since: Optional[datetime] = Field(
+        default=None,
+        description="Users not active since this time, including users never seen active. Administrator only.",
+    )
+    never_active: Optional[bool] = Field(
+        default=None,
+        description="True for users never seen active, false for users seen at least once. Administrator only.",
+    )
     platform_role: Optional[list[PlatformRole]] = Field(
         default=None,
         min_length=1,
@@ -880,7 +900,7 @@ class UserListQuery(BaseModel):
         default=None,
         description=(
             "Explicit ordering, case-insensitive, with unique_id as tie-breaker and nulls last. "
-            "name sorts by last name then first name. email is administrator only. "
+            "name sorts by last name then first name. email and last_active are administrator only. "
             "Omission keeps the default last name, first name order."
         ),
     )

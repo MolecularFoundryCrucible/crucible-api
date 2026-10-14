@@ -23,6 +23,7 @@ from app.api.dependencies import get_engine, get_api_path, get_api_url
 from app.models.core_models import ApiToken
 from app.models.resource import ResourceCapabilities
 from app.utils.hub_tokens import ACCESS_PREFIX, InvalidHubGrant, hub_access_family
+from app.services.activity import record_caller_activity
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, THRESHOLDS, GroupMembership, Permission, PlatformRole,
     Principal, PrivilegeMode, PrivilegeModeSource, Role, can_grant,
@@ -241,12 +242,15 @@ def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
             except InvalidHubGrant:
                 raise HTTPException(status_code=401, detail="Invalid or expired API credential.")
             authenticated_at = family.auth_time.replace(tzinfo=family.auth_time.tzinfo or datetime.timezone.utc) if family.auth_time else None
-            return replace(load_principal(session, family.user_unique_id), credential="hub", authenticated_at=authenticated_at)
+            principal = replace(load_principal(session, family.user_unique_id), credential="hub", authenticated_at=authenticated_at)
+        record_caller_activity(engine, principal.user_id)
+        return principal
 
     cache_key = _auth_cache_key(apikey)
     with _auth_cache_lock:
         cached = _auth_cache.get(cache_key)
     if cached is not None:
+        record_caller_activity(engine, cached.user_id, apikey)
         return cached
 
     api_acct = find_key(credentials, engine)  # raises 401 on invalid/expired
@@ -259,6 +263,7 @@ def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
 
     with _auth_cache_lock:
         _auth_cache[cache_key] = result
+    record_caller_activity(engine, result.user_id, apikey)
     return result
 
 

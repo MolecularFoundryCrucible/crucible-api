@@ -50,6 +50,7 @@ INSTRUMENT_PAGINATION = ResourcePaginationSpec(
         "name": func.lower(Instrument.instrument_name),
         "created": Resource.creation_time,
         "updated": func.coalesce(Resource.modification_time, Resource.creation_time),
+        "activity": Instrument.last_activity_at,
     },
     default_sort="created",
     default_direction="desc",
@@ -195,6 +196,8 @@ def list_instruments(
         else:
             statement = select(Instrument, Resource).join(Resource, Resource.mfid == Instrument.unique_id, isouter=True)
         statement = statement.where(deletion_filter_for(Instrument))
+        if params.active_since is not None:
+            statement = statement.where(Instrument.last_activity_at >= params.active_since)
         for f in filters:
             statement = statement.where(f)
         if params.affiliation:

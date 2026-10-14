@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, List, Literal, Optional
 from pydantic import AliasChoices, ConfigDict, Field, field_validator
 from sqlmodel import SQLModel
@@ -57,6 +58,7 @@ class ServiceAccountKeyStatus(SQLModel):
     valid: bool
     created_at: str
     expires_at: str
+    last_used_at: Optional[datetime] = Field(default=None, description="Last authenticated use, recorded at most every 10 minutes.")
 
 
 class UserRead(SQLModel):
@@ -69,6 +71,7 @@ class UserRead(SQLModel):
     platform_role: Optional[PlatformRole] = None
     user_capabilities: Optional[UserCapabilities] = None
     api_key_status: Optional[ServiceAccountKeyStatus] = None
+    last_active_at: Optional[datetime] = Field(default=None, description="Last authenticated request, recorded at most hourly. Returned to platform administrators and to the user themselves.")
 
 
 class AccountCapabilities(SQLModel):

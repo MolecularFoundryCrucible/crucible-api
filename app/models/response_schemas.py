@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional
 
@@ -54,6 +55,7 @@ class ApiKeyVerify(BaseModel):
     valid: bool
     created_at: str
     expires_at: str
+    last_used_at: Optional[datetime] = None
 
 
 class ProjectSyncResult(BaseModel):

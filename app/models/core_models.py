@@ -250,6 +250,7 @@ class User(SQLModel, table=True):
     username: Optional[str] = Field(default=None, max_length=32, index=True)
     # Platform-wide bypass, deliberately not a group. Postgres enum platform_role.
     platform_role: Optional[str] = Field(default="none")
+    last_active_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
     projects: List["Project"] = Relationship(back_populates="users", link_model=UserProjectLink)
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
 
@@ -259,6 +260,7 @@ class ApiToken(SQLModel, table = True):
     user_unique_id: str = Field(default = None, foreign_key = "user.orcid", index = True)
     token: str = Field(default = None, primary_key = True, index = True)
     token_created: str = Field(default_factory=get_utc_isoformat)
+    last_used_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
 
 
 class UserPreferences(SQLModel, table=True):
@@ -349,6 +351,7 @@ class Project(SQLModel, table=True):
     title: Optional[str]
     project_lead_orcid: str = Field(foreign_key="user.orcid", index=True)
     project_lead_email: Optional[str] = None  # stored for old-API backward compat; not exposed in new response schemas
+    last_activity_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
     users: List[User] = Relationship(back_populates="projects", link_model=UserProjectLink)
     resource: Optional["Resource"] = Relationship(
         sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Project.unique_id", "lazy": "noload"}
@@ -519,6 +522,7 @@ class Instrument(SQLModel, table=True):
     # POST /instruments/{id}/status, not PATCH — it is a lifecycle transition
     # with a higher bar than a metadata edit.
     status: Optional[str] = Field(default="active")
+    last_activity_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
 
 
 # --- Task tracking ---

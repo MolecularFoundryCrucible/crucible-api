@@ -216,7 +216,7 @@ def cursor_primary_value(cursor: ResourceCursor) -> Any:
         return None
     if cursor.primary is None:
         raise CursorError("Missing cursor sort value")
-    if cursor.sort in {"created", "updated"}:
+    if cursor.sort in {"created", "updated", "activity", "last_active"}:
         try:
             value = datetime.fromisoformat(cursor.primary)
         except ValueError as exc:

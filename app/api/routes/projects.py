@@ -156,6 +156,7 @@ PROJECT_PAGINATION = ResourcePaginationSpec(
         "title": func.lower(Project.title),
         "created": Resource.creation_time,
         "updated": func.coalesce(Resource.modification_time, Resource.creation_time),
+        "activity": Project.last_activity_at,
     },
     default_sort="project_id",
     default_direction="asc",
@@ -173,7 +174,8 @@ def list_projects(
     and the caller's own membership role.
     Pass affiliation=owner to return only projects authoritatively owned by the caller.
     Pass member_ref (and optionally member_role) to return only projects where the given users are members.
-    Pass sort=project_id|title|created|updated with direction=asc|desc to change the order.
+    Pass sort=project_id|title|created|updated|activity with direction=asc|desc to change the order,
+    and active_since to keep only projects with recent activity.
     Pass include_total=false to omit the exact authorization-filtered count.
     '''
     project_id = params.project_id
@@ -214,6 +216,8 @@ def list_projects(
         if params.affiliation:
             base = base.where(project_owner_affiliation_filter(auth_res, Project))
         base = base.where(deletion_filter_for(Project))
+        if params.active_since is not None:
+            base = base.where(Project.last_activity_at >= params.active_since)
 
         total = (
             session.exec(select(func.count()).select_from(base.with_only_columns(Project.id).subquery())).one()

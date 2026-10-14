@@ -69,6 +69,7 @@ class ProjectWithLead(ProjectRead):
     scientific_metadata: Optional[dict] = None
     creation_time: Optional[UtcDatetime] = None
     modification_time: Optional[UtcDatetime] = None
+    last_activity_at: Optional[UtcDatetime] = None
     members: Optional[List[AccessGroupMemberRead]] = None
     deletion_request: Optional[dict] = None
     role: Optional[str] = Field(

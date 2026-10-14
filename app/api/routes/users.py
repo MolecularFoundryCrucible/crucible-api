@@ -59,7 +59,7 @@ USER_COLLECTION_DEPRECATION = "@1799280000"
 USER_LIST_DECLARED_PARAMS = {
     "unique_id", "username", "email", "permissive", "is_service_account",
     "first_name", "last_name", "q", "search_fields", "platform_role", "include_total",
-    "limit", "cursor", "offset", "sort", "direction",
+    "limit", "cursor", "offset", "sort", "direction", "active_since", "inactive_since", "never_active",
 }
 
 
@@ -78,6 +78,7 @@ def _key_status(token: Optional[ApiToken]) -> Optional[ServiceAccountKeyStatus]:
         valid=expires_at >= datetime.now(timezone.utc),
         created_at=created_at.date().isoformat(),
         expires_at=expires_at.date().isoformat(),
+        last_used_at=token.last_used_at,
     )
 
 
@@ -138,6 +139,8 @@ def _user_sort_key(sort: UserSort):
         return func.lower(User.username)
     if sort is UserSort.EMAIL:
         return func.lower(User.email)
+    if sort is UserSort.LAST_ACTIVE:
+        return User.last_active_at
     return func.lower(User.unique_id)
 
 
@@ -146,6 +149,8 @@ def _user_sort_value(sort: UserSort, user: User):
         if user.last_name is None or user.first_name is None:
             return None
         return f"{user.last_name.lower()} {user.first_name.lower()}"
+    if sort is UserSort.LAST_ACTIVE:
+        return user.last_active_at
     raw = {
         UserSort.USERNAME: user.username,
         UserSort.EMAIL: user.email,
@@ -182,6 +187,11 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
         raise HTTPException(
             status_code=403,
             detail="Only platform administrators may filter or sort users by email",
+        )
+    if not is_admin and (params.sort is UserSort.LAST_ACTIVE or params.active_since or params.inactive_since or params.never_active is not None):
+        raise HTTPException(
+            status_code=403,
+            detail="Only platform administrators may filter or sort users by activity",
         )
     sort = params.sort or UserSort.NAME
 
@@ -235,6 +245,13 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
 
     if params.is_service_account is not None:
         search_cmd = search_cmd.where(User.is_service_account == params.is_service_account)
+
+    if params.active_since is not None:
+        search_cmd = search_cmd.where(User.last_active_at >= params.active_since)
+    if params.inactive_since is not None:
+        search_cmd = search_cmd.where(or_(User.last_active_at.is_(None), User.last_active_at < params.inactive_since))
+    if params.never_active is not None:
+        search_cmd = search_cmd.where(User.last_active_at.is_(None) if params.never_active else User.last_active_at.is_not(None))
 
     if params.platform_role:
         search_cmd = search_cmd.where(User.platform_role.in_(
@@ -557,6 +574,7 @@ def verify_user_apikey(user_ref: UserRef, auth_res: Annotated[Principal, Depends
             valid=valid,
             created_at=created_dt.date().isoformat(),
             expires_at=expires_dt.date().isoformat(),
+            last_used_at=token.last_used_at,
         )
 
 @router.post("/users", response_model=UserRead, responses={409: {"description": "Identifier, username, or email already in use; username and email conflicts use `{\"detail\": {\"code\": \"already_in_use\", \"fields\": [...], \"message\": ...}}`"}})

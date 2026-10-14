@@ -1,13 +1,18 @@
 from datetime import timedelta, datetime
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.general_utils import is_orcid
-from app.models.core_models import AccessGroupJoinRequest, ApiToken, User
+from app.general_utils import get_utc_datetime
+from app.models.core_models import AccessGroupJoinRequest, ApiToken, User, UserPreferences
+from app.models.preferences import MAX_DOCUMENT_BYTES, PREFERENCES_SCHEMA_VERSION, PreferencesDocument, PreferencesRead, serialized_size
 from app.models.join_requests import JoinRequestRead
 from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import AccountInfo, ApiKeyRead, ApiKeyVerify, ProjectSyncResult
@@ -205,3 +210,79 @@ def verify_account_apikey(auth_res: Annotated[Principal, Depends(authorize_user)
             created_at=created_dt.date().isoformat(),
             expires_at=expires_dt.date().isoformat(),
         )
+
+
+def _merge_patch(target, patch):
+    if not isinstance(patch, dict):
+        return patch
+    result = dict(target) if isinstance(target, dict) else {}
+    for key, value in patch.items():
+        if value is None:
+            result.pop(key, None)
+        else:
+            result[key] = _merge_patch(result.get(key), value)
+    return result
+
+
+def _preferences_etag(revision: int) -> str:
+    return f'"p{revision}"'
+
+
+def _preferences_read(row: Optional[UserPreferences], response: Response) -> PreferencesRead:
+    revision = row.revision if row else 0
+    response.headers["ETag"] = _preferences_etag(revision)
+    if row is None:
+        return PreferencesRead(schema_version=PREFERENCES_SCHEMA_VERSION, revision=0, preferences={})
+    return PreferencesRead(schema_version=row.schema_version, revision=row.revision, updated_at=row.updated_at, preferences=row.preferences)
+
+
+def _caller_id(session: Session, principal: Principal) -> int:
+    user_id = session.exec(select(User.id).where(User.unique_id == principal.user_id)).one_or_none()
+    if user_id is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user_id
+
+
+@router.get("/account/preferences", response_model=PreferencesRead, responses={200: {"headers": {"ETag": {"description": "Current preferences revision; send it as `If-Match` on PATCH", "schema": {"type": "string"}}}}})
+def get_account_preferences(auth_res: Annotated[Principal, Depends(authorize_user)], response: Response):
+    """Return the caller's preferences. A caller who never saved any gets an empty document at revision 0."""
+    with Session(engine) as session:
+        row = session.get(UserPreferences, _caller_id(session, auth_res))
+        return _preferences_read(row, response)
+
+
+@router.patch("/account/preferences", response_model=PreferencesRead, responses={412: {"description": "If-Match does not match the current revision: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}, 422: {"description": "The patch is not an object, or the merged document has an unknown key, an invalid value, or exceeds a size limit"}})
+def update_account_preferences(auth_res: Annotated[Principal, Depends(authorize_user)], response: Response, patch: Annotated[Any, Body()], if_match: Annotated[Optional[str], Header()] = None):
+    """Merge a JSON Merge Patch (RFC 7396) into the caller's preferences: `null` removes a key. Send `If-Match` with the ETag from GET to refuse the change when another write happened first; `If-Match: *` matches any revision."""
+    if not isinstance(patch, dict):
+        raise RequestValidationError([{"type": "dict_type", "loc": ("body",), "msg": "Preferences patch must be a JSON object", "input": patch}])
+    for attempt in range(2):
+        with Session(engine) as session:
+            user_id = _caller_id(session, auth_res)
+            row = session.exec(select(UserPreferences).where(UserPreferences.user_id == user_id).with_for_update()).one_or_none()
+            current = _preferences_etag(row.revision if row else 0)
+            if if_match is not None and if_match.strip() != "*" and if_match != current:
+                raise HTTPException(status_code=412, detail={"code": "etag_mismatch", "etag": current, "message": "Preferences changed since the given ETag"})
+            merged = _merge_patch(row.preferences if row else {}, patch)
+            try:
+                PreferencesDocument.model_validate(merged)
+            except ValidationError as error:
+                raise RequestValidationError(error.errors(include_url=False, include_context=False)) from None
+            if serialized_size(merged) > MAX_DOCUMENT_BYTES:
+                raise RequestValidationError([{"type": "too_long", "loc": ("body",), "msg": f"Preferences exceed {MAX_DOCUMENT_BYTES} bytes", "input": None}])
+            if row is None:
+                row = UserPreferences(user_id=user_id, preferences=merged, schema_version=PREFERENCES_SCHEMA_VERSION, revision=1, updated_at=get_utc_datetime())
+            else:
+                row.preferences = merged
+                row.revision += 1
+                row.updated_at = get_utc_datetime()
+            session.add(row)
+            try:
+                session.commit()
+            except IntegrityError:
+                if attempt:
+                    raise
+                session.rollback()
+                continue
+            session.refresh(row)
+            return _preferences_read(row, response)

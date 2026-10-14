@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- Added per-user preferences: `GET /account/preferences` returns the caller's document with an `ETag` (`"p<revision>"`, `"p0"` before the first save), and `PATCH /account/preferences` merges a JSON Merge Patch (RFC 7396; `null` removes a key) with optional `If-Match` (412 `etag_mismatch` returns the current ETag). Shared keys are `theme` (`light`, `dark`, `system`) and `default_record_kind` (`samples`, `datasets`); `hub` is a client namespace object capped at 4 KB, and the document at 16 KB. Unknown keys and invalid values return 422. Available to every authenticated caller, for their own preferences only. Requires migration `5582366c0eb4`.
+
 ### Changed
 
 - Multipart upload sessions now choose their part size from the file size: the size divided by 8, rounded up to a whole MiB, between 8 MiB and 64 MiB, so files up to 512 MiB upload as about 8 parallel parts instead of one 64 MiB part. The size is returned as `part_size` from initiation and status, as before; clients must plan parts from it rather than assume 64 MiB. Sessions already in progress keep their size.

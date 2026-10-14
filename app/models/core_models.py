@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Optional, List
 from pydantic import ConfigDict
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Column, CheckConstraint, UniqueConstraint, BigInteger, DateTime, func, Index, text, Text, String
+from sqlalchemy import JSON, Column, CheckConstraint, UniqueConstraint, BigInteger, DateTime, ForeignKey, Integer, func, Index, text, Text, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel, Relationship
 from mfid import mfid
@@ -259,6 +259,14 @@ class ApiToken(SQLModel, table = True):
     user_unique_id: str = Field(default = None, foreign_key = "user.orcid", index = True)
     token: str = Field(default = None, primary_key = True, index = True)
     token_created: str = Field(default_factory=get_utc_isoformat)
+
+
+class UserPreferences(SQLModel, table=True):
+    user_id: int = Field(sa_column=Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True))
+    preferences: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON().with_variant(JSONB(), "postgresql"), nullable=False))
+    schema_version: int = 1
+    revision: int = 1
+    updated_at: datetime = Field(sa_type=DateTime(timezone=True))
 
 
 class HubTokenFamily(SQLModel, table=True):

@@ -145,7 +145,43 @@ def test_deployment_references_only_and_enabled(environment):
         assert key not in config and key not in values
         assert f"crucible-hub-{environment}-" in config[key + "_VERSION"]
         assert config[key + "_VERSION"].rsplit("/", 1)[1].isdigit()
+    for key in ("ORCID_CLIENT_ID", "ORCID_CLIENT_SECRET_VERSION"):
+        assert values[key]["valueFrom"]["configMapKeyRef"] == {"name": f"crucible-api-config-{environment}", "key": key}
+    assert "ORCID_CLIENT_SECRET" not in config and "ORCID_CLIENT_SECRET" not in values
+    assert config["ORCID_CLIENT_SECRET_VERSION"].startswith("projects/")
+    assert config["ORCID_CLIENT_SECRET_VERSION"].rsplit("/", 1)[1].isdigit()
     if environment == "staging":
         assert config["HUB_AUTH_CALLBACK_URI"].split(",")[0] == "http://localhost:3000/hub/auth/callback"
     else:
         assert config["HUB_AUTH_CALLBACK_URI"] == "https://crucible.lbl.gov/hub/auth/callback"
+
+
+def test_direct_api_orcid_config_and_secret_version(monkeypatch):
+    from app.api import dependencies
+    import app.general_utils as general_utils
+
+    monkeypatch.setattr(dependencies, "get_api_config", lambda: {"orcid_client_id": "fallback-client-id"})
+    monkeypatch.delenv("ORCID_CLIENT_ID", raising=False)
+    assert dependencies.get_orcid_client_id() == "fallback-client-id"
+
+    monkeypatch.setenv("ORCID_CLIENT_ID", "env-client-id")
+    assert dependencies.get_orcid_client_id() == "env-client-id"
+
+    monkeypatch.setattr("dotenv.load_dotenv", lambda: None)
+    monkeypatch.delenv("ORCID_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("ORCID_CLIENT_SECRET_VERSION", raising=False)
+    with pytest.raises(RuntimeError):
+        dependencies.get_orcid_client_secret()
+
+    captured = {}
+
+    def fake_get_gcs_secret(secret_name, sa_creds, cred_file):
+        captured["secret_name"] = secret_name
+        return "fetched-orcid-secret"
+
+    monkeypatch.setattr(general_utils, "get_gcs_secret", fake_get_gcs_secret)
+    version_path = "projects/776258882599/secrets/orcid_client_secret/versions/2"
+    monkeypatch.setenv("ORCID_CLIENT_SECRET_VERSION", version_path)
+    assert dependencies.get_orcid_client_secret() == "fetched-orcid-secret"
+    assert captured["secret_name"] == version_path
+

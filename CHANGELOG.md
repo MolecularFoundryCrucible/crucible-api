@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Successful `/health`, `/health/live`, `/health/ready`, and `/metrics` requests are no longer written to the request log (failures still are), and these routes are excluded from the HTTP request metrics.
 - Request log lines now end with `actor=<user id> credential=<api_key|hub>` (`actor=- credential=-` for unauthenticated requests), so a request can be traced to its caller.
 - Multipart upload sessions now choose their part size from the file size: the size divided by 8, rounded up to a whole MiB, between 8 MiB and 64 MiB, so files up to 512 MiB upload as about 8 parallel parts instead of one 64 MiB part. The size is returned as `part_size` from initiation and status, as before; clients must plan parts from it rather than assume 64 MiB. Sessions already in progress keep their size.
+- Direct API ORCID sign-in (`/auth/login`, `/auth/callback`) now reads `ORCID_CLIENT_ID` (falling back to `orcid_client_id` in `API_CONF_FILE`) and `ORCID_CLIENT_SECRET` / `ORCID_CLIENT_SECRET_VERSION` (replacing `CLIENT_SECRET` and the hardcoded Secret Manager path) from the environment; `main` and `staging` Kubernetes ConfigMaps and Deployments now set `ORCID_CLIENT_ID` and `ORCID_CLIENT_SECRET_VERSION` explicitly.
 
 ### Fixed
 

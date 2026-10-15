@@ -106,6 +106,16 @@ spec:
             configMapKeyRef:
               key: API_CONF_FILE
               name: crucible-api-config-main
+        - name: "ORCID_CLIENT_ID"
+          valueFrom:
+            configMapKeyRef:
+              key: ORCID_CLIENT_ID
+              name: crucible-api-config-main
+        - name: "ORCID_CLIENT_SECRET_VERSION"
+          valueFrom:
+            configMapKeyRef:
+              key: ORCID_CLIENT_SECRET_VERSION
+              name: crucible-api-config-main
         - name: "DB_TYPE"
           valueFrom:
             configMapKeyRef:

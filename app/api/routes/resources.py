@@ -58,7 +58,7 @@ from app.utils.permissions import (
 from app.utils.sql_utils import add_or_update, set_public, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
 from app.utils.link_utils import fetch_readable_links
-from app.utils.project_utils import is_project_group, resolve_project_identifiers, resolve_project_reference
+from app.utils.project_utils import resolve_project_identifiers, resolve_project_reference
 from app.utils.user_utils import resolve_user_by_identifier
 from app.utils.cursor_utils import (
     CursorError,
@@ -1120,13 +1120,12 @@ def transfer_ownership(mfid: str, body: TransferOwnershipRequest,
         )
 
 
-def _current_project_grants(session, mfid: str) -> List[tuple]:
-    rows = session.exec(
-        select(ResourceACL, AccessGroup)
+def _project_grant(session, project: Project, mfid: str) -> Optional[ResourceACL]:
+    return session.exec(
+        select(ResourceACL)
         .join(AccessGroup, AccessGroup.id == ResourceACL.accessgroup_id)
-        .where(ResourceACL.mfid == mfid)
-    ).all()
-    return [(acl, ag) for acl, ag in rows if is_project_group(ag.group_name, session)]
+        .where(ResourceACL.mfid == mfid, AccessGroup.group_name == project.unique_id)
+    ).one_or_none()
 
 
 @router.post("/resources/{mfid}/project", response_model=ReassignProjectRead)
@@ -1154,11 +1153,9 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
         from app.utils.deletion_utils import assert_not_pending_deletion
         assert_not_pending_deletion(session, new_proj.unique_id)
 
-        current_grants = _current_project_grants(session, mfid)
-        prev_proj = None
-        if current_grants:
-            _, prev_ag = current_grants[0]
-            prev_proj = session.exec(select(Project).where(Project.unique_id == prev_ag.group_name)).one_or_none()
+        entity_model = Dataset if resource.resource_type == "dataset" else Sample
+        entity = session.exec(select(entity_model).where(entity_model.unique_id == mfid)).one_or_none()
+        prev_proj = resolve_project_identifiers(session, entity.project_id, entity.project_mfid) if entity is not None else None
         result = ReassignProjectRead(
             resource_id=mfid,
             resource_mfid=mfid,
@@ -1175,13 +1172,17 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
         if new_ag is None:
             raise HTTPException(status_code=409, detail=f"No access group for project '{new_proj.project_id}'")
 
-        for acl, _ in current_grants:
-            session.delete(acl)
-        session.flush()
-        sql_create_resource_acl(new_ag, mfid, read=True, write=True, session=session, permission=Role.ADMIN)
+        if prev_proj is not None and prev_proj.unique_id != new_proj.unique_id:
+            previous_grant = _project_grant(session, prev_proj, mfid)
+            if previous_grant is not None:
+                session.delete(previous_grant)
+                session.flush()
+        grant = sql_create_resource_acl(new_ag, mfid, read=True, write=True, session=session, permission=Role.ADMIN)
+        if grant.permission is None or Role[grant.permission.upper()] < Role.ADMIN:
+            grant.permission = Role.ADMIN.db_value
+            grant.read = grant.write = True
+            session.add(grant)
 
-        entity_model = Dataset if resource.resource_type == "dataset" else Sample
-        entity = session.exec(select(entity_model).where(entity_model.unique_id == mfid)).one_or_none()
         if entity is not None:
             entity.project_id = new_proj.project_id
             entity.project_mfid = new_proj.unique_id

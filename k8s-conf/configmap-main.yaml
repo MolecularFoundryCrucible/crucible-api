@@ -27,6 +27,7 @@ data:
 
   # storage
   UPLOAD_BUCKET: "mf-storage-prod"
+  RECORD_BUCKET: "mf-record-prod"
   MULTIPART_UPLOAD_ENABLED: "true"
   MULTIPART_UPLOAD_BUCKET: "mf-storage-prod"
   MULTIPART_UPLOAD_SIGNER: "crucible-mpu-signer-prod@mf-crucible.iam.gserviceaccount.com"

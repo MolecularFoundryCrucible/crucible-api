@@ -134,6 +134,11 @@ spec:
             configMapKeyRef:
               key: UPLOAD_BUCKET
               name: crucible-api-config-staging
+        - name: "RECORD_BUCKET"
+          valueFrom:
+            configMapKeyRef:
+              key: RECORD_BUCKET
+              name: crucible-api-config-staging
         - name: "STORAGE_READ_BUCKETS"
           valueFrom:
             configMapKeyRef:

@@ -33,6 +33,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Staging wrote its record files (`{mfid}/record.json` and `metadata.json`) into the production record bucket, where a staging edit to a record copied from production would overwrite that record's production copy and revision. The bucket now comes from the `RECORD_BUCKET` setting: `mf-record-prod` on main and the new `mf-record-staging` on staging; record files are skipped, with a warning, when it is unset.
 - `GET /account/join_requests` returned 500 for anyone who had made a join request, and join request lists returned 500 when a request's project no longer existed.
 - Uploading a new file (signed multipart or legacy `/upload/complete`) now updates the dataset's `modification_time`, and with it the project's and instrument's `last_activity_at`; only replacements did before.
 - An upload whose content matches a file already in the dataset under a different name is now stored as a new file. Before, initiation returned the existing file of the other name and never created the requested one, and it also skipped the `filename_exists` conflict when the requested name was taken by different content. Initiation still returns the existing file when both the name and the content match.

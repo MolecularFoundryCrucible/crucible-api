@@ -1,13 +1,20 @@
 import hashlib
 import json
 import logging
+import os
 
 from app.general_utils import get_utc_isoformat
 
 logger = logging.getLogger(__name__)
 
-_RECORD_BUCKET = "mf-record-prod"
 _SCHEMA_VERSION = 1
+
+
+def _record_bucket():
+    bucket = os.environ.get("RECORD_BUCKET", "").strip()
+    if not bucket:
+        logger.warning("RECORD_BUCKET is not set; record files are not written")
+    return bucket
 
 
 def _get_client():
@@ -99,8 +106,11 @@ def instrument_record(inst, ri) -> dict:
 
 def write_record(mfid: str, record: dict, actor: str, operation: str) -> None:
     """Upload record.json for a resource. Best-effort — logs and returns on failure."""
+    bucket = _record_bucket()
+    if not bucket:
+        return
     try:
-        blob = _get_client().bucket(_RECORD_BUCKET).blob(f"{mfid}/record.json")
+        blob = _get_client().bucket(bucket).blob(f"{mfid}/record.json")
         audit = _build_audit(blob, record, actor, operation)
         if audit is None:
             return
@@ -115,8 +125,11 @@ def write_record(mfid: str, record: dict, actor: str, operation: str) -> None:
 
 def write_metadata(mfid: str, metadata: dict, actor: str, operation: str) -> None:
     """Upload metadata.json for a resource. Best-effort — logs and returns on failure."""
+    bucket = _record_bucket()
+    if not bucket:
+        return
     try:
-        blob = _get_client().bucket(_RECORD_BUCKET).blob(f"{mfid}/metadata.json")
+        blob = _get_client().bucket(bucket).blob(f"{mfid}/metadata.json")
         audit = _build_audit(blob, metadata, actor, operation)
         if audit is None:
             return

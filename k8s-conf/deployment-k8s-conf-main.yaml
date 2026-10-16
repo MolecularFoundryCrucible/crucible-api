@@ -39,6 +39,11 @@ spec:
             configMapKeyRef:
               key: UPLOAD_BUCKET
               name: crucible-api-config-main
+        - name: "RECORD_BUCKET"
+          valueFrom:
+            configMapKeyRef:
+              key: RECORD_BUCKET
+              name: crucible-api-config-main
         - name: "MULTIPART_UPLOAD_ENABLED"
           valueFrom:
             configMapKeyRef:

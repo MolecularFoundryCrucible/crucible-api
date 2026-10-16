@@ -37,6 +37,7 @@ data:
 
   # multipart uploads
   UPLOAD_BUCKET: "mf-storage-staging"
+  RECORD_BUCKET: "mf-record-staging"
   STORAGE_READ_BUCKETS: "mf-storage-prod"
   MULTIPART_UPLOAD_ENABLED: "true"
   MULTIPART_UPLOAD_BUCKET: "mf-storage-staging"

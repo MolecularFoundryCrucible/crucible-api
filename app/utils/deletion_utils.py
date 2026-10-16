@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.models.core_models import (
     AccessGroup, AccessGroupJoinRequest, AssociatedFile, Dataset,
     DatasetKeywordLink, DatasetLink, DatasetSampleLink, DeletionRequest,
-    Instrument, IngestionRequest, Project, Resource, ResourceACL,
+    Instrument, IngestionRequest, PostprocessingRun, Project, Resource, ResourceACL,
     ResourceEmbedding, Sample, ScientificMetadataBinary, SampleLink, UserRecentResource,
     Thumbnail, UploadSession, UserAccessGroupLink, UserProjectLink,
 )
@@ -215,6 +215,7 @@ def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Res
             ),
         )
     ))
+    session.execute(delete(PostprocessingRun).where(PostprocessingRun.dataset_mfid == dataset_unique_id))
     session.execute(delete(UploadSession).where(UploadSession.dataset_mfid == dataset_unique_id))
     session.execute(delete(AssociatedFile).where(AssociatedFile.dataset_id == dataset.id))
     session.execute(delete(DatasetKeywordLink).where(DatasetKeywordLink.dataset_id == dataset.id))

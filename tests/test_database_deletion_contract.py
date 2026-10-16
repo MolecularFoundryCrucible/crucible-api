@@ -232,3 +232,22 @@ def test_forced_deletion_removes_recent_resource_entries(db_engine, resource_typ
 
     with Session(db_engine) as session:
         assert session.exec(select(UserRecentResource)).all() == []
+
+
+def test_forced_deletion_removes_postprocessing_runs(db_engine):
+    from app.general_utils import get_utc_datetime
+    from app.models.core_models import PostprocessingRun
+    group_id, _ = _setup(db_engine)
+    with Session(db_engine) as session:
+        session.add(PostprocessingRun(dataset_mfid="resource-to-delete", pipeline="rga_analysis", requested_at=get_utc_datetime()))
+        session.commit()
+
+    deletion_routes.hard_delete_resource_route(
+        resource_id="resource-to-delete",
+        background_tasks=None,
+        auth_res=_principal(group_id),
+        force=True,
+    )
+
+    with Session(db_engine) as session:
+        assert session.exec(select(PostprocessingRun)).all() == []

@@ -4636,6 +4636,60 @@
         "title": "PaginatedResponse[JoinRequestRead]",
         "type": "object"
       },
+      "PaginatedResponse_PostprocessingRunRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PostprocessingRunRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offset"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "limit",
+          "items"
+        ],
+        "title": "PaginatedResponse[PostprocessingRunRead]",
+        "type": "object"
+      },
       "PaginatedResponse_ProjectRead_": {
         "properties": {
           "items": {
@@ -5075,6 +5129,30 @@
         "title": "PaginatedResponse[Union[UserRead, UserPublicRead]]",
         "type": "object"
       },
+      "PipelineRead": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parameters_schema": {
+            "additionalProperties": true,
+            "title": "Parameters Schema",
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "parameters_schema"
+        ],
+        "title": "PipelineRead",
+        "type": "object"
+      },
       "PlatformRole": {
         "enum": [
           "none",
@@ -5084,6 +5162,150 @@
         ],
         "title": "PlatformRole",
         "type": "string"
+      },
+      "PostprocessRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "parameters": {
+            "additionalProperties": true,
+            "description": "Pipeline parameters, validated against the pipeline's parameters_schema.",
+            "title": "Parameters",
+            "type": "object"
+          },
+          "pipeline": {
+            "description": "Name of a pipeline from GET /pipelines.",
+            "title": "Pipeline",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pipeline"
+        ],
+        "title": "PostprocessRequest",
+        "type": "object"
+      },
+      "PostprocessingRunRead": {
+        "properties": {
+          "dataset_mfid": {
+            "title": "Dataset Mfid",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "title": "Parameters",
+            "type": "object"
+          },
+          "pipeline": {
+            "title": "Pipeline",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "requested",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "dataset_mfid",
+          "pipeline",
+          "parameters",
+          "status",
+          "requested_at"
+        ],
+        "title": "PostprocessingRunRead",
+        "type": "object"
+      },
+      "PostprocessingRunUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PostprocessingRunUpdate",
+        "type": "object"
       },
       "PreferencesRead": {
         "properties": {
@@ -12542,6 +12764,8 @@
     },
     "/datasets/{dataset_mfid}/carrier_segmentation": {
       "post": {
+        "deprecated": true,
+        "description": "Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline \"carrier_segmentation\".",
         "operationId": "request_carrier_segmentation_datasets__dataset_mfid__carrier_segmentation_post",
         "parameters": [
           {
@@ -12578,7 +12802,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PostprocessingRunRead"
+                }
               }
             },
             "description": "Successful Response",
@@ -13178,6 +13404,8 @@
     },
     "/datasets/{dataset_mfid}/insitu_spec_aggregation": {
       "post": {
+        "deprecated": true,
+        "description": "Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline \"insitu_aggregation\".",
         "operationId": "request_insitu_aggregation_datasets__dataset_mfid__insitu_spec_aggregation_post",
         "parameters": [
           {
@@ -13214,7 +13442,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PostprocessingRunRead"
+                }
               }
             },
             "description": "Successful Response",
@@ -13523,6 +13753,8 @@
     },
     "/datasets/{dataset_mfid}/mosaic_stitch": {
       "post": {
+        "deprecated": true,
+        "description": "Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline \"mosaic_stitch\".",
         "operationId": "request_mosaic_stitch_datasets__dataset_mfid__mosaic_stitch_post",
         "parameters": [
           {
@@ -13559,7 +13791,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PostprocessingRunRead"
+                }
               }
             },
             "description": "Successful Response",
@@ -13600,8 +13834,104 @@
         ]
       }
     },
+    "/datasets/{dataset_mfid}/postprocess": {
+      "post": {
+        "description": "Queue a postprocessing run on a dataset. Requires contributor access. Each request starts a new run.",
+        "operationId": "postprocess_dataset_datasets__dataset_mfid__postprocess_post",
+        "parameters": [
+          {
+            "description": "Dataset MFID.",
+            "in": "path",
+            "name": "dataset_mfid",
+            "required": true,
+            "schema": {
+              "description": "Dataset MFID.",
+              "title": "Dataset Mfid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostprocessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostprocessingRunRead"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is below contributor on the dataset"
+          },
+          "404": {
+            "description": "Dataset not found, not readable, or pending deletion"
+          },
+          "422": {
+            "description": "Unknown pipeline (`unknown_pipeline`) or invalid parameters (`invalid_parameters`)"
+          },
+          "503": {
+            "description": "The run could not be queued (`pipeline_unavailable`); it is recorded as failed"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Postprocess Dataset",
+        "tags": [
+          "postprocessing"
+        ]
+      }
+    },
     "/datasets/{dataset_mfid}/rga_analysis": {
       "post": {
+        "deprecated": true,
+        "description": "Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline \"rga_analysis\".",
         "operationId": "request_rga_analysis_datasets__dataset_mfid__rga_analysis_post",
         "parameters": [
           {
@@ -13638,7 +13968,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PostprocessingRunRead"
+                }
               }
             },
             "description": "Successful Response",
@@ -19630,6 +19962,400 @@
           }
         },
         "summary": "Metrics"
+      }
+    },
+    "/pipelines": {
+      "get": {
+        "description": "List the pipelines that can postprocess a dataset, with the parameters each accepts.",
+        "operationId": "list_pipelines_pipelines_get",
+        "parameters": [
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PipelineRead"
+                  },
+                  "title": "Response List Pipelines Pipelines Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Pipelines",
+        "tags": [
+          "postprocessing"
+        ]
+      }
+    },
+    "/postprocessing_runs": {
+      "get": {
+        "description": "List postprocessing runs on datasets the caller can read, newest first.",
+        "operationId": "list_postprocessing_runs_postprocessing_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "dataset_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dataset Mfid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pipeline",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pipeline"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "requested",
+                    "running",
+                    "completed",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_PostprocessingRunRead_"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Postprocessing Runs",
+        "tags": [
+          "postprocessing"
+        ]
+      }
+    },
+    "/postprocessing_runs/{run_id}": {
+      "get": {
+        "description": "Return one postprocessing run. Requires read access to its dataset.",
+        "operationId": "get_postprocessing_run_postprocessing_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostprocessingRunRead"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Postprocessing Run",
+        "tags": [
+          "postprocessing"
+        ]
+      },
+      "patch": {
+        "description": "Report a run's progress: running, completed, or failed with an error. Requires edit access to its dataset.",
+        "operationId": "update_postprocessing_run_postprocessing_runs__run_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostprocessingRunUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostprocessingRunRead"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "409": {
+            "description": "The run already finished (`run_finished`)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Postprocessing Run",
+        "tags": [
+          "postprocessing"
+        ]
       }
     },
     "/print/barcode": {

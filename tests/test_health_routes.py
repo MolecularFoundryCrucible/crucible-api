@@ -126,8 +126,8 @@ def test_api_version_uses_project_metadata(monkeypatch):
     assert api_version() == "3.1.0"
 
 
-HEAD = "b644cf2e7240"
-PREVIOUS = "d7b51bd885fc"
+HEAD = "aa8eb05c643d"
+PREVIOUS = "b644cf2e7240"
 
 
 def test_readiness_stays_ready_when_the_database_is_ahead(monkeypatch):

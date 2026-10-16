@@ -15,7 +15,7 @@ from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
-from app.general_utils import get_secret, get_utc_datetime
+from app.general_utils import get_utc_datetime
 from app.models.core_models import (
     AccessGroup,
     AssociatedFile,
@@ -82,7 +82,9 @@ from app.utils.instrument_utils import (
     resolve_instrument_mfids_to_references,
 )
 from app.utils.link_utils import require_link_create_permissions
-from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
+from app.utils.rmq_utils import get_ingestion_tier
+from app.api.routes.pipelines import start_postprocessing_run
+from app.models.pipelines import PostprocessingRunRead
 from app.utils.search_utils import (
     apply_trigram_search,
     configure_trigram_search,
@@ -136,79 +138,29 @@ def _normalize_thumbnail_input(dsid: str, thumbnail_b64str: str) -> str:
         raise HTTPException(status_code=500, detail="Unable to process thumbnail image") from exc
 
 
-@router.post("/datasets/{dataset_mfid}/carrier_segmentation")
+@router.post("/datasets/{dataset_mfid}/carrier_segmentation", response_model=PostprocessingRunRead, deprecated=True)
 def request_carrier_segmentation(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    msg = {
-        "dsid": dsid,
-    }
+    '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "carrier_segmentation".'''
+    return start_postprocessing_run(auth_res, dsid, "carrier_segmentation", {})
 
-    send_pika_message(
-        message=json.dumps(msg),
-        exchange="",
-        routing_key="carrier-segmentation",
-        user="admin",
-        rmq_pw=rmq_pw
-    )
-    return
 
-@router.post("/datasets/{dataset_mfid}/insitu_spec_aggregation")
+@router.post("/datasets/{dataset_mfid}/insitu_spec_aggregation", response_model=PostprocessingRunRead, deprecated=True)
 def request_insitu_aggregation(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    msg = {
-        "dsid": dsid,
-    }
+    '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "insitu_aggregation".'''
+    return start_postprocessing_run(auth_res, dsid, "insitu_aggregation", {})
 
-    send_pika_message(
-        message=json.dumps(msg),
-        exchange="",
-        routing_key="insitu-aggregation",
-        user="admin",
-        rmq_pw=rmq_pw
-    )
-    return
 
-@router.post("/datasets/{dataset_mfid}/rga_analysis")
+@router.post("/datasets/{dataset_mfid}/rga_analysis", response_model=PostprocessingRunRead, deprecated=True)
 def request_rga_analysis(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    with Session(engine) as session:
-        dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-    if dataset is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "rga_analysis".'''
+    return start_postprocessing_run(auth_res, dsid, "rga_analysis", {})
 
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    msg = {
-        "dsid": dataset.unique_id,
-    }
 
-    send_pika_message(
-        message=json.dumps(msg),
-        exchange="",
-        routing_key="rga-analysis",
-        user="admin",
-        rmq_pw=rmq_pw
-    )
-    return
-
-@router.post("/datasets/{dataset_mfid}/mosaic_stitch")
+@router.post("/datasets/{dataset_mfid}/mosaic_stitch", response_model=PostprocessingRunRead, deprecated=True)
 def request_mosaic_stitch(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    with Session(engine) as session:
-        dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-    if dataset is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "mosaic_stitch".'''
+    return start_postprocessing_run(auth_res, dsid, "mosaic_stitch", {})
 
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    msg = {
-        "dsid": dataset.unique_id,
-    }
-
-    send_pika_message(
-        message=json.dumps(msg),
-        exchange="",
-        routing_key="mosaic-stitch",
-        user="admin",
-        rmq_pw=rmq_pw
-    )
-    return
 
 @router.post("/datasets", response_model=DatasetResponse)
 async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],

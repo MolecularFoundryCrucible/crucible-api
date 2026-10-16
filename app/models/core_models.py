@@ -539,6 +539,24 @@ class IngestionRequest(SQLModel, table=True):
     associated_file: Optional["AssociatedFile"] = Relationship(back_populates="ingestion_requests")
 
 
+class PostprocessingRun(SQLModel, table=True):
+    __table_args__ = (
+        Index("ix_postprocessingrun_dataset_requested", "dataset_mfid", "requested_at"),
+        CheckConstraint("status IN ('requested', 'running', 'completed', 'failed')", name="ck_postprocessingrun_status"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    dataset_mfid: str = Field(sa_column=Column(String, ForeignKey("dataset.unique_id", ondelete="CASCADE"), nullable=False))
+    pipeline: str
+    parameters: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON().with_variant(JSONB(), "postgresql"), nullable=False))
+    status: str = "requested"
+    error: Optional[str] = Field(default=None, sa_type=Text)
+    requested_by: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("user.orcid", ondelete="SET NULL")))
+    requested_at: datetime = Field(sa_type=DateTime(timezone=True))
+    started_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    finished_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+
+
 class UploadSession(SQLModel, table=True):
     __tablename__ = "upload_sessions"
     __table_args__ = (

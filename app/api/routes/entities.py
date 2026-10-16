@@ -1,7 +1,6 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import bindparam, text
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -12,7 +11,7 @@ from app.models.core_models import (
 from app.utils.auth_utils import authorize_user, permission_filter
 from app.utils.project_utils import resolve_project_reference
 from app.utils.sql_utils import deletion_filter_for
-from app.utils.permissions import Permission, Principal, Role, has_global_permission
+from app.utils.permissions import Permission, Principal
 
 router = APIRouter(tags=["entities"])
 engine = get_engine()
@@ -99,311 +98,74 @@ def _build_graph(session: Session, sample_ids: set, dataset_ids: set) -> dict:
 
 # ---------------------------------------------------------------------------
 # GET /entity_graph_cte/{entity_id}
-# CTE-based: finds the connected component in a fixed number of queries.
 # Default: first-degree neighbours only. Pass recursive=true for full traversal.
 # ---------------------------------------------------------------------------
 
-_VISIBLE_ENTITIES_SQL = """
-        visible_samples(id) AS (
-            SELECT s.id
-            FROM sample s
-            WHERE NOT EXISTS (
-                SELECT 1
-                FROM deletionrequest dr
-                WHERE dr.resource_id = s.unique_id
-                  AND dr.status IN ('pending', 'approved')
-            )
-              AND (
-                  :platform_admin
-                  OR EXISTS (
-                      SELECT 1
-                      FROM resourceacl acl
-                      WHERE acl.mfid = s.unique_id
-                        AND acl.accessgroup_id IN :group_ids
-                        AND acl.permission IN ('viewer', 'contributor', 'editor', 'admin', 'owner')
-                  )
-              )
-        ),
-        visible_datasets(id) AS (
-            SELECT d.id
-            FROM dataset d
-            WHERE NOT EXISTS (
-                SELECT 1
-                FROM deletionrequest dr
-                WHERE dr.resource_id = d.unique_id
-                  AND dr.status IN ('pending', 'approved')
-            )
-              AND (
-                  :platform_admin
-                  OR EXISTS (
-                      SELECT 1
-                      FROM resourceacl acl
-                      WHERE acl.mfid = d.unique_id
-                        AND acl.accessgroup_id IN :group_ids
-                        AND acl.permission IN ('viewer', 'contributor', 'editor', 'admin', 'owner')
-                  )
-              )
-        )
-"""
+_IN_CHUNK = 5000
 
 
-def _graph_sql(statement: str):
-    return text(statement).bindparams(bindparam("group_ids", expanding=True))
+def _visible_neighbours(session, principal, model, to_column, from_column, ids) -> set:
+    """Readable, active `model` ids reached through link rows whose `from_column` is in `ids`."""
+    found = set()
+    ids = list(ids)
+    for start in range(0, len(ids), _IN_CHUNK):
+        found.update(session.exec(
+            select(to_column)
+            .join(model, model.id == to_column)
+            .where(from_column.in_(ids[start:start + _IN_CHUNK]))
+            .where(permission_filter(principal, model, Permission.READ))
+            .where(deletion_filter_for(model))
+            .distinct()
+        ).all())
+    return found
 
 
-_SAMPLE_SEED_1HOP_SQL = _graph_sql(f"""
-    WITH
-        {_VISIBLE_ENTITIES_SQL},
-        s_neighbors(id) AS (
-            SELECT CAST(:seed_id AS int)
-            UNION
-            SELECT sl.sample_id FROM samplelink sl
-             WHERE sl.parent_sample_id = CAST(:seed_id AS int)
-               AND sl.sample_id IN (SELECT id FROM visible_samples)
-            UNION
-            SELECT sl.parent_sample_id FROM samplelink sl
-             WHERE sl.sample_id = CAST(:seed_id AS int)
-               AND sl.parent_sample_id IN (SELECT id FROM visible_samples)
-        ),
-        d_neighbors(id) AS (
-            SELECT DISTINCT dsl.dataset_id FROM datasetsamplelink dsl
-             WHERE dsl.sample_id IN (SELECT id FROM s_neighbors)
-               AND dsl.dataset_id IN (SELECT id FROM visible_datasets)
-        )
-    SELECT 'sn' AS t, s.unique_id AS a, s.sample_name AS b
-      FROM sample s WHERE s.id IN (SELECT id FROM s_neighbors)
-    UNION ALL
-    SELECT 'dn', d.unique_id, d.dataset_name
-      FROM dataset d WHERE d.id IN (SELECT id FROM d_neighbors)
-    UNION ALL
-    SELECT 'se', s1.unique_id, s2.unique_id
-      FROM samplelink sl
-      JOIN sample s1 ON s1.id = sl.parent_sample_id
-      JOIN sample s2 ON s2.id = sl.sample_id
-     WHERE sl.parent_sample_id IN (SELECT id FROM s_neighbors)
-       AND sl.sample_id        IN (SELECT id FROM s_neighbors)
-    UNION ALL
-    SELECT 'de', d1.unique_id, d2.unique_id
-      FROM datasetlink dl
-      JOIN dataset d1 ON d1.id = dl.parent_dataset_id
-      JOIN dataset d2 ON d2.id = dl.child_dataset_id
-     WHERE dl.parent_dataset_id IN (SELECT id FROM d_neighbors)
-       AND dl.child_dataset_id  IN (SELECT id FROM d_neighbors)
-    UNION ALL
-    SELECT 'sd', s.unique_id, d.unique_id
-      FROM datasetsamplelink dsl
-      JOIN sample  s ON s.id = dsl.sample_id
-      JOIN dataset d ON d.id = dsl.dataset_id
-     WHERE dsl.sample_id  IN (SELECT id FROM s_neighbors)
-       AND dsl.dataset_id IN (SELECT id FROM d_neighbors)
-""")
-
-_DATASET_SEED_1HOP_SQL = _graph_sql(f"""
-    WITH
-        {_VISIBLE_ENTITIES_SQL},
-        d_neighbors(id) AS (
-            SELECT CAST(:seed_id AS int)
-            UNION
-            SELECT dl.child_dataset_id FROM datasetlink dl
-             WHERE dl.parent_dataset_id = CAST(:seed_id AS int)
-               AND dl.child_dataset_id IN (SELECT id FROM visible_datasets)
-            UNION
-            SELECT dl.parent_dataset_id FROM datasetlink dl
-             WHERE dl.child_dataset_id = CAST(:seed_id AS int)
-               AND dl.parent_dataset_id IN (SELECT id FROM visible_datasets)
-        ),
-        s_neighbors(id) AS (
-            SELECT DISTINCT dsl.sample_id FROM datasetsamplelink dsl
-             WHERE dsl.dataset_id IN (SELECT id FROM d_neighbors)
-               AND dsl.sample_id IN (SELECT id FROM visible_samples)
-        )
-    SELECT 'sn' AS t, s.unique_id AS a, s.sample_name AS b
-      FROM sample s WHERE s.id IN (SELECT id FROM s_neighbors)
-    UNION ALL
-    SELECT 'dn', d.unique_id, d.dataset_name
-      FROM dataset d WHERE d.id IN (SELECT id FROM d_neighbors)
-    UNION ALL
-    SELECT 'se', s1.unique_id, s2.unique_id
-      FROM samplelink sl
-      JOIN sample s1 ON s1.id = sl.parent_sample_id
-      JOIN sample s2 ON s2.id = sl.sample_id
-     WHERE sl.parent_sample_id IN (SELECT id FROM s_neighbors)
-       AND sl.sample_id        IN (SELECT id FROM s_neighbors)
-    UNION ALL
-    SELECT 'de', d1.unique_id, d2.unique_id
-      FROM datasetlink dl
-      JOIN dataset d1 ON d1.id = dl.parent_dataset_id
-      JOIN dataset d2 ON d2.id = dl.child_dataset_id
-     WHERE dl.parent_dataset_id IN (SELECT id FROM d_neighbors)
-       AND dl.child_dataset_id  IN (SELECT id FROM d_neighbors)
-    UNION ALL
-    SELECT 'sd', s.unique_id, d.unique_id
-      FROM datasetsamplelink dsl
-      JOIN sample  s ON s.id = dsl.sample_id
-      JOIN dataset d ON d.id = dsl.dataset_id
-     WHERE dsl.sample_id  IN (SELECT id FROM s_neighbors)
-       AND dsl.dataset_id IN (SELECT id FROM d_neighbors)
-""")
-
-_SAMPLE_SEED_GRAPH_SQL = _graph_sql(f"""
-    WITH RECURSIVE
-        {_VISIBLE_ENTITIES_SQL},
-        s_down(id) AS (
-            SELECT CAST(:seed_id AS int)
-            UNION
-            SELECT sl.sample_id FROM samplelink sl JOIN s_down d ON sl.parent_sample_id = d.id
-             WHERE sl.sample_id IN (SELECT id FROM visible_samples)
-        ),
-        s_up(id) AS (
-            SELECT CAST(:seed_id AS int)
-            UNION
-            SELECT sl.parent_sample_id FROM samplelink sl JOIN s_up u ON sl.sample_id = u.id
-             WHERE sl.parent_sample_id IN (SELECT id FROM visible_samples)
-        ),
-        s_ids(id) AS (SELECT id FROM s_down UNION SELECT id FROM s_up),
-        d_seed(id) AS (
-            SELECT DISTINCT dataset_id FROM datasetsamplelink
-            WHERE sample_id IN (SELECT id FROM s_ids)
-              AND dataset_id IN (SELECT id FROM visible_datasets)
-        ),
-        d_down(id) AS (
-            SELECT id FROM d_seed
-            UNION
-            SELECT dl.child_dataset_id FROM datasetlink dl JOIN d_down d ON dl.parent_dataset_id = d.id
-             WHERE dl.child_dataset_id IN (SELECT id FROM visible_datasets)
-        ),
-        d_up(id) AS (
-            SELECT id FROM d_seed
-            UNION
-            SELECT dl.parent_dataset_id FROM datasetlink dl JOIN d_up u ON dl.child_dataset_id = u.id
-             WHERE dl.parent_dataset_id IN (SELECT id FROM visible_datasets)
-        ),
-        d_ids(id) AS (SELECT id FROM d_down UNION SELECT id FROM d_up)
-    SELECT 'sn' AS t, s.unique_id AS a, s.sample_name AS b
-      FROM sample s WHERE s.id IN (SELECT id FROM s_ids)
-    UNION ALL
-    SELECT 'dn', d.unique_id, d.dataset_name
-      FROM dataset d WHERE d.id IN (SELECT id FROM d_ids)
-    UNION ALL
-    SELECT 'se', s1.unique_id, s2.unique_id
-      FROM samplelink sl
-      JOIN sample s1 ON s1.id = sl.parent_sample_id
-      JOIN sample s2 ON s2.id = sl.sample_id
-     WHERE sl.parent_sample_id IN (SELECT id FROM s_ids)
-       AND sl.sample_id       IN (SELECT id FROM s_ids)
-    UNION ALL
-    SELECT 'de', d1.unique_id, d2.unique_id
-      FROM datasetlink dl
-      JOIN dataset d1 ON d1.id = dl.parent_dataset_id
-      JOIN dataset d2 ON d2.id = dl.child_dataset_id
-     WHERE dl.parent_dataset_id IN (SELECT id FROM d_ids)
-       AND dl.child_dataset_id  IN (SELECT id FROM d_ids)
-    UNION ALL
-    SELECT 'sd', s.unique_id, d.unique_id
-      FROM datasetsamplelink dsl
-      JOIN sample  s ON s.id = dsl.sample_id
-      JOIN dataset d ON d.id = dsl.dataset_id
-     WHERE dsl.sample_id  IN (SELECT id FROM s_ids)
-       AND dsl.dataset_id IN (SELECT id FROM d_ids)
-""")
-
-_DATASET_SEED_GRAPH_SQL = _graph_sql(f"""
-    WITH RECURSIVE
-        {_VISIBLE_ENTITIES_SQL},
-        d1_down(id) AS (
-            SELECT CAST(:seed_id AS int)
-            UNION
-            SELECT dl.child_dataset_id FROM datasetlink dl JOIN d1_down d ON dl.parent_dataset_id = d.id
-             WHERE dl.child_dataset_id IN (SELECT id FROM visible_datasets)
-        ),
-        d1_up(id) AS (
-            SELECT CAST(:seed_id AS int)
-            UNION
-            SELECT dl.parent_dataset_id FROM datasetlink dl JOIN d1_up u ON dl.child_dataset_id = u.id
-             WHERE dl.parent_dataset_id IN (SELECT id FROM visible_datasets)
-        ),
-        d1_ids(id) AS (SELECT id FROM d1_down UNION SELECT id FROM d1_up),
-        s_seed(id) AS (
-            SELECT DISTINCT sample_id FROM datasetsamplelink
-            WHERE dataset_id IN (SELECT id FROM d1_ids)
-              AND sample_id IN (SELECT id FROM visible_samples)
-        ),
-        s_down(id) AS (
-            SELECT id FROM s_seed
-            UNION
-            SELECT sl.sample_id FROM samplelink sl JOIN s_down d ON sl.parent_sample_id = d.id
-             WHERE sl.sample_id IN (SELECT id FROM visible_samples)
-        ),
-        s_up(id) AS (
-            SELECT id FROM s_seed
-            UNION
-            SELECT sl.parent_sample_id FROM samplelink sl JOIN s_up u ON sl.sample_id = u.id
-             WHERE sl.parent_sample_id IN (SELECT id FROM visible_samples)
-        ),
-        s_ids(id) AS (SELECT id FROM s_down UNION SELECT id FROM s_up),
-        d2_seed(id) AS (
-            SELECT DISTINCT dataset_id FROM datasetsamplelink
-             WHERE sample_id  IN (SELECT id FROM s_ids)
-               AND dataset_id NOT IN (SELECT id FROM d1_ids)
-               AND dataset_id IN (SELECT id FROM visible_datasets)
-        ),
-        d2_down(id) AS (
-            SELECT id FROM d2_seed
-            UNION
-            SELECT dl.child_dataset_id FROM datasetlink dl JOIN d2_down d ON dl.parent_dataset_id = d.id
-             WHERE dl.child_dataset_id IN (SELECT id FROM visible_datasets)
-        ),
-        d2_up(id) AS (
-            SELECT id FROM d2_seed
-            UNION
-            SELECT dl.parent_dataset_id FROM datasetlink dl JOIN d2_up u ON dl.child_dataset_id = u.id
-             WHERE dl.parent_dataset_id IN (SELECT id FROM visible_datasets)
-        ),
-        d_ids(id) AS (
-            SELECT id FROM d1_ids
-            UNION SELECT id FROM d2_down
-            UNION SELECT id FROM d2_up
-        )
-    SELECT 'sn' AS t, s.unique_id AS a, s.sample_name AS b
-      FROM sample s WHERE s.id IN (SELECT id FROM s_ids)
-    UNION ALL
-    SELECT 'dn', d.unique_id, d.dataset_name
-      FROM dataset d WHERE d.id IN (SELECT id FROM d_ids)
-    UNION ALL
-    SELECT 'se', s1.unique_id, s2.unique_id
-      FROM samplelink sl
-      JOIN sample s1 ON s1.id = sl.parent_sample_id
-      JOIN sample s2 ON s2.id = sl.sample_id
-     WHERE sl.parent_sample_id IN (SELECT id FROM s_ids)
-       AND sl.sample_id       IN (SELECT id FROM s_ids)
-    UNION ALL
-    SELECT 'de', d1.unique_id, d2.unique_id
-      FROM datasetlink dl
-      JOIN dataset d1 ON d1.id = dl.parent_dataset_id
-      JOIN dataset d2 ON d2.id = dl.child_dataset_id
-     WHERE dl.parent_dataset_id IN (SELECT id FROM d_ids)
-       AND dl.child_dataset_id  IN (SELECT id FROM d_ids)
-    UNION ALL
-    SELECT 'sd', s.unique_id, d.unique_id
-      FROM datasetsamplelink dsl
-      JOIN sample  s ON s.id = dsl.sample_id
-      JOIN dataset d ON d.id = dsl.dataset_id
-     WHERE dsl.sample_id  IN (SELECT id FROM s_ids)
-       AND dsl.dataset_id IN (SELECT id FROM d_ids)
-""")
+def _closure(session, principal, model, to_column, from_column, seeds) -> set:
+    reached, frontier = set(seeds), set(seeds)
+    while frontier:
+        frontier = _visible_neighbours(session, principal, model, to_column, from_column, frontier) - reached
+        reached |= frontier
+    return reached
 
 
-def _parse_graph_rows(rows) -> dict:
-    """Convert tagged mixed result rows into a node-link dict."""
-    nodes, links = [], []
-    for t, a, b in rows:
-        if t == "sn":
-            nodes.append({"id": a, "entity_type": "sample",  "name": b})
-        elif t == "dn":
-            nodes.append({"id": a, "entity_type": "dataset", "name": b})
-        else:
-            links.append({"source": a, "target": b})
-    return {"directed": True, "multigraph": False, "graph": {}, "nodes": nodes, "edges": links}
+def _sample_lineage(session, principal, seeds, recursive=True) -> set:
+    step = _closure if recursive else _visible_neighbours
+    down = step(session, principal, Sample, SampleLink.sample_id, SampleLink.parent_sample_id, seeds)
+    up = step(session, principal, Sample, SampleLink.parent_sample_id, SampleLink.sample_id, seeds)
+    return set(seeds) | down | up
+
+
+def _dataset_lineage(session, principal, seeds, recursive=True) -> set:
+    step = _closure if recursive else _visible_neighbours
+    down = step(session, principal, Dataset, DatasetLink.child_dataset_id, DatasetLink.parent_dataset_id, seeds)
+    up = step(session, principal, Dataset, DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id, seeds)
+    return set(seeds) | down | up
+
+
+def _linked_datasets(session, principal, sample_ids) -> set:
+    return _visible_neighbours(session, principal, Dataset, DatasetSampleLink.dataset_id, DatasetSampleLink.sample_id, sample_ids)
+
+
+def _linked_samples(session, principal, dataset_ids) -> set:
+    return _visible_neighbours(session, principal, Sample, DatasetSampleLink.sample_id, DatasetSampleLink.dataset_id, dataset_ids)
+
+
+def _entity_graph_ids(session, principal, kind: str, seed_id: int, recursive: bool) -> tuple[set, set]:
+    """Sample and dataset ids around a readable root: its lineage, the records linked to that
+    lineage, and (recursively) their lineage. Only readable, active records are visited, so the
+    traversal never crosses one the caller cannot see."""
+    if kind == "sample":
+        sample_ids = _sample_lineage(session, principal, {seed_id}, recursive)
+        dataset_seeds = _linked_datasets(session, principal, sample_ids)
+        dataset_ids = _dataset_lineage(session, principal, dataset_seeds) if recursive else dataset_seeds
+        return sample_ids, dataset_ids
+    dataset_ids = _dataset_lineage(session, principal, {seed_id}, recursive)
+    sample_seeds = _linked_samples(session, principal, dataset_ids)
+    if not recursive:
+        return sample_seeds, dataset_ids
+    sample_ids = _sample_lineage(session, principal, sample_seeds)
+    more_datasets = _linked_datasets(session, principal, sample_ids) - dataset_ids
+    return sample_ids, dataset_ids | _dataset_lineage(session, principal, more_datasets)
 
 
 @router.get("/entity_graph_cte/{entity_mfid}")
@@ -428,8 +190,7 @@ def entity_graph_cte(
         ).first()
 
         if sample_target is not None:
-            seed_id = sample_target.id
-            sql = _SAMPLE_SEED_GRAPH_SQL if recursive else _SAMPLE_SEED_1HOP_SQL
+            kind, seed_id = "sample", sample_target.id
         else:
             dataset_target = session.exec(
                 select(Dataset)
@@ -439,15 +200,10 @@ def entity_graph_cte(
             ).first()
             if dataset_target is None:
                 raise HTTPException(status_code=404, detail="Entity not found")
-            seed_id = dataset_target.id
-            sql = _DATASET_SEED_GRAPH_SQL if recursive else _DATASET_SEED_1HOP_SQL
+            kind, seed_id = "dataset", dataset_target.id
 
-        rows = session.execute(sql, {
-            "seed_id": seed_id,
-            "platform_admin": has_global_permission(auth_res, Permission.READ),
-            "group_ids": auth_res.group_ids_at_or_above(Role.VIEWER),
-        })
-        return _parse_graph_rows(rows)
+        sample_ids, dataset_ids = _entity_graph_ids(session, auth_res, kind, seed_id, recursive)
+        return _build_graph(session, sample_ids, dataset_ids)
 
 
 # ---------------------------------------------------------------------------

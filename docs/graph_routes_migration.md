@@ -60,7 +60,7 @@ GET /projects/{project_ref}/entity_graph
 
 The API's Prometheus request counters (retained from 2026-03-26) showed no call to any of them after 2026-08-01, and four were never called. Neither nano-crucible nor crucible-labs calls them; crucible-labs used the three project routes until 2026-05-28 (`b8576f6`). Several of them traversed through unreadable or pending-deletion datasets before filtering, or returned unreadable parent MFIDs.
 
-`GET /entity_graph_cte/{entity_mfid}` does not return `relationship_type` on its edges; `GET /resources/{resource_mfid}/graph` does.
+`GET /entity_graph_cte/{entity_mfid}` walks lineage level by level with the shared permission and deletion filters (2026-10-16) instead of recursive SQL that checked visibility across every sample and dataset, and its edges now carry `relationship_type`.
 
 ## Open design decisions
 

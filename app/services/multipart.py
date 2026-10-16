@@ -171,12 +171,10 @@ def reserve(engine, principal, dsid, body, key, config):
             previous = idempotent(session, principal, dsid, key, fingerprint)
             if previous is not None:
                 return previous
-        if body.sha256_hash:
-            existing = session.exec(select(AssociatedFile).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.sha256_hash == body.sha256_hash, AssociatedFile.size == body.size, AssociatedFile.sha256_verified_at.is_not(None))).first()
-            if existing:
-                require_permission(session, demoted(session, principal), dsid, Permission.READ)
-                return MultipartStatus(state="completed", existing_file=AssociatedFileRead.model_validate(existing, update={"dataset_mfid": dsid}))
         existing_name = session.exec(select(AssociatedFile).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.filename == body.filename)).first()
+        if existing_name is not None and body.sha256_hash and existing_name.sha256_hash == body.sha256_hash and existing_name.size == body.size and existing_name.sha256_verified_at is not None:
+            require_permission(session, demoted(session, principal), dsid, Permission.READ)
+            return MultipartStatus(state="completed", existing_file=AssociatedFileRead.model_validate(existing_name, update={"dataset_mfid": dsid}))
         if existing_name is not None:
             raise HTTPException(409, {"code": "filename_exists", "file_mfid": existing_name.mfid, "etag": file_etag(existing_name.storage_path, existing_name.storage_generation, existing_name.sha256_hash, existing_name.size), "message": "Filename already exists"})
         if filename_reserved(session, dsid, body.filename):
@@ -387,6 +385,7 @@ def complete(engine, storage, principal, dsid, body, retire=None):
             conflict = session.exec(select(AssociatedFile.id).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.filename == current.associated_file_name)).first()
             code = "filename_conflict" if conflict is not None else None
         if code is None:
+            touch_resource_modification_time(session, dsid)
             if file is not None:
                 previous = (file.storage_path, file.storage_generation, file.filename, file.dataset_id)
                 file.storage_path = f"{current.bucket}/{current.gcs_path}"
@@ -396,7 +395,6 @@ def complete(engine, storage, principal, dsid, body, retire=None):
                 file.storage_crc32c = current.claimed_crc32c
                 file.sha256_verified_at = None
                 session.add(file)
-                touch_resource_modification_time(session, dsid)
             else:
                 file = AssociatedFile(dataset_id=dataset.id, filename=current.associated_file_name, storage_path=f"{current.bucket}/{current.gcs_path}", size=current.size, sha256_hash=current.claimed_sha256, storage_generation=metadata["generation"], storage_crc32c=current.claimed_crc32c)
                 session.add(file)

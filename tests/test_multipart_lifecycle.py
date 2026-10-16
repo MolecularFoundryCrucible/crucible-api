@@ -1,7 +1,8 @@
 import base64
 import hashlib
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import google_crc32c
@@ -361,11 +362,26 @@ def test_verified_hash_short_circuits_initiation(flow):
         file.sha256_verified_at = service.now()
         session.add(file)
         session.commit()
-    response = client.post(BASE + "/initiate", json={"filename": "another", "size": len(DATA), "sha256_hash": SHA})
+    response = client.post(BASE + "/initiate", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": SHA})
     assert response.status_code == 200, response.text
     assert response.json()["state"] == "completed"
     assert response.json()["upload_id"] is None
     assert response.json()["existing_file"]["mfid"] == file_id
+
+
+def test_same_content_under_another_name_is_a_new_upload(flow):
+    client, engine, _ = flow
+    identifier = publish(flow)
+    complete(flow, identifier)
+    with Session(engine) as session:
+        file = session.exec(select(AssociatedFile)).one()
+        file.sha256_verified_at = service.now()
+        session.add(file)
+        session.commit()
+    response = client.post(BASE + "/initiate", json={"filename": "another", "size": len(DATA), "sha256_hash": SHA})
+    assert response.status_code == 200, response.text
+    assert response.json()["existing_file"] is None
+    assert response.json()["upload_id"] is not None
 
 
 @pytest.mark.parametrize("body", [{"filename": "../x", "size": 1}, {"filename": "/x", "size": 1}, {"filename": "x", "size": True}, {"filename": "x", "size": 0}, {"filename": "x", "size": 1, "sha256_hash": "bad"}])
@@ -602,10 +618,15 @@ def test_unverified_multipart_hash_does_not_dedupe_legacy_paths(flow, monkeypatc
     assert response.status_code == 200, response.text
     assert response.json()["filename"] == "legacy.bin"
     monkeypatch.setattr("app.api.routes.gcs_storage.engine", engine)
-    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda: ("token", "2030-01-01T00:00:00+00:00"))
-    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "other.bin", "size": len(DATA), "sha256_hash": SHA})
+    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda dsid: ("token", "2030-01-01T00:00:00+00:00"))
+    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": SHA})
+    assert response.status_code == 200, response.text
+    assert response.json()["existing_file"] is None
+    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA), "sha256_hash": SHA})
     assert response.status_code == 200, response.text
     assert response.json()["existing_file"]["filename"] == "legacy.bin"
+    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "other.bin", "size": len(DATA), "sha256_hash": SHA})
+    assert response.json()["existing_file"] is None
 
 
 def test_legacy_paths_respect_multipart_filename_reservation(flow, monkeypatch):
@@ -1180,3 +1201,42 @@ def test_initiate_returns_adaptive_part_size(flow):
     assert response.status_code == 200, response.text
     assert response.json()["part_size"] == 9 * MIB
     assert response.json()["part_count"] == 8
+
+
+OLD = datetime(2020, 1, 1, tzinfo=timezone.utc)
+
+
+def dataset_touched(engine):
+    with Session(engine) as session:
+        value = session.get(Resource, "ds").modification_time
+        return value.replace(tzinfo=value.tzinfo or timezone.utc) > OLD
+
+
+def age_dataset(engine):
+    with Session(engine) as session:
+        resource = session.get(Resource, "ds")
+        resource.modification_time = OLD
+        session.add(resource)
+        session.commit()
+
+
+def test_new_files_touch_the_dataset(flow):
+    _, engine, _ = flow
+    age_dataset(engine)
+    publish(flow)
+    assert dataset_touched(engine)
+
+
+def test_legacy_completion_touches_the_dataset(flow, monkeypatch):
+    client, engine, _ = flow
+    monkeypatch.setattr("app.api.routes.gcs_storage.engine", engine)
+    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda dsid: ("token", "2030-01-01T00:00:00+00:00"))
+    upload_id = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA)}).json()["upload_id"]
+    age_dataset(engine)
+    blob = SimpleNamespace(size=len(DATA), reload=lambda: None)
+    gcs = MagicMock()
+    gcs.bucket.return_value.blob.return_value = blob
+    monkeypatch.setattr("app.api.routes.gcs_storage._get_gcs_storage_client", lambda: gcs)
+    response = client.post("/datasets/ds/upload/complete", json={"upload_id": upload_id, "sha256_hash": SHA})
+    assert response.status_code == 200, response.text
+    assert dataset_touched(engine)

@@ -18,7 +18,7 @@ from app.services import multipart
 from app.services.storage_downloads import DOWNLOAD_LIFETIME, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, retire_object, signed_download_url, upload_bucket
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
-from app.utils.sql_utils import add_or_update
+from app.utils.sql_utils import add_or_update, touch_resource_modification_time
 
 router = APIRouter(tags=["storage"])
 engine = get_engine()
@@ -70,17 +70,23 @@ def _determine_storage_path(dataset_mfid, filename):
     folder and return the storage path for the file. 
     """
     basename = filename.split("/")[-1]
-    ds_blobs = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
-    for blob in ds_blobs:
-        if blob.name.startswith(multipart_prefix(dataset_mfid)):
-            continue
-        if blob.name.endswith(basename):
-            return f"{_DOWNLOAD_BUCKET}/{blob.name}"
-    else:
+    exact = f"{dataset_mfid}/{filename}"
+    names = [
+        blob.name
+        for blob in _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
+        if not blob.name.startswith(multipart_prefix(dataset_mfid))
+    ]
+    if exact in names:
+        return f"{_DOWNLOAD_BUCKET}/{exact}"
+    candidates = [name for name in names if name.endswith(f"/{basename}")]
+    if len(candidates) == 1:
+        return f"{_DOWNLOAD_BUCKET}/{candidates[0]}"
+    if candidates:
         raise HTTPException(
-            status_code=404,
-            detail="File not found in production storage",
+            status_code=409,
+            detail=f"Several stored objects match {basename!r}; the file's location cannot be determined",
         )
+    raise HTTPException(status_code=404, detail="File not found in production storage")
 
 def _retire_object(storage_path, generation, retired_at):
     bucket, _, key = storage_path.partition("/")
@@ -159,17 +165,6 @@ def _validate_and_prepare_upload(
             raise HTTPException(status_code=404, detail="Dataset not found")
         require_permission(session, principal, dsid, Permission.CREATE)
 
-        if body.sha256_hash:
-            existing = session.exec(
-                select(AssociatedFile).where(
-                    AssociatedFile.dataset_id == ds.id,
-                    AssociatedFile.sha256_hash == body.sha256_hash,
-                    multipart.trusted_hash(),
-                )
-            ).first()
-            if existing is not None:
-                return existing # TODO - this feels wrong, can return relative storage path, filename
-
         from pathlib import PurePosixPath
         parts = [p for p in PurePosixPath(body.filename).parts if p not in ("", "/", ".", "..")]
         if not parts:
@@ -177,6 +172,17 @@ def _validate_and_prepare_upload(
         if parts[0] == MULTIPART_SEGMENT:
             raise HTTPException(status_code=400, detail=f"Filenames starting with {MULTIPART_SEGMENT}/ are reserved")
         safe_filename = str(PurePosixPath(*parts))
+        if body.sha256_hash:
+            existing = session.exec(
+                select(AssociatedFile).where(
+                    AssociatedFile.dataset_id == ds.id,
+                    AssociatedFile.filename == safe_filename,
+                    AssociatedFile.sha256_hash == body.sha256_hash,
+                    multipart.trusted_hash(),
+                )
+            ).first()
+            if existing is not None:
+                return existing
         if multipart.filename_reserved(session, dsid, safe_filename):
             raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
     return f"{dsid}/{safe_filename}", safe_filename
@@ -351,6 +357,7 @@ def complete_resumable_upload(
         )
         session.add(assoc)
         session.delete(us)
+        touch_resource_modification_time(session, dsid)
         session.commit()
         session.refresh(assoc)
         return AssociatedFileRead.model_validate(assoc, update={"dataset_mfid": assoc.dataset.unique_id})

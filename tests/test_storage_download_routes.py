@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
@@ -146,6 +147,30 @@ def test_backfill_skips_multipart_objects(db_engine, monkeypatch):
     client.bucket.return_value.list_blobs.return_value = listed
     monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: client)
     assert gcs_storage._determine_storage_path(DS, "scan.pdf") == f"mf-storage-prod/{DS}/raw/scan.pdf"
+
+
+def _listing(monkeypatch, *names):
+    client = MagicMock()
+    client.bucket.return_value.list_blobs.return_value = [SimpleNamespace(name=f"{DS}/{name}") for name in names]
+    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: client)
+
+
+def test_backfill_needs_a_whole_name_match(monkeypatch):
+    _listing(monkeypatch, "foobar.tif", "raw/bar.tif")
+    assert gcs_storage._determine_storage_path(DS, "bar.tif") == f"mf-storage-prod/{DS}/raw/bar.tif"
+    _listing(monkeypatch, "foobar.tif")
+    with pytest.raises(HTTPException) as error:
+        gcs_storage._determine_storage_path(DS, "bar.tif")
+    assert error.value.status_code == 404
+
+
+def test_backfill_prefers_the_exact_path_and_refuses_to_guess(monkeypatch):
+    _listing(monkeypatch, "a/bar.tif", "bar.tif", "b/bar.tif")
+    assert gcs_storage._determine_storage_path(DS, "bar.tif") == f"mf-storage-prod/{DS}/bar.tif"
+    _listing(monkeypatch, "a/bar.tif", "b/bar.tif")
+    with pytest.raises(HTTPException) as error:
+        gcs_storage._determine_storage_path(DS, "bar.tif")
+    assert error.value.status_code == 409
 
 
 def _ingestion_requests(db_engine):

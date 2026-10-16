@@ -11,6 +11,8 @@ from app.general_utils import get_secret, is_orcid, is_valid_mfid
 from app.models.core_models import AccessGroup, Project, User
 
 logger = logging.getLogger(__name__)
+# urllib3 logs request URLs at DEBUG, and the proposal service takes its API key in the query string.
+logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
 MF_PROPOSAL_DB_URL = "https://foundry-admin.lbl.gov/api/JSON/sciCat-GetUser.aspx"
 MF_PROPOSAL_DB_TIMEOUT = 10
@@ -292,7 +294,8 @@ def find_mf_user_proposals(orcid: str) -> List[str]:
         response.raise_for_status()
         payload = response.json()
     except (requests.RequestException, ValueError) as exc:
-        logger.warning("MF proposal lookup failed for %s: %s", orcid, exc)
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        logger.warning("MF proposal lookup failed for %s: %s%s", orcid, type(exc).__name__, f" {status}" if status else "")
         return []
 
     if not isinstance(payload, list) or any(not isinstance(item, dict) for item in payload):

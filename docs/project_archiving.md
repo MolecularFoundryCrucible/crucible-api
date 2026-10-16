@@ -24,7 +24,8 @@ Archived projects:
 - Are omitted from project collection, search, and picker results by default.
 - Can be included explicitly with `include_archived=true`.
 - Remain available through exact MFID or slug resolution.
-- Continue to permit join requests, membership administration, uploads, derived sample and dataset creation, ACL administration, and ownership transfer.
+- Accept no new join requests (see `join_requests_design.md`); existing requests stay reviewable.
+- Continue to permit membership administration, uploads, derived sample and dataset creation, ACL administration, and ownership transfer.
 - Retain all resources, relationships, and access rules.
 
 Exact collection filters such as `GET /projects?project_id={slug}` should return an archived project because they are resolution requests rather than discovery requests. User-scoped project collections should follow the default omission rule and support the same `include_archived` option.

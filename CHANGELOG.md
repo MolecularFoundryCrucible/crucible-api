@@ -29,6 +29,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Removed
 
+- Removed nine unused legacy graph routes: `GET /entity_graph/{entity_mfid}`, `/entity_graph_bfs/{entity_mfid}`, `/datasets/{dataset_mfid}/dataset_graph` and `/dataset_graph_cte`, `/samples/{sample_mfid}/sample_graph` and `/sample_graph_cte`, and `/projects/{project_ref}/sample_graph`, `/dataset_graph`, and `/entity_graph`. None was called after 2026-08-01, and several traversed through, or returned the MFIDs of, datasets and samples the caller could not read. Use `GET /resources/{resource_mfid}/graph`, `GET /entity_graph_cte/{entity_mfid}`, or `GET /project_graph/{project_ref}`.
 - Removed `POST /extract_metadata`, the unused route that extracted metadata from notebook images with an AI model. It let any authenticated caller choose the URL the server connected to (`api_url`), which allowed requests to internal services. The `anthropic` dependency is removed with it.
 
 ### Fixed

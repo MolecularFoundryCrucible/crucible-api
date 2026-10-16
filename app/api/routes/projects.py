@@ -3,22 +3,19 @@ from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select, col
-import networkx as nx
-from networkx.readwrite import json_graph
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ProjectRef, UserRef
 from app.models.core_models import (
-    AccessGroup, Project, Resource, Sample, ScientificMetadataBinary, User, UserProjectLink, UserAccessGroupLink,
-    Dataset, DatasetSampleLink,
+    AccessGroup, Project, Resource, ScientificMetadataBinary, User, UserProjectLink, UserAccessGroupLink,
 )
 from app.services.resource_pagination import (
     ResourcePaginationSpec, execute_resource_page, prepare_resource_pagination)
 from app.utils.auth_utils import (
     access_selector_filter, authorize_user,
-    load_principal, permission_filter, project_member_filter, project_owner_affiliation_filter,
+    load_principal, project_member_filter, project_owner_affiliation_filter,
     require_grant, require_permission, resolve_access_principal,
     resource_capabilities)
 from app.utils.permissions import (
@@ -637,132 +634,3 @@ def remove_user_from_project(
         return _get_project_users(proj.project_id, session)
 
 
-@router.get("/projects/{project_ref}/sample_graph")
-def project_sample_graph(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
-
-    with Session(engine) as session:
-        proj = resolve_project_reference(project_ref, session)
-        if proj is None:
-            raise HTTPException(status_code=404, detail="Project not found")
-        require_permission(session, auth_res, proj.unique_id, Permission.READ)
-
-        samp_cmd = (
-            select(Sample)
-            .options(joinedload(Sample.parents))
-            .where(permission_filter(auth_res, Sample, Permission.READ))
-            .where(deletion_filter_for(Sample))
-        )
-
-        # Filter samples by the project's MFID, not its (renamable) project_id
-        samp_cmd = samp_cmd.where(Sample.project_mfid == proj.unique_id)
-        samp_list = session.exec(samp_cmd).unique().all()
-
-        allowed_ids = {sample.unique_id for sample in samp_list}
-        edges = []
-        for sample in samp_list:
-            for parent in sample.parents:
-                if parent.unique_id in allowed_ids:
-                    edges.append((parent.unique_id, sample.unique_id))
-
-        G = nx.DiGraph(edges)
-        for sample in samp_list:
-            G.add_node(sample.unique_id,
-                       sample_name=sample.sample_name)
-
-        return json_graph.node_link_data(G)
-
-@router.get("/projects/{project_ref}/dataset_graph")
-def project_dataset_graph(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
-
-    with Session(engine) as session:
-        proj = resolve_project_reference(project_ref, session)
-        if proj is None:
-            raise HTTPException(status_code=404, detail="Project not found")
-
-        ds_cmd = (
-            select(Dataset)
-            .options(joinedload(Dataset.parents))
-            .filter(permission_filter(auth_res, Dataset, Permission.READ))
-            .where(deletion_filter_for(Dataset))
-            .where(Dataset.project_mfid == proj.unique_id)
-        )
-
-        ds_list = session.exec(ds_cmd).unique().all()
-
-        allowed_ids = {dataset.unique_id for dataset in ds_list}
-        edges = []
-        for dataset in ds_list:
-            for parent in dataset.parents:
-                if parent.unique_id in allowed_ids:
-                    edges.append((parent.unique_id, dataset.unique_id))
-
-        G = nx.DiGraph(edges)
-        for dataset in ds_list:
-            G.add_node(dataset.unique_id,
-                       dataset_name=dataset.dataset_name)
-
-        return json_graph.node_link_data(G)
-
-
-@router.get("/projects/{project_ref}/entity_graph")
-def project_entity_graph(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''
-    Returns a NetworkX node-link graph of all samples and datasets in the
-    project, connected via sample lineage, dataset lineage, and sample-dataset
-    associations. Nodes carry entity_type ('sample' or 'dataset') and name.
-    '''
-    with Session(engine) as session:
-        proj = resolve_project_reference(project_ref, session)
-        if proj is None:
-            raise HTTPException(status_code=404, detail="Project not found")
-        require_permission(session, auth_res, proj.unique_id, Permission.READ)
-
-        # Load all samples in the project with parent relationships. Filtered
-        # by the project's MFID, not its (renamable) project_id.
-        proj_mfid = proj.unique_id
-        samp_cmd = (
-            select(Sample)
-            .options(joinedload(Sample.parents))
-            .where(permission_filter(auth_res, Sample, Permission.READ))
-            .where(deletion_filter_for(Sample))
-            .where(Sample.project_mfid == proj_mfid)
-        )
-        samp_list = session.exec(samp_cmd).unique().all()
-
-        # Load all authorized datasets in the project with parent relationships
-        ds_list = session.exec(
-            select(Dataset)
-            .options(joinedload(Dataset.parents))
-            .filter(permission_filter(auth_res, Dataset, Permission.READ))
-            .where(deletion_filter_for(Dataset))
-            .where(Dataset.project_mfid == proj_mfid)
-        ).unique().all()
-
-        s_int_to_uid = {s.id: s.unique_id for s in samp_list}
-        d_int_to_uid = {d.id: d.unique_id for d in ds_list}
-        sample_mfids = set(s_int_to_uid.values())
-        dataset_mfids = set(d_int_to_uid.values())
-
-        # Load sample-dataset associations scoped to this project's entities
-        sd_links = session.exec(
-            select(DatasetSampleLink)
-            .where(DatasetSampleLink.sample_id.in_(s_int_to_uid.keys()))
-            .where(DatasetSampleLink.dataset_id.in_(d_int_to_uid.keys()))
-        ).all() if s_int_to_uid and d_int_to_uid else []
-
-        # Build combined graph — no subgraph extraction needed, include everything
-        G = nx.DiGraph()
-        for s in samp_list:
-            G.add_node(s.unique_id, entity_type='sample', name=s.sample_name)
-            for parent in s.parents:
-                if parent.unique_id in sample_mfids:
-                    G.add_edge(parent.unique_id, s.unique_id)
-        for d in ds_list:
-            G.add_node(d.unique_id, entity_type='dataset', name=d.dataset_name)
-            for parent in d.parents:
-                if parent.unique_id in dataset_mfids:
-                    G.add_edge(parent.unique_id, d.unique_id)
-        for link in sd_links:
-            G.add_edge(s_int_to_uid[link.sample_id], d_int_to_uid[link.dataset_id])
-
-        return json_graph.node_link_data(G)

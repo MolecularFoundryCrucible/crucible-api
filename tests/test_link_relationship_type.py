@@ -203,19 +203,14 @@ def test_graph_edges_carry_relationship_type(client, db_engine, auth_as):
     client.post("/samples/samp_parent/children/samp_child",
                 params={"relationship_type": "is_part_of"})
 
-    dataset_graph = client.get("/datasets/ds_child/dataset_graph")
-    dataset_graph_cte = client.get("/datasets/ds_child/dataset_graph_cte")
-    sample_graph = client.get("/samples/samp_child/sample_graph")
-    entity_graph = client.get(f"/entity_graph/samp_child")
+    dataset_graph = client.get("/resources/ds_child/graph")
+    sample_graph = client.get("/resources/samp_child/graph")
 
-    for response in (dataset_graph, dataset_graph_cte, sample_graph, entity_graph):
+    for response in (dataset_graph, sample_graph):
         assert response.status_code == 200, response.text
 
-    # node_link_data emits parent/child edges under "edges" (networkx >= 3.4).
     assert [e["relationship_type"] for e in dataset_graph.json()["edges"]] == ["is_derived_from"]
-    assert [e["relationship_type"] for e in dataset_graph_cte.json()["edges"]] == ["is_derived_from"]
     assert [e["relationship_type"] for e in sample_graph.json()["edges"]] == ["is_part_of"]
-    assert [e["relationship_type"] for e in entity_graph.json()["edges"]] == ["is_part_of"]
 
 
 # --- filtering -----------------------------------------------------------

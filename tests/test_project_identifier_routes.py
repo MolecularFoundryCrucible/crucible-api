@@ -212,20 +212,19 @@ def test_project_graphs_accept_mfid_and_slug(client, db_engine, auth_as):
     project_mfid, group_id = _setup(db_engine)
     auth_as("0000-0001-1111-1111", groups=[(project_mfid, group_id, Role.OWNER)])
 
-    for suffix in ("sample_graph", "dataset_graph", "entity_graph"):
-        canonical = client.get(f"/projects/{project_mfid}/{suffix}")
-        compatibility = client.get(f"/projects/project-slug/{suffix}")
+    canonical = client.get(f"/project_graph/{project_mfid}")
+    compatibility = client.get("/project_graph/project-slug")
 
-        assert canonical.status_code == 200, canonical.text
-        assert compatibility.status_code == 200, compatibility.text
-        assert canonical.json() == compatibility.json()
+    assert canonical.status_code == 200, canonical.text
+    assert compatibility.status_code == 200, compatibility.text
+    assert canonical.json() == compatibility.json()
 
 
 def test_missing_project_graph_returns_404(client, db_engine, auth_as):
     _setup(db_engine)
     auth_as("0000-0002-2222-2222")
 
-    response = client.get("/projects/missing-project/sample_graph")
+    response = client.get("/project_graph/missing-project")
 
     assert response.status_code == 404
 
@@ -243,7 +242,7 @@ def test_dataset_graph_ignores_legacy_public_boolean_without_acl(client, db_engi
         session.commit()
     auth_as("0000-0002-2222-2222")
 
-    response = client.get(f"/projects/{project_mfid}/dataset_graph")
+    response = client.get(f"/project_graph/{project_mfid}")
 
     assert response.status_code == 200, response.text
     assert response.json()["nodes"] == []
@@ -262,7 +261,7 @@ def test_platform_admin_dataset_graph_does_not_require_group_membership(client, 
         session.commit()
     auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
 
-    response = client.get(f"/projects/{project_mfid}/dataset_graph")
+    response = client.get(f"/project_graph/{project_mfid}")
 
     assert response.status_code == 200, response.text
     assert [node["id"] for node in response.json()["nodes"]] == ["ds_private_admin"]

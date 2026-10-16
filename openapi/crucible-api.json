@@ -2653,6 +2653,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/InstrumentFacetBucket"
+                },
+                {
+                  "$ref": "#/components/schemas/RequesterFacetBucket"
                 }
               ]
             },
@@ -3510,12 +3513,34 @@
         "title": "InstrumentUpdate",
         "type": "object"
       },
+      "JoinRequestCapabilities": {
+        "properties": {
+          "can_review": {
+            "description": "Whether the caller may approve or reject this pending request.",
+            "title": "Can Review",
+            "type": "boolean"
+          },
+          "can_withdraw": {
+            "description": "Whether the caller may withdraw this pending request.",
+            "title": "Can Withdraw",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "can_review",
+          "can_withdraw"
+        ],
+        "title": "JoinRequestCapabilities",
+        "type": "object"
+      },
       "JoinRequestCreate": {
-        "description": "Body for POST /projects/{proj_id}/join.",
+        "additionalProperties": false,
+        "description": "Body for POST /projects/{project_ref}/join_requests.",
         "properties": {
           "reason": {
             "anyOf": [
               {
+                "maxLength": 2000,
                 "type": "string"
               },
               {
@@ -3528,16 +3553,63 @@
         "title": "JoinRequestCreate",
         "type": "object"
       },
+      "JoinRequestFacetField": {
+        "enum": [
+          "status",
+          "project",
+          "requester"
+        ],
+        "title": "JoinRequestFacetField",
+        "type": "string"
+      },
       "JoinRequestRead": {
-        "description": "Response model for AccessGroupJoinRequest.",
+        "description": "A request to join a project, with the people involved and what the caller may do with it.",
         "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/JoinRequestCapabilities"
+          },
+          "granted_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Granted Role"
+          },
           "group_name": {
-            "title": "Group Name",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "description": "Deprecated. Use project.project_id.",
+            "title": "Group Name"
           },
           "id": {
             "title": "Id",
             "type": "integer"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectReferenceRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null when the project no longer exists."
+          },
+          "project_mfid": {
+            "title": "Project Mfid",
+            "type": "string"
           },
           "reason": {
             "anyOf": [
@@ -3551,15 +3623,19 @@
             "title": "Reason"
           },
           "request_time": {
+            "format": "date-time",
+            "title": "Request Time",
+            "type": "string"
+          },
+          "requester": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/UserPublicRead"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Request Time"
+            ]
           },
           "requester_id": {
             "title": "Requester Id",
@@ -3568,6 +3644,7 @@
           "review_time": {
             "anyOf": [
               {
+                "format": "date-time",
                 "type": "string"
               },
               {
@@ -3575,6 +3652,16 @@
               }
             ],
             "title": "Review Time"
+          },
+          "reviewer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserPublicRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "reviewer_id": {
             "anyOf": [
@@ -3599,25 +3686,28 @@
             "title": "Reviewer Notes"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/JoinRequestStatus"
           }
         },
         "required": [
           "id",
-          "group_name",
+          "status",
+          "project_mfid",
           "requester_id",
-          "status"
+          "request_time",
+          "capabilities"
         ],
         "title": "JoinRequestRead",
         "type": "object"
       },
       "JoinRequestReview": {
-        "description": "Body for PATCH /projects/{proj_id}/join_requests/{request_id}.",
+        "additionalProperties": false,
+        "description": "Body for PATCH /join_requests/{request_id}.",
         "properties": {
           "reviewer_notes": {
             "anyOf": [
               {
+                "maxLength": 2000,
                 "type": "string"
               },
               {
@@ -3626,7 +3716,22 @@
             ],
             "title": "Reviewer Notes"
           },
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JoinRequestRole"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Role granted on approval, strictly below the reviewer's own role. Defaults to contributor. Only with status approved."
+          },
           "status": {
+            "enum": [
+              "approved",
+              "rejected"
+            ],
             "title": "Status",
             "type": "string"
           }
@@ -3636,6 +3741,46 @@
         ],
         "title": "JoinRequestReview",
         "type": "object"
+      },
+      "JoinRequestRole": {
+        "enum": [
+          "viewer",
+          "contributor",
+          "editor",
+          "admin"
+        ],
+        "title": "JoinRequestRole",
+        "type": "string"
+      },
+      "JoinRequestScope": {
+        "enum": [
+          "accessible",
+          "submitted",
+          "reviewable"
+        ],
+        "title": "JoinRequestScope",
+        "type": "string"
+      },
+      "JoinRequestSort": {
+        "enum": [
+          "request_time",
+          "review_time",
+          "status",
+          "project",
+          "requester_name"
+        ],
+        "title": "JoinRequestSort",
+        "type": "string"
+      },
+      "JoinRequestStatus": {
+        "enum": [
+          "pending",
+          "approved",
+          "rejected",
+          "withdrawn"
+        ],
+        "title": "JoinRequestStatus",
+        "type": "string"
       },
       "Keyword": {
         "properties": {
@@ -5956,6 +6101,55 @@
         "title": "RecentResourceRecord",
         "type": "object"
       },
+      "RequesterFacetBucket": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Canonical display label. Null only for the null bucket.",
+            "title": "Label"
+          },
+          "requester": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserPublicRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "value",
+          "count",
+          "requester"
+        ],
+        "title": "RequesterFacetBucket",
+        "type": "object"
+      },
       "ResourceACL": {
         "properties": {
           "accessgroup_id": {
@@ -8103,7 +8297,8 @@
     },
     "/access_groups/{group_name}/join": {
       "post": {
-        "description": "Request to join an access group (currently only projects). Blocked if the\ncaller is already a member or already has a pending request for this group.\nResubmission is allowed after a request has been rejected or approved.",
+        "deprecated": true,
+        "description": "Deprecated: use POST /projects/{project_ref}/join_requests. group_name takes a project slug or MFID.",
         "operationId": "request_to_join_access_group_access_groups__group_name__join_post",
         "parameters": [
           {
@@ -8497,7 +8692,8 @@
     },
     "/account/join_requests": {
       "get": {
-        "description": "Return the authenticated caller's own join request history across all groups.\nFilter by ?status=pending|approved|rejected.",
+        "deprecated": true,
+        "description": "Deprecated: use GET /join_requests?scope=submitted.",
         "operationId": "get_account_join_requests_account_join_requests_get",
         "parameters": [
           {
@@ -8507,7 +8703,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "$ref": "#/components/schemas/JoinRequestStatus"
                 },
                 {
                   "type": "null"
@@ -19363,10 +19559,130 @@
     },
     "/join_requests": {
       "get": {
-        "description": "List join requests.\n- Admins can list across all groups, optionally filtered by ?group_name=.\n- A non-admin caller who passes ?group_name= must be the lead of that\n  group, otherwise 403.\n- A non-admin caller who omits ?group_name= gets requests scoped to every\n  group they lead (empty list if they lead none) — this is the cheap way\n  for someone leading multiple projects to fetch all their pending\n  requests in one call instead of one request per project.",
+        "description": "List join requests you made or may review. Platform administrators see all of them.",
         "operationId": "list_join_requests_join_requests_get",
         "parameters": [
           {
+            "description": "Text sorts are case-insensitive; nulls are last and the request id breaks ties. Status order is pending, approved, rejected, withdrawn. requester_name orders by last name, first name, username, and ORCID.",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/JoinRequestSort",
+              "default": "request_time",
+              "description": "Text sorts are case-insensitive; nulls are last and the request id breaks ties. Status order is pending, approved, rejected, withdrawn. requester_name orders by last name, first name, username, and ORCID."
+            }
+          },
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortDirection",
+              "default": "desc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque continuation cursor from next_cursor.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque continuation cursor from next_cursor.",
+              "title": "Cursor"
+            }
+          },
+          {
+            "description": "Compatibility offset. A supplied cursor takes precedence.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Compatibility offset. A supplied cursor takes precedence.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "accessible: your own requests and those you may review; submitted: your own; reviewable: those you may review.",
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/JoinRequestScope",
+              "default": "accessible",
+              "description": "accessible: your own requests and those you may review; submitted: your own; reviewable: those you may review."
+            }
+          },
+          {
+            "description": "Repeat to match several statuses.",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/JoinRequestStatus"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeat to match several statuses.",
+              "title": "Status"
+            }
+          },
+          {
+            "description": "Repeat to match several projects.",
+            "in": "query",
+            "name": "project_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeat to match several projects.",
+              "title": "Project Mfid"
+            }
+          },
+          {
+            "deprecated": true,
+            "description": "Deprecated. Use project_mfid. Accepts a project slug or MFID.",
             "in": "query",
             "name": "group_name",
             "required": false,
@@ -19379,23 +19695,9 @@
                   "type": "null"
                 }
               ],
+              "deprecated": true,
+              "description": "Deprecated. Use project_mfid. Accepts a project slug or MFID.",
               "title": "Group Name"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Status"
             }
           },
           {
@@ -19416,25 +19718,108 @@
           },
           {
             "in": "query",
-            "name": "limit",
+            "name": "reviewer_id",
             "required": false,
             "schema": {
-              "default": 100,
-              "maximum": 1000,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reviewer Id"
             }
           },
           {
             "in": "query",
-            "name": "offset",
+            "name": "requested_after",
             "required": false,
             "schema": {
-              "default": 0,
-              "minimum": 0,
-              "title": "Offset",
-              "type": "integer"
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Requested After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "requested_before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Requested Before"
+            }
+          },
+          {
+            "description": "Closed at or after this time (reviewed, withdrawn, or closed by a direct add).",
+            "in": "query",
+            "name": "reviewed_after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Closed at or after this time (reviewed, withdrawn, or closed by a direct add).",
+              "title": "Reviewed After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reviewed_before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reviewed Before"
+            }
+          },
+          {
+            "description": "Matches the requester's name, username, or ORCID, case-insensitively.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Matches the requester's name, username, or ORCID, case-insensitively.",
+              "title": "Q"
             }
           },
           {
@@ -19499,13 +19884,299 @@
         ],
         "summary": "List Join Requests",
         "tags": [
-          "access_groups"
+          "join_requests"
+        ]
+      }
+    },
+    "/join_requests/facets": {
+      "get": {
+        "description": "Count join requests by status, project, or requester, with the same scope and filters as GET /join_requests. Buckets are ordered by count, largest first, then by label.",
+        "operationId": "join_request_facets_join_requests_facets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "field",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/JoinRequestFacetField"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "accessible: your own requests and those you may review; submitted: your own; reviewable: those you may review.",
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/JoinRequestScope",
+              "default": "accessible",
+              "description": "accessible: your own requests and those you may review; submitted: your own; reviewable: those you may review."
+            }
+          },
+          {
+            "description": "Repeat to match several statuses.",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/JoinRequestStatus"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeat to match several statuses.",
+              "title": "Status"
+            }
+          },
+          {
+            "description": "Repeat to match several projects.",
+            "in": "query",
+            "name": "project_mfid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeat to match several projects.",
+              "title": "Project Mfid"
+            }
+          },
+          {
+            "deprecated": true,
+            "description": "Deprecated. Use project_mfid. Accepts a project slug or MFID.",
+            "in": "query",
+            "name": "group_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "deprecated": true,
+              "description": "Deprecated. Use project_mfid. Accepts a project slug or MFID.",
+              "title": "Group Name"
+            }
+          },
+          {
+            "in": "query",
+            "name": "requester_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Requester Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reviewer_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reviewer Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "requested_after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Requested After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "requested_before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Requested Before"
+            }
+          },
+          {
+            "description": "Closed at or after this time (reviewed, withdrawn, or closed by a direct add).",
+            "in": "query",
+            "name": "reviewed_after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Closed at or after this time (reviewed, withdrawn, or closed by a direct add).",
+              "title": "Reviewed After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reviewed_before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reviewed Before"
+            }
+          },
+          {
+            "description": "Matches the requester's name, username, or ORCID, case-insensitively.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Matches the requester's name, username, or ORCID, case-insensitively.",
+              "title": "Q"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FacetResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Join Request Facets",
+        "tags": [
+          "join_requests"
         ]
       }
     },
     "/join_requests/{request_id}": {
       "get": {
-        "description": "Fetch a single join request by id. Visible to admins, the lead of the\nrequest's group, or the user who submitted it.",
+        "description": "Read one join request. Visible to its requester, to those who may review it, and to platform administrators; 404 otherwise.",
         "operationId": "get_join_request_join_requests__request_id__get",
         "parameters": [
           {
@@ -19579,11 +20250,11 @@
         ],
         "summary": "Get Join Request",
         "tags": [
-          "access_groups"
+          "join_requests"
         ]
       },
       "patch": {
-        "description": "Approve or reject a pending join request. Admin or the lead of the\nrequest's group only. Approving adds the requester to the group's\nproject membership and access group.",
+        "description": "Approve or reject a pending request. Requires editor or above in the project (or platform administrator). Approval adds the requester at `role` (default contributor), which must be below your own role.",
         "operationId": "review_join_request_join_requests__request_id__patch",
         "parameters": [
           {
@@ -19649,6 +20320,12 @@
               }
             }
           },
+          "403": {
+            "description": "Not allowed to review, or the role is not below yours"
+          },
+          "409": {
+            "description": "`join_request_closed`, or the project is gone or pending deletion"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -19667,7 +20344,93 @@
         ],
         "summary": "Review Join Request",
         "tags": [
-          "access_groups"
+          "join_requests"
+        ]
+      }
+    },
+    "/join_requests/{request_id}/withdraw": {
+      "post": {
+        "description": "Withdraw your own pending join request.",
+        "operationId": "withdraw_join_request_join_requests__request_id__withdraw_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JoinRequestRead"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "403": {
+            "description": "Only the requester can withdraw"
+          },
+          "409": {
+            "description": "`join_request_closed`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Withdraw Join Request",
+        "tags": [
+          "join_requests"
         ]
       }
     },
@@ -21255,6 +22018,104 @@
         "summary": "Project Entity Graph",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/projects/{project_ref}/join_requests": {
+      "post": {
+        "description": "Ask to join a project. One pending request per project, at most 20 pending in total.",
+        "operationId": "request_to_join_project_projects__project_ref__join_requests_post",
+        "parameters": [
+          {
+            "description": "Project MFID or project_id slug (case-insensitive).",
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "description": "Project MFID or project_id slug (case-insensitive).",
+              "title": "Project Ref",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+            "in": "header",
+            "name": "Crucible-Privilege-Mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PrivilegeMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
+              "title": "Crucible-Privilege-Mode"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinRequestCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JoinRequestRead"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "Crucible-Privilege-Mode": {
+                "$ref": "#/components/headers/CruciblePrivilegeMode"
+              },
+              "Vary": {
+                "$ref": "#/components/headers/PrivilegeModeVary"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/CrucibleRequestId"
+              }
+            }
+          },
+          "403": {
+            "description": "Service accounts cannot request (`service_account_cannot_request`)"
+          },
+          "409": {
+            "description": "`already_member`, `join_request_pending`, `too_many_pending_requests`, or `project_not_accepting_requests`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Request To Join Project",
+        "tags": [
+          "join_requests"
         ]
       }
     },

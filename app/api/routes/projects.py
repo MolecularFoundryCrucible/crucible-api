@@ -494,7 +494,7 @@ def add_users_to_project(
             allow_peer=False,
         )
 
-        sql_add_user_to_project(user, proj.project_id, session, role=internal_role)
+        sql_add_user_to_project(user, proj.project_id, session, role=internal_role, actor_id=auth_res.user_id)
         session.commit()
 
         return _get_project_users(proj.project_id, session)

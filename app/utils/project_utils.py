@@ -174,7 +174,7 @@ def resolve_project_mfids_to_references(mfids, session) -> dict[str, ProjectRefe
     }
 
 
-def sql_add_user_to_project(user: User, proj_id: str, session, role=None):
+def sql_add_user_to_project(user: User, proj_id: str, session, role=None, actor_id=None):
     """Add a user to a project's membership and access group. Idempotent.
 
     The UserProjectLink write is legacy: UserAccessGroupLink is what
@@ -197,6 +197,7 @@ def sql_add_user_to_project(user: User, proj_id: str, session, role=None):
         session,
         role=role,
         group_type=AccessGroupType.PROJECT,
+        actor_id=actor_id,
     )
     touch_resource_modification_time(session, group_name)
 

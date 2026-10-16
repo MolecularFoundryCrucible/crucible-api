@@ -22,6 +22,7 @@ import app.api.routes.entities as entities_routes
 import app.api.routes.instruments as instruments_routes
 import app.api.routes.ingestion_requests as ingestion_requests_routes
 import app.api.routes.pipelines as pipelines_routes
+import app.api.routes.join_requests as join_requests_routes
 import app.api.routes.projects as projects_routes
 import app.api.routes.resources as resources_routes
 import app.api.routes.resource_graph as resource_graph_routes
@@ -71,6 +72,7 @@ def db_engine():
     instruments_routes.engine = engine
     ingestion_requests_routes.engine = engine
     pipelines_routes.engine = engine
+    join_requests_routes.engine = engine
     projects_routes.engine = engine
     resources_routes.engine = engine
     resource_graph_routes.engine = engine

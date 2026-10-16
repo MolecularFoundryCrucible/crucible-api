@@ -53,7 +53,7 @@ Only `pending` requests change. Any transition from another state returns 409 `j
 | `GET /join_requests/facets` | Counts (below). |
 | `GET /join_requests/{request_id}` | Read one. |
 | `PATCH /join_requests/{request_id}` | Review. Body `{status: "approved" \| "rejected", role?, reviewer_notes?}` (notes at most 2000 characters). `role` only with `approved`. Returns the updated request. |
-| `POST /join_requests/{request_id}/withdraw` | Requester withdraws a pending request. |
+| `POST /join_requests/{request_id}/withdraw` | Requester withdraws a pending request. `review_time` records when it closed. |
 
 Deprecated, kept as wrappers with the new behavior and response:
 
@@ -70,11 +70,11 @@ Deprecated, kept as wrappers with the new behavior and response:
 - `requested_after`, `requested_before`, `reviewed_after`, `reviewed_before`: timezone-aware timestamps.
 - `q`: matches the requester's name, username, or ORCID (case-insensitive).
 - `sort`: `request_time` (default), `review_time`, `status`, `project`, `requester_name`; `direction` `asc` or `desc` (default `desc`). Text sorts are case-insensitive, nulls last, request id is the final tie-breaker; status order is pending, approved, rejected, withdrawn.
-- `limit` (1 to 200, default 50), `cursor` (signed keyset cursor bound to the scope, filters, sort, and caller, as elsewhere), `offset` kept for compatibility.
+- `limit` (1 to 1000, default 100, as before), `cursor` (signed keyset cursor bound to the scope, filters, sort, and caller, as elsewhere), `offset` kept for compatibility.
 
 Response: `PaginatedResponse[JoinRequestRead]` with `next_cursor`.
 
-`GET /join_requests/facets?field=status|project|requester` takes the same scope and filters and returns `FacetResponse` (project buckets carry the project reference, requester buckets the public user). It gives the counts behind a "3 pending" badge and the project filter in a review queue.
+`GET /join_requests/facets?field=status|project|requester` takes the same scope and filters and returns `FacetResponse` (project buckets carry the project reference, requester buckets the public user), ordered by count and then label, at most `limit` buckets (1 to 200, default 50). It gives the counts behind a "3 pending" badge and the project filter in a review queue.
 
 ### Response item
 
@@ -82,7 +82,8 @@ Response: `PaginatedResponse[JoinRequestRead]` with `next_cursor`.
 {
   "id": 42,
   "status": "pending",
-  "project": {"project_id": "thin-films", "project_mfid": "0t...", "title": "Thin films"},
+  "project_mfid": "0t...",
+  "project": {"unique_id": "0t...", "project_id": "thin-films", "title": "Thin films"},
   "requester": {"unique_id": "0000-...", "username": "ehwong", "first_name": "...", "last_name": "..."},
   "reason": "Joining the XRD campaign",
   "request_time": "2026-10-16T17:02:11Z",
@@ -95,7 +96,7 @@ Response: `PaginatedResponse[JoinRequestRead]` with `next_cursor`.
 }
 ```
 
-`group_name` stays as a deprecated alias of `project.project_id`. `requester` and `reviewer` use the public user shape, so no emails are exposed. When the project row is gone, `project` holds only the MFID from the access group.
+`group_name` stays as a deprecated alias of `project.project_id`. `requester` and `reviewer` use the public user shape, so no emails are exposed. When the project row is gone, `project` is null and `project_mfid` still names it.
 
 ### Automatic closing
 
@@ -103,7 +104,7 @@ Whenever a user is added to a project (direct add, approval of another request, 
 
 ### Data changes (one migration)
 
-- `request_time`, `review_time`: text to `timestamptz` (existing values are ISO 8601 and convert with `::timestamptz`; unparseable values, if any, are reported by a dry-run audit in `migrations/data/` first).
+- `request_time`, `review_time`: text to `timestamptz` (existing values are ISO 8601 and convert with `::timestamptz`; production had no rows on 2026-10-16). Missing request times are set to the migration time.
 - `status`: CHECK in (`pending`, `approved`, `rejected`, `withdrawn`).
 - New `granted_role` (`resource_role` enum, nullable).
 - Index `(accessgroup_id, status, request_time)` for review queues; the existing per-requester index serves `submitted`.

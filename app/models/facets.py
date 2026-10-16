@@ -30,8 +30,12 @@ class InstrumentFacetBucket(FacetBucket):
     instrument: Optional[InstrumentReferenceRead]
 
 
+class RequesterFacetBucket(FacetBucket):
+    requester: Optional[UserPublicRead]
+
+
 FacetBucketResponse = (
-    FacetBucket | OwnerFacetBucket | ProjectFacetBucket | InstrumentFacetBucket
+    FacetBucket | OwnerFacetBucket | ProjectFacetBucket | InstrumentFacetBucket | RequesterFacetBucket
 )
 
 

@@ -59,7 +59,7 @@ from app.utils.sql_utils import add_or_update, set_public, sql_create_resource_a
 from app.utils.gcs_record_utils import write_metadata
 from app.utils.link_utils import fetch_readable_links
 from app.utils.project_utils import resolve_project_identifiers, resolve_project_reference
-from app.utils.user_utils import resolve_user_by_identifier
+from app.utils.user_utils import close_pending_join_requests, resolve_user_by_identifier
 from app.utils.cursor_utils import (
     CursorError,
     filter_fingerprint,
@@ -977,6 +977,7 @@ def _transfer_project_ownership(session, mfid: str, new_owner: User) -> Optional
     else:
         new_owner_link.role = Role.OWNER.db_value
         session.add(new_owner_link)
+    close_pending_join_requests(session, ag.id, new_owner.unique_id, Role.OWNER.db_value)
 
     project.project_lead_orcid = new_owner.unique_id
     project.project_lead_email = new_owner.email

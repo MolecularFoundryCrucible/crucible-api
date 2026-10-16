@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 from sqlalchemy import event
 from sqlmodel import Session
 
-import app.api.routes.access_groups as access_groups_routes
+import app.api.routes.join_requests as join_requests_routes
 import app.api.routes.deletion as deletion_routes
 import app.api.routes.files as files_routes
 from app.models.core_models import (
@@ -19,6 +19,8 @@ from app.models.core_models import (
     Sample,
     User,
 )
+from app.models.join_requests import JoinRequestScope, JoinRequestSort
+from app.models.query_params import SortDirection
 from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role
 
 
@@ -68,14 +70,16 @@ def test_join_request_collection_uses_two_queries(db_engine):
         user_id="platform-admin",
         platform_role=PlatformRole.ADMIN,
     )
-    with _statement_count(db_engine) as statements:
-        response = access_groups_routes.list_join_requests(
+    with _statement_count(db_engine) as statements, Session(db_engine) as session:
+        response = join_requests_routes.list_join_requests_page(
+            session,
             principal,
-            group_name=None,
-            status=None,
-            requester_id=None,
-            limit=100,
-            offset=0,
+            join_requests_routes.join_request_filters(
+                scope=JoinRequestScope.ACCESSIBLE, status=None, project_mfid=None, group_name=None,
+                requester_id=None, reviewer_id=None, requested_after=None, requested_before=None,
+                reviewed_after=None, reviewed_before=None, q=None,
+            ),
+            JoinRequestSort.REQUEST_TIME, SortDirection.DESC, 100, None, 0,
         )
 
     assert len(statements) == 2

@@ -10,9 +10,11 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.general_utils import get_utc_datetime, if_match_satisfied, is_orcid
-from app.models.core_models import AccessGroupJoinRequest, ApiToken, Dataset, DeletionRequest, Instrument, Project, Resource, Sample, User, UserPreferences, UserRecentResource
+from app.models.core_models import ApiToken, Dataset, DeletionRequest, Instrument, Project, Resource, Sample, User, UserPreferences, UserRecentResource
 from app.models.preferences import MAX_DOCUMENT_BYTES, PREFERENCES_SCHEMA_VERSION, PreferencesDocument, PreferencesRead, RecentResourceRead, RecentResourceRecord, serialized_size
-from app.models.join_requests import JoinRequestRead
+from app.api.routes.join_requests import join_request_filters, list_join_requests_page
+from app.models.join_requests import JoinRequestRead, JoinRequestScope, JoinRequestSort, JoinRequestStatus
+from app.models.query_params import SortDirection
 from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import AccountInfo, ApiKeyRead, ApiKeyVerify, ProjectSyncResult
 from app.models.users import (
@@ -125,26 +127,19 @@ def sync_account_projects(auth_res: Annotated[Principal, Depends(authorize_user)
     return ProjectSyncResult(orcid=user_unique_id, **result)
 
 
-@router.get("/account/join_requests", response_model=PaginatedResponse[JoinRequestRead])
+@router.get("/account/join_requests", response_model=PaginatedResponse[JoinRequestRead], deprecated=True)
 def get_account_join_requests(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    status: Optional[str] = None,
+    status: Optional[JoinRequestStatus] = None,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ):
-    """Return the authenticated caller's own join request history across all groups.
-    Filter by ?status=pending|approved|rejected."""
-    user_unique_id = auth_res.user_id
+    """Deprecated: use GET /join_requests?scope=submitted."""
+    filters = join_request_filters(scope=JoinRequestScope.SUBMITTED, status=[status] if status else None, project_mfid=None,
+                                   group_name=None, requester_id=None, reviewer_id=None, requested_after=None,
+                                   requested_before=None, reviewed_after=None, reviewed_before=None, q=None)
     with Session(engine) as session:
-        query = select(AccessGroupJoinRequest).where(AccessGroupJoinRequest.requester_id == user_unique_id)
-        if status:
-            query = query.where(AccessGroupJoinRequest.status == status)
-
-        total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        items = session.exec(
-            query.order_by(AccessGroupJoinRequest.id.desc()).offset(offset).limit(limit)
-        ).all()
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+        return list_join_requests_page(session, auth_res, filters, JoinRequestSort.REQUEST_TIME, SortDirection.DESC, limit, None, offset)
 
 
 @router.get("/account/apikey", response_model=ApiKeyRead, deprecated=True, responses={403: {"description": "Hub sessions cannot read API keys (`api_key_read_not_allowed`)"}})

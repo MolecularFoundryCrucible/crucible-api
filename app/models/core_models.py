@@ -469,6 +469,10 @@ class AccessGroupJoinRequest(SQLModel, table=True):
             postgresql_where=text("status = 'pending'"),
             sqlite_where=text("status = 'pending'"),
         ),
+        Index("ix_agjr_group_status_time", "accessgroup_id", "status", "request_time"),
+        CheckConstraint("status IN ('pending', 'approved', 'rejected', 'withdrawn')", name="ck_agjr_status"),
+        CheckConstraint("length(reason) <= 2000", name="ck_agjr_reason_length"),
+        CheckConstraint("length(reviewer_notes) <= 2000", name="ck_agjr_reviewer_notes_length"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -476,10 +480,11 @@ class AccessGroupJoinRequest(SQLModel, table=True):
     requester_id: str = Field(foreign_key="user.orcid", index=True)
     reason: Optional[str] = Field(default=None)
     status: str = Field(default="pending", index=True)
-    request_time: Optional[str] = Field(default_factory=get_utc_isoformat)
-    review_time: Optional[str] = Field(default=None)
+    request_time: datetime = Field(default_factory=get_utc_datetime, sa_column=Column(DateTime(timezone=True), nullable=False))
+    review_time: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     reviewer_id: Optional[str] = Field(default=None, foreign_key="user.orcid")
     reviewer_notes: Optional[str] = Field(default=None)
+    granted_role: Optional[str] = Field(default=None)
 
 
 class DeletionAuditLog(SQLModel, table=True):

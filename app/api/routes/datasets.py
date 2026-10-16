@@ -163,9 +163,9 @@ def request_mosaic_stitch(dsid: DatasetMfid, auth_res: Annotated[Principal, Depe
 
 
 @router.post("/datasets", response_model=DatasetResponse)
-async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
-                         dataset: DatasetCreate,
-                         background_tasks: BackgroundTasks):
+def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
+                   dataset: DatasetCreate,
+                   background_tasks: BackgroundTasks):
     
     logger.info(f"Creating dataset: {dataset.unique_id}")
     dataset_details = dataset.model_dump(exclude_unset=True)

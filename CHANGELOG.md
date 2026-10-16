@@ -24,6 +24,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - `POST /datasets/{dataset_mfid}/carrier_segmentation`, `/insitu_spec_aggregation`, `/rga_analysis`, and `/mosaic_stitch` are deprecated in favor of `POST /datasets/{dataset_mfid}/postprocess`. They now start a tracked postprocessing run and return it instead of an empty body.
 
+### Removed
+
+- Removed `POST /extract_metadata`, the unused route that extracted metadata from notebook images with an AI model. It let any authenticated caller choose the URL the server connected to (`api_url`), which allowed requests to internal services. The `anthropic` dependency is removed with it.
+
 ### Fixed
 
 - The dataset processing routes (`carrier_segmentation`, `insitu_spec_aggregation`, `rga_analysis`, `mosaic_stitch`) required only a login: any authenticated caller could queue jobs on any dataset, including private datasets, datasets pending deletion, and MFIDs that do not exist. They now require contributor access to an existing dataset that is not pending deletion.

@@ -1,20 +1,6 @@
-from typing import List, Literal, Optional
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, computed_field
-
-SUPPORTED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
-
-
-class ImageInput(BaseModel):
-    data: str
-    media_type: Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
-
-
-class ExtractMetadataRequest(BaseModel):
-    images: List[ImageInput]
-    context: Optional[str] = None
-    api_key: Optional[str] = None
-    api_url: Optional[str] = None
 
 
 class ChunkSearchRequest(BaseModel):

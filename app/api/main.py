@@ -20,7 +20,7 @@ from app.utils.permissions import PrivilegeMode, PrivilegeModeSource
 from app.api.routes import (account, auth, files, datasets, gcs_storage, resources,
                             samples, instruments, users, projects,
                             access_groups, entities, misc, deletion,
-                            ingestion_requests, pipelines, ai, service_accounts,
+                            ingestion_requests, pipelines, service_accounts,
                             resource_graph, hub_auth, print as print_routes)
 
 logging.basicConfig(
@@ -293,7 +293,6 @@ app.include_router(access_groups.router)
 app.include_router(entities.router)
 app.include_router(misc.router)
 app.include_router(deletion.router)
-app.include_router(ai.router)
 app.include_router(service_accounts.router)
 app.include_router(print_routes.router)
 

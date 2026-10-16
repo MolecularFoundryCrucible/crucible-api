@@ -2595,55 +2595,6 @@
         "title": "EffectiveResourceAccessRead",
         "type": "object"
       },
-      "ExtractMetadataRequest": {
-        "properties": {
-          "api_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Api Key"
-          },
-          "api_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Api Url"
-          },
-          "context": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Context"
-          },
-          "images": {
-            "items": {
-              "$ref": "#/components/schemas/ImageInput"
-            },
-            "title": "Images",
-            "type": "array"
-          }
-        },
-        "required": [
-          "images"
-        ],
-        "title": "ExtractMetadataRequest",
-        "type": "object"
-      },
       "FacetBucket": {
         "additionalProperties": false,
         "properties": {
@@ -2908,30 +2859,6 @@
           "user_unique_id"
         ],
         "title": "HubTokenResponse",
-        "type": "object"
-      },
-      "ImageInput": {
-        "properties": {
-          "data": {
-            "title": "Data",
-            "type": "string"
-          },
-          "media_type": {
-            "enum": [
-              "image/jpeg",
-              "image/png",
-              "image/gif",
-              "image/webp"
-            ],
-            "title": "Media Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "data",
-          "media_type"
-        ],
-        "title": "ImageInput",
         "type": "object"
       },
       "IngestionRequest": {
@@ -17000,85 +16927,6 @@
         "summary": "Entity Graph Cte",
         "tags": [
           "entities"
-        ]
-      }
-    },
-    "/extract_metadata": {
-      "post": {
-        "description": "Extract scientific metadata from one or more lab notebook images using Claude vision.\nReturns a free-form JSON object with the extracted metadata.\nPass an optional context string to guide the extraction (e.g. instrument type, experiment class).",
-        "operationId": "extract_metadata_extract_metadata_post",
-        "parameters": [
-          {
-            "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-            "in": "header",
-            "name": "Crucible-Privilege-Mode",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/PrivilegeMode"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Select normal ACL-derived authorization or explicit platform-administrator elevation. Omission preserves legacy behavior.",
-              "title": "Crucible-Privilege-Mode"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExtractMetadataRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response",
-            "headers": {
-              "Cache-Control": {
-                "$ref": "#/components/headers/PrivateCacheControl"
-              },
-              "Crucible-Privilege-Mode": {
-                "$ref": "#/components/headers/CruciblePrivilegeMode"
-              },
-              "Vary": {
-                "$ref": "#/components/headers/PrivilegeModeVary"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/CrucibleRequestId"
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Extract Metadata",
-        "tags": [
-          "ai"
         ]
       }
     },

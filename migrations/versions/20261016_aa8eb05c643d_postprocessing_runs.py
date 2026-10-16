@@ -22,11 +22,16 @@ def upgrade():
         sa.Column("requested_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("idempotency_key", sa.String(length=128), nullable=True),
+        sa.Column("request_fingerprint", sa.String(length=64), nullable=True),
         sa.CheckConstraint("status IN ('requested', 'running', 'completed', 'failed')", name="ck_postprocessingrun_status"),
     )
     op.create_index("ix_postprocessingrun_dataset_requested", "postprocessingrun", ["dataset_mfid", "requested_at"])
+    op.create_index("uq_postprocessingrun_idempotency", "postprocessingrun", ["requested_by", "dataset_mfid", "idempotency_key"],
+                    unique=True, postgresql_where=sa.text("idempotency_key IS NOT NULL"))
 
 
 def downgrade():
+    op.drop_index("uq_postprocessingrun_idempotency", table_name="postprocessingrun")
     op.drop_index("ix_postprocessingrun_dataset_requested", table_name="postprocessingrun")
     op.drop_table("postprocessingrun")

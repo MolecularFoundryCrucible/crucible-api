@@ -547,6 +547,8 @@ class IngestionRequest(SQLModel, table=True):
 class PostprocessingRun(SQLModel, table=True):
     __table_args__ = (
         Index("ix_postprocessingrun_dataset_requested", "dataset_mfid", "requested_at"),
+        Index("uq_postprocessingrun_idempotency", "requested_by", "dataset_mfid", "idempotency_key", unique=True,
+              postgresql_where=text("idempotency_key IS NOT NULL"), sqlite_where=text("idempotency_key IS NOT NULL")),
         CheckConstraint("status IN ('requested', 'running', 'completed', 'failed')", name="ck_postprocessingrun_status"),
     )
 
@@ -560,6 +562,8 @@ class PostprocessingRun(SQLModel, table=True):
     requested_at: datetime = Field(sa_type=DateTime(timezone=True))
     started_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     finished_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    idempotency_key: Optional[str] = Field(default=None, max_length=128)
+    request_fingerprint: Optional[str] = Field(default=None, max_length=64)
 
 
 class UploadSession(SQLModel, table=True):

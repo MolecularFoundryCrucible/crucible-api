@@ -56,8 +56,13 @@ def test_postprocessing_and_join_request_migrations_roundtrip():
                 assert connection.execute(text("SELECT parameters::text, status FROM postprocessingrun")).one() == ("{}", "requested")
                 _fails(connection, "INSERT INTO postprocessingrun (dataset_mfid, pipeline, status, requested_at) VALUES ('ds1', 'x', 'done', now())")
                 _fails(connection, "INSERT INTO postprocessingrun (dataset_mfid, pipeline, requested_at) VALUES ('missing', 'x', now())")
+                keyed = "INSERT INTO postprocessingrun (dataset_mfid, pipeline, requested_by, requested_at, idempotency_key) VALUES ('ds1', 'x', '0000-0001', now(), {})"
+                connection.execute(text(keyed.format("'flow-1'")))
+                _fails(connection, keyed.format("'flow-1'"))
+                connection.execute(text(keyed.format("NULL")))
+                connection.execute(text(keyed.format("NULL")))
                 connection.execute(text("DELETE FROM \"user\""))
-                assert connection.execute(text("SELECT requested_by FROM postprocessingrun")).scalar() is None
+                assert connection.execute(text("SELECT count(*) FROM postprocessingrun WHERE requested_by IS NOT NULL")).scalar() == 0
                 connection.execute(text("DELETE FROM dataset"))
                 assert connection.execute(text("SELECT count(*) FROM postprocessingrun")).scalar() == 0
 

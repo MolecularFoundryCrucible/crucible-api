@@ -159,3 +159,58 @@ def test_status_updates(client, datasets, auth_as, queue):
     assert again.status_code == 409
     assert again.json()["detail"]["code"] == "run_finished"
     assert client.patch(f"/postprocessing_runs/{run_id}", json={"status": "requested"}).status_code == 422
+
+
+def postprocess(client, key=None, dataset="ds1", **body):
+    headers = {"Idempotency-Key": key} if key else {}
+    return client.post(f"/datasets/{dataset}/postprocess", json={"pipeline": "carrier_segmentation", **body}, headers=headers)
+
+
+def test_retries_with_the_same_key_return_the_original_run(client, datasets, auth_as, queue):
+    as_member(auth_as, Role.CONTRIBUTOR)
+    first = postprocess(client, "flow-1")
+    again = postprocess(client, "flow-1")
+    assert (first.status_code, again.status_code) == (202, 202)
+    assert again.json()["run_id"] == first.json()["run_id"]
+    assert queue.call_count == 1
+    assert len(runs(datasets)) == 1
+
+
+def test_a_reused_key_with_a_different_request_is_409(client, datasets, auth_as, queue):
+    as_member(auth_as, Role.CONTRIBUTOR)
+    run_id = postprocess(client, "flow-1").json()["run_id"]
+    response = client.post("/datasets/ds1/postprocess", json={"pipeline": "rga_analysis"}, headers={"Idempotency-Key": "flow-1"})
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "idempotency_key_reused"
+    assert response.json()["detail"]["run_id"] == run_id
+
+
+def test_keys_are_scoped_to_caller_and_dataset(client, datasets, auth_as, queue):
+    as_member(auth_as, Role.CONTRIBUTOR)
+    postprocess(client, "flow-1")
+    postprocess(client, "flow-1", dataset="ds2")
+    as_member(auth_as, Role.CONTRIBUTOR, user=STRANGER)
+    postprocess(client, "flow-1")
+    postprocess(client)
+    postprocess(client)
+    assert len(runs(datasets)) == 5
+
+
+def test_a_retry_after_a_queue_failure_queues_the_same_run(client, datasets, auth_as, queue):
+    as_member(auth_as, Role.CONTRIBUTOR)
+    queue.side_effect = ConnectionError("broker down")
+    failed = postprocess(client, "flow-1")
+    assert failed.status_code == 503
+    queue.side_effect = None
+    retried = postprocess(client, "flow-1")
+    assert retried.status_code == 202
+    body = retried.json()
+    assert (body["run_id"], body["status"], body["error"], body["finished_at"]) == (failed.json()["detail"]["run_id"], "requested", None, None)
+    assert len(runs(datasets)) == 1
+
+
+def test_a_retry_does_not_bypass_access_checks(client, datasets, auth_as, queue):
+    as_member(auth_as, Role.CONTRIBUTOR)
+    postprocess(client, "flow-1")
+    as_member(auth_as, Role.VIEWER)
+    assert postprocess(client, "flow-1").status_code == 403

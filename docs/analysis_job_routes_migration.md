@@ -2,7 +2,7 @@
 
 ## Status
 
-Deferred. This document records the agreed direction for future work. The current routes and responses remain unchanged.
+Superseded (2026-10-16). Implemented as postprocessing pipelines: `GET /pipelines`, `POST /datasets/{dataset_mfid}/postprocess` (contributor access, optional `Idempotency-Key`), and tracked runs under `/postprocessing_runs`. The four routes below are deprecated wrappers that run the same checks and return the run. The rest of this document is kept for history.
 
 ## Affected routes
 

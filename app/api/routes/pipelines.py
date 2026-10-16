@@ -1,10 +1,12 @@
+import hashlib
 import json
 import logging
 from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import ValidationError
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -64,7 +66,37 @@ def _publish(run: PostprocessingRun, routing_key: str):
     )
 
 
-def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_name: str, parameters: dict) -> PostprocessingRun:
+QUEUE_FAILURE = "Could not queue the run"
+
+
+def _queue(session, run: PostprocessingRun, routing_key: str) -> PostprocessingRun:
+    try:
+        _publish(run, routing_key)
+    except Exception:
+        logger.exception("pipeline_publish_failed run=%s pipeline=%s dataset=%s", run.id, run.pipeline, run.dataset_mfid)
+        run.status = "failed"
+        run.error = QUEUE_FAILURE
+        run.finished_at = get_utc_datetime()
+        session.add(run)
+        session.commit()
+        raise HTTPException(status_code=503, detail={"code": "pipeline_unavailable", "message": "Could not queue the run; try again later", "run_id": run.id}) from None
+    logger.info("postprocessing_run_requested run=%s pipeline=%s dataset=%s", run.id, run.pipeline, run.dataset_mfid)
+    return run
+
+
+def _replay(session, run: PostprocessingRun, fingerprint: str, routing_key: str) -> PostprocessingRun:
+    if run.request_fingerprint != fingerprint:
+        raise HTTPException(status_code=409, detail={"code": "idempotency_key_reused", "message": "Idempotency key was already used for a different request", "run_id": run.id})
+    if run.status == "failed" and run.error == QUEUE_FAILURE:
+        run.status, run.error, run.finished_at = "requested", None, None
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        return _queue(session, run, routing_key)
+    return run
+
+
+def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_name: str, parameters: dict, idempotency_key: Optional[str] = None) -> PostprocessingRun:
     pipeline = PIPELINES.get(pipeline_name)
     if pipeline is None:
         raise HTTPException(status_code=422, detail={"code": "unknown_pipeline", "message": f"Unknown pipeline '{pipeline_name}'", "pipelines": sorted(PIPELINES)})
@@ -72,36 +104,46 @@ def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_n
         parameters = pipeline.parameters.model_validate(parameters).model_dump(mode="json", exclude_none=True)
     except ValidationError as error:
         raise HTTPException(status_code=422, detail={"code": "invalid_parameters", "errors": json.loads(error.json(include_url=False))}) from None
+    fingerprint = hashlib.sha256(json.dumps({"pipeline": pipeline.name, "parameters": parameters}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     with Session(engine) as session:
         dataset = _readable_dataset(session, principal, dataset_mfid)
         require_permission(session, principal, dataset.unique_id, Permission.CREATE)
-        run = PostprocessingRun(dataset_mfid=dataset.unique_id, pipeline=pipeline.name, parameters=parameters, requested_by=principal.user_id, requested_at=get_utc_datetime())
+
+        def previous():
+            return session.exec(select(PostprocessingRun).where(
+                PostprocessingRun.requested_by == principal.user_id,
+                PostprocessingRun.dataset_mfid == dataset.unique_id,
+                PostprocessingRun.idempotency_key == idempotency_key,
+            )).one_or_none()
+
+        if idempotency_key is not None and (existing := previous()) is not None:
+            return _replay(session, existing, fingerprint, pipeline.routing_key)
+        run = PostprocessingRun(dataset_mfid=dataset.unique_id, pipeline=pipeline.name, parameters=parameters, requested_by=principal.user_id,
+                                requested_at=get_utc_datetime(), idempotency_key=idempotency_key, request_fingerprint=fingerprint)
         session.add(run)
-        session.commit()
-        session.refresh(run)
         try:
-            _publish(run, pipeline.routing_key)
-        except Exception:
-            logger.exception("pipeline_publish_failed run=%s pipeline=%s dataset=%s", run.id, run.pipeline, run.dataset_mfid)
-            run.status = "failed"
-            run.error = "Could not queue the run"
-            run.finished_at = get_utc_datetime()
-            session.add(run)
             session.commit()
-            raise HTTPException(status_code=503, detail={"code": "pipeline_unavailable", "message": "Could not queue the run; try again later", "run_id": run.id}) from None
-        logger.info("postprocessing_run_requested run=%s pipeline=%s dataset=%s", run.id, run.pipeline, run.dataset_mfid)
-        return run
+        except IntegrityError:
+            session.rollback()
+            existing = previous() if idempotency_key is not None else None
+            if existing is None:
+                raise
+            return _replay(session, existing, fingerprint, pipeline.routing_key)
+        session.refresh(run)
+        return _queue(session, run, pipeline.routing_key)
 
 
 @router.post("/datasets/{dataset_mfid}/postprocess", response_model=PostprocessingRunRead, status_code=202,
              responses={404: {"description": "Dataset not found, not readable, or pending deletion"},
                         403: {"description": "Caller is below contributor on the dataset"},
+                        409: {"description": "The Idempotency-Key was already used for a different pipeline or parameters (`idempotency_key_reused`)"},
                         422: {"description": "Unknown pipeline (`unknown_pipeline`) or invalid parameters (`invalid_parameters`)"},
                         503: {"description": "The run could not be queued (`pipeline_unavailable`); it is recorded as failed"}})
-def postprocess_dataset(dataset_mfid: DatasetMfid, body: PostprocessRequest, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Queue a postprocessing run on a dataset. Requires contributor access. Each request starts a new run.'''
-    return start_postprocessing_run(auth_res, dataset_mfid, body.pipeline, body.parameters)
+def postprocess_dataset(dataset_mfid: DatasetMfid, body: PostprocessRequest, auth_res: Annotated[Principal, Depends(authorize_user)],
+                        idempotency_key: Annotated[Optional[str], Header(min_length=1, max_length=128, description="Retries with the same key return the original run instead of starting another.")] = None):
+    '''Queue a postprocessing run on a dataset. Requires contributor access. Each request starts a new run unless it repeats an Idempotency-Key.'''
+    return start_postprocessing_run(auth_res, dataset_mfid, body.pipeline, body.parameters, idempotency_key)
 
 
 @router.get("/postprocessing_runs", response_model=PaginatedResponse[PostprocessingRunRead])

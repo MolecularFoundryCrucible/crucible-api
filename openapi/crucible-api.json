@@ -13959,7 +13959,7 @@
     },
     "/datasets/{dataset_mfid}/postprocess": {
       "post": {
-        "description": "Queue a postprocessing run on a dataset. Requires contributor access. Each request starts a new run.",
+        "description": "Queue a postprocessing run on a dataset. Requires contributor access. Each request starts a new run unless it repeats an Idempotency-Key.",
         "operationId": "postprocess_dataset_datasets__dataset_mfid__postprocess_post",
         "parameters": [
           {
@@ -13971,6 +13971,26 @@
               "description": "Dataset MFID.",
               "title": "Dataset Mfid",
               "type": "string"
+            }
+          },
+          {
+            "description": "Retries with the same key return the original run instead of starting another.",
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Retries with the same key return the original run instead of starting another.",
+              "title": "Idempotency-Key"
             }
           },
           {
@@ -14032,6 +14052,9 @@
           },
           "404": {
             "description": "Dataset not found, not readable, or pending deletion"
+          },
+          "409": {
+            "description": "The Idempotency-Key was already used for a different pipeline or parameters (`idempotency_key_reused`)"
           },
           "422": {
             "description": "Unknown pipeline (`unknown_pipeline`) or invalid parameters (`invalid_parameters`)"

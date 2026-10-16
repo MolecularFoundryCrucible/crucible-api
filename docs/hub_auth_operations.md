@@ -16,16 +16,14 @@ Store the ORCID client secret and Hub client secret separately in the deployment
 
 The API accesses Google Secret Manager directly with the existing Google client library and Application Default Credentials, using the pod's workload identity. It needs no exported service-account key or new CSI/External Secrets dependency. Secret values stay in worker memory, not ConfigMaps, Kubernetes Secret copies, logs, or files. The existing legacy API credential loader is unchanged. This follows [Google's Secret Manager guidance](https://docs.cloud.google.com/secret-manager/docs/best-practices).
 
-Set `HUB_AUTH_CLIENT_SECRET_VERSION` and `HUB_AUTH_ORCID_CLIENT_SECRET_VERSION` to full `projects/.../secrets/.../versions/N` names with numeric versions. A reference takes precedence over its corresponding inline environment secret; access failure never falls back to inline or legacy credentials. Successful reads are cached per worker and version; failed reads are not cached. Lookups have a five-second RPC timeout without SDK retries. Values must be nonempty ASCII without line breaks. Local development may keep `HUB_AUTH_CLIENT_SECRET` and `HUB_AUTH_ORCID_CLIENT_SECRET` when no references are configured.
+Set `HUB_AUTH_CLIENT_SECRET_VERSION` and `HUB_AUTH_ORCID_CLIENT_SECRET_VERSION` to full `projects/.../secrets/.../versions/latest` (or numeric `versions/N`) Secret Manager names. A reference takes precedence over its corresponding inline environment secret; access failure never falls back to inline or legacy credentials. Successful reads are cached per worker and version reference; failed reads are not cached. Lookups have a five-second RPC timeout without SDK retries. Values must be nonempty ASCII without line breaks. Local development may keep `HUB_AUTH_CLIENT_SECRET` and `HUB_AUTH_ORCID_CLIENT_SECRET` when no references are configured.
 
-The following secrets were provisioned under project `776258882599` on 2026-09-28. Main's Hub client credential remains pinned to version `1`; staging's Hub client credential and both ORCID credentials were rotated to version `2`. Their values were verified without logging them. Existing unrelated secrets and IAM grants were not changed.
-
-After successful local sign-in and logout testing, superseded version `1` of the staging Hub client secret and both ORCID secrets was disabled with user approval. Main's shared Hub credential remains enabled at version `1`. Disabled versions were not destroyed; do not re-enable exposed credentials for rollback.
+Both `main` and `staging` share unified secrets in project `776258882599` (`mf-crucible`) tracking `versions/latest`:
 
 | Environment | Hub client credential | ORCID client credential |
 | --- | --- | --- |
-| Main | `crucible-hub-main-client-secret` | `crucible-hub-main-orcid-client-secret` |
-| Staging | `crucible-hub-staging-client-secret` | `crucible-hub-staging-orcid-client-secret` |
+| Main | `crucible-hub-client-secret` (`versions/latest`) | `crucible-hub-orcid-client-secret` (`versions/latest`) |
+| Staging | `crucible-hub-client-secret` (`versions/latest`) | `crucible-hub-orcid-client-secret` (`versions/latest`) |
 
 Main has a separately generated Hub client secret; staging matches the rotated local Hub/API shared credential. The API and corresponding Hub server must use the same value for their environment. Both ORCID secrets contain the rotated local credential for configured client `APP-YDW1MRE405389PP0`. The Hub never needs the ORCID client secret. Only main gets a deployed Hub. Staging is tested from a local Hub with an explicitly configured callback.
 

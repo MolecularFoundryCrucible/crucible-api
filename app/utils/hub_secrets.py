@@ -17,7 +17,7 @@ def hub_auth_enabled() -> bool:
 
 @lru_cache(maxsize=8)
 def _read_secret_version(name: str) -> str:
-    if not re.fullmatch(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/[1-9][0-9]*", name):
+    if not re.fullmatch(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)", name):
         raise HubSecretUnavailable
     try:
         with secretmanager.SecretManagerServiceClient() as client:

@@ -57,10 +57,13 @@ def test_version_precedence_cache_and_rotation(monkeypatch, manager):
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION[:-1] + "2")
     hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET")
     assert client.access_secret_version.call_count == 2
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION.replace("/1", "/latest"))
+    assert hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value"
+    assert client.access_secret_version.call_count == 3
 
 
-@pytest.mark.parametrize("version", ["bad", VERSION.replace("/1", "/latest"), VERSION.replace("/1", "/0")])
-def test_references_require_pinned_versions(monkeypatch, manager, version):
+@pytest.mark.parametrize("version", ["bad", VERSION.replace("/1", "/0"), VERSION.replace("/1", "/latest2")])
+def test_references_reject_invalid_versions(monkeypatch, manager, version):
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", version)
     with pytest.raises(hub_secrets.HubSecretUnavailable):
         hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET")
@@ -141,10 +144,13 @@ def test_deployment_references_only_and_enabled(environment):
     for key in config:
         if key.startswith("HUB_AUTH_"):
             assert values[key]["valueFrom"]["configMapKeyRef"] == {"name": f"crucible-api-config-{environment}", "key": key}
-    for key in ("HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_ORCID_CLIENT_SECRET"):
+    expected_versions = {
+        "HUB_AUTH_CLIENT_SECRET": "projects/776258882599/secrets/crucible-hub-client-secret/versions/latest",
+        "HUB_AUTH_ORCID_CLIENT_SECRET": "projects/776258882599/secrets/crucible-hub-orcid-client-secret/versions/latest",
+    }
+    for key, expected_version in expected_versions.items():
         assert key not in config and key not in values
-        assert f"crucible-hub-{environment}-" in config[key + "_VERSION"]
-        assert config[key + "_VERSION"].rsplit("/", 1)[1].isdigit()
+        assert config[key + "_VERSION"] == expected_version
     if environment == "staging":
         assert config["HUB_AUTH_CALLBACK_URI"].split(",")[0] == "http://localhost:3000/hub/auth/callback"
     else:

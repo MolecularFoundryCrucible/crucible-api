@@ -148,16 +148,26 @@ class _NonFiniteNumber:
         self.literal = literal
 
 
-def _unsupported_reason(text: str):
-    for character in text:
-        code = ord(character)
-        if code == 0:
-            return "NUL characters (\\u0000) cannot be stored; remove them before sending"
-        if 0xD800 <= code <= 0xDFFF:
-            return "unpaired UTF-16 surrogates are not valid Unicode text"
-        if 0xFDD0 <= code <= 0xFDEF or (code & 0xFFFE) == 0xFFFE:
-            return "Unicode noncharacters are not allowed in JSON text"
+NUL_REASON = "NUL characters (\\u0000) cannot be stored; remove them before sending"
+
+
+def _character_reason(code: int):
+    if code == 0:
+        return NUL_REASON
+    if 0xD800 <= code <= 0xDFFF:
+        return "unpaired UTF-16 surrogates are not valid Unicode text"
+    if 0xFDD0 <= code <= 0xFDEF or (code & 0xFFFE) == 0xFFFE:
+        return "Unicode noncharacters are not allowed in JSON text"
     return None
+
+
+def _unsupported_reason(text: str):
+    if text.isascii():
+        return NUL_REASON if "\x00" in text else None
+    offending = [character for character in set(text) if _character_reason(ord(character))]
+    if not offending:
+        return None
+    return _character_reason(ord(min(offending, key=text.index)))
 
 
 def _printable(key: str) -> str:
@@ -194,6 +204,10 @@ async def reject_unstorable_json(request: Request, call_next):
                 problems = _unstorable(json.loads(body, parse_constant=_NonFiniteNumber))
             except ValueError:
                 problems = []
+            except RecursionError:
+                return JSONResponse(status_code=422, content={"detail": [
+                    {"type": "json_too_deep", "loc": ["body"], "msg": "JSON nesting is too deep"}
+                ]})
             if problems:
                 return JSONResponse(status_code=422, content={"detail": [
                     {"type": kind, "loc": list(location), "msg": message}

@@ -1,8 +1,9 @@
-from datetime import timedelta, datetime, timezone
+from datetime import date, timedelta, datetime, timezone
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import delete, exists, func, or_
@@ -24,7 +25,7 @@ from app.models.users import (
     AccountProfileUpdate,
     UserRead,
 )
-from app.utils.auth_utils import API_KEY_READ_DEPRECATION, authorize_user, find_or_add_api_access, permission_filter, reject_hub_api_key_read, require_recent_authentication
+from app.utils.auth_utils import API_KEY_READ_DEPRECATION, authorize_user, find_or_add_api_access, security, permission_filter, reject_hub_api_key_read, require_recent_authentication
 from app.utils.permissions import (
     Permission,
     PlatformRole,
@@ -177,32 +178,33 @@ def regenerate_account_apikey(
     return ApiKeyRead(api_key=find_or_add_api_access(auth_res.user_id, engine, regenerate=True))
 
 
-@router.get("/account/verify", response_model=ApiKeyVerify)
-def verify_account_apikey(auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/account/verify", response_model=ApiKeyVerify, responses={404: {"description": "A Hub session's account has no API key"}})
+def verify_account_apikey(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+):
     """
-    Verify the caller's API key and return its validity and expiry date.
-    Returns 401 for invalid or expired keys (handled by authorize_user before this runs).
+    Report an API key's validity and expiry. With an API key, describes that key (expired keys
+    are rejected with 401 before this runs). With a Hub session, describes the account's newest key,
+    with valid false once it has expired.
     """
-    user_unique_id = auth_res.user_id
     with Session(engine) as session:
-        token = session.exec(
-            select(ApiToken).where(ApiToken.user_unique_id == user_unique_id)
-            .order_by(ApiToken.token_created.desc())
-        ).first()
+        if auth_res.credential == "hub":
+            token = session.exec(
+                select(ApiToken).where(ApiToken.user_unique_id == auth_res.user_id)
+                .order_by(ApiToken.token_created.desc())
+            ).first()
+        else:
+            token = session.get(ApiToken, credentials.credentials)
         if token is None:
             raise HTTPException(status_code=404, detail="No API key found")
 
-        created_at = token.token_created
-        if isinstance(created_at, str):
-            created_dt = datetime.strptime(created_at, "%Y-%m-%d")
-        else:
-            created_dt = created_at
-
-        expires_dt = created_dt + timedelta(days=365)
+        created = date.fromisoformat(str(token.token_created)[:10])
+        expires = created + timedelta(days=365)
         return ApiKeyVerify(
-            valid=True,
-            created_at=created_dt.date().isoformat(),
-            expires_at=expires_dt.date().isoformat(),
+            valid=date.today() < expires,
+            created_at=created.isoformat(),
+            expires_at=expires.isoformat(),
             last_used_at=token.last_used_at,
         )
 

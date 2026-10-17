@@ -36,6 +36,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- `GET /account/verify` described the account's newest key and always reported `valid: true`. With an API key it now describes the key that was presented; with a Hub session it describes the newest key with `valid: false` once that key has expired (404 when the account has no key).
 - Staging wrote its record files (`{mfid}/record.json` and `metadata.json`) into the production record bucket, where a staging edit to a record copied from production would overwrite that record's production copy and revision. The bucket now comes from the `RECORD_BUCKET` setting: `mf-record-prod` on main and the new `mf-record-staging` on staging; record files are skipped, with a warning, when it is unset.
 - `GET /account/join_requests` returned 500 for anyone who had made a join request, and join request lists returned 500 when a request's project no longer existed.
 - Uploading a new file (signed multipart or legacy `/upload/complete`) now updates the dataset's `modification_time`, and with it the project's and instrument's `last_activity_at`; only replacements did before.

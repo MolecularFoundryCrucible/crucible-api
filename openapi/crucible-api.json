@@ -9498,7 +9498,7 @@
     },
     "/account/verify": {
       "get": {
-        "description": "Verify the caller's API key and return its validity and expiry date.\nReturns 401 for invalid or expired keys (handled by authorize_user before this runs).",
+        "description": "Report an API key's validity and expiry. With an API key, describes that key (expired keys\nare rejected with 401 before this runs). With a Hub session, describes the account's newest key,\nwith valid false once it has expired.",
         "operationId": "verify_account_apikey_account_verify_get",
         "parameters": [
           {
@@ -9544,6 +9544,9 @@
                 "$ref": "#/components/headers/CrucibleRequestId"
               }
             }
+          },
+          "404": {
+            "description": "A Hub session's account has no API key"
           },
           "422": {
             "content": {

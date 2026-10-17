@@ -79,7 +79,7 @@ from app.utils.instrument_utils import (
     resolve_instrument_identifiers,
     resolve_instrument_mfids_to_references,
 )
-from app.utils.link_utils import require_link_create_permissions
+from app.utils.link_utils import reject_lineage_cycle, reject_self_link, require_link_create_permissions
 from app.utils.rmq_utils import get_ingestion_tier
 from app.api.routes.pipelines import start_postprocessing_run
 from app.models.pipelines import PostprocessingRunRead
@@ -889,6 +889,7 @@ def link_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_datase
     editor access to both datasets.
     '''
 
+    reject_self_link(parent_dataset_id, child_dataset_id)
     with Session(engine) as session:
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).first()
         if not parent:
@@ -912,6 +913,7 @@ def link_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_datase
             require_permission(session, auth_res, child_dataset_id, Permission.EDIT)
             link.relationship_type = relationship_type
         else:
+            reject_lineage_cycle(session, DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id, parent.id, child.id)
             link = DatasetLink(
                 parent_dataset_id=parent.id,
                 child_dataset_id=child.id,

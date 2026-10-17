@@ -29,7 +29,7 @@ from app.utils.auth_utils import (
     authorize_user, permission_filter, project_scope_filter,
     owner_affiliation_filter, require_permission)
 from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
-from app.utils.link_utils import require_link_create_permissions
+from app.utils.link_utils import reject_lineage_cycle, reject_self_link, require_link_create_permissions
 from app.utils.permissions import Principal, Permission, Role, has_global_permission
 from app.utils.project_utils import (
     project_not_found,
@@ -90,6 +90,7 @@ def link_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id
     editor access to both samples.
     '''
 
+    reject_self_link(parent_sample_id, child_sample_id)
     with Session(engine) as session:
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()
         if not parent_sample:
@@ -113,6 +114,7 @@ def link_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id
             require_permission(session, auth_res, child_sample_id, Permission.EDIT)
             link.relationship_type = relationship_type
         else:
+            reject_lineage_cycle(session, SampleLink.parent_sample_id, SampleLink.sample_id, parent_sample.id, child_sample.id)
             link = SampleLink(
                 parent_sample_id=parent_sample.id,
                 sample_id=child_sample.id,

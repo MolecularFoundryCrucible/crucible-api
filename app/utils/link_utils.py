@@ -1,5 +1,6 @@
 from typing import List, Optional, Sequence
 
+from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.models.core_models import (
@@ -13,6 +14,26 @@ from app.models.links import LinkedResource
 from app.utils.auth_utils import permission_filter, require_permission
 from app.utils.permissions import Permission, Principal
 from app.utils.sql_utils import deletion_filter_for
+
+
+def reject_self_link(parent_mfid: str, child_mfid: str) -> None:
+    if parent_mfid == child_mfid:
+        raise HTTPException(status_code=422, detail={"code": "self_link", "message": "A record cannot be its own parent"})
+
+
+def reject_lineage_cycle(session: Session, parent_column, child_column, parent_id: int, child_id: int) -> None:
+    """Raise 409 when the child is already an ancestor of the parent. Walks every link, readable or not,
+    and never names the records on the path."""
+    seen, frontier = {parent_id}, {parent_id}
+    while frontier:
+        ids = list(frontier)
+        ancestors = set()
+        for start in range(0, len(ids), 5000):
+            ancestors.update(session.exec(select(parent_column).where(child_column.in_(ids[start:start + 5000]))).all())
+        if child_id in ancestors:
+            raise HTTPException(status_code=409, detail={"code": "lineage_cycle", "message": "The child is already an ancestor of the parent; this link would create a cycle"})
+        frontier = ancestors - seen
+        seen |= frontier
 
 
 def require_link_create_permissions(

@@ -1,7 +1,7 @@
 import logging
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, or_
+from sqlalchemy import delete, exists, func, or_
 from sqlmodel import Session, select
 
 from app.models.core_models import (
@@ -116,10 +116,20 @@ def deletion_summary(session: Session, resource_type: str, mfid: str) -> dict:
     raise ValueError(f"Deletion summary is not defined for resource type '{resource_type}'")
 
 
-def deletion_blockers(session: Session, resource_type: str, mfid: str) -> dict[str, int]:
-    if resource_type not in ("project", "instrument"):
-        return {}
-    return deletion_summary(session, resource_type, mfid)["blocking"]
+def has_deletion_blockers(session: Session, resource_type: str, mfid: str) -> bool:
+    """Whether any dataset or sample is still assigned, with the same rules as deletion_summary's counts."""
+    if resource_type == "project":
+        project = session.exec(select(Project).where(Project.unique_id == mfid)).one()
+        return session.exec(select(
+            exists().where(or_(Dataset.project_mfid == project.unique_id, Dataset.project_id == project.project_id))
+            | exists().where(Sample.project_mfid == project.unique_id)
+        )).one()
+    if resource_type == "instrument":
+        instrument = session.exec(select(Instrument).where(Instrument.unique_id == mfid)).one()
+        return session.exec(select(
+            exists().where(or_(Dataset.instrument_mfid == instrument.unique_id, Dataset.instrument_id == instrument.id))
+        )).one()
+    return False
 
 
 def deletion_preview_read(

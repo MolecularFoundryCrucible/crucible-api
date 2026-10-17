@@ -1,4 +1,4 @@
-from typing import Annotated, Iterable, Optional, Sequence
+from typing import Annotated, Callable, Iterable, Optional, Sequence
 import logging
 import re
 import os
@@ -348,7 +348,7 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
                           allow_peer_grants: bool = True,
                           status_permission: Optional[Permission] = Permission.DELETE,
                           acl_rows: Optional[Sequence[tuple[int, Role]]] = None,
-                          can_delete: bool = False) -> ResourceCapabilities:
+                          can_delete: bool | Callable[[], bool] = False) -> ResourceCapabilities:
     if acl_rows is None:
         acl_rows = fetch_acl_rows(session, mfid)
     actor_role = effective_role(principal, acl_rows)
@@ -367,10 +367,10 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
                 max_grant_role = target.db_value
                 break
 
-    may_delete = can_delete and (
+    may_delete = (
         _has_resource_permission(principal, acl_rows, Permission.DELETE)
         or _has_resource_permission(principal, acl_rows, Permission.HARD_DELETE)
-    )
+    ) and (can_delete() if callable(can_delete) else can_delete)
 
     return ResourceCapabilities(
         can_edit=_has_resource_permission(

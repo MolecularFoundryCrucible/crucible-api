@@ -851,3 +851,41 @@ class TestMetadataAndCapability:
         auth_as("ds-cap-owner", groups=[("ds-cap-owner", _group_id_session(db_engine, "ds-cap-owner"), Role.OWNER)])
         body = client.get("/datasets/ds-cap-1").json()
         assert body["capabilities"]["can_delete"] is False
+
+
+class TestDeleteCapabilityCheck:
+    def test_a_dataset_assigned_only_by_slug_still_blocks(self, client, db_engine, auth_as):
+        project_mfid = TestBlockers()._project_with_dataset(db_engine, "proj_cap_legacy", use_legacy=True)
+        auth_as("block-owner-1", groups=[(project_mfid, _group_id_session(db_engine, project_mfid), Role.OWNER)])
+        assert client.get(f"/projects/{project_mfid}").json()["capabilities"]["can_delete"] is False
+        assert client.get(f"/resources/{project_mfid}").json()["capabilities"]["can_delete"] is False
+
+    def test_an_instrument_with_datasets_cannot_be_deleted(self, client, db_engine, auth_as):
+        mfid = _instrument(client, db_engine, auth_as)
+        with Session(db_engine) as session:
+            session.add(Dataset(unique_id="instr-cap-ds", dataset_name="d", instrument_mfid=mfid))
+            session.add(Resource(mfid="instr-cap-ds", resource_type="dataset"))
+            session.commit()
+        auth_as("instr-admin", groups=[], platform_role=PlatformRole.ADMIN)
+        assert client.get(f"/instruments/{mfid}").json()["capabilities"]["can_delete"] is False
+        assert client.get(f"/resources/{mfid}").json()["capabilities"]["can_delete"] is False
+
+    def test_callers_who_cannot_delete_trigger_no_blocker_queries(self, client, db_engine, auth_as, monkeypatch):
+        import app.api.routes.projects as projects_routes
+        import app.services.resource_details as resource_details
+        calls = []
+        def counting(*args):
+            calls.append(args)
+            return False
+        monkeypatch.setattr(projects_routes, "has_deletion_blockers", counting)
+        monkeypatch.setattr(resource_details, "has_deletion_blockers", counting)
+        project_mfid = _project(db_engine, "proj_cap_lazy", "cap-owner-lazy")
+        _add_member(db_engine, project_mfid, "cap-viewer-lazy", Role.VIEWER)
+        group_id = _group_id_session(db_engine, project_mfid)
+        auth_as("cap-viewer-lazy", groups=[(project_mfid, group_id, Role.VIEWER)])
+        client.get(f"/projects/{project_mfid}")
+        client.get(f"/resources/{project_mfid}")
+        assert calls == []
+        auth_as("cap-owner-lazy", groups=[(project_mfid, group_id, Role.OWNER)])
+        assert client.get(f"/projects/{project_mfid}").json()["capabilities"]["can_delete"] is True
+        assert len(calls) == 1

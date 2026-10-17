@@ -23,7 +23,7 @@ from app.utils.auth_utils import (
     require_permission, resource_capabilities)
 from app.services.resource_pagination import (
     ResourcePaginationSpec, execute_resource_page, prepare_resource_pagination)
-from app.utils.deletion_utils import deletion_blockers
+from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.instrument_utils import assert_instrument_id_available, get_instrument_or_404
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.search_utils import (
@@ -86,7 +86,7 @@ def _instrument_capabilities(session, principal, instrument):
         session,
         principal,
         instrument.unique_id,
-        can_delete=not deletion_blockers(session, "instrument", instrument.unique_id),
+        can_delete=lambda: not has_deletion_blockers(session, "instrument", instrument.unique_id),
     )
 
 

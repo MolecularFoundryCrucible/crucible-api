@@ -29,7 +29,7 @@ from app.utils.auth_utils import (
     resource_capabilities,
 )
 from app.services.resource_access import load_member_grants, may_view_members, record_role
-from app.utils.deletion_utils import deletion_blockers
+from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import Permission, Principal, Role
@@ -290,7 +290,7 @@ def load_instrument_detail(
             principal,
             resource_id,
             acl_rows=acl_rows,
-            can_delete=not deletion_blockers(session, "instrument", resource_id),
+            can_delete=lambda: not has_deletion_blockers(session, "instrument", resource_id),
         ),
         "deletion_request": _deletion_request_payload(deletion_request),
         "members": load_member_grants(session, resource_id)
@@ -338,7 +338,7 @@ def load_project_detail(
             manage_access_floor=Role.EDITOR,
             allow_peer_grants=False,
             status_permission=Permission.EDIT,
-            can_delete=not deletion_blockers(session, "project", resource_id),
+            can_delete=lambda: not has_deletion_blockers(session, "project", resource_id),
         ),
         deletion_request=_deletion_request_payload(deletion_request),
         role=role.db_value if (role := principal.role_in(project.unique_id)) is not None else None,

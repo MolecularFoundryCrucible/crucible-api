@@ -57,16 +57,15 @@ def test_service_account_can_add_a_file_without_updating_an_existing_one(client,
     )
     repeated = client.post(
         "/datasets/dataset-one/files",
-        json={"filename": "changed.dat", "size": 99, "sha256_hash": "same-hash"},
+        json={"filename": "first.dat", "size": 99, "sha256_hash": "other-hash"},
     )
 
     assert created.status_code == 200, created.text
-    assert repeated.status_code == 200, repeated.text
-    assert repeated.json()["mfid"] == created.json()["mfid"]
-    assert repeated.json()["filename"] == "first.dat"
-    assert repeated.json()["size"] == 10
+    assert repeated.status_code == 409, repeated.text
+    assert repeated.json()["detail"]["file_mfid"] == created.json()["mfid"]
     with Session(db_engine) as session:
-        assert len(session.exec(select(AssociatedFile)).all()) == 1
+        files = session.exec(select(AssociatedFile)).all()
+        assert [(f.size, f.sha256_hash) for f in files] == [(10, "same-hash")]
 
 
 def test_service_account_can_link_resources_in_the_same_project(client, db_engine, auth_as):

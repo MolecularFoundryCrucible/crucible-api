@@ -288,6 +288,9 @@ def test_catalog_only_record_lifecycle_is_unchanged(client, db_engine, admin):
     created = client.post(f"/datasets/{DS}/files", json={"filename": "remote.h5", "size": 42, "sha256_hash": "e" * 64, "storage_backend": "globus", "storage_path": "globus://endpoint/a/remote.h5", "access_note": "on NERSC"})
     assert created.status_code == 200, created.text
     file_mfid = created.json()["mfid"]
+    again = client.post(f"/datasets/{DS}/files", json={"filename": "remote.h5", "size": 43, "sha256_hash": "f" * 64, "storage_backend": "globus"})
+    assert again.status_code == 409
+    assert again.json()["detail"]["file_mfid"] == file_mfid
     updated = client.patch(f"/files/{file_mfid}", json={"storage_path": "/global/cfs/b/remote.h5", "storage_backend": "local", "size": 43, "sha256_hash": "f" * 64})
     assert updated.status_code == 200, updated.text
     assert updated.json()["storage_path"] == "/global/cfs/b/remote.h5"

@@ -13203,7 +13203,7 @@
         ]
       },
       "post": {
-        "description": "Adds a file record to a dataset.\nCreates the record if one with the same sha256_hash and dataset does not already exist.\nUse POST /datasets/{dataset_mfid}/files/{file_id}/ingest to trigger ingestion.\nRequires contributor access. A repeated hash returns the existing record unchanged.",
+        "description": "Adds a file record to a dataset.\nFilenames are unique within a dataset. Repeating a filename with the same sha256_hash and size returns the existing record unchanged;\nrepeating it with different content returns 409 `filename_exists` with the existing file's MFID and ETag.\nUse POST /datasets/{dataset_mfid}/files/{file_id}/ingest to trigger ingestion.\nRequires contributor access.",
         "operationId": "add_associated_file_datasets__dataset_mfid__files_post",
         "parameters": [
           {
@@ -13270,6 +13270,9 @@
                 "$ref": "#/components/headers/CrucibleRequestId"
               }
             }
+          },
+          "409": {
+            "description": "A file with this filename already exists in the dataset with different content: `{\"detail\": {\"code\": \"filename_exists\", \"file_mfid\": ..., \"etag\": ..., \"message\": ...}}`; update it through `PATCH /files/{file_mfid}` (remote files) or `POST /files/{file_mfid}/upload/multipart/initiate` (GCS files). A filename reserved by an active multipart upload returns a plain string detail"
           },
           "422": {
             "content": {

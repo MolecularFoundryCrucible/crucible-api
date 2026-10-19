@@ -39,7 +39,7 @@ from app.models.facets import FacetResponse
 from app.models.datasets import (
     AssociatedFileCreate, AssociatedFileRead,
     DatasetCreate, DatasetInstrumentAssign, DatasetInstrumentRead,
-    DatasetRead, DatasetResponse, DatasetUpdate,
+    DatasetRead, DatasetResponse, DatasetUpdate, file_etag,
     ThumbnailCreate, ThumbnailPreviewRead, ThumbnailRead, ThumbnailUpdate,
 )
 from app.models.instrument import InstrumentReferenceRead
@@ -1378,15 +1378,16 @@ def read_associated_files(auth_res: Annotated[Principal, Depends(authorize_user)
         return [AssociatedFileRead.model_validate(f, update={"dataset_mfid": f.dataset.unique_id}) for f in files]
 
 
-@router.post("/datasets/{dataset_mfid}/files", response_model=AssociatedFileRead)
+@router.post("/datasets/{dataset_mfid}/files", response_model=AssociatedFileRead, responses={409: {"description": "A file with this filename already exists in the dataset with different content: `{\"detail\": {\"code\": \"filename_exists\", \"file_mfid\": ..., \"etag\": ..., \"message\": ...}}`; update it through `PATCH /files/{file_mfid}` (remote files) or `POST /files/{file_mfid}/upload/multipart/initiate` (GCS files). A filename reserved by an active multipart upload returns a plain string detail"}})
 def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
                         dsid: DatasetMfid,
                         associated_file: AssociatedFileCreate):
     '''
     Adds a file record to a dataset.
-    Creates the record if one with the same sha256_hash and dataset does not already exist.
+    Filenames are unique within a dataset. Repeating a filename with the same sha256_hash and size returns the existing record unchanged;
+    repeating it with different content returns 409 `filename_exists` with the existing file's MFID and ETag.
     Use POST /datasets/{dataset_mfid}/files/{file_id}/ingest to trigger ingestion.
-    Requires contributor access. A repeated hash returns the existing record unchanged.
+    Requires contributor access.
     '''
 
     with Session(engine) as session:
@@ -1395,18 +1396,16 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
             raise HTTPException(status_code=404, detail="Dataset not found")
         require_permission(session, auth_res, dsid, Permission.CREATE)
 
-        af_obj = session.exec(
+        existing = session.exec(
             select(AssociatedFile).where(
-                AssociatedFile.sha256_hash == associated_file.sha256_hash,
                 AssociatedFile.dataset_id == ds.id,
-                multipart.trusted_hash(),
+                AssociatedFile.filename == associated_file.filename,
             )
         ).first()
-        if af_obj is not None:
-            return AssociatedFileRead.model_validate(
-                af_obj,
-                update={"dataset_mfid": ds.unique_id},
-            )
+        if existing is not None:
+            if existing.sha256_hash == associated_file.sha256_hash and existing.size == associated_file.size:
+                return AssociatedFileRead.model_validate(existing, update={"dataset_mfid": ds.unique_id})
+            raise HTTPException(409, {"code": "filename_exists", "file_mfid": existing.mfid, "etag": file_etag(existing.storage_path, existing.storage_generation, existing.sha256_hash, existing.size), "message": "Filename already exists"})
 
         if multipart.filename_reserved(session, dsid, associated_file.filename):
             raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")

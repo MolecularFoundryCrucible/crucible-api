@@ -629,6 +629,24 @@ def test_unverified_multipart_hash_does_not_dedupe_legacy_paths(flow, monkeypatc
     assert response.json()["existing_file"] is None
 
 
+def test_file_record_filenames_are_unique_within_a_dataset(flow):
+    client, _, _ = flow
+    file_id = complete(flow, publish(flow)).json()["mfid"]
+    repeated = client.post("/datasets/ds/files", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": SHA})
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["mfid"] == file_id
+    changed = client.post("/datasets/ds/files", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": "2" * 64})
+    assert changed.status_code == 409
+    detail = changed.json()["detail"]
+    assert (detail["code"], detail["file_mfid"]) == ("filename_exists", file_id)
+    assert detail["etag"] == client.get(f"/files/{file_id}").json()["etag"]
+    renamed = client.post("/datasets/ds/files", json={"filename": "alias.bin", "size": len(DATA), "sha256_hash": SHA})
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["filename"] == "alias.bin"
+    assert renamed.json()["mfid"] != file_id
+    assert sorted(f["filename"] for f in client.get("/datasets/ds/files").json()) == ["alias.bin", "data.bin"]
+
+
 def test_legacy_paths_respect_multipart_filename_reservation(flow, monkeypatch):
     client, engine, _ = flow
     start(flow)

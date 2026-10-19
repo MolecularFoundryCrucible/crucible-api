@@ -53,11 +53,11 @@ def get_secret(secret_env_var, gcs_secret_name = None, sa_creds: str = None, cre
     '''
     from dotenv import load_dotenv
     load_dotenv()
-    if gcs_secret_name is not None:
-        gcs_secret_path = f"{secret_store}/{gcs_secret_name}"
     secret = os.getenv(secret_env_var)
     if secret is None:
-        secret = get_gcs_secret(gcs_secret_path, sa_creds, cred_file)
+        if gcs_secret_name is None:
+            raise RuntimeError(f"Secret {secret_env_var} is not set and has no Secret Manager name")
+        secret = get_gcs_secret(f"{secret_store}/{gcs_secret_name}", sa_creds, cred_file)
         os.environ[secret_env_var] = secret
     return(secret)
 

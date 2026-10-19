@@ -56,6 +56,7 @@ engine = get_engine()
 USER_PROJECT_PAGINATION = replace(PROJECT_PAGINATION, kind="user_project")
 
 USER_COLLECTION_DEPRECATION = "@1799280000"
+API_KEY_VERIFY_DEPRECATION = "@1792368000"
 USER_LIST_DECLARED_PARAMS = {
     "unique_id", "username", "email", "permissive", "is_service_account",
     "first_name", "last_name", "q", "search_fields", "platform_role", "include_total",
@@ -543,39 +544,24 @@ def regenerate_user_apikey(
     return ApiKeyRead(api_key=find_or_add_api_access(user_id, engine, regenerate=True))
 
 
-@router.get("/users/{user_ref}/apikey/verify", response_model=ApiKeyVerify)
-def verify_user_apikey(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Returns validity and expiry info for the given user's API key. Admin only.'''
+@router.get("/users/{user_ref}/apikey/verify", response_model=ApiKeyVerify, deprecated=True)
+def verify_user_apikey(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)], response: Response):
+    '''Returns validity and expiry info for the given user's API key. Admin only.
+
+    Deprecated: administrators get the same status as `api_key_status` from GET /users/{user_ref}.
+    '''
     user_id = _canonical_user_id(user_ref)
     require_platform_admin(auth_res)
+    response.headers["Deprecation"] = API_KEY_VERIFY_DEPRECATION
 
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-
-        one_year_ago = date.today() - timedelta(days=365)
-        token = session.exec(
-            select(ApiToken).where(ApiToken.user_unique_id == user_id)
-            .order_by(ApiToken.token_created.desc())
-        ).first()
-        if token is None:
+        status = _admin_key_status(session, auth_res, user)
+        if status is None:
             raise HTTPException(status_code=404, detail="No API key found for this user")
-
-        created_at = token.token_created
-        if isinstance(created_at, str):
-            created_dt = datetime.strptime(created_at, "%Y-%m-%d")
-        else:
-            created_dt = created_at
-
-        expires_dt = created_dt + timedelta(days=365)
-        valid = created_dt.date() >= one_year_ago
-        return ApiKeyVerify(
-            valid=valid,
-            created_at=created_dt.date().isoformat(),
-            expires_at=expires_dt.date().isoformat(),
-            last_used_at=token.last_used_at,
-        )
+        return ApiKeyVerify(**status.model_dump())
 
 @router.post("/users", response_model=UserRead, responses={409: {"description": "Identifier, username, or email already in use; username and email conflicts use `{\"detail\": {\"code\": \"already_in_use\", \"fields\": [...], \"message\": ...}}`"}})
 def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_info: UserCreate,

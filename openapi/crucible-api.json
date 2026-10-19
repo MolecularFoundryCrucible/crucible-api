@@ -28257,7 +28257,8 @@
     },
     "/users/{user_ref}/apikey/verify": {
       "get": {
-        "description": "Returns validity and expiry info for the given user's API key. Admin only.",
+        "deprecated": true,
+        "description": "Returns validity and expiry info for the given user's API key. Admin only.\n\nDeprecated: administrators get the same status as `api_key_status` from GET /users/{user_ref}.",
         "operationId": "verify_user_apikey_users__user_ref__apikey_verify_get",
         "parameters": [
           {

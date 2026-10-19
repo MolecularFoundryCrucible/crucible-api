@@ -165,7 +165,7 @@ def publish(flow, filename="data.bin"):
 
 
 def expire(engine, identifier):
-    change(engine, identifier, expires_at=(service.now() - timedelta(seconds=1)).isoformat())
+    change(engine, identifier, expires_at=service.now() - timedelta(seconds=1))
 
 
 def test_upload_resume_publish_retry_download_ingestion_and_delete(flow, monkeypatch):
@@ -1140,7 +1140,7 @@ def test_pending_legacy_upload_blocks_retirement(flow, retired, expires_in):
     client, engine, _ = flow
     mfid = legacy_file(engine, "old.bin")
     with Session(engine) as session:
-        session.add(UploadSession(dataset_mfid="ds", gcs_path="ds/old.bin", associated_file_name="old.bin", owner_user_id="owner", expires_at=(service.now() + (expires_in or -timedelta(hours=1))).isoformat(), size=3))
+        session.add(UploadSession(dataset_mfid="ds", gcs_path="ds/old.bin", associated_file_name="old.bin", owner_user_id="owner", expires_at=service.now() + (expires_in or -timedelta(hours=1)), size=3))
         session.commit()
     _, response = replace(flow, mfid)
     assert response.status_code == 200, response.text

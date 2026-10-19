@@ -196,7 +196,7 @@ def _create_upload_session(
     size: int,
 ) -> str:
     """Persist an UploadSession record and return the generated upload_id."""
-    expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
     us = UploadSession(
         dataset_mfid=dsid,
         gcs_path=gcs_path,
@@ -321,8 +321,7 @@ def complete_resumable_upload(
             raise HTTPException(status_code=403, detail="Not the owner of this upload session")
         if us.protocol is not None:
             raise HTTPException(status_code=409, detail="Use the multipart completion route for this upload session")
-        expires_at = us.expires_at if isinstance(us.expires_at, datetime) else datetime.fromisoformat(us.expires_at)
-        if expires_at < datetime.now(timezone.utc):
+        if multipart.utc(us.expires_at) < datetime.now(timezone.utc):
             session.delete(us)
             session.commit()
             raise HTTPException(status_code=410, detail="Upload session has expired")

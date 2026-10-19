@@ -41,7 +41,6 @@ def now():
 
 
 def utc(value):
-    value = datetime.fromisoformat(value) if isinstance(value, str) else value
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
@@ -63,7 +62,7 @@ def authorize(session, principal, dsid):
 
 
 def live():
-    return UploadSession.protocol == PROTOCOL, UploadSession.state.notin_(TERMINAL), UploadSession.expires_at > now().isoformat()
+    return UploadSession.protocol == PROTOCOL, UploadSession.state.notin_(TERMINAL), UploadSession.expires_at > now()
 
 
 def owned(session, dsid, upload_id, principal, *, lock=False, check_access=True):
@@ -147,7 +146,7 @@ def new_session(session, principal, dsid, size, key, fingerprint, claimed_sha256
             raise HTTPException(429, "Upload reservation quota exceeded", headers={"Retry-After": "60"})
     identifier = uuid4().hex
     part_size = choose_part_size(size)
-    upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, gcs_path=f"{multipart_prefix(dsid)}{identifier}", associated_file_name=filename, expires_at=(now() + INITIATION_WINDOW).isoformat(), size=size, protocol=PROTOCOL, bucket=config.bucket, state="initiating", part_size=part_size, part_count=(size + part_size - 1) // part_size, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=claimed_sha256, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0, replace_file_mfid=replace_file_mfid, replace_base_etag=replace_base_etag)
+    upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, gcs_path=f"{multipart_prefix(dsid)}{identifier}", associated_file_name=filename, expires_at=now() + INITIATION_WINDOW, size=size, protocol=PROTOCOL, bucket=config.bucket, state="initiating", part_size=part_size, part_count=(size + part_size - 1) // part_size, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=claimed_sha256, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0, replace_file_mfid=replace_file_mfid, replace_base_etag=replace_base_etag)
     session.add(upload)
     session.commit()
     session.refresh(upload)
@@ -200,7 +199,7 @@ def start(engine, storage, upload):
         if current.state == "initiating":
             current.provider_upload_id = provider_id
             current.state = "uploading"
-            current.expires_at = (now() + SESSION_LIFETIME).isoformat()
+            current.expires_at = now() + SESSION_LIFETIME
             save(session, current)
             session.commit()
         return status(session, current)

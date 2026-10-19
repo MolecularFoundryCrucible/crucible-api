@@ -13,7 +13,7 @@ from app.models.core_models import (
 from app.models.links import LinkedResource
 from app.utils.auth_utils import permission_filter, require_permission
 from app.utils.permissions import Permission, Principal
-from app.utils.sql_utils import deletion_filter_for
+from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for
 
 
 def reject_self_link(parent_mfid: str, child_mfid: str) -> None:
@@ -48,9 +48,11 @@ def require_link_create_permissions(
     ):
         require_permission(session, principal, source.unique_id, Permission.CREATE)
         require_permission(session, principal, target.unique_id, Permission.READ)
-        return
-    require_permission(session, principal, source.unique_id, Permission.EDIT)
-    require_permission(session, principal, target.unique_id, Permission.EDIT)
+    else:
+        require_permission(session, principal, source.unique_id, Permission.EDIT)
+        require_permission(session, principal, target.unique_id, Permission.EDIT)
+    assert_not_pending_deletion(session, source.unique_id)
+    assert_not_pending_deletion(session, target.unique_id)
 
 
 def fetch_readable_sample_datasets(

@@ -107,7 +107,7 @@ class TestInitiateMultipartUpload:
 
         exec_result = MagicMock()
         exec_result.one_or_none.side_effect = [ds]
-        exec_result.first.side_effect = [existing_af]
+        exec_result.first.side_effect = [None, existing_af]
         session.exec.return_value = exec_result
 
         body = {"filename": "data.h5", "size": 1024, "sha256_hash": "abc123"}

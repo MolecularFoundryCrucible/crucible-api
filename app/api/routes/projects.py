@@ -28,7 +28,8 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import add_or_update, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
-from app.utils.deletion_utils import assert_not_pending_deletion, has_deletion_blockers
+from app.utils.deletion_utils import has_deletion_blockers
+from app.utils.sql_utils import assert_not_pending_deletion
 from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import (
     assert_project_id_available, is_project_owner, project_id_matches, sql_add_user_to_project,

@@ -90,8 +90,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.user_utils import resolve_create_owner
-from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
-from app.utils.deletion_utils import assert_not_pending_deletion
+from app.utils.sql_utils import add_or_update, assert_mfid_available, assert_not_pending_deletion, only_update, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 
@@ -571,11 +570,7 @@ def list_datasets(
             session, params.instrument_id, instrument_mfid)
         linked_sample_id = None
         if sample_mfid is not None:
-            linked_sample_id = session.exec(
-                select(Sample.id)
-                .where(Sample.unique_id == sample_mfid)
-                .where(permission_filter(auth_res, Sample, Permission.READ))
-            ).one_or_none()
+            linked_sample_id = session.exec(select_active(Sample, sample_mfid, Sample.id, principal=auth_res)).one_or_none()
             if linked_sample_id is None:
                 raise HTTPException(status_code=404, detail="Sample not found or access denied")
 
@@ -966,7 +961,7 @@ def list_parent_datasets(child_dataset_id: ChildDatasetMfid, auth_res: Annotated
     recorded type are excluded when the filter is set.
     '''
     with Session(engine) as session:
-        child = session.exec(select(Dataset).where(Dataset.unique_id == child_dataset_id)).one_or_none()
+        child = session.exec(select_active(Dataset, child_dataset_id)).one_or_none()
         if child is None:
             raise HTTPException(status_code=404, detail="Child dataset not found")
         require_permission(session, auth_res, child_dataset_id, Permission.READ)
@@ -1008,7 +1003,7 @@ def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotate
     recorded type are excluded when the filter is set.
     '''
     with Session(engine) as session:
-        parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
+        parent = session.exec(select_active(Dataset, parent_dataset_id)).one_or_none()
         if parent is None:
             raise HTTPException(status_code=404, detail="Parent dataset not found")
         require_permission(session, auth_res, parent_dataset_id, Permission.READ)
@@ -1207,6 +1202,7 @@ def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
     with Session(engine) as session:
         if session.exec(ds_cmd).one_or_none() is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
+        assert_not_pending_deletion(session, dsid)
 
     thumbnail_b64str = _normalize_thumbnail_input(dsid, thumbnail.thumbnail_b64str)
 
@@ -1395,6 +1391,7 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         require_permission(session, auth_res, dsid, Permission.CREATE)
+        assert_not_pending_deletion(session, dsid)
 
         existing = session.exec(
             select(AssociatedFile).where(
@@ -1560,9 +1557,7 @@ def read_samples_in_dataset(dsid: DatasetMfid, auth_res: Annotated[Principal, De
     response.headers["Deprecation"] = RELATIONSHIP_ROUTE_DEPRECATION
     with Session(engine) as session:
         ds = session.exec(
-            select(Dataset)
-            .where(Dataset.unique_id == dsid)
-            .where(permission_filter(auth_res, Dataset, Permission.READ))
+            select_active(Dataset, dsid, principal=auth_res)
         ).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found or access denied")

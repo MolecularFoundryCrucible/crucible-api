@@ -1179,7 +1179,7 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
             raise HTTPException(status_code=404,
                                 detail=f"Project '{body.project_id or body.project_mfid}' not found")
         require_permission(session, auth_res, new_proj.unique_id, Permission.CREATE)
-        from app.utils.deletion_utils import assert_not_pending_deletion
+        from app.utils.sql_utils import assert_not_pending_deletion
         assert_not_pending_deletion(session, new_proj.unique_id)
 
         entity_model = Dataset if resource.resource_type == "dataset" else Sample

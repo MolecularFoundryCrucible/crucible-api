@@ -107,7 +107,7 @@ def test_legacy_public_boolean_does_not_authorize_ingestion_read(client, db_engi
 
     response = client.get(f"/ingestion_requests/{request_id}")
 
-    assert response.status_code == 403, response.text
+    assert response.status_code == 404, response.text
 
 
 def test_acl_viewer_can_read_and_list_ingestion_requests(client, db_engine, auth_as):
@@ -192,4 +192,4 @@ def test_legacy_public_boolean_does_not_authorize_ingestion_list(client, db_engi
 
     response = client.get("/ingestion_requests", params={"dataset_id": dataset_mfid})
 
-    assert response.status_code == 403, response.text
+    assert response.status_code == 404, response.text

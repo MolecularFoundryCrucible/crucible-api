@@ -44,8 +44,7 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, select_active, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public
-from app.utils.deletion_utils import assert_not_pending_deletion
+from app.utils.sql_utils import add_or_update, assert_mfid_available, assert_not_pending_deletion, deletion_filter_for, select_active, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public
 
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
@@ -789,7 +788,7 @@ def list_child_samples(parent_sample_id: ParentSampleMfid, auth_res: Annotated[P
     recorded type are excluded when the filter is set.
     '''
     with Session(engine) as session:
-        parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
+        parent_sample = session.exec(select_active(Sample, parent_sample_id)).one_or_none()
         if parent_sample is None:
             raise HTTPException(status_code=404, detail="Parent sample not found")
         require_permission(session, auth_res, parent_sample_id, Permission.READ)

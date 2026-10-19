@@ -13947,10 +13947,10 @@
             "description": "Caller is below contributor on the dataset"
           },
           "404": {
-            "description": "Dataset not found, not readable, or pending deletion"
+            "description": "Dataset not found or not readable"
           },
           "409": {
-            "description": "The Idempotency-Key was already used for a different pipeline or parameters (`idempotency_key_reused`)"
+            "description": "The dataset has an active deletion request (`pending_deletion`), or the Idempotency-Key was already used for a different pipeline or parameters (`idempotency_key_reused`)"
           },
           "422": {
             "description": "Unknown pipeline (`unknown_pipeline`) or invalid parameters (`invalid_parameters`)"

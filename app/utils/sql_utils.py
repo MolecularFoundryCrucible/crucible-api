@@ -250,15 +250,49 @@ def get_active_deletion_request(session, resource_id: str):
     ).first()
 
 
+def assert_not_pending_deletion(session, mfid: str) -> None:
+    active = get_active_deletion_request(session, mfid)
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "pending_deletion",
+                "status": active.status,
+                "message": f"'{mfid}' has an active deletion request (status: {active.status}) and cannot be changed.",
+            },
+        )
+
+
 def select_active(resource_model, mfid, *columns, principal=None):
     """Select the record named `mfid` unless it has an active deletion request; with a principal,
-    also unless that principal cannot read it."""
+    also unless that principal cannot read it. For filters, traversals, and lists."""
     query = select(*(columns or (resource_model,))).where(resource_model.unique_id == mfid).where(deletion_filter_for(resource_model))
     if principal is not None:
         from app.utils.auth_utils import permission_filter
         from app.utils.permissions import Permission
         query = query.where(permission_filter(principal, resource_model, Permission.READ))
     return query
+
+
+def select_readable(resource_model, mfid, *columns, principal):
+    """Select the record named `mfid` if `principal` can read it, even while it has an active
+    deletion request. For exact lookups of a record and its own content."""
+    from app.utils.auth_utils import permission_filter
+    from app.utils.permissions import Permission
+    return select(*(columns or (resource_model,))).where(resource_model.unique_id == mfid).where(permission_filter(principal, resource_model, Permission.READ))
+
+
+def select_readable_file(file_mfid, principal):
+    """Select (AssociatedFile, Dataset) for `file_mfid` if `principal` can read its dataset."""
+    from app.models.core_models import AssociatedFile, Dataset
+    from app.utils.auth_utils import permission_filter
+    from app.utils.permissions import Permission
+    return (
+        select(AssociatedFile, Dataset)
+        .join(Dataset, Dataset.id == AssociatedFile.dataset_id)
+        .where(AssociatedFile.mfid == file_mfid)
+        .where(permission_filter(principal, Dataset, Permission.READ))
+    )
 
 
 def deletion_filter_for(resource_model):

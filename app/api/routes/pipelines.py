@@ -19,7 +19,7 @@ from app.services.pipelines import PIPELINES
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Permission, Principal
 from app.utils.rmq_utils import send_pika_message
-from app.utils.sql_utils import select_active
+from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_active, select_readable
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["postprocessing"])
@@ -35,13 +35,6 @@ def list_pipelines(auth_res: Annotated[Principal, Depends(authorize_user)]):
         PipelineRead(name=pipeline.name, description=pipeline.description, parameters_schema=pipeline.parameters.model_json_schema())
         for pipeline in PIPELINES.values()
     ]
-
-
-def _readable_dataset(session, principal, dataset_mfid):
-    dataset = session.exec(select_active(Dataset, dataset_mfid, principal=principal)).one_or_none()
-    if dataset is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    return dataset
 
 
 def _publish(run: PostprocessingRun, routing_key: str):
@@ -102,8 +95,11 @@ def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_n
     fingerprint = hashlib.sha256(json.dumps({"pipeline": pipeline.name, "parameters": parameters}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     with Session(engine) as session:
-        dataset = _readable_dataset(session, principal, dataset_mfid)
+        dataset = session.exec(select_readable(Dataset, dataset_mfid, principal=principal)).one_or_none()
+        if dataset is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
         require_permission(session, principal, dataset.unique_id, Permission.CREATE)
+        assert_not_pending_deletion(session, dataset.unique_id)
 
         def previous():
             return session.exec(select(PostprocessingRun).where(
@@ -130,9 +126,9 @@ def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_n
 
 
 @router.post("/datasets/{dataset_mfid}/postprocess", response_model=PostprocessingRunRead, status_code=202,
-             responses={404: {"description": "Dataset not found, not readable, or pending deletion"},
+             responses={404: {"description": "Dataset not found or not readable"},
                         403: {"description": "Caller is below contributor on the dataset"},
-                        409: {"description": "The Idempotency-Key was already used for a different pipeline or parameters (`idempotency_key_reused`)"},
+                        409: {"description": "The dataset has an active deletion request (`pending_deletion`), or the Idempotency-Key was already used for a different pipeline or parameters (`idempotency_key_reused`)"},
                         422: {"description": "Unknown pipeline (`unknown_pipeline`) or invalid parameters (`invalid_parameters`)"},
                         503: {"description": "The run could not be queued (`pipeline_unavailable`); it is recorded as failed"}})
 def postprocess_dataset(dataset_mfid: DatasetMfid, body: PostprocessRequest, auth_res: Annotated[Principal, Depends(authorize_user)],
@@ -152,12 +148,13 @@ def list_postprocessing_runs(
 ):
     '''List postprocessing runs on datasets the caller can read, newest first.'''
     with Session(engine) as session:
-        if dataset_mfid is not None:
-            _readable_dataset(session, auth_res, dataset_mfid)
+        if dataset_mfid is not None and session.exec(select_active(Dataset, dataset_mfid, Dataset.id, principal=auth_res)).first() is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
         query = (
             select(PostprocessingRun)
             .join(Dataset, Dataset.unique_id == PostprocessingRun.dataset_mfid)
             .where(permission_filter(auth_res, Dataset, Permission.READ))
+            .where(deletion_filter_for(Dataset))
         )
         if dataset_mfid is not None:
             query = query.where(PostprocessingRun.dataset_mfid == dataset_mfid)
@@ -174,10 +171,7 @@ def _run_with_access(session, principal, run_id, permission):
     run = session.get(PostprocessingRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Postprocessing run not found")
-    readable = session.exec(
-        select(Dataset.id).where(Dataset.unique_id == run.dataset_mfid).where(permission_filter(principal, Dataset, Permission.READ))
-    ).first()
-    if readable is None:
+    if session.exec(select_readable(Dataset, run.dataset_mfid, Dataset.id, principal=principal)).first() is None:
         raise HTTPException(status_code=404, detail="Postprocessing run not found")
     if permission is not Permission.READ:
         require_permission(session, principal, run.dataset_mfid, permission)

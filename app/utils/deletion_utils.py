@@ -1,6 +1,5 @@
 import logging
 
-from fastapi import HTTPException
 from sqlalchemy import delete, exists, func, or_
 from sqlmodel import Session, select
 
@@ -147,22 +146,6 @@ def deletion_preview_read(
             DeletionGrantRead(**grant) for grant in summary.get("removed_grants", [])
         ],
     )
-
-
-def assert_not_pending_deletion(session: Session, mfid: str) -> None:
-    active = session.exec(
-        select(DeletionRequest)
-        .where(DeletionRequest.resource_id == mfid)
-        .where(DeletionRequest.status.in_(["pending", "approved"]))
-    ).first()
-    if active is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"'{mfid}' has an active deletion request "
-                f"(status: {active.status})."
-            ),
-        )
 
 
 def _deleted_group_grants(session: Session, group: AccessGroup) -> list[dict]:

@@ -75,7 +75,7 @@ def test_repeat_requests_start_new_runs(client, datasets, auth_as, queue):
     ("ds1", Role.VIEWER, ME, 403),
     ("ds1", None, STRANGER, 404),
     ("missing", Role.OWNER, ME, 404),
-    ("doomed", Role.OWNER, ME, 404),
+    ("doomed", Role.OWNER, ME, 409),
 ])
 def test_refused_requests_queue_nothing(client, datasets, auth_as, queue, dataset, role, user, status):
     if role is None:

@@ -6,14 +6,13 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.models.core_models import (
-    AssociatedFile,
     Dataset,
     IngestionRequest,
 )
 from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Permission, Principal
-from app.utils.sql_utils import only_update
+from app.utils.sql_utils import deletion_filter_for, only_update, select_active, select_readable, select_readable_file
 
 router = APIRouter(tags=["ingestion_requests"])
 engine = get_engine()
@@ -28,10 +27,10 @@ def _get_ir_with_access(session: Session, request_id: int, principal: Principal,
     if ir is None:
         raise HTTPException(status_code=404, detail="Ingestion request not found")
 
-    ds = session.exec(select(Dataset).where(Dataset.unique_id == ir.dataset_mfid)).one_or_none()
-    if ds is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    require_permission(session, principal, ds.unique_id, permission)
+    if session.exec(select_readable(Dataset, ir.dataset_mfid, Dataset.id, principal=principal)).first() is None:
+        raise HTTPException(status_code=404, detail="Ingestion request not found")
+    if permission is not Permission.READ:
+        require_permission(session, principal, ir.dataset_mfid, permission)
     return ir
 
 
@@ -56,32 +55,22 @@ def list_ingestion_requests(
             select(IngestionRequest)
             .join(Dataset, Dataset.unique_id == IngestionRequest.dataset_mfid)
             .where(permission_filter(auth_res, Dataset, Permission.READ))
+            .where(deletion_filter_for(Dataset))
         )
 
         file_mfid = file_mfid or file_id
         dataset_mfid = dataset_mfid or dataset_id
 
         if file_mfid is not None:
-            af = session.exec(
-                select(AssociatedFile).where(AssociatedFile.mfid == file_mfid)
-            ).one_or_none()
-            if af is None:
+            row = session.exec(select_readable_file(file_mfid, auth_res).where(deletion_filter_for(Dataset))).one_or_none()
+            if row is None:
                 raise HTTPException(status_code=404, detail="File not found")
-
-            ds = session.exec(select(Dataset).where(Dataset.id == af.dataset_id)).one_or_none()
-            if ds is None:
-                raise HTTPException(status_code=404, detail="Dataset not found")
-            require_permission(session, auth_res, ds.unique_id, Permission.READ)
-
-            query = query.where(IngestionRequest.file_mfid == af.mfid)
+            query = query.where(IngestionRequest.file_mfid == row[0].mfid)
 
         elif dataset_mfid is not None:
-            ds = session.exec(select(Dataset).where(Dataset.unique_id == dataset_mfid)).one_or_none()
-            if ds is None:
+            if session.exec(select_active(Dataset, dataset_mfid, Dataset.id, principal=auth_res)).first() is None:
                 raise HTTPException(status_code=404, detail="Dataset not found")
-            require_permission(session, auth_res, ds.unique_id, Permission.READ)
-
-            query = query.where(IngestionRequest.dataset_mfid == ds.unique_id)
+            query = query.where(IngestionRequest.dataset_mfid == dataset_mfid)
 
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         items = session.exec(

@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 
 import app.api.routes.gcs_storage as gcs_storage
 from app.api.routes import multipart as routes
-from app.models.core_models import AccessGroup, AssociatedFile, Dataset, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
+from app.models.core_models import AccessGroup, AssociatedFile, Dataset, DeletionRequest, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
 from app.models.datasets import file_etag
 from app.services import multipart as service
 from app.services.multipart_storage import StorageFailure, UploadMissing
@@ -627,6 +627,21 @@ def test_unverified_multipart_hash_does_not_dedupe_legacy_paths(flow, monkeypatc
     assert response.json()["existing_file"]["filename"] == "legacy.bin"
     response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "other.bin", "size": len(DATA), "sha256_hash": SHA})
     assert response.json()["existing_file"] is None
+
+
+def test_upload_does_not_publish_into_a_dataset_put_up_for_deletion(flow):
+    client, engine, _ = flow
+    identifier = start(flow)
+    put(flow, identifier)
+    with Session(engine) as session:
+        session.add(DeletionRequest(resource_id="ds", resource_type="dataset", requester_id="owner", status="pending"))
+        session.commit()
+    response = complete(flow, identifier)
+    assert response.status_code == 409, response.text
+    assert "dataset_pending_deletion" in response.text
+    assert row(engine, identifier).state != "completed"
+    with Session(engine) as session:
+        assert session.exec(select(AssociatedFile)).all() == []
 
 
 def test_file_record_filenames_are_unique_within_a_dataset(flow):

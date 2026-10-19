@@ -19,7 +19,7 @@ from app.services.multipart_storage import StorageFailure, UploadMissing
 from app.services.storage_downloads import StorageLocationError, multipart_prefix, resolve_storage_object, upload_bucket
 from app.utils.auth_utils import load_principal, require_permission
 from app.utils.permissions import Permission, PlatformRole
-from app.utils.sql_utils import touch_resource_modification_time
+from app.utils.sql_utils import assert_not_pending_deletion, get_active_deletion_request, touch_resource_modification_time
 
 PROTOCOL = "gcs_xml_v1"
 MIB = 1024 ** 2
@@ -166,6 +166,7 @@ def reserve(engine, principal, dsid, body, key, config):
         if dataset is None:
             raise HTTPException(404, "Dataset not found")
         authorize(session, principal, dsid)
+        assert_not_pending_deletion(session, dsid)
         if key:
             previous = idempotent(session, principal, dsid, key, fingerprint)
             if previous is not None:
@@ -226,6 +227,7 @@ def reserve_replace(engine, principal, file_mfid, body, key, if_match, config, b
         current = demoted(session, principal)
         require_permission(session, current, dsid, Permission.READ)
         require_permission(session, current, dsid, Permission.EDIT)
+        assert_not_pending_deletion(session, dsid)
         if file.storage_backend != "gcs":
             raise HTTPException(400, "Only GCS files can be replaced; edit catalog-only records with PATCH /files/{file_id}")
         if key:
@@ -371,6 +373,8 @@ def complete(engine, storage, principal, dsid, body, retire=None):
         file = None
         if dataset is None:
             code = "dataset_deleted"
+        elif get_active_deletion_request(session, dsid) is not None:
+            code = "dataset_pending_deletion"
         elif current.replace_file_mfid:
             try:
                 require_permission(session, demoted(session, principal), dsid, Permission.EDIT)

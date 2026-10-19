@@ -15,7 +15,6 @@ from jose import jwt, JWTError
 logger = logging.getLogger(__name__)
 
 from fastapi import Depends, Header, HTTPException, Request
-from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.general_utils import  get_secret
@@ -134,8 +133,11 @@ def delete_apikey(orcid, session):
     session.commit()
 
 
+ORCID_TIMEOUT = 10
+
+
 def code_for_token_exchange(code: str, client_id, client_secret, redirect_uri):
-    token_req = requests.post(url = "https://orcid.org/oauth/token", 
+    token_req = requests.post(url = "https://orcid.org/oauth/token", timeout = ORCID_TIMEOUT,
                               data = {  "client_id": client_id,
                                         "client_secret": client_secret, 
                                         "grant_type":"authorization_code", 
@@ -158,8 +160,7 @@ def decode_token(token: str, secret_key = SECRET_KEY, alg = ALGORITHM):
         payload = jwt.decode(token, secret_key, algorithms=[alg])
         return payload
     except JWTError:
-        login_path = ''.join([api_path, '/login'])
-        return RedirectResponse(login_path)
+        return None
 
 
 def find_key(credentials, engine):

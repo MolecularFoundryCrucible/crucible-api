@@ -44,7 +44,7 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public
+from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, select_active, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public
 from app.utils.deletion_utils import assert_not_pending_deletion
 
 from app.utils.gcs_record_utils import write_record, sample_record
@@ -393,9 +393,7 @@ def list_samples(
         linked_dataset_id = None
         if dataset_mfid is not None:
             linked_dataset_id = session.exec(
-                select(Dataset.id)
-                .where(Dataset.unique_id == dataset_mfid)
-                .where(permission_filter(auth_res, Dataset, Permission.READ))
+                select_active(Dataset, dataset_mfid, Dataset.id, principal=auth_res)
             ).one_or_none()
             if linked_dataset_id is None:
                 raise HTTPException(status_code=404, detail="Dataset not found or access denied")
@@ -691,7 +689,7 @@ def list_sample_datasets(
 
     with Session(engine) as session:
         # Verify sample exists
-        sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
+        sample = session.exec(select_active(Sample, sample_id)).one_or_none()
 
         if sample is None:
             raise HTTPException(status_code=404, detail="Sample not found")
@@ -748,7 +746,7 @@ def list_parent_samples(child_sample_id: ChildSampleMfid, auth_res: Annotated[Pr
     recorded type are excluded when the filter is set.
     '''
     with Session(engine) as session:
-        child_sample = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).one_or_none()
+        child_sample = session.exec(select_active(Sample, child_sample_id)).one_or_none()
         if child_sample is None:
             raise HTTPException(status_code=404, detail="Child sample not found")
         require_permission(session, auth_res, child_sample_id, Permission.READ)

@@ -10,7 +10,7 @@ from app.models.core_models import (
 )
 from app.utils.auth_utils import authorize_user, permission_filter
 from app.utils.project_utils import resolve_project_reference
-from app.utils.sql_utils import deletion_filter_for
+from app.utils.sql_utils import deletion_filter_for, select_active
 from app.utils.permissions import Permission, Principal
 
 router = APIRouter(tags=["entities"])
@@ -182,22 +182,12 @@ def entity_graph_cte(
     """
 
     with Session(engine) as session:
-        sample_target = session.exec(
-            select(Sample)
-            .where(permission_filter(auth_res, Sample, Permission.READ))
-            .where(deletion_filter_for(Sample))
-            .where(Sample.unique_id == entity_id)
-        ).first()
+        sample_target = session.exec(select_active(Sample, entity_id, principal=auth_res)).first()
 
         if sample_target is not None:
             kind, seed_id = "sample", sample_target.id
         else:
-            dataset_target = session.exec(
-                select(Dataset)
-                .where(permission_filter(auth_res, Dataset, Permission.READ))
-                .where(deletion_filter_for(Dataset))
-                .where(Dataset.unique_id == entity_id)
-            ).first()
+            dataset_target = session.exec(select_active(Dataset, entity_id, principal=auth_res)).first()
             if dataset_target is None:
                 raise HTTPException(status_code=404, detail="Entity not found")
             kind, seed_id = "dataset", dataset_target.id

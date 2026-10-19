@@ -29,7 +29,7 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import deletion_filter_for, table_obj_to_dict
+from app.utils.sql_utils import deletion_filter_for, select_active, table_obj_to_dict
 from app.utils.user_utils import assert_profile_fields_available, commit_user, find_mf_user_proposals, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
@@ -806,9 +806,7 @@ def read_user_access_to_dataset(dataset_mfid: DatasetMfid, user_ref: UserRef, au
     '''Returns the user's effective role on one dataset. Limited to self and platform administrators.'''
     with Session(engine) as session:
         access_principal = resolve_access_principal(session, auth_res, user_ref)
-        dataset = session.exec(
-            select(Dataset).where(Dataset.unique_id == dataset_mfid)
-        ).one_or_none()
+        dataset = session.exec(select_active(Dataset, dataset_mfid)).one_or_none()
         if dataset is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 

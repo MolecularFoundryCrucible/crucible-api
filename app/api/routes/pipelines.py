@@ -19,7 +19,7 @@ from app.services.pipelines import PIPELINES
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Permission, Principal
 from app.utils.rmq_utils import send_pika_message
-from app.utils.sql_utils import deletion_filter_for
+from app.utils.sql_utils import select_active
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["postprocessing"])
@@ -38,12 +38,7 @@ def list_pipelines(auth_res: Annotated[Principal, Depends(authorize_user)]):
 
 
 def _readable_dataset(session, principal, dataset_mfid):
-    dataset = session.exec(
-        select(Dataset)
-        .where(Dataset.unique_id == dataset_mfid)
-        .where(permission_filter(principal, Dataset, Permission.READ))
-        .where(deletion_filter_for(Dataset))
-    ).one_or_none()
+    dataset = session.exec(select_active(Dataset, dataset_mfid, principal=principal)).one_or_none()
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
     return dataset

@@ -109,9 +109,9 @@ def test_reason_length_is_capped(act, world):
     assert act(ALICE).post("/projects/films/join_requests", json={"reason": "x" * 2001}).status_code == 422
 
 
-def test_editor_approves_below_their_role(act, world, db_engine):
+def test_editor_approves_up_to_their_role(act, world, db_engine):
     request_id = ask(act, ALICE)["id"]
-    assert act(EDITOR).patch(f"/join_requests/{request_id}", json={"status": "approved", "role": "editor"}).status_code == 403
+    assert act(EDITOR).patch(f"/join_requests/{request_id}", json={"status": "approved", "role": "admin"}).status_code == 403
     response = act(EDITOR).patch(f"/join_requests/{request_id}", json={"status": "approved", "role": "contributor", "reviewer_notes": "welcome"})
     assert response.status_code == 200, response.text
     body = response.json()

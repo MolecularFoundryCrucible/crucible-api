@@ -70,7 +70,6 @@ def _project_capabilities(session, principal, project):
         principal,
         project.unique_id,
         manage_access_floor=Role.EDITOR,
-        allow_peer_grants=False,
         status_permission=Permission.EDIT,
         can_delete=lambda: not has_deletion_blockers(session, "project", project.unique_id),
     )
@@ -435,8 +434,7 @@ def add_users_to_project(
     '''
     Add a user to a project at `role`, defaulting to contributor.
 
-    Requires editor or above in the project. Editors may grant contributor or
-    viewer, admins may grant editor or below, and owners may grant admin or below.
+    Requires editor or above in the project, granting at most your own role.
     Cannot seat someone as owner this way; a project has exactly one owner,
     changed only via POST /resources/{mfid}/transfer_ownership.
     '''
@@ -484,7 +482,6 @@ def add_users_to_project(
             proj.unique_id,
             internal_role,
             floor=Role.EDITOR,
-            allow_peer=False,
         )
 
         sql_add_user_to_project(user, proj.project_id, session, role=internal_role, actor_id=auth_res.user_id)
@@ -550,7 +547,6 @@ def set_project_user_role(
             internal_role,
             current=current,
             floor=Role.EDITOR,
-            allow_peer=False,
         )
 
         link.role = internal_role.db_value
@@ -570,36 +566,18 @@ def remove_user_from_project(
     username: Annotated[Optional[str], Query(deprecated=True, description="Deprecated. Put the username in the path instead.")] = None,
 ):
     '''
-    Remove a user from a project and its associated access group.
-    Admins or the project lead can remove any member. A member can also
-    remove themselves (leave the project), but the project lead cannot
-    remove themselves — transfer leadership first.
+    Remove a user from a project. Members may leave on their own; otherwise this
+    requires editor or above in the project and a member whose role is at most
+    your own. The owner cannot be removed; transfer ownership first.
     '''
-    user_unique_id = auth_res.user_id
-    is_admin = auth_res.is_platform_admin
-
     with Session(engine) as session:
         proj = resolve_project_reference(project_ref, session)
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project {project_ref} not found")
-
-        caller_is_owner = (
-            not auth_res.is_service_account
-            and is_project_owner(user_unique_id, proj.project_id, session)
-        )
-        try:
-            user = _resolve_member(session, user_ref, email, username)
-        except HTTPException:
-            if not is_admin and not caller_is_owner:
-                raise HTTPException(status_code=403, detail="Only platform admins, the project lead, or the member themselves can remove a member.")
-            raise
-        is_self = user_unique_id == user.unique_id
-        if not is_admin and not caller_is_owner and not is_self:
-            raise HTTPException(status_code=403, detail="Only platform admins, the project lead, or the member themselves can remove a member.")
-
-        if is_self and caller_is_owner:
-            raise HTTPException(status_code=409, detail="The project lead cannot remove themselves. Transfer leadership first.")
-
+        user = _resolve_member(session, user_ref, email, username)
+        is_self = auth_res.user_id == user.unique_id
+        if not is_self:
+            require_permission(session, auth_res, proj.unique_id, Permission.EDIT)
 
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)).one_or_none()
         ag_link = session.exec(
@@ -610,6 +588,11 @@ def remove_user_from_project(
         ).one_or_none() if ag else None
         if ag_link is None:
             raise HTTPException(status_code=404, detail=f"User {user.unique_id} is not a member of project {proj.project_id}")
+        current = Role.from_db(ag_link.role)
+        if current is Role.OWNER:
+            raise HTTPException(status_code=409, detail="The project owner cannot be removed; use POST /resources/{mfid}/transfer_ownership first")
+        if not is_self:
+            require_grant(session, auth_res, proj.unique_id, current, current=current, floor=Role.EDITOR)
         session.delete(ag_link)
 
         touch_resource_modification_time(session, proj.unique_id)

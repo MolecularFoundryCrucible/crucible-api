@@ -3725,7 +3725,7 @@
                 "type": "null"
               }
             ],
-            "description": "Role granted on approval, strictly below the reviewer's own role. Defaults to contributor. Only with status approved."
+            "description": "Role granted on approval, at most the reviewer's own role. Defaults to contributor. Only with status approved."
           },
           "status": {
             "enum": [
@@ -19960,7 +19960,7 @@
         ]
       },
       "patch": {
-        "description": "Approve or reject a pending request. Requires editor or above in the project (or platform administrator). Approval adds the requester at `role` (default contributor), which must be below your own role.",
+        "description": "Approve or reject a pending request. Requires editor or above in the project (or platform administrator). Approval adds the requester at `role` (default contributor), at most your own role.",
         "operationId": "review_join_request_join_requests__request_id__patch",
         "parameters": [
           {
@@ -21773,7 +21773,7 @@
     },
     "/projects/{project_ref}/users/{user_ref}": {
       "delete": {
-        "description": "Remove a user from a project and its associated access group.\nAdmins or the project lead can remove any member. A member can also\nremove themselves (leave the project), but the project lead cannot\nremove themselves — transfer leadership first.",
+        "description": "Remove a user from a project. Members may leave on their own; otherwise this\nrequires editor or above in the project and a member whose role is at most\nyour own. The owner cannot be removed; transfer ownership first.",
         "operationId": "remove_user_from_project_projects__project_ref__users__user_ref__delete",
         "parameters": [
           {
@@ -22011,7 +22011,7 @@
         ]
       },
       "post": {
-        "description": "Add a user to a project at `role`, defaulting to contributor.\n\nRequires editor or above in the project. Editors may grant contributor or\nviewer, admins may grant editor or below, and owners may grant admin or below.\nCannot seat someone as owner this way; a project has exactly one owner,\nchanged only via POST /resources/{mfid}/transfer_ownership.",
+        "description": "Add a user to a project at `role`, defaulting to contributor.\n\nRequires editor or above in the project, granting at most your own role.\nCannot seat someone as owner this way; a project has exactly one owner,\nchanged only via POST /resources/{mfid}/transfer_ownership.",
         "operationId": "add_users_to_project_projects__project_ref__users__user_ref__post",
         "parameters": [
           {
@@ -22851,7 +22851,7 @@
         ]
       },
       "put": {
-        "description": "Grant or change a principal's access. Idempotent.\n\n`kind` is `users` or `projects`. Requires admin on the resource, and you\nmay not grant above your own role nor overwrite a grant above it. Owner\ngrants and changes to an existing owner require transfer_ownership.",
+        "description": "Grant or change a principal's access. Idempotent.\n\n`kind` is `users` or `projects`. Requires admin on the resource, and you\nmay not grant above your own role nor overwrite a grant above it. Owner\ngrants and changes to an existing owner require transfer_ownership.\nProjects are shared through /projects/{project_ref}/users, and a record's\nown project grant changes only with POST /resources/{mfid}/project (409).",
         "operationId": "set_resource_access_resources__mfid__access__kind___principal__put",
         "parameters": [
           {

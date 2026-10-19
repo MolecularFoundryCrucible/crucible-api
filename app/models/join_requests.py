@@ -59,7 +59,7 @@ class JoinRequestReview(SQLModel):
     status: Literal["approved", "rejected"]
     role: Optional[JoinRequestRole] = Field(
         default=None,
-        description="Role granted on approval, strictly below the reviewer's own role. Defaults to contributor. Only with status approved.",
+        description="Role granted on approval, at most the reviewer's own role. Defaults to contributor. Only with status approved.",
     )
     reviewer_notes: Optional[str] = Field(default=None, max_length=MAX_TEXT_LENGTH)
 

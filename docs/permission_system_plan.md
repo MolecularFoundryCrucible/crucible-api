@@ -344,10 +344,12 @@ No sixth role. Every role added multiplies the `effective_role` test matrix, the
 
 | Operation | Requires |
 |---|---|
-| add a project member | `>= editor` in the project group, strictly below your own role |
-| change a member's role | `>= editor`, with both the old and new role strictly below your own |
-| remove a project member | project owner, platform administrator, or the member themselves |
+| add a project member | `>= editor` in the project group, at most your own role |
+| change a member's role | `>= editor`, with both the old and new role at most your own |
+| remove a project member | `>= editor` and the member's role at most your own, or the member themselves; never the owner |
 | manage resource ACL entries | `>= admin` on the resource, at or below your own role |
+
+Changed 2026-10-19: membership now follows the same "at most your own role" rule as resource ACL entries, replacing the strict hierarchy and owner-only removal described above, so one rule covers every grant. Project access is managed only through membership: the resource ACL routes refuse project records, and they refuse to change a dataset or sample's grant for its own project, which follows `POST /resources/{mfid}/project`.
 
 ### Membership lived in two tables; one was never authoritative
 

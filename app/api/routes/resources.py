@@ -734,6 +734,7 @@ def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, aut
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
         if ag is None:
             raise HTTPException(status_code=404, detail="Access Group not found")
+        _guard_grant(session, resource, ag)
         acl = _set_resource_access_grant(session, auth_res, mfid, ag, permission)
         session.commit()
         session.refresh(acl)
@@ -751,6 +752,27 @@ def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, aut
 # `public`), typed by path segment so that a username cannot be mistaken for a
 # project id.
 # ---------------------------------------------------------------------------
+
+def _reject_project_grants(resource: Resource) -> None:
+    if resource.resource_type == "project":
+        raise HTTPException(status_code=409, detail={
+            "code": "use_project_members",
+            "message": "Project access is managed through membership; use /projects/{project_ref}/users",
+        })
+
+
+def _guard_grant(session, resource: Resource, access_group: AccessGroup) -> None:
+    """Projects are shared through membership, and a record's own project grant follows its assignment."""
+    _reject_project_grants(resource)
+    if resource.resource_type in ("dataset", "sample") and access_group.group_type == AccessGroupType.PROJECT.value:
+        model = Dataset if resource.resource_type == "dataset" else Sample
+        owning = session.exec(select(model.project_mfid).where(model.unique_id == resource.mfid)).first()
+        if owning == access_group.group_name:
+            raise HTTPException(status_code=409, detail={
+                "code": "owning_project_grant",
+                "message": "The record's own project grant follows its assignment; use POST /resources/{mfid}/project",
+            })
+
 
 def _resolve_grantee(session, kind: str, principal: str):
     """(AccessGroup, canonical principal) for a typed path segment."""
@@ -814,6 +836,8 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
     `kind` is `users` or `projects`. Requires admin on the resource, and you
     may not grant above your own role nor overwrite a grant above it. Owner
     grants and changes to an existing owner require transfer_ownership.
+    Projects are shared through /projects/{project_ref}/users, and a record's
+    own project grant changes only with POST /resources/{mfid}/project (409).
     """
     if kind not in ("users", "projects"):
         raise HTTPException(status_code=404,
@@ -834,7 +858,9 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
                 status_code=409,
                 detail=f"Cannot grant owner access this way; use POST /resources/{mfid}/transfer_ownership")
 
+        _reject_project_grants(resource)
         ag, canonical = _resolve_grantee(session, kind, principal)
+        _guard_grant(session, resource, ag)
         _set_resource_access_grant(session, auth_res, mfid, ag, target)
         session.commit()
 
@@ -858,7 +884,9 @@ def revoke_resource_access(mfid: str, kind: str, principal: str,
             raise HTTPException(status_code=404, detail="Resource not found")
         require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
 
+        _reject_project_grants(resource)
         ag, canonical = _resolve_grantee(session, kind, principal)
+        _guard_grant(session, resource, ag)
         existing = session.exec(
             select(ResourceACL).where(ResourceACL.mfid == mfid)
             .where(ResourceACL.accessgroup_id == ag.id)).one_or_none()

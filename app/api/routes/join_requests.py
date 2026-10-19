@@ -418,7 +418,7 @@ def get_join_request(request_id: int, auth_res: Annotated[Principal, Depends(aut
               responses={403: {"description": "Not allowed to review, or the role is not below yours"},
                          409: {"description": "`join_request_closed`, or the project is gone or pending deletion"}})
 def review_join_request(request_id: int, body: JoinRequestReview, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Approve or reject a pending request. Requires editor or above in the project (or platform administrator). Approval adds the requester at `role` (default contributor), which must be below your own role.'''
+    '''Approve or reject a pending request. Requires editor or above in the project (or platform administrator). Approval adds the requester at `role` (default contributor), at most your own role.'''
     with Session(engine) as session:
         session.exec(select(AccessGroupJoinRequest.id).where(AccessGroupJoinRequest.id == request_id).with_for_update()).first()
         req, project_mfid, project, requester, _, may_review = _visible_row(session, auth_res, request_id)
@@ -433,7 +433,7 @@ def review_join_request(request_id: int, body: JoinRequestReview, auth_res: Anno
             if session.exec(select(DeletionRequest.id).where(DeletionRequest.resource_id == project.unique_id, DeletionRequest.status.in_(["pending", "approved"]))).first():
                 raise _error(409, "project_not_accepting_requests", f"Project '{project.project_id}' is pending deletion")
             role = Role.from_db((body.role or JoinRequestRole.CONTRIBUTOR).value)
-            require_grant(session, auth_res, project.unique_id, role, floor=Role.EDITOR, allow_peer=False)
+            require_grant(session, auth_res, project.unique_id, role, floor=Role.EDITOR)
         req.status = body.status
         req.review_time = get_utc_datetime()
         req.reviewer_id = auth_res.user_id

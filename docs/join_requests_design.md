@@ -40,7 +40,7 @@ Only `pending` requests change. Any transition from another state returns 409 `j
 
 - **Request:** any signed-in user who is not a member of the project, while the project is not pending deletion (409 `project_not_accepting_requests`). Service accounts cannot request (403); they are added by people.
 - **Review (approve or reject):** platform admins, and anyone holding editor or above in the project, the same people who can add members directly. Service accounts cannot review unless they act with platform-admin authority, as today.
-- **Granted role:** the reviewer chooses `viewer`, `contributor` (default), `editor`, or `admin`, strictly below their own role in the project, the same rule as direct adds (editors grant viewer or contributor, admins up to editor, owners up to admin). `owner` is never granted this way (ownership moves only through transfer). A role at or above the reviewer's returns 403 with the same message as direct adds. Platform admins may grant up to admin.
+- **Granted role:** the reviewer chooses `viewer`, `contributor` (default), `editor`, or `admin`, at most their own role in the project, the same rule as direct adds (editors grant up to editor, admins and owners up to admin). `owner` is never granted this way (ownership moves only through transfer). A role above the reviewer's returns 403 with the same message as direct adds. Platform admins may grant up to admin.
 - **Withdraw:** the requester only.
 - **Read:** the requester, anyone who may review it, and platform admins. Everyone else gets 404, so request IDs do not reveal who asked to join what.
 
@@ -112,7 +112,7 @@ Whenever a user is added to a project (direct add, approval of another request, 
 
 ### Tests
 
-Lifecycle transitions and 409s; reviewer eligibility by role (viewer and contributor cannot review, editor can, service account cannot); role caps (editor grants contributor but not editor, owner grants admin, nobody grants owner); requests to projects pending deletion rejected; withdraw by requester only; 404 for unrelated callers; scopes, each filter, each sort with cursor paging across ties; facets; automatic closing from a direct add; deprecated routes; the 500s that exist today.
+Lifecycle transitions and 409s; reviewer eligibility by role (viewer and contributor cannot review, editor can, service account cannot); role caps (editor grants editor but not admin, owner grants admin, nobody grants owner); requests to projects pending deletion rejected; withdraw by requester only; 404 for unrelated callers; scopes, each filter, each sort with cursor paging across ties; facets; automatic closing from a direct add; deprecated routes; the 500s that exist today.
 
 ## Future: in-app notifications
 
@@ -147,7 +147,7 @@ Polling with ETags first (the Hub already polls). Server-sent events can be adde
 
 ## Decisions
 
-- Approvals and direct adds grant the same roles: strictly below the reviewer's own role.
+- Approvals and direct adds grant the same roles: at most the reviewer's own role (changed from strictly below on 2026-10-19).
 - Projects pending deletion accept no new requests; their existing requests stay as they are. Archived projects should do the same: archiving does not exist yet, and `project_archiving.md` (which currently lets archived projects keep accepting requests) is updated to match. Deleting a project removes its join requests with its access group (already the case, reported as `join_requests_removed`).
 - Email notifications are out of scope.
 

@@ -336,7 +336,6 @@ def load_project_detail(
             principal,
             resource_id,
             manage_access_floor=Role.EDITOR,
-            allow_peer_grants=False,
             status_permission=Permission.EDIT,
             can_delete=lambda: not has_deletion_blockers(session, "project", resource_id),
         ),

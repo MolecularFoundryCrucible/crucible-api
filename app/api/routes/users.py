@@ -14,7 +14,7 @@ from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import DatasetMfid, UserRef
 from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import (
-    AccessGroup, ApiToken, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
+    AccessGroup, ApiToken, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
 )
 from app.utils.auth_utils import API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
 from app.utils.cursor_utils import (
@@ -659,10 +659,6 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
                 accessgroup_id=groups_by_name[project.unique_id].id,
                 role=Role.CONTRIBUTOR.db_value,
             )
-            for project in projects
-        ])
-        session.add_all([
-            UserProjectLink(user_id=user.id, project_id=project.project_id)
             for project in projects
         ])
         session.commit()

@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import delete, exists, func, or_
+from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -338,7 +339,8 @@ def record_recent_resource(auth_res: Annotated[Principal, Depends(authorize_user
 def list_recent_resources(auth_res: Annotated[Principal, Depends(authorize_user)], limit: Annotated[int, Query(ge=1, le=RECENT_LIMIT)] = 10):
     """Return the caller's recently viewed resources, newest first, limited to resources the caller can still read and that are not pending deletion. Entries older than 90 days are omitted."""
     name = func.coalesce(Dataset.dataset_name, Sample.sample_name, Project.title, Project.project_id, Instrument.instrument_name)
-    project = func.coalesce(Dataset.project_id, Sample.project_id, Project.project_id)
+    record_project = aliased(Project)
+    project = func.coalesce(record_project.project_id, Project.project_id)
     with Session(engine) as session:
         user_id = _caller_id(session, auth_res)
         statement = (
@@ -346,6 +348,7 @@ def list_recent_resources(auth_res: Annotated[Principal, Depends(authorize_user)
             .join(Resource, Resource.mfid == UserRecentResource.resource_mfid)
             .outerjoin(Dataset, Dataset.unique_id == Resource.mfid)
             .outerjoin(Sample, Sample.unique_id == Resource.mfid)
+            .outerjoin(record_project, record_project.unique_id == func.coalesce(Dataset.project_mfid, Sample.project_mfid))
             .outerjoin(Project, Project.unique_id == Resource.mfid)
             .outerjoin(Instrument, Instrument.unique_id == Resource.mfid)
             .where(

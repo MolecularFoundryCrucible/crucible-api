@@ -178,8 +178,7 @@ class DatasetInstrumentRead(SQLModel):
     previous_instrument: Optional[InstrumentReferenceRead] = None
     previous_instrument_name: Optional[str] = Field(
         default=None,
-        description="The dataset's instrument_name before the change. For datasets whose "
-                    "name never named a registered instrument, this is the only record of it.",
+        description="Name of the dataset's previous registered instrument, or null when it had none.",
     )
     instrument: InstrumentReferenceRead
 

@@ -1,18 +1,8 @@
-"""is_project_member and is_project_group must read UserAccessGroupLink, not
-UserProjectLink — see docs/permission_system_plan.md, "table-wise, is our
-handling of project membership correct?" UserProjectLink has a real FK to
-`project` but is never consulted for authorization; UserAccessGroupLink is
-what authorize_user actually builds a Principal's groups from. The two drift
-apart via the generic POST/DELETE /users/{orcid}/access_groups/{group_name}
-routes, which only ever touch UserAccessGroupLink.
-
-The access group is keyed by the project's MFID (Project.unique_id), not its
-project_id — see docs/permission_system_plan.md, "Groups".
-"""
-from sqlmodel import Session, SQLModel, create_engine, select
+"""Project membership is the user's standing in the project's access group, keyed by the project MFID."""
+from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink, UserProjectLink
+from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
 from app.utils.project_utils import is_project_group, is_project_member, sql_get_projects_for_user
 from app.utils.permissions import AccessGroupType
 
@@ -21,7 +11,7 @@ def _engine():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine, tables=[
         AccessGroup.__table__, Project.__table__, User.__table__,
-        UserAccessGroupLink.__table__, UserProjectLink.__table__,
+        UserAccessGroupLink.__table__,
     ])
     return engine
 
@@ -58,23 +48,7 @@ def test_real_access_group_standing_is_membership():
         assert is_project_member(user.id, "proj_a", session) is True
 
 
-def test_user_project_link_alone_is_not_membership():
-    """The exact drift scenario: granted through the generic access-group
-    route's opposite (revoked there), UserProjectLink survives with nothing
-    backing it."""
-    engine = _engine()
-    with Session(engine) as session:
-        _project(session, "proj_b", "0000-0011")
-        user = _user(session, "0000-0011")
-        session.add(UserProjectLink(user_id=user.id, project_id="proj_b"))
-        session.commit()
-
-        assert is_project_member(user.id, "proj_b", session) is False
-
-
-def test_access_group_standing_without_user_project_link_is_still_membership():
-    """The other half of the drift: granted via the generic route, never
-    reflected in UserProjectLink. Real access must still count."""
+def test_access_group_viewer_standing_is_membership():
     engine = _engine()
     with Session(engine) as session:
         proj = _project(session, "proj_c", "0000-0012")

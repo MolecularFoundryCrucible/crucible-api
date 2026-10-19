@@ -17,7 +17,6 @@ from app.models.core_models import (
     ScientificMetadataBinary,
     User,
     UserAccessGroupLink,
-    UserProjectLink,
 )
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
@@ -93,9 +92,6 @@ def _add_member(db_engine, project_mfid, orcid, role=Role.CONTRIBUTOR):
         ag_id = _group_id(session, project_mfid)
         session.add(UserAccessGroupLink(
             user_id=user.id, accessgroup_id=ag_id, role=role.db_value))
-        project = session.exec(
-            select(Project).where(Project.unique_id == project_mfid)).one()
-        session.add(UserProjectLink(user_id=user.id, project_id=project.project_id))
         session.commit()
 
 
@@ -179,7 +175,6 @@ class TestForcedDeletionProject:
                 AccessGroup.id == project_group_id)).all() == []
             assert session.exec(select(UserAccessGroupLink).where(
                 UserAccessGroupLink.accessgroup_id == project_group_id)).all() == []
-            assert session.exec(select(UserProjectLink)).all() == []
             assert session.exec(select(AccessGroupJoinRequest)).all() == []
             assert session.exec(select(ResourceACL).where(
                 ResourceACL.mfid == "other-ds")).all() == []
@@ -292,7 +287,7 @@ class TestForcedDeletionInstrument:
 
 
 class TestBlockers:
-    def _project_with_dataset(self, db_engine, project_id, use_legacy=False):
+    def _project_with_dataset(self, db_engine, project_id):
         project_mfid = _project(db_engine, project_id, "block-owner-1")
         with Session(db_engine) as session:
             owner = session.exec(
@@ -300,14 +295,11 @@ class TestBlockers:
             owner_group = session.exec(
                 select(AccessGroup).where(
                     AccessGroup.group_name == owner.unique_id)).one()
-            project = session.exec(
-                select(Project).where(Project.unique_id == project_mfid)).one()
             dataset = Dataset(
                 unique_id=f"{project_id}-ds",
                 dataset_name="blocking dataset",
                 owner_orcid=owner.unique_id,
-                project_id=project.project_id if use_legacy else None,
-                project_mfid=None if use_legacy else project_mfid,
+                project_mfid=project_mfid,
             )
             session.add(dataset)
             session.commit()
@@ -377,32 +369,6 @@ class TestBlockers:
             params={"force": "true", "confirm": "true"})
         assert resp.status_code == 409, resp.text
         assert resp.json()["detail"]["blocking"] == {"samples": 1}
-
-    def test_legacy_dataset_project_id_blocks(self, client, db_engine, auth_as):
-        project_mfid = self._project_with_dataset(db_engine, "proj_block_3", use_legacy=True)
-        auth_as("block-owner-1", groups=[(project_mfid, _group_id_session(db_engine, project_mfid), Role.OWNER)])
-
-        resp = client.post(f"/resources/{project_mfid}/delete")
-        assert resp.status_code == 409, resp.text
-        assert resp.json()["detail"]["blocking"] == {"datasets": 1}
-
-    def test_legacy_dataset_instrument_id_blocks(self, client, db_engine, auth_as):
-        mfid = _instrument(client, db_engine, auth_as)
-        with Session(db_engine) as session:
-            instrument = session.exec(
-                select(Instrument).where(Instrument.unique_id == mfid)).one()
-            session.add(Dataset(
-                unique_id="legacy-inst-ds",
-                dataset_name="legacy",
-                instrument_id=instrument.id,
-            ))
-            session.add(Resource(mfid="legacy-inst-ds", resource_type="dataset"))
-            session.commit()
-        auth_as("block-owner-1", groups=[("instr-admin", _group_id_session(db_engine, "instr-admin"), Role.OWNER)])
-
-        resp = client.post(f"/resources/{mfid}/delete")
-        assert resp.status_code == 409, resp.text
-        assert resp.json()["detail"]["blocking"] == {"datasets": 1}
 
     def test_dataset_assigned_after_request_creation_blocks_approval(self, client, db_engine, auth_as):
         project_mfid = _project(db_engine, "proj_block_4", "block-owner-4")
@@ -854,12 +820,6 @@ class TestMetadataAndCapability:
 
 
 class TestDeleteCapabilityCheck:
-    def test_a_dataset_assigned_only_by_slug_still_blocks(self, client, db_engine, auth_as):
-        project_mfid = TestBlockers()._project_with_dataset(db_engine, "proj_cap_legacy", use_legacy=True)
-        auth_as("block-owner-1", groups=[(project_mfid, _group_id_session(db_engine, project_mfid), Role.OWNER)])
-        assert client.get(f"/projects/{project_mfid}").json()["capabilities"]["can_delete"] is False
-        assert client.get(f"/resources/{project_mfid}").json()["capabilities"]["can_delete"] is False
-
     def test_an_instrument_with_datasets_cannot_be_deleted(self, client, db_engine, auth_as):
         mfid = _instrument(client, db_engine, auth_as)
         with Session(db_engine) as session:

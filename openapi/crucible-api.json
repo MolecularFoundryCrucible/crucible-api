@@ -1444,7 +1444,7 @@
                 "type": "null"
               }
             ],
-            "description": "The dataset's instrument_name before the change. For datasets whose name never named a registered instrument, this is the only record of it.",
+            "description": "Name of the dataset's previous registered instrument, or null when it had none.",
             "title": "Previous Instrument Name"
           }
         },
@@ -13453,7 +13453,7 @@
     },
     "/datasets/{dataset_mfid}/instrument": {
       "put": {
-        "description": "Assign or reassign the dataset's instrument, by slug or MFID.\n\nThe three instrument columns are written from one resolved instrument row,\nso instrument_id (the integer FK), instrument_mfid, and the instrument_name\nlabel cannot drift apart. Nothing about the instrument is taken from the\nrequest body beyond the identifier used to look it up.\n\nThe instrument's access group is granted contributor on the dataset, the\nsame grant dataset creation makes. Reassignment removes the grant belonging\nto the outgoing instrument's group only — resourceacl records no provenance,\nso a broader sweep could not tell a derived grant from a deliberate one.\n\nResubmitting the dataset's current instrument changes no columns but still\nensures the ACL row exists, which repairs datasets whose instrument columns\nwere backfilled without the accompanying grant.",
+        "description": "Assign or reassign the dataset's instrument, by slug or MFID.\n\nOnly instrument_mfid is stored; the instrument's slug and name in responses\nare read from the instrument row.\n\nThe instrument's access group is granted contributor on the dataset, the\nsame grant dataset creation makes. Reassignment removes the grant belonging\nto the outgoing instrument's group only — resourceacl records no provenance,\nso a broader sweep could not tell a derived grant from a deliberate one.\n\nResubmitting the dataset's current instrument changes no columns but still\nensures the ACL row exists, which repairs datasets whose instrument columns\nwere backfilled without the accompanying grant.",
         "operationId": "assign_dataset_instrument_datasets__dataset_mfid__instrument_put",
         "parameters": [
           {
@@ -21478,7 +21478,7 @@
         ]
       },
       "patch": {
-        "description": "Partially update a project record. Only fields provided in the request body are modified.\nAccessible by admins and the project lead.\nLeadership is not a field here — ProjectUpdate has no project_lead_*\nfields (extra=\"forbid\" 422s if you send one). Use\nPOST /resources/{proj_id}/transfer_ownership instead.\n\nproject_id may be changed (renamed) here. Every foreign key that names a\nproject stores its MFID (Project.unique_id), never project_id, so a\nrename does not orphan any dataset/sample/ACL row.",
+        "description": "Partially update a project record. Only fields provided in the request body are modified.\nAccessible by admins and the project lead.\nLeadership is not a field here — ProjectUpdate has no project_lead_*\nfields (extra=\"forbid\" 422s if you send one). Use\nPOST /resources/{proj_id}/transfer_ownership instead.\n\nproject_id may be changed (renamed) here. Datasets, samples, and memberships\nlink to the project by MFID, so a rename changes only the project row.",
         "operationId": "update_project_projects__project_ref__patch",
         "parameters": [
           {

@@ -26,8 +26,8 @@ def me(client, db_engine, auth_as):
     with Session(db_engine) as session:
         session.add(AccessGroup(id=1, group_name="test_group"))
         session.add(User(first_name="Re", last_name="Cent", email=None, unique_id=ME, username="recent"))
-        _resource(session, "ds1", "dataset", dataset_name="Spectra", project_id="proj-a")
-        _resource(session, "sm1", "sample", sample_name="Film 7", project_id="proj-a")
+        _resource(session, "ds1", "dataset", dataset_name="Spectra", project_mfid="pr1")
+        _resource(session, "sm1", "sample", sample_name="Film 7", project_mfid="pr1")
         _resource(session, "pr1", "project", project_id="proj-a", title="Project A", organization="MF", status="active", project_lead_orcid=ME, project_lead_email="lead@example.org")
         _resource(session, "in1", "instrument", instrument_name="TEM", owner="facility", location="B67")
         _resource(session, "hidden", "dataset", readable=False, dataset_name="Secret")

@@ -89,16 +89,20 @@ def test_join_request_collection_uses_two_queries(db_engine):
 
 def test_deletion_request_collection_uses_two_queries(db_engine):
     with Session(db_engine) as session:
+        dataset_project = Project(project_id="dataset-project", organization="MF", project_lead_orcid="requester")
+        sample_project = Project(project_id="sample-project", organization="MF", project_lead_orcid="requester")
         session.add_all([
+            dataset_project,
+            sample_project,
             Dataset(
                 unique_id="deletion-dataset",
                 dataset_name="Dataset",
-                project_id="dataset-project",
+                project_mfid=dataset_project.unique_id,
             ),
             Sample(
                 unique_id="deletion-sample",
                 sample_name="Sample",
-                project_id="sample-project",
+                project_mfid=sample_project.unique_id,
             ),
             Resource(mfid="deletion-dataset", resource_type="dataset"),
             Resource(mfid="deletion-sample", resource_type="sample"),

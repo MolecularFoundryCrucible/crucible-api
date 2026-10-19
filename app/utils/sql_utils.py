@@ -145,7 +145,7 @@ def sql_create_resource_acl(ag, mfid, read, write, session, permission):
     return acl
 
 
-def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None):
+def create_standard_acls(session, mfid, owner_id, requestor_id, project_mfid=None):
     '''
     Create the standard set of ResourceACL entries for a newly created resource.
     - owner's ORCID group gets `owner`
@@ -159,7 +159,7 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None)
     No requestor row either. The creator reaches the resource through the
     project group; a row per creator per resource expresses nothing.
     '''
-    from app.models.core_models import AccessGroup, Project
+    from app.models.core_models import AccessGroup
     from app.utils.permissions import AccessGroupType, Role
     from sqlmodel import select
 
@@ -176,19 +176,15 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None)
         sql_create_resource_acl(owner_ag, mfid, read=True, write=True,
                                 session=session, permission=Role.OWNER)
 
-    if project_id:
-        project = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
-        proj_ag = (
-            session.exec(select(AccessGroup).where(
-                AccessGroup.group_name == project.unique_id,
-                AccessGroup.group_type == AccessGroupType.PROJECT.value,
-            )).one_or_none()
-            if project else None
-        )
+    if project_mfid:
+        proj_ag = session.exec(select(AccessGroup).where(
+            AccessGroup.group_name == project_mfid,
+            AccessGroup.group_type == AccessGroupType.PROJECT.value,
+        )).one_or_none()
         if proj_ag is None:
             raise HTTPException(
                 status_code=409,
-                detail=f"Project '{project_id}' has no access group",
+                detail=f"Project '{project_mfid}' has no access group",
             )
         sql_create_resource_acl(proj_ag, mfid, read=True, write=True,
                                 session=session, permission=Role.ADMIN)

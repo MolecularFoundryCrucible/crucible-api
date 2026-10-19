@@ -36,7 +36,7 @@ def _setup(db_engine):
         session.add(Resource(mfid=proj_old.unique_id, resource_type="project"))
         session.add(Resource(mfid=proj_new.unique_id, resource_type="project"))
         session.add(Resource(mfid="ds_1", resource_type="dataset"))
-        session.add(Dataset(unique_id="ds_1", dataset_name="d", owner_orcid="0000-0031", project_id="proj_old"))
+        session.add(Dataset(unique_id="ds_1", dataset_name="d", owner_orcid="0000-0031", project_mfid=proj_old.unique_id))
         session.commit()
         session.add(UserAccessGroupLink(user_id=caller.id, accessgroup_id=old_proj_ag.id, role="admin"))
         session.add(UserAccessGroupLink(user_id=caller.id, accessgroup_id=new_proj_ag.id, role="contributor"))
@@ -62,7 +62,7 @@ def test_preview_does_not_mutate_anything(client, db_engine, auth_as):
         acls = {a.accessgroup_id for a in session.exec(select(ResourceACL).where(ResourceACL.mfid == "ds_1")).all()}
         assert acls == {old_ag_id}
         ds = session.exec(select(Dataset).where(Dataset.unique_id == "ds_1")).one()
-        assert ds.project_id == "proj_old"
+        assert ds.project_mfid == session.exec(select(Project.unique_id).where(Project.project_id == "proj_old")).one()
 
 
 def test_confirm_moves_the_acl_row_and_syncs_project_id(client, db_engine, auth_as):
@@ -79,7 +79,7 @@ def test_confirm_moves_the_acl_row_and_syncs_project_id(client, db_engine, auth_
         assert acls[new_ag_id] == "admin"
 
         ds = session.exec(select(Dataset).where(Dataset.unique_id == "ds_1")).one()
-        assert ds.project_id == "proj_new"
+        assert ds.project_mfid == session.exec(select(Project.unique_id).where(Project.project_id == "proj_new")).one()
 
 
 def test_confirm_updates_project_mfid_too(client, db_engine, auth_as):
@@ -165,7 +165,7 @@ def test_moving_an_unassigned_record_keeps_its_shares(client, db_engine, auth_as
     old_ag_id, new_ag_id = _setup(db_engine)
     with Session(db_engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds_1")).one()
-        dataset.project_id = None
+        dataset.project_mfid = None
         session.add(dataset)
         session.commit()
     auth_as("0000-0031", groups=[("proj_shared", shared_ag_id, Role.ADMIN), ("proj_new", new_ag_id, Role.CONTRIBUTOR)])

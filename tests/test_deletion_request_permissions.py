@@ -10,6 +10,7 @@ from app.models.core_models import (
     AccessGroup,
     Dataset,
     DeletionRequest,
+    Project,
     Resource,
     ResourceACL,
     User,
@@ -359,10 +360,10 @@ def test_project_filter_returns_canonical_project_reference(db_engine):
         for suffix in ("one", "two"):
             resource_id = f"dataset-{suffix}"
             session.add_all([
+                Project(unique_id=f"project-mfid-{suffix}", project_id=f"project-{suffix}", organization="MF", project_lead_orcid="requester"),
                 Dataset(
                     unique_id=resource_id,
                     dataset_name=suffix,
-                    project_id=f"project-{suffix}",
                     project_mfid=f"project-mfid-{suffix}",
                 ),
                 Resource(mfid=resource_id, resource_type="dataset"),
@@ -616,13 +617,15 @@ def test_deletion_request_sort_modes_and_cursors(db_engine):
     ]
     with Session(db_engine) as session:
         session.add_all(users)
+        for project_id in {request[2] for request in requests if request[2]}:
+            session.add(Project(unique_id=f"mfid-{project_id}", project_id=project_id, organization="MF", project_lead_orcid="requester-smith"))
         for resource_id, resource_name, project_id, requester_id, status in requests:
             session.add_all([
                 Resource(mfid=resource_id, resource_type="dataset"),
                 Dataset(
                     unique_id=resource_id,
                     dataset_name=resource_id,
-                    project_id=project_id,
+                    project_mfid=f"mfid-{project_id}" if project_id else None,
                 ),
                 DeletionRequest(
                     resource_id=resource_id,

@@ -86,3 +86,37 @@ def test_postprocessing_and_join_request_migrations_roundtrip():
         finally:
             transaction.rollback()
     engine.dispose()
+
+
+@pytest.mark.skipif(not os.getenv("CRUCIBLE_TEST_PG_URL"), reason="requires isolated test PostgreSQL")
+def test_dropping_legacy_slug_foreign_keys_lets_projects_be_renamed():
+    migration = _load("20261019_9d41c6a2e7f3_drop_legacy_slug_foreign_keys.py")
+    engine = create_engine(os.environ["CRUCIBLE_TEST_PG_URL"])
+    schema = "test_slug_fks_" + uuid4().hex
+    with engine.connect() as connection:
+        transaction = connection.begin()
+        try:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+            connection.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+            connection.execute(text("CREATE TABLE project (id serial PRIMARY KEY, project_id text UNIQUE, unique_id text UNIQUE)"))
+            connection.execute(text("CREATE TABLE instrument (id serial PRIMARY KEY, unique_id text UNIQUE)"))
+            connection.execute(text("CREATE TABLE dataset (id serial PRIMARY KEY, project_id text CONSTRAINT dataset_project_id_fkey REFERENCES project (project_id), "
+                                    "instrument_id integer CONSTRAINT dataset_instrument_id_fkey REFERENCES instrument (id), project_mfid text)"))
+            connection.execute(text("CREATE TABLE userprojectlink (user_id integer, project_id text CONSTRAINT userprojectlink_project_id_fkey REFERENCES project (project_id), PRIMARY KEY (user_id, project_id))"))
+            connection.execute(text("INSERT INTO project (project_id, unique_id) VALUES ('old-slug', 'p1')"))
+            connection.execute(text("INSERT INTO instrument (unique_id) VALUES ('i1')"))
+            connection.execute(text("INSERT INTO dataset (project_id, instrument_id, project_mfid) VALUES ('old-slug', 1, 'p1')"))
+            connection.execute(text("INSERT INTO userprojectlink VALUES (1, 'old-slug')"))
+            _fails(connection, "UPDATE project SET project_id = 'new-slug'")
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.upgrade()
+                connection.execute(text("UPDATE project SET project_id = 'new-slug'"))
+                connection.execute(text("DELETE FROM instrument"))
+                assert {fk["name"] for table in ("dataset", "userprojectlink") for fk in inspect(connection).get_foreign_keys(table, schema=schema)} == set()
+                connection.execute(text("UPDATE project SET project_id = 'old-slug'"))
+                connection.execute(text("INSERT INTO instrument (id, unique_id) VALUES (1, 'i1')"))
+                migration.downgrade()
+                assert len(inspect(connection).get_foreign_keys("dataset", schema=schema)) == 2
+        finally:
+            transaction.rollback()
+    engine.dispose()

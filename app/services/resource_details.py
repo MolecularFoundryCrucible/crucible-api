@@ -143,7 +143,7 @@ def load_dataset_detail(
     return DatasetResponse.model_validate({
         **dataset.model_dump(),
         **dataset_instrument_fields(dataset, instrument_reference),
-        "project_id": project_reference.project_id if project_reference else dataset.project_id,
+        "project_id": project_reference.project_id if project_reference else None,
         "project": project_reference,
         "public": resource.public if resource else dataset.public,
         "creation_time": resource.creation_time if resource else None,
@@ -219,14 +219,14 @@ def load_sample_detail(
     )
     return SampleResponse.model_validate({
         **sample.model_dump(),
-        "project_id": project_references[sample.project_mfid].project_id if sample.project_mfid in project_references else sample.project_id,
+        "project_id": project_references[sample.project_mfid].project_id if sample.project_mfid in project_references else None,
         "project": project_references.get(sample.project_mfid),
         "public": resource.public if resource else False,
         "datasets": [
             DatasetRead.model_validate({
                 **dataset.model_dump(),
                 **dataset_instrument_fields(dataset, instrument_references.get(dataset.instrument_mfid)),
-                "project_id": project_references[dataset.project_mfid].project_id if dataset.project_mfid in project_references else dataset.project_id,
+                "project_id": project_references[dataset.project_mfid].project_id if dataset.project_mfid in project_references else None,
                 "project": project_references.get(dataset.project_mfid),
             })
             for dataset in readable_datasets

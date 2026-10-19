@@ -580,13 +580,11 @@ def create_deletion_request(
             ds = session.exec(select(Dataset).where(Dataset.unique_id == resource_id)).one_or_none()
             if ds is not None:
                 resource_name = ds.dataset_name
-                project_id = ds.project_id
                 project_mfid = ds.project_mfid
         elif resource.resource_type == "sample":
             samp = session.exec(select(Sample).where(Sample.unique_id == resource_id)).one_or_none()
             if samp is not None:
                 resource_name = samp.sample_name
-                project_id = samp.project_id
                 project_mfid = samp.project_mfid
         elif resource.resource_type == "project":
             project = session.exec(select(Project).where(Project.unique_id == resource_id)).one_or_none()
@@ -598,6 +596,8 @@ def create_deletion_request(
             instrument = session.exec(select(Instrument).where(Instrument.unique_id == resource_id)).one_or_none()
             if instrument is not None:
                 resource_name = instrument.instrument_name
+        if project_id is None and project_mfid is not None:
+            project_id = session.exec(select(Project.project_id).where(Project.unique_id == project_mfid)).first()
 
         deletion_req = DeletionRequest(
             resource_id=resource_id,
@@ -1156,7 +1156,7 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
 
         entity_model = Dataset if resource.resource_type == "dataset" else Sample
         entity = session.exec(select(entity_model).where(entity_model.unique_id == mfid)).one_or_none()
-        prev_proj = resolve_project_identifiers(session, entity.project_id, entity.project_mfid) if entity is not None else None
+        prev_proj = session.exec(select(Project).where(Project.unique_id == entity.project_mfid)).one_or_none() if entity is not None and entity.project_mfid else None
         result = ReassignProjectRead(
             resource_id=mfid,
             resource_mfid=mfid,
@@ -1185,7 +1185,6 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
             session.add(grant)
 
         if entity is not None:
-            entity.project_id = new_proj.project_id
             entity.project_mfid = new_proj.unique_id
             session.add(entity)
 

@@ -192,7 +192,7 @@ def test_reassign_project_accepts_project_mfid(client, db_engine, auth_as):
     assert body["previous_project_mfid"] == ids["project"]
     with Session(db_engine) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == "ds_1")).one()
-        assert (ds.project_id, ds.project_mfid) == ("other-proj", ids["other"])
+        assert ds.project_mfid == ids["other"]
 
 
 def test_reassign_project_canonicalizes_slug_casing(client, db_engine, auth_as):

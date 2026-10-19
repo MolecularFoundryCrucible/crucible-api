@@ -9,7 +9,7 @@ from app.models.core_models import (
     DatasetKeywordLink, DatasetLink, DatasetSampleLink, DeletionRequest,
     Instrument, IngestionRequest, PostprocessingRun, Project, Resource, ResourceACL,
     ResourceEmbedding, Sample, ScientificMetadataBinary, SampleLink, UserRecentResource,
-    Thumbnail, UploadSession, UserAccessGroupLink, UserProjectLink,
+    Thumbnail, UploadSession, UserAccessGroupLink,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,10 +37,7 @@ def _project_deletion_summary(session: Session, project_mfid: str) -> dict:
     summary = {
         "blocking": _nonzero({
             "datasets": session.exec(
-                select(func.count(Dataset.id)).where(or_(
-                    Dataset.project_mfid == project.unique_id,
-                    Dataset.project_id == project.project_id,
-                ))
+                select(func.count(Dataset.id)).where(Dataset.project_mfid == project.unique_id)
             ).one(),
             "samples": session.exec(
                 select(func.count(Sample.id)).where(
@@ -85,10 +82,7 @@ def _instrument_deletion_summary(session: Session, instrument_mfid: str) -> dict
     summary = {
         "blocking": _nonzero({
             "datasets": session.exec(
-                select(func.count(Dataset.id)).where(or_(
-                    Dataset.instrument_mfid == instrument.unique_id,
-                    Dataset.instrument_id == instrument.id,
-                ))
+                select(func.count(Dataset.id)).where(Dataset.instrument_mfid == instrument.unique_id)
             ).one(),
         }),
         "service_accounts_unbound": 0,
@@ -121,13 +115,13 @@ def has_deletion_blockers(session: Session, resource_type: str, mfid: str) -> bo
     if resource_type == "project":
         project = session.exec(select(Project).where(Project.unique_id == mfid)).one()
         return session.exec(select(
-            exists().where(or_(Dataset.project_mfid == project.unique_id, Dataset.project_id == project.project_id))
+            exists().where(Dataset.project_mfid == project.unique_id)
             | exists().where(Sample.project_mfid == project.unique_id)
         )).one()
     if resource_type == "instrument":
         instrument = session.exec(select(Instrument).where(Instrument.unique_id == mfid)).one()
         return session.exec(select(
-            exists().where(or_(Dataset.instrument_mfid == instrument.unique_id, Dataset.instrument_id == instrument.id))
+            exists().where(Dataset.instrument_mfid == instrument.unique_id)
         )).one()
     return False
 
@@ -285,9 +279,6 @@ def _hard_delete_project(project_unique_id: str, session: Session, resource: Res
         ))
         session.execute(delete(UserAccessGroupLink).where(
             UserAccessGroupLink.accessgroup_id == group.id
-        ))
-        session.execute(delete(UserProjectLink).where(
-            UserProjectLink.project_id == project.project_id
         ))
         session.execute(delete(AccessGroupJoinRequest).where(
             AccessGroupJoinRequest.accessgroup_id == group.id

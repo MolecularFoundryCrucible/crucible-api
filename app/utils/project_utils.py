@@ -4,11 +4,11 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import and_, func
 from sqlmodel import select
-from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink, UserProjectLink
+from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
 from app.models.projects import ProjectReferenceRead
 from app.general_utils import is_valid_mfid
 from app.utils.permissions import AccessGroupType, Role
-from app.utils.sql_utils import add_or_update, touch_resource_modification_time
+from app.utils.sql_utils import touch_resource_modification_time
 from app.utils.user_utils import sql_add_user_to_access_group
 
 # Project IDs retain uppercase and leading-digit support for existing proposal
@@ -175,22 +175,10 @@ def resolve_project_mfids_to_references(mfids, session) -> dict[str, ProjectRefe
 
 
 def sql_add_user_to_project(user: User, proj_id: str, session, role=None, actor_id=None):
-    """Add a user to a project's membership and access group. Idempotent.
-
-    The UserProjectLink write is legacy: UserAccessGroupLink is what
-    authorization and every membership read actually consult (see
-    is_project_member / sql_get_projects_for_user). Kept in step here only so
-    existing readers of UserProjectLink are not broken before its phase-5
-    drop — see docs/permission_system_plan.md.
-    """
+    """Add a user to a project's access group. Idempotent."""
     group_name = resolve_project_id_to_mfid(proj_id, session)
     if group_name is None:
         raise HTTPException(status_code=404, detail=f"Project '{proj_id}' not found or not yet provisioned")
-    add_or_update(session,
-                  UserProjectLink,
-                  where=(and_(UserProjectLink.user_id == user.id, UserProjectLink.project_id == proj_id)),
-                  user_id=user.id,
-                  project_id=proj_id)
     sql_add_user_to_access_group(
         user.unique_id,
         group_name,
@@ -220,13 +208,7 @@ def is_project_group(group_name: str, session) -> bool:
 
 
 def is_project_member(user_id: int, proj_id: str, session) -> bool:
-    """Whether the user has any standing in the project's own access group —
-    the authoritative definition of project membership. Not UserProjectLink:
-    that table can drift from real access (e.g. via the generic
-    POST/DELETE /users/{orcid}/access_groups/{group_name} routes, which never
-    touch it), so anything gating on "is a member" must ask the table
-    authorization itself reads.
-    """
+    """Whether the user has any standing in the project's own access group."""
     group_name = resolve_project_id_to_mfid(proj_id, session)
     if group_name is None:
         return False
@@ -291,12 +273,7 @@ def project_standing(orcid: str, proj_id: str, session) -> "Role | None":
 
 
 def sql_get_projects_for_user(orcid, session, options=None):
-    """Get all projects for a user by ORCID. Returns empty list if user not found.
-
-    Reads membership from the project's own access group standing, the same
-    source is_project_member and effective_role use — not UserProjectLink,
-    which can drift from it (see is_project_member).
-    """
+    """Get all projects for a user by ORCID from their project access group standing. Returns None if the user is not found."""
     user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
     if user is None:
         return None

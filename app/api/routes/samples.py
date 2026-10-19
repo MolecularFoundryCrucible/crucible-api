@@ -198,7 +198,7 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
         project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
-            "project_id": project_reference.project_id if project_reference else sample.project_id,
+            "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
             "public": ri.public if ri else False,
             "creation_time": ri.creation_time if ri else None,
@@ -261,7 +261,6 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         sample_details['owner_user_id'] = owner_user.id
         if project is not None:
             assert_not_pending_deletion(session, project.unique_id)
-            sample_details['project_id'] = project.project_id
             sample_details['project_mfid'] = project.unique_id
 
         sample = Sample(**sample_details)
@@ -286,7 +285,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         create_standard_acls(session, sample.unique_id,
                              owner_id=sample.owner_orcid,
                              requestor_id=user_unique_id,
-                             project_id=sample.project_id)
+                             project_mfid=sample.project_mfid)
 
         session.add(sample)
         session.commit()
@@ -296,7 +295,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
-            "project_id": project_reference.project_id if project_reference else sample.project_id,
+            "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
             "public": ri.public if ri else False,
             "creation_time": ri.creation_time if ri else None,
@@ -504,7 +503,7 @@ def list_samples(
                     dataset_reads_by_sample.setdefault(sid, []).append(DatasetRead.model_validate({
                         **ds.model_dump(),
                         **dataset_instrument_fields(ds, instrument_references.get(ds.instrument_mfid)),
-                        "project_id": ds_project_references[ds.project_mfid].project_id if ds.project_mfid in ds_project_references else ds.project_id,
+                        "project_id": ds_project_references[ds.project_mfid].project_id if ds.project_mfid in ds_project_references else None,
                         "project": ds_project_references.get(ds.project_mfid),
                     }))
 
@@ -540,7 +539,7 @@ def list_samples(
                     compat_datasets = dataset_reads_by_sample.get(samp.id, [])
             items.append(SampleResponse.model_validate({
                 **samp.model_dump(),
-                "project_id": resolved_project_id if resolved_project_id is not None else samp.project_id,
+                "project_id": resolved_project_id,
                 "project": project_reference,
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
@@ -627,7 +626,7 @@ def search_samples(
         results = session.exec(query).all()
         items = [SampleResponse.model_validate({
             **samp.model_dump(),
-            "project_id": resolved_project_id if resolved_project_id is not None else samp.project_id,
+            "project_id": resolved_project_id,
             "project": ProjectReferenceRead(
                 unique_id=project_mfid,
                 project_id=resolved_project_id,
@@ -724,14 +723,21 @@ def list_sample_datasets(
         if limit is not None:
             full_query = full_query.limit(limit)
 
-        results = session.exec(full_query).all()
+        rows = session.exec(full_query).all()
+        datasets = [row[0] for row in rows] if include_metadata else list(rows)
+        projects = resolve_project_mfids_to_references((d.project_mfid for d in datasets), session)
+        instruments = resolve_instrument_mfids_to_references((d.instrument_mfid for d in datasets), session)
+
+        def item(dataset):
+            project = projects.get(dataset.project_mfid)
+            return {
+                **dataset.model_dump(),
+                **dataset_instrument_fields(dataset, instruments.get(dataset.instrument_mfid)),
+                "project_id": project.project_id if project else None,
+            }
         if include_metadata:
-            return [{**dataset.model_dump(),
-                    "scientific_metadata": sci_md
-                    }
-                    for dataset, sci_md in results]
-        else:
-            return results
+            return [{**item(dataset), "scientific_metadata": sci_md} for dataset, sci_md in rows]
+        return [item(dataset) for dataset in datasets]
 
 
 @router.get("/samples/{child_sample_mfid}/parents", response_model=PaginatedResponse[SampleRead])
@@ -765,7 +771,7 @@ def list_parent_samples(child_sample_id: ChildSampleMfid, auth_res: Annotated[Pr
         project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
         items = [SampleRead.model_validate({
             **s.model_dump(),
-            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else s.project_id,
+            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else None,
             "project": project_references.get(s.project_mfid),
         }) for s in rows]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
@@ -802,7 +808,7 @@ def list_child_samples(parent_sample_id: ParentSampleMfid, auth_res: Annotated[P
         project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
         items = [SampleRead.model_validate({
             **s.model_dump(),
-            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else s.project_id,
+            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else None,
             "project": project_references.get(s.project_mfid),
         }) for s in rows]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)

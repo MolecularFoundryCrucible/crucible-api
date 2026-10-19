@@ -6,7 +6,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.main import app
 from app.models.core_models import (
     User, AccessGroup, UserAccessGroupLink, ResourceACL, Resource, Dataset,
-    AssociatedFile, IngestionRequest, Project, UserProjectLink, Sample,
+    AssociatedFile, IngestionRequest, Project, Sample,
     DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
     DatasetLink, ApiToken, UploadSession, DeletionAuditLog, DatasetKeywordLink, Thumbnail,
     ResourceEmbedding, UserPreferences, UserRecentResource, PostprocessingRun,
@@ -36,7 +36,7 @@ TEST_TABLES = [
     User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__,
     ResourceACL.__table__, Resource.__table__, Dataset.__table__,
     AssociatedFile.__table__, IngestionRequest.__table__, Project.__table__,
-    UserProjectLink.__table__, Sample.__table__, DeletionRequest.__table__,
+    Sample.__table__, DeletionRequest.__table__,
     Instrument.__table__, AccessGroupJoinRequest.__table__, DatasetSampleLink.__table__,
     SampleLink.__table__, DatasetLink.__table__, ApiToken.__table__, UploadSession.__table__,
     DeletionAuditLog.__table__, DatasetKeywordLink.__table__, Thumbnail.__table__,

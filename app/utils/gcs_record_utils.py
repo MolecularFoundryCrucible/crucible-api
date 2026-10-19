@@ -64,8 +64,8 @@ def _build_audit(blob, payload: dict, actor: str, operation: str) -> dict | None
 def dataset_record(ds, ri) -> dict:
     return {
         "unique_id": ds.unique_id, "dataset_name": ds.dataset_name,
-        "owner_orcid": ds.owner_orcid, "project_id": ds.project_id,
-        "instrument_name": ds.instrument_name, "measurement": ds.measurement,
+        "owner_orcid": ds.owner_orcid, "project_mfid": ds.project_mfid,
+        "instrument_mfid": ds.instrument_mfid, "measurement": ds.measurement,
         "data_type": ds.data_type, "data_format": ds.data_format,
         "session_name": ds.session_name,
         "timestamp": ds.timestamp, "size": ds.size,
@@ -80,7 +80,7 @@ def sample_record(samp, ri) -> dict:
     return {
         "unique_id": samp.unique_id, "sample_name": samp.sample_name,
         "sample_type": samp.sample_type, "owner_orcid": samp.owner_orcid,
-        "project_id": samp.project_id, "description": samp.description,
+        "project_mfid": samp.project_mfid, "description": samp.description,
         "timestamp": samp.timestamp,
         "public": ri.public if ri else False,
         "resource_type": "sample",

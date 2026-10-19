@@ -9,7 +9,7 @@ from sqlmodel import Session, select, col
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ProjectRef, UserRef
 from app.models.core_models import (
-    AccessGroup, Project, Resource, ScientificMetadataBinary, User, UserProjectLink, UserAccessGroupLink,
+    AccessGroup, Project, Resource, ScientificMetadataBinary, User, UserAccessGroupLink,
 )
 from app.services.resource_pagination import (
     ResourcePaginationSpec, execute_resource_page, prepare_resource_pagination)
@@ -129,9 +129,6 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
                       api_version_githash=API_VERSION_GITHASH)
         sql_create_resource_acl(ag, prop.unique_id, read=True, write=True,
                                 session=session, permission=Role.OWNER)
-
-        if prop not in project_lead.projects:
-            project_lead.projects.append(prop)
 
         session.commit()
         session.refresh(prop)
@@ -356,9 +353,8 @@ def update_project(project_ref: ProjectRef, auth_res: Annotated[Principal, Depen
     fields (extra="forbid" 422s if you send one). Use
     POST /resources/{proj_id}/transfer_ownership instead.
 
-    project_id may be changed (renamed) here. Every foreign key that names a
-    project stores its MFID (Project.unique_id), never project_id, so a
-    rename does not orphan any dataset/sample/ACL row.
+    project_id may be changed (renamed) here. Datasets, samples, and memberships
+    link to the project by MFID, so a rename changes only the project row.
     '''
     with Session(engine) as session:
         project = resolve_project_reference(project_ref, session)
@@ -605,9 +601,6 @@ def remove_user_from_project(
             raise HTTPException(status_code=409, detail="The project lead cannot remove themselves. Transfer leadership first.")
 
 
-        # The access-group standing is the real membership record — see
-        # is_project_member. A missing UserAccessGroupLink means the user has
-        # no actual access regardless of what UserProjectLink says.
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)).one_or_none()
         ag_link = session.exec(
             select(UserAccessGroupLink).where(
@@ -618,16 +611,6 @@ def remove_user_from_project(
         if ag_link is None:
             raise HTTPException(status_code=404, detail=f"User {user.unique_id} is not a member of project {proj.project_id}")
         session.delete(ag_link)
-
-        # Best-effort cleanup of the legacy link table; its absence is not an error.
-        link = session.exec(
-            select(UserProjectLink).where(
-                UserProjectLink.user_id == user.id,
-                UserProjectLink.project_id == proj.project_id
-            )
-        ).one_or_none()
-        if link is not None:
-            session.delete(link)
 
         touch_resource_modification_time(session, proj.unique_id)
         session.commit()

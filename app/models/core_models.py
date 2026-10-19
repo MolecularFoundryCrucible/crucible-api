@@ -92,7 +92,6 @@ class Sample(SQLModel, table = True):
     owner_orcid: Optional[str] = Field(default=None, index=True)
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     timestamp: Optional[str] = Field(default_factory=get_utc_isoformat, alias="date_created")
-    project_id: Optional[str] = None
     project_mfid: Optional[str] = Field(default=None, index=True, foreign_key="project.unique_id")
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
@@ -130,12 +129,9 @@ class Dataset(SQLModel, table=True):
     dataset_name: Optional[str] = Field(default = "")   
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     owner_orcid: Optional[str] = Field(default=None, index=True)
-    project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")
     project_mfid: Optional[str] = Field(default=None, index=True, foreign_key="project.unique_id")
-    instrument_id: Optional[int]  = Field(default = None, index = True, foreign_key = "instrument.id")
     instrument_mfid: Optional[str] = Field(default=None, index=True, foreign_key="instrument.unique_id")
     source_folder: Optional[str]
-    instrument_name: Optional[str]
     timestamp: Optional[str] = Field(default_factory=get_utc_isoformat)
     size: Optional[int] = Field(sa_column=Column(BigInteger())) 
     data_format: Optional[str]
@@ -230,15 +226,6 @@ class AccessGroup(SQLModel, table=True):
     acl: List["ResourceACL"] = Relationship(back_populates="accessgroup")
 
 
-class UserProjectLink(SQLModel, table=True):
-    user_id: Optional[int] = Field(
-        default=None, foreign_key="user.id", primary_key=True
-    )
-    project_id: Optional[str] = Field(
-        default=None, foreign_key="project.project_id", primary_key=True
-    )
-
-
 class User(SQLModel, table=True):
     __table_args__ = (Index("ux_user_email_lower", func.lower(text("email")), unique=True, postgresql_where=text("email IS NOT NULL")),)
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -251,7 +238,6 @@ class User(SQLModel, table=True):
     # Platform-wide bypass, deliberately not a group. Postgres enum platform_role.
     platform_role: Optional[str] = Field(default="none")
     last_active_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
-    projects: List["Project"] = Relationship(back_populates="users", link_model=UserProjectLink)
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
 
 
@@ -352,7 +338,6 @@ class Project(SQLModel, table=True):
     project_lead_orcid: str = Field(foreign_key="user.orcid", index=True)
     project_lead_email: Optional[str] = None  # stored for old-API backward compat; not exposed in new response schemas
     last_activity_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
-    users: List[User] = Relationship(back_populates="projects", link_model=UserProjectLink)
     resource: Optional["Resource"] = Relationship(
         sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Project.unique_id", "lazy": "noload"}
     )

@@ -314,6 +314,7 @@ def find_mf_user_proposals(orcid: str) -> List[str]:
 
 def assign_projects_to_user(session, user_id: str, project_ids: List[str]) -> Dict[str, List[str]]:
     """Add project memberships without removing existing memberships."""
+    from app.models.core_models import UserAccessGroupLink
     from app.utils.permissions import AccessGroupType, Role
 
     user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
@@ -330,11 +331,12 @@ def assign_projects_to_user(session, user_id: str, project_ids: List[str]) -> Di
             not_found.append(project_id)
             continue
 
-        if project in user.projects:
-            already_member.append(project_id)
-        else:
-            user.projects.append(project)
-            added.append(project_id)
+        member = session.exec(
+            select(UserAccessGroupLink.user_id)
+            .join(AccessGroup, AccessGroup.id == UserAccessGroupLink.accessgroup_id)
+            .where(UserAccessGroupLink.user_id == user.id, AccessGroup.group_name == project.unique_id)
+        ).first()
+        (already_member if member is not None else added).append(project_id)
         sql_add_user_to_access_group(
             user_id,
             project.unique_id,

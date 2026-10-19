@@ -408,6 +408,31 @@ def require_permission(session, principal: Principal, mfid: str,
     return effective_role(principal, acl_rows)
 
 
+GRANTABLE_ROLES = (Role.VIEWER, Role.CONTRIBUTOR, Role.EDITOR, Role.ADMIN)
+
+
+def entry_capabilities(principal: Principal, actor: Optional[Role], current: Optional[Role], *,
+                       floor: Role, is_self: bool = False, fixed: bool = False) -> dict:
+    """The capabilities object for one member or grant, decided by the same rule as require_grant."""
+    from app.utils.permissions import can_grant
+
+    if fixed or current is Role.OWNER:
+        return {"can_remove": False, "can_change_role": False, "assignable_roles": []}
+    if principal.is_platform_admin:
+        assignable = list(GRANTABLE_ROLES)
+        may_remove = True
+    elif principal.is_service_account:
+        assignable, may_remove = [], False
+    else:
+        assignable = [role for role in GRANTABLE_ROLES if can_grant(actor, role, current, floor=floor)]
+        may_remove = can_grant(actor, current or Role.VIEWER, current, floor=floor)
+    return {
+        "can_remove": may_remove or is_self,
+        "can_change_role": any(role != current for role in assignable),
+        "assignable_roles": [role.db_value for role in assignable],
+    }
+
+
 def require_grant(session, principal: Principal, mfid: str, target: Role,
                   current: Optional[Role] = None, floor: Role = Role.ADMIN,
                   allow_peer: bool = True) -> None:

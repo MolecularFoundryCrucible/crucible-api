@@ -16,7 +16,7 @@ from app.models.query_params import (
     InstrumentAffiliation, InstrumentDetailQuery, InstrumentListQuery,
     InstrumentSearchQuery, InstrumentStatus)
 from app.models.users import UserPublicRead
-from app.services.resource_access import load_member_grants, may_view_members, record_role
+from app.services.resource_access import load_member_grants, may_view_members, record_role, with_grant_capabilities
 from app.services.resource_details import ResourceDetailOptions, load_instrument_detail
 from app.utils.auth_utils import (
     authorize_user, maintainer_affiliation_filter, owner_affiliation_filter,
@@ -127,7 +127,7 @@ def _instrument_roles(session, principal, instrument_mfids) -> dict:
 def _instrument_members(session, principal, instrument):
     if not may_view_members(session, principal, instrument.unique_id):
         return None
-    return load_member_grants(session, instrument.unique_id)
+    return with_grant_capabilities(session, principal, instrument.unique_id, load_member_grants(session, instrument.unique_id))
 
 
 def _instrument_owners(session, instruments):

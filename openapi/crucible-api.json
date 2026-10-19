@@ -35,6 +35,16 @@
       "AccessGrantRead": {
         "description": "One canonical principal grant on a resource.",
         "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntryCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "display_name": {
             "anyOf": [
               {
@@ -106,6 +116,16 @@
       "AccessGroupMemberRead": {
         "description": "A public-safe group member profile plus their standing role.",
         "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntryCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "first_name": {
             "title": "First Name",
             "type": "string"
@@ -2593,6 +2613,36 @@
           "effective_access"
         ],
         "title": "EffectiveResourceAccessRead",
+        "type": "object"
+      },
+      "EntryCapabilities": {
+        "description": "What the caller may do to one member or grant, as the matching routes would decide.",
+        "properties": {
+          "assignable_roles": {
+            "description": "Roles the matching PATCH or PUT would accept for this entry.",
+            "items": {
+              "$ref": "#/components/schemas/AccessPermission"
+            },
+            "title": "Assignable Roles",
+            "type": "array"
+          },
+          "can_change_role": {
+            "description": "The matching PATCH or PUT would succeed for at least one other role.",
+            "title": "Can Change Role",
+            "type": "boolean"
+          },
+          "can_remove": {
+            "description": "The matching DELETE would succeed: removal up to your own role, or leaving yourself.",
+            "title": "Can Remove",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "can_remove",
+          "can_change_role",
+          "assignable_roles"
+        ],
+        "title": "EntryCapabilities",
         "type": "object"
       },
       "FacetBucket": {

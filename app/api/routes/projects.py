@@ -43,6 +43,7 @@ from app.services.resource_details import (
     ResourceDetailOptions,
     load_project_detail,
     load_project_members,
+    with_member_capabilities,
 )
 
 router = APIRouter(tags=["projects"])
@@ -239,7 +240,7 @@ def list_projects(
             may_see_private_fields = has_global_permission(auth_res, Permission.READ) or caller_role is not None
             lead_user = leads.get(proj.project_lead_orcid)
             lead = UserPublicRead.model_validate(lead_user) if lead_user else None
-            members = _get_project_users(proj.project_id, session) if include_members and may_see_private_fields else None
+            members = _get_project_users(proj, session, auth_res) if include_members and may_see_private_fields else None
             items.append(ProjectWithLead(
                 **proj.model_dump(),
                 lead=lead,
@@ -394,9 +395,9 @@ def update_project(project_ref: ProjectRef, auth_res: Annotated[Principal, Depen
         )
 
 
-def _get_project_users(proj_id: str, session) -> List[AccessGroupMemberRead]:
-    '''Public-safe project members and their role.'''
-    return load_project_members(session, proj_id)
+def _get_project_users(project: Project, session, principal: Principal) -> List[AccessGroupMemberRead]:
+    '''Public-safe project members, their role, and what the caller may do to each.'''
+    return with_member_capabilities(session, principal, project.unique_id, load_project_members(session, project.project_id))
 @router.get("/projects/{project_ref}/users", response_model=PaginatedResponse[AccessGroupMemberRead])
 def read_users_on_project(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)],
                           limit: int = Query(default=100, ge=1, le=1000),
@@ -412,7 +413,7 @@ def read_users_on_project(project_ref: ProjectRef, auth_res: Annotated[Principal
 
         require_permission(session, auth_res, project.unique_id, Permission.READ)
 
-        all_users = _get_project_users(project.project_id, session)
+        all_users = _get_project_users(project, session, auth_res)
         return PaginatedResponse(total=len(all_users), limit=limit, offset=offset, items=all_users[offset:offset + limit])
 
 
@@ -465,7 +466,7 @@ def add_users_to_project(
             if existing_link is not None and existing_link.role is not None:
                 current_role = Role.from_db(existing_link.role)
                 if current_role == internal_role:
-                    return _get_project_users(proj.project_id, session)
+                    return _get_project_users(proj, session, auth_res)
                 raise HTTPException(
                     status_code=409,
                     detail=(
@@ -487,7 +488,7 @@ def add_users_to_project(
         sql_add_user_to_project(user, proj.project_id, session, role=internal_role, actor_id=auth_res.user_id)
         session.commit()
 
-        return _get_project_users(proj.project_id, session)
+        return _get_project_users(proj, session, auth_res)
 
 
 @router.patch("/projects/{project_ref}/users/{user_ref}", response_model=List[AccessGroupMemberRead])
@@ -554,7 +555,7 @@ def set_project_user_role(
         touch_resource_modification_time(session, proj.unique_id)
         session.commit()
 
-        return _get_project_users(proj.project_id, session)
+        return _get_project_users(proj, session, auth_res)
 
 
 @router.delete("/projects/{project_ref}/users/{user_ref}", response_model=List[AccessGroupMemberRead])
@@ -597,6 +598,6 @@ def remove_user_from_project(
 
         touch_resource_modification_time(session, proj.unique_id)
         session.commit()
-        return _get_project_users(proj.project_id, session)
+        return _get_project_users(proj, session, auth_res)
 
 

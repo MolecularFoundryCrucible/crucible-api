@@ -35,7 +35,7 @@ from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import ResourceDetailQuery, ResourceEmbeddingListQuery
-from app.services.resource_access import access_grant_read, access_grant_reads
+from app.services.resource_access import access_grant_read, access_grant_reads, with_grant_capabilities
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
 from app.utils.auth_utils import (
     authorize_user,
@@ -825,7 +825,7 @@ def list_resource_access(mfid: str, auth_res: Annotated[Principal, Depends(autho
             .where(ResourceACL.mfid == mfid)
         ).all()
 
-        return access_grant_reads(session, [(ag, acl.permission) for acl, ag in rows])
+        return with_grant_capabilities(session, auth_res, mfid, access_grant_reads(session, [(ag, acl.permission) for acl, ag in rows]))
 
 
 @router.put("/resources/{mfid}/access/{kind}/{principal}", response_model=AccessGrantRead)

@@ -4,15 +4,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
+from app.models.core_models import AccessGroup, Project, ResourceACL, User, UserAccessGroupLink
 from app.api.routes.projects import _get_project_users
+from app.utils.permissions import Principal
 
 
 def _engine():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine, tables=[
         AccessGroup.__table__, Project.__table__, User.__table__,
-        UserAccessGroupLink.__table__,
+        UserAccessGroupLink.__table__, ResourceACL.__table__,
     ])
     return engine
 
@@ -44,7 +45,7 @@ def test_member_role_comes_from_the_project_access_group():
         session.add(UserAccessGroupLink(user_id=member.id, accessgroup_id=ag.id, role="contributor"))
         session.commit()
 
-        result = {u.unique_id: u.role for u in _get_project_users("proj_x", session)}
+        result = {u.unique_id: u.role for u in _get_project_users(proj, session, Principal(user_id="0000-0001"))}
         assert result == {"0000-0001": "owner", "0000-0002": "contributor"}
 
 

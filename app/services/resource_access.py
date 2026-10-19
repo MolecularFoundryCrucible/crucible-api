@@ -1,7 +1,7 @@
 from sqlmodel import Session, select
 
-from app.models.access import AccessGrantRead
-from app.models.core_models import AccessGroup, Instrument, Project, ResourceACL, User
+from app.models.access import AccessGrantRead, EntryCapabilities
+from app.models.core_models import AccessGroup, Dataset, Instrument, Project, Resource, ResourceACL, Sample, User
 from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, Principal, Role, effective_role
 
 
@@ -85,6 +85,30 @@ def load_member_grants(session: Session, mfid: str) -> list[AccessGrantRead]:
     ).all()
     grants = access_grant_reads(session, [(ag, Role.from_db(acl.permission).db_value) for acl, ag in rows])
     return sorted(grants, key=lambda grant: (-Role.from_db(grant.permission.value), grant.principal_id))
+
+
+def with_grant_capabilities(session: Session, principal: Principal, mfid: str, grants: list[AccessGrantRead]) -> list[AccessGrantRead]:
+    """Attach what the caller may do to each grant, by the rules of the /resources/{mfid}/access routes."""
+    from app.utils.auth_utils import entry_capabilities, fetch_acl_rows
+
+    resource_type = session.exec(select(Resource.resource_type).where(Resource.mfid == mfid)).first()
+    owning_project = None
+    if resource_type in ("dataset", "sample"):
+        model = Dataset if resource_type == "dataset" else Sample
+        owning_project = session.exec(select(model.project_mfid).where(model.unique_id == mfid)).first()
+    actor = effective_role(principal, fetch_acl_rows(session, mfid))
+    for grant in grants:
+        kind = grant.principal_type.value
+        fixed = (
+            resource_type == "project"
+            or kind not in ("user", "service_account", "project", "public")
+            or (kind == "project" and grant.principal_id == owning_project)
+        )
+        capabilities = entry_capabilities(principal, actor, Role.from_db(grant.permission.value), floor=Role.ADMIN, fixed=fixed)
+        if kind == "public":
+            capabilities.update(can_change_role=False, assignable_roles=[])
+        grant.capabilities = EntryCapabilities(**capabilities)
+    return grants
 
 
 def record_role(principal: Principal, acl_rows) -> Role | None:

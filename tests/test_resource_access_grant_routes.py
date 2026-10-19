@@ -58,6 +58,7 @@ def test_list_resource_access_shows_canonical_grant(client, db_engine, auth_as):
         "permission": "owner",
         "slug": None,
         "display_name": "A Owner",
+        "capabilities": {"can_remove": False, "can_change_role": False, "assignable_roles": []},
     }
 
 

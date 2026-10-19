@@ -1,3 +1,4 @@
+import pytest
 from contextlib import contextmanager
 from unittest.mock import MagicMock
 
@@ -181,3 +182,37 @@ def test_file_detail_uses_authorized_dataset_without_lazy_load(db_engine):
 
     assert len(statements) == 2
     assert response.dataset_mfid == "file-dataset"
+
+
+def _grants_world(db_engine, people, projects):
+    from app.models.core_models import AccessGroupJoinRequest, ResourceACL, Resource, User, UserAccessGroupLink
+    with Session(db_engine) as session:
+        session.add(Resource(mfid="shared-ds", resource_type="dataset"))
+        session.add(Dataset(unique_id="shared-ds", dataset_name="shared"))
+        for n in range(people):
+            orcid = f"0000-0010-0000-{n:04d}"
+            session.add(User(first_name="P", last_name=str(n), email=None, unique_id=orcid))
+            group = AccessGroup(group_name=orcid, group_type=AccessGroupType.IDENTITY.value)
+            session.add(group)
+            session.flush()
+            session.add(ResourceACL(mfid="shared-ds", accessgroup_id=group.id, read=True, write=False, permission="viewer"))
+        for n in range(projects):
+            project = Project(project_id=f"grant-proj-{n}", organization="MF", project_lead_orcid="0000-0010-0000-0000")
+            session.add(project)
+            session.flush()
+            group = AccessGroup(group_name=project.unique_id, group_type=AccessGroupType.PROJECT.value)
+            session.add(group)
+            session.flush()
+            session.add(ResourceACL(mfid="shared-ds", accessgroup_id=group.id, read=True, write=False, permission="viewer"))
+        session.commit()
+
+
+@pytest.mark.parametrize("people, projects", [(2, 1), (12, 6)])
+def test_member_grants_resolve_principals_in_constant_queries(db_engine, people, projects):
+    from app.services.resource_access import load_member_grants
+    _grants_world(db_engine, people, projects)
+    with Session(db_engine) as session, _statement_count(db_engine) as statements:
+        grants = load_member_grants(session, "shared-ds")
+    assert len(grants) == people + projects
+    assert {grant.principal_type for grant in grants} == {"user", "project"}
+    assert len(statements) <= 3

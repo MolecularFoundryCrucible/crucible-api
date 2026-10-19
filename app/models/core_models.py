@@ -89,7 +89,7 @@ class Sample(SQLModel, table = True):
     unique_id: str = Field(default_factory= get_mfid_value, index = True, unique = True)
     sample_name: str = Field(index = True, default = None) 
     sample_type: Optional[str] = Field(index = True, default = None)
-    owner_orcid: Optional[str]
+    owner_orcid: Optional[str] = Field(default=None, index=True)
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     timestamp: Optional[str] = Field(default_factory=get_utc_isoformat, alias="date_created")
     project_id: Optional[str] = None
@@ -129,7 +129,7 @@ class Dataset(SQLModel, table=True):
     public: bool = Field(default = False, index = True)
     dataset_name: Optional[str] = Field(default = "")   
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
-    owner_orcid: Optional[str] = Field(default = None)
+    owner_orcid: Optional[str] = Field(default=None, index=True)
     project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")
     project_mfid: Optional[str] = Field(default=None, index=True, foreign_key="project.unique_id")
     instrument_id: Optional[int]  = Field(default = None, index = True, foreign_key = "instrument.id")

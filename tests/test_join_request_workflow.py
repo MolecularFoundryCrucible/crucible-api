@@ -219,7 +219,7 @@ def test_filters(act, world, db_engine):
     assert set(ids(editor.get("/join_requests", params={"requested_after": week_ago}))) == {bob_films, alice_bulk}
     assert set(ids(editor.get("/join_requests", params={"requested_before": week_ago}))) == {alice_films}
     assert ids(editor.get("/join_requests", params={"reviewed_after": week_ago})) == [bob_films]
-    assert editor.get("/join_requests", params={"requested_after": "2026-01-01T00:00:00"}).status_code == 422
+    assert set(ids(editor.get("/join_requests", params={"requested_before": week_ago.replace("+00:00", "")}))) == {alice_films}
 
 
 @pytest.mark.parametrize("sort, direction, expected", [

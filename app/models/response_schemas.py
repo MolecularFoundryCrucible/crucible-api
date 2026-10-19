@@ -1,8 +1,8 @@
-from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional
 
 from app.models.users import UserRead
+from app.models.timestamps import UtcDatetime
 
 class DatasetResponse(BaseModel):
     id: int
@@ -55,7 +55,7 @@ class ApiKeyVerify(BaseModel):
     valid: bool
     created_at: str
     expires_at: str
-    last_used_at: Optional[datetime] = None
+    last_used_at: Optional[UtcDatetime] = None
 
 
 class ProjectSyncResult(BaseModel):

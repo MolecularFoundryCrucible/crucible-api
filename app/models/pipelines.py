@@ -1,7 +1,7 @@
-from datetime import datetime
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+from app.models.timestamps import UtcDatetime
 
 PostprocessingRunStatus = Literal["requested", "running", "completed", "failed"]
 
@@ -29,9 +29,9 @@ class PostprocessingRunRead(BaseModel):
     status: PostprocessingRunStatus
     error: Optional[str] = None
     requested_by: Optional[str] = None
-    requested_at: datetime
-    started_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None
+    requested_at: UtcDatetime
+    started_at: Optional[UtcDatetime] = None
+    finished_at: Optional[UtcDatetime] = None
 
 
 class PostprocessingRunUpdate(BaseModel):

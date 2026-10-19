@@ -1,4 +1,3 @@
-from datetime import datetime
 from enum import Enum
 from typing import Literal, Optional
 
@@ -7,6 +6,7 @@ from sqlmodel import SQLModel
 
 from app.models.projects import ProjectReferenceRead
 from app.models.users import UserPublicRead
+from app.models.timestamps import UtcDatetime
 
 MAX_TEXT_LENGTH = 2000
 
@@ -84,10 +84,10 @@ class JoinRequestRead(SQLModel):
     requester_id: str
     requester: Optional[UserPublicRead] = None
     reason: Optional[str] = None
-    request_time: datetime
+    request_time: UtcDatetime
     reviewer_id: Optional[str] = None
     reviewer: Optional[UserPublicRead] = None
-    review_time: Optional[datetime] = None
+    review_time: Optional[UtcDatetime] = None
     reviewer_notes: Optional[str] = None
     granted_role: Optional[str] = None
     capabilities: JoinRequestCapabilities

@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import AwareDatetime
 from sqlalchemy import and_, case, false, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
@@ -27,6 +26,7 @@ from app.utils.auth_utils import authorize_user, permission_filter, require_gran
 from app.utils.cursor_utils import CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.project_utils import is_project_member, resolve_project_reference, sql_add_user_to_project
+from app.models.timestamps import UtcDatetime
 
 router = APIRouter(tags=["join_requests"])
 engine = get_engine()
@@ -84,10 +84,10 @@ def join_request_filters(
     group_name: Annotated[Optional[str], Query(deprecated=True, description="Deprecated. Use project_mfid. Accepts a project slug or MFID.")] = None,
     requester_id: Optional[str] = None,
     reviewer_id: Optional[str] = None,
-    requested_after: Optional[AwareDatetime] = None,
-    requested_before: Optional[AwareDatetime] = None,
-    reviewed_after: Annotated[Optional[AwareDatetime], Query(description="Closed at or after this time (reviewed, withdrawn, or closed by a direct add).")] = None,
-    reviewed_before: Optional[AwareDatetime] = None,
+    requested_after: Optional[UtcDatetime] = None,
+    requested_before: Optional[UtcDatetime] = None,
+    reviewed_after: Annotated[Optional[UtcDatetime], Query(description="Closed at or after this time (reviewed, withdrawn, or closed by a direct add).")] = None,
+    reviewed_before: Optional[UtcDatetime] = None,
     q: Annotated[Optional[str], Query(min_length=1, max_length=200, description="Matches the requester's name, username, or ORCID, case-insensitively.")] = None,
 ) -> JoinRequestFilters:
     return JoinRequestFilters(scope, status, project_mfid, group_name, requester_id, reviewer_id,

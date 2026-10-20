@@ -22,6 +22,7 @@ from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_readable_file, touch_resource_modification_time
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.pagination import PaginatedResponse
+from app.models.response_schemas import DownloadLinkRead, MessageResponse
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 from app.services.storage_downloads import StorageLocationError, resolve_storage_object
 
@@ -79,7 +80,7 @@ def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: s
         return read
 
 
-@router.get("/files/{file_id}/download_link", responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
+@router.get("/files/{file_id}/download_link", response_model=DownloadLinkRead, responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def get_file_download_link(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
@@ -148,7 +149,7 @@ def update_file(
         return AssociatedFileRead.model_validate(af, update={"dataset_mfid": ds.unique_id})
 
 
-@router.delete("/files/{file_id}")
+@router.delete("/files/{file_id}", response_model=MessageResponse)
 def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
     '''Deletes a file and its ingestion requests. Requires admin on the parent dataset.'''
 

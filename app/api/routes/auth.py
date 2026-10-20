@@ -17,6 +17,7 @@ from app.api.dependencies import (
     get_orcid_client_id, get_orcid_client_secret, get_redirect_uri,
 )
 from app.models.core_models import User
+from app.models.response_schemas import ApiKeyRead, LegacyApiKeyRead
 from app.utils.permissions import AccessGroupType, Role
 from app.utils.auth_utils import find_or_add_api_access
 from app.utils.sql_utils import add_or_update
@@ -42,7 +43,7 @@ def _login_redirect(login_path: str, return_to: str) -> RedirectResponse:
 
 # ── Canonical routes ─────────────────────────────────────────────────────────
 
-@router.get("/auth/login")
+@router.get("/auth/login", response_class=RedirectResponse, status_code=307, responses={307: {"description": "Redirect to the ORCID sign-in page"}})
 def orcid_login() -> RedirectResponse:
     """Redirect the user to the ORCID login page to begin authentication."""
     redirect_uri = get_redirect_uri()
@@ -51,7 +52,7 @@ def orcid_login() -> RedirectResponse:
     return RedirectResponse(orcid_auth_url)
 
 
-@router.get("/auth/callback")
+@router.get("/auth/callback", response_class=RedirectResponse, status_code=307, responses={307: {"description": "Redirect back to the page that started sign-in, with a short-lived session cookie"}, 502: {"description": "ORCID sign-in failed"}})
 def redirect_exchange(request: Request, code: str, state: str = None):
     """
     Exchange the ORCID authorization code for an access token and user information.
@@ -98,7 +99,7 @@ def redirect_exchange(request: Request, code: str, state: str = None):
     return response
 
 
-@router.get("/auth/apikey")
+@router.get("/auth/apikey", response_model=LegacyApiKeyRead, responses={200: {"description": "The API key as JSON, or an HTML page asking for an email when the profile has none", "content": {"text/html": {}}}, 307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}})
 def get_apikey(request: Request):
     """Exchange a valid ORCID browser session cookie for a Crucible API key."""
     from app.utils.auth_utils import decode_token, find_or_add_api_access
@@ -260,7 +261,7 @@ document.getElementById('email').addEventListener('keydown', function(e) {{
 </html>"""
 
 
-@router.post("/auth/apikey/regenerate")
+@router.post("/auth/apikey/regenerate", response_model=ApiKeyRead, responses={307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}})
 def regenerate_apikey(request: Request):
     """Regenerate the caller's API key via browser ORCID session. Requires cookie auth."""
     from app.utils.auth_utils import decode_token
@@ -278,25 +279,25 @@ def regenerate_apikey(request: Request):
 
 # ── Deprecated aliases (kept for backward compatibility) ─────────────────────
 
-@router.get("/login", deprecated=True, include_in_schema=True)
+@router.get("/login", deprecated=True, response_class=RedirectResponse, status_code=307, responses={307: {"description": "Redirect to the ORCID sign-in page"}})
 def orcid_login_deprecated() -> RedirectResponse:
     """Deprecated: use GET /auth/login."""
     return orcid_login()
 
 
-@router.get("/auth", deprecated=True, include_in_schema=True)
+@router.get("/auth", deprecated=True, response_class=RedirectResponse, status_code=307, responses={307: {"description": "Redirect back to the page that started sign-in, with a short-lived session cookie"}, 502: {"description": "ORCID sign-in failed"}})
 def redirect_exchange_deprecated(request: Request, code: str, state: str = None):
     """Deprecated: use GET /auth/callback."""
     return redirect_exchange(request, code, state)
 
 
-@router.get("/user_apikey", deprecated=True, include_in_schema=True)
+@router.get("/user_apikey", deprecated=True, response_model=LegacyApiKeyRead, responses={200: {"description": "The API key as JSON, or an HTML page asking for an email when the profile has none", "content": {"text/html": {}}}, 307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}})
 def get_apikey_deprecated(request: Request):
     """Deprecated: use GET /auth/apikey."""
     return get_apikey(request)
 
 
-@router.get("/regenerate_apikey", deprecated=True, include_in_schema=True)
+@router.get("/regenerate_apikey", deprecated=True, response_model=ApiKeyRead, responses={307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}})
 def regenerate_apikey_deprecated(request: Request):
     """Deprecated: use POST /auth/apikey/regenerate."""
     return regenerate_apikey(request)

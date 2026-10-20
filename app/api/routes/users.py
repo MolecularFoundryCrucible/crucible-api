@@ -36,7 +36,7 @@ from app.models.pagination import PaginatedResponse
 from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
 from app.api.routes.projects import PROJECT_PAGINATION
 from app.models.users import UserCreate, UserPublicRead, UserRead, UserUpdate
-from app.models.response_schemas import ApiKeyRead, ApiKeyVerify
+from app.models.response_schemas import ApiKeyRead, ApiKeyVerify, DetailResponse
 from app.models.core_models import ApiToken
 from app.models.projects import ProjectWithLead
 from app.models.access_groups import AccessGroupRead
@@ -845,6 +845,7 @@ def list_user_access_groups(auth_res: Annotated[Principal, Depends(authorize_use
 
 @router.delete(
     "/users/{user_ref}/access_groups/{group_name}",
+    response_model=DetailResponse,
     deprecated=True,
 )
 def remove_user_from_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], user_ref: UserRef, group_name: str):

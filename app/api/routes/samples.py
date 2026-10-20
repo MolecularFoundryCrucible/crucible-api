@@ -49,6 +49,7 @@ from app.utils.sql_utils import add_or_update, assert_mfid_available, assert_par
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
 from app.models.users import UserPublicRead
+from app.models.response_schemas import MessageResponse
 from app.services.resource_details import ResourceDetailOptions, load_sample_detail
 from app.services.resource_facets import list_sample_facets
 from app.services.resource_filters import resource_scope_predicates
@@ -128,7 +129,7 @@ def link_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id
         return link
 
 
-@router.delete("/samples/{parent_sample_mfid}/children/{child_sample_mfid}")
+@router.delete("/samples/{parent_sample_mfid}/children/{child_sample_mfid}", response_model=MessageResponse)
 def unlink_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id: ChildSampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
     with Session(engine) as session:

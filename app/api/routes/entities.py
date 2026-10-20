@@ -8,6 +8,7 @@ from app.api.path_params import EntityMfid, ProjectRef
 from app.models.core_models import (
     Dataset, DatasetLink, DatasetSampleLink, Sample, SampleLink,
 )
+from app.models.response_schemas import EntityGraph
 from app.utils.auth_utils import authorize_user, permission_filter
 from app.utils.project_utils import resolve_project_reference
 from app.utils.sql_utils import deletion_filter_for, select_active
@@ -168,7 +169,7 @@ def _entity_graph_ids(session, principal, kind: str, seed_id: int, recursive: bo
     return sample_ids, dataset_ids | _dataset_lineage(session, principal, more_datasets)
 
 
-@router.get("/entity_graph_cte/{entity_mfid}")
+@router.get("/entity_graph_cte/{entity_mfid}", response_model=EntityGraph)
 def entity_graph_cte(
     entity_id: EntityMfid,
     auth_res: Annotated[Principal, Depends(authorize_user)],
@@ -201,7 +202,7 @@ def entity_graph_cte(
 # Returns all entities in the project regardless of connectivity.
 # ---------------------------------------------------------------------------
 
-@router.get("/project_graph/{project_ref}")
+@router.get("/project_graph/{project_ref}", response_model=EntityGraph)
 def project_graph(
     project_ref: ProjectRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],

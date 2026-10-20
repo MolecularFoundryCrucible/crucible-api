@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, Dict, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ from app.models.core_models import (
     User,
     UserAccessGroupLink,
 )
-from app.models.response_schemas import DatasetSampleLinkResponse
+from app.models.response_schemas import DatasetSampleLinkResponse, MessageResponse
 from app.models.facets import FacetResponse
 from app.models.datasets import (
     AssociatedFileCreate, AssociatedFileRead,
@@ -912,7 +912,7 @@ def link_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_datase
         return link
 
 
-@router.delete("/datasets/{parent_dataset_mfid}/children/{child_dataset_mfid}")
+@router.delete("/datasets/{parent_dataset_mfid}/children/{child_dataset_mfid}", response_model=MessageResponse)
 def unlink_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_dataset_id: ChildDatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
     with Session(engine) as session:
@@ -1035,7 +1035,7 @@ def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotate
 
 
 
-@router.delete('/datasets/{dataset_mfid}/samples/{sample_mfid}')
+@router.delete('/datasets/{dataset_mfid}/samples/{sample_mfid}', response_model=MessageResponse)
 def unlink_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, sample_id: SampleMfid):
 
     with Session(engine) as session:
@@ -1304,7 +1304,7 @@ def delete_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)], ds
         return {"message": f"Thumbnail {thumbnail_id} deleted from dataset {dsid}"}
 
 
-@router.get("/datasets/{dataset_mfid}/download_links")
+@router.get("/datasets/{dataset_mfid}/download_links", response_model=Dict[str, Optional[str]])
 def generate_dataset_download_links(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,

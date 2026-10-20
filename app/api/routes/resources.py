@@ -35,6 +35,7 @@ from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import ResourceDetailQuery, ResourceEmbeddingListQuery
+from app.models.response_schemas import DetailResponse
 from app.services.resource_access import access_grant_read, access_grant_reads, with_grant_capabilities
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
 from app.utils.auth_utils import (
@@ -868,7 +869,7 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
         return access_grant_read(session, ag, target.db_value)
 
 
-@router.delete("/resources/{mfid}/access/{kind}/{principal}")
+@router.delete("/resources/{mfid}/access/{kind}/{principal}", response_model=DetailResponse)
 def revoke_resource_access(mfid: str, kind: str, principal: str,
                            auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Revoke a principal's access.
@@ -934,7 +935,7 @@ def publish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize
         return access_grant_read(session, ag, Role.VIEWER.db_value)
 
 
-@router.delete("/resources/{mfid}/access/public")
+@router.delete("/resources/{mfid}/access/public", response_model=DetailResponse)
 def unpublish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Withdraw public access."""
     with Session(engine) as session:

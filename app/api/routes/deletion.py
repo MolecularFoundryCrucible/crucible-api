@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
@@ -36,6 +36,7 @@ from app.models.deletion import (
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import SortDirection
 from app.models.users import UserPublicRead
+from app.models.response_schemas import DetailResponse
 from app.utils.auth_utils import (
     authorize_user,
     fetch_acl_rows,
@@ -714,7 +715,7 @@ def review_deletion_request(
 # Owner or platform-admin direct deletion with explicit acknowledgement.
 # Projects and instruments preview first and delete only with confirm=true.
 # ---------------------------------------------------------------------------
-@router.delete("/resources/{mfid}")
+@router.delete("/resources/{mfid}", response_model=Union[DeletionPreviewRead, DetailResponse])
 def hard_delete_resource_route(
     resource_id: ResourceMfid,
     background_tasks: BackgroundTasks,

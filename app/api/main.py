@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.routes import multipart
@@ -286,7 +286,7 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-Instrumentator(excluded_handlers=["^/metrics$", "^/health(/.*)?$"]).instrument(app).expose(app)
+Instrumentator(excluded_handlers=["^/metrics$", "^/health(/.*)?$"]).instrument(app).expose(app, response_class=PlainTextResponse, responses={200: {"description": "Prometheus metrics in the text exposition format"}})
 
 app.include_router(account.router)
 app.include_router(auth.router)

@@ -38,9 +38,11 @@ Open questions for the design: whether lineage is live (new children join automa
 
 ## Production access data to review
 
-Read-only findings on 2026-10-19. Changing any of these is a production data write and needs explicit approval.
+Read-only findings on 2026-10-19, resolved on 2026-10-20 with explicit approval:
 
-1. **127 datasets and 1 sample** have a `project_mfid` but their project's group does not hold admin on them, so project members cannot see or edit them. Repair: restore the owning project's admin grant.
-2. **Custom groups named after unregistered instruments** (`insitu_pl` with 1,030 grants, `themisx` 64, `spinbot_photobox` 38, `mace` 17, `mosaicmicroscope` 16, `nirvana` 5, and others) have no members, so their grants grant nothing. They can be removed once the unregistered instrument names are resolved (`docs/legacy_slug_columns_followup.md`).
-3. **The custom group `unknown`** holds viewer grants on 32,302 datasets across many instruments and has one member, Morgan Wall, who can therefore read all of them. Confirm whether this is intended.
-4. **Custom groups with no grants** (many `MFP…`, `AUM_DEMO…`, `test…`, ORCID-named groups) can be removed.
+1. **127 datasets and 1 sample** without their owning project's admin grant. Restored on 105; 4 belonged to a project with an empty `project_id` that the August migration had created from blank legacy slugs (its 1,312 datasets and 3 samples were unassigned and the project deleted through the API, audit logged); 19 were orphaned dataset rows with no resource row, left by a failed RGA/TEY ingestion on 2026-05-20 and re-ingested on 2026-08-17, deleted with their 266 failed ingestion requests and an audit entry each.
+2. **Custom groups named after unregistered instruments** (`insitu_pl`, `themisx`, `spinbot_photobox`, `mace`, `mosaicmicroscope`, `nirvana`, `inorganic_xrd`, `practice thermometer`, `python/pandas`): no members, 1,173 grants. Removed after the instrument names were mapped to registered instruments (`docs/legacy_slug_columns_followup.md`).
+3. **The custom group `unknown`**: viewer on 32,302 datasets, one member (Morgan Wall). Removed. 13,445 of those datasets had no other grant and no owner, project, or instrument; they are reachable only by platform administrators.
+4. **35 custom groups with no grants** (`AUM_DEMO…`, `MFP…`, `test…`, ORCID-named, and others). Removed with their 17 memberships.
+
+Also on 2026-10-20: 7,638 datasets linked to an instrument but missing the instrument group's grant were repaired through `PUT /datasets/{dataset_mfid}/instrument`. The four `nsf-summer-school-2026-mkw-*` groups (43 grants) are workshop sharing and were left in place.

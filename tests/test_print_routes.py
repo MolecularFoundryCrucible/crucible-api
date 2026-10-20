@@ -187,9 +187,8 @@ def test_list_printers_returns_sorted_discovered_printers(client, auth_as, monke
     assert [p["printer_id"] for p in body["printers"]] == ["ncem", "spinbot"]
     ncem, spinbot = body["printers"]
     assert ncem["online"] is False
-    assert ncem["hostname"] == "pi-ncem"
     assert spinbot["online"] is True
-    assert spinbot["hostname"] == "pi-spinbot"
+    assert all(set(printer) == {"printer_id", "online", "ts"} for printer in body["printers"])
 
 
 def test_list_printers_empty_when_none_discovered(client, auth_as, monkeypatch):

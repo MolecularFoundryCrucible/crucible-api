@@ -63,8 +63,6 @@ class BarcodePrintResponse(BaseModel):
 class PrinterStatus(BaseModel):
     printer_id: str
     online: bool
-    hostname: Optional[str] = None
-    ip: Optional[str] = None
     ts: Optional[float] = None
 
 
@@ -257,8 +255,6 @@ def list_printers(
         PrinterStatus(
             printer_id=printer_id,
             online=_printer_online(status),
-            hostname=status.get("hostname"),
-            ip=status.get("ip"),
             ts=status.get("ts"),
         )
         for printer_id, status in sorted(statuses.items())

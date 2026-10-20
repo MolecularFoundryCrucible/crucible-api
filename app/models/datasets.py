@@ -270,9 +270,15 @@ def validate_non_gcs_filename(value: str) -> str:
 
 class AssociatedFileCreate(SQLModel):
     '''Fields required to attach an associated file to a dataset.
+    for GCS filename should be in the format {cloud-bucket}/{path-to-file}
+    Ingestion is currently only supported for files in the crucible-uploads cloud-bucket.
+    storage_backend defaults to "gcs"; any other value marks this as a catalog-only
+    reference to a file living outside GCS (e.g. an HPC partition or Globus path) —
+    Crucible does not verify existence or broker access for non-gcs files.
 
     For non-GCS files, filename is the canonical relative path and identity
-    within a dataset. GCS behavior remains hash-based.
+    within a dataset. GCS behavior remains hash-based i.e. hash must
+    be unique in dataset to create a new row but you can use the same filename.
     '''
     filename: str
     size: int
@@ -320,7 +326,7 @@ class AssociatedFileUpdate(SQLModel):
     access_note: Optional[str] = None
     size: Optional[int] = None
     sha256_hash: Optional[str] = None
-    
+
 
 class ScientificMetadataBinaryRead(SQLModel):
     #id: Optional[int] = None

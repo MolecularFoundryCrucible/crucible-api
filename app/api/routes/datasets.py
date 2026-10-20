@@ -215,7 +215,7 @@ def request_mosaic_stitch(dsid: DatasetMfid, auth_res: Annotated[Principal, Depe
 async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
                          dataset: DatasetCreate,
                          background_tasks: BackgroundTasks):
-    
+
     logger.info(f"Creating dataset: {dataset.unique_id}")
     dataset_details = dataset.model_dump(exclude_unset=True)
     user_unique_id = auth_res.user_id
@@ -293,7 +293,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
 
         # get time
         now = get_utc_datetime()
-        
+
         # fetch resource
         existing_ri = session.exec(select(Resource).where(Resource.mfid == ds.unique_id)).one_or_none()
         ri = add_or_update(session, Resource, where=(Resource.mfid == ds.unique_id),
@@ -307,7 +307,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         ri.api_version_githash = API_VERSION_GITHASH
         ri.public = ds.public
         set_public(session, ds.unique_id, bool(ds.public))
-        
+
         session.flush()
 
         create_standard_acls(session, ds.unique_id,
@@ -1235,7 +1235,7 @@ def get_first_thumbnails(
             }
             for t in first_thumbnails
         }
-    
+
 @router.post("/datasets/{dataset_mfid}/thumbnails", response_model=ThumbnailRead)
 def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
                   dsid: DatasetMfid,
@@ -1443,11 +1443,18 @@ def read_associated_files(auth_res: Annotated[Principal, Depends(authorize_user)
 def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
                         dsid: DatasetMfid,
                         associated_file: AssociatedFileCreate):
-    '''Adds a file record to a dataset.
+    '''
+    Adds a file record to a dataset.
 
-    GCS retains its hash-based behavior. Non-GCS records are identified by
-    dataset-relative filename: exact retries return the original row, while a
-    conflicting redefinition is rejected without modification.
+    GCS Creates the record if one with the same sha256_hash and dataset does not already exist.
+    Use POST /datasets/{dataset_mfid}/files/{file_id}/ingest to trigger ingestion.
+    Requires contributor access. A repeated hash returns the existing record unchanged.
+
+    Non-GCS records are identified by dataset-relative filename, files
+    can have the samecontent hash, for instance kpoint grids they
+    should not just be dropped : exact retries return
+    the original row, while a conflicting redefinition i.e. same
+    filename different hash is rejected without modification.
     '''
 
     with Session(engine) as session:

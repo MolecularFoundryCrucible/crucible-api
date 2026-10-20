@@ -39,6 +39,13 @@ class Thumbnail(SQLModel, table=True):
 
 
 class AssociatedFile(SQLModel, table=True):
+    # The intention these __table_args__  is to have a filename that is a usable key
+    # in the non-gcs case and catch different ways to write the same POSIX
+    # relative path and stop paths that do not refer to files.
+    # We are are not addressing the security implications
+    # of such a filename. Since a client is likley to use the stored filename to
+    # determine how to unpack a fetched dataset all manner of exploits
+    # are possible.
     __table_args__ = (
         CheckConstraint(
             "storage_backend = 'gcs' OR ("
@@ -116,7 +123,7 @@ class SampleLink(SQLModel, table=True):
 class Sample(SQLModel, table = True):
     id: Optional[int] = Field(default = None, primary_key = True)
     unique_id: str = Field(default_factory= get_mfid_value, index = True, unique = True)
-    sample_name: str = Field(index = True, default = None) 
+    sample_name: str = Field(index = True, default = None)
     sample_type: Optional[str] = Field(index = True, default = None)
     owner_orcid: Optional[str]
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
@@ -156,7 +163,7 @@ class Dataset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     unique_id: str = Field(default_factory = get_mfid_value, index=True, unique=True)
     public: bool = Field(default = False, index = True)
-    dataset_name: Optional[str] = Field(default = "")   
+    dataset_name: Optional[str] = Field(default = "")
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     owner_orcid: Optional[str] = Field(default = None)
     project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")
@@ -166,7 +173,7 @@ class Dataset(SQLModel, table=True):
     source_folder: Optional[str]
     instrument_name: Optional[str]
     timestamp: Optional[str] = Field(default_factory=get_utc_isoformat)
-    size: Optional[int] = Field(sa_column=Column(BigInteger())) 
+    size: Optional[int] = Field(sa_column=Column(BigInteger()))
     data_format: Optional[str]
     measurement: Optional[str]
     data_type: Optional[str]
@@ -398,7 +405,7 @@ class ScientificMetadataBinary(SQLModel, table = True):
         back_populates="scientific_metadata",
         sa_relationship_kwargs={"foreign_keys": "[ScientificMetadataBinary.unique_id]"}
     )
-    
+
     __table_args__ = (
         Index(
             "ix_scientific_metadata_fts",
@@ -428,9 +435,9 @@ class Resource(SQLModel, table=True):
     api_version_githash: Optional[str] = Field(default=None)
    # last_modified_by_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.unique_id")
     scientific_metadata: Optional["ScientificMetadataBinary"] = Relationship(
-            back_populates="resource", 
+            back_populates="resource",
             sa_relationship_kwargs={"foreign_keys": "[ScientificMetadataBinary.unique_id]"})
-    
+
     deletion_requests: List["DeletionRequest"] = Relationship(
         back_populates="resource",
         sa_relationship_kwargs={"foreign_keys": "[DeletionRequest.resource_id]"}

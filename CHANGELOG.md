@@ -47,6 +47,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- `GET /deletion_requests` returned `null` `project_id` and `project_mfid` for project deletion requests, left them out of `?project_mfid=` for that project, and sorted them as projectless under `sort=project_id`; they now report their own project, as `GET /deletion_requests/{request_id}` and the create response already did.
 - `POST /datasets/{dataset_mfid}/samples/{sample_mfid}` returned 500 after creating the link when the dataset has no name; `dataset_name` is now nullable in the response, as in other dataset responses.
 - `GET /users/{user_ref}/apikey/verify` returned 500 for keys stored with a full timestamp (every key issued by current code); it now reports the same status as `api_key_status`.
 - Project roles could be granted outside membership: `PUT /resources/{project_mfid}/access/users|projects/...` gave a project role that bypassed the membership rules, did not appear among the project's members, and survived removal from the project. These routes, their `DELETE` forms, and `POST /resources/{project_mfid}/access_groups` now return 409 `use_project_members`. Changing or revoking a dataset or sample's grant for its own project returns 409 `owning_project_grant`; it follows `POST /resources/{mfid}/project`. Sharing records with other projects is unchanged.

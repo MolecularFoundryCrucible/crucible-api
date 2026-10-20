@@ -359,9 +359,11 @@ def list_deletion_requests(
             DeletionRequest.status == DeletionRequestStatus.PENDING.value,
             review_authority,
         )
+        resource_project = aliased(Project)
         project_mfid_column = func.coalesce(
             Dataset.project_mfid,
             Sample.project_mfid,
+            resource_project.unique_id,
         )
         record_project = aliased(Project)
         project_id_column = record_project.project_id
@@ -387,6 +389,7 @@ def list_deletion_requests(
             .outerjoin(Resource, Resource.mfid == DeletionRequest.resource_id)
             .outerjoin(Dataset, Dataset.unique_id == DeletionRequest.resource_id)
             .outerjoin(Sample, Sample.unique_id == DeletionRequest.resource_id)
+            .outerjoin(resource_project, resource_project.unique_id == DeletionRequest.resource_id)
             .outerjoin(record_project, record_project.unique_id == project_mfid_column)
             .outerjoin(requester_user, requester_user.unique_id == DeletionRequest.requester_id)
             .outerjoin(reviewer_user, reviewer_user.unique_id == DeletionRequest.reviewer_id)
@@ -399,6 +402,7 @@ def list_deletion_requests(
                 count_query
                 .outerjoin(Dataset, Dataset.unique_id == DeletionRequest.resource_id)
                 .outerjoin(Sample, Sample.unique_id == DeletionRequest.resource_id)
+                .outerjoin(resource_project, resource_project.unique_id == DeletionRequest.resource_id)
                 .where(project_mfid_column == project_mfid)
             )
             data_query = data_query.where(project_mfid_column == project_mfid)

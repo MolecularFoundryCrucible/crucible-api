@@ -559,8 +559,10 @@ def create_deletion_request(
                 detail=f"A deletion request for {resource_id} already exists (status: {existing.status}).",
             )
 
+        summary = None
         if resource.resource_type in ("project", "instrument"):
-            blocking = deletion_summary(session, resource.resource_type, resource_id)["blocking"]
+            summary = deletion_summary(session, resource.resource_type, resource_id)
+            blocking = summary["blocking"]
             if blocking:
                 raise HTTPException(
                     status_code=409,
@@ -628,8 +630,7 @@ def create_deletion_request(
             select(User).where(User.unique_id == requester_id)
         ).one_or_none()
         preview = None
-        if resource.resource_type in ("project", "instrument"):
-            summary = deletion_summary(session, resource.resource_type, resource_id)
+        if summary is not None:
             preview = deletion_preview_read(
                 resource_id, resource.resource_type, False, summary
             )

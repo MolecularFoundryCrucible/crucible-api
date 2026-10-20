@@ -220,3 +220,21 @@ def test_member_grants_resolve_principals_in_constant_queries(db_engine, people,
     assert len(grants) == people + projects
     assert {grant.principal_type for grant in grants} == {"user", "project"}
     assert len(statements) <= 3
+
+
+def test_adding_a_file_does_not_load_the_datasets_other_files(client, db_engine, auth_as):
+    from app.models.core_models import AssociatedFile, Dataset, Resource
+    from app.utils.permissions import PlatformRole
+    with Session(db_engine) as session:
+        dataset = Dataset(unique_id="ds-many", dataset_name="d")
+        session.add_all([dataset, Resource(mfid="ds-many", resource_type="dataset")])
+        session.flush()
+        session.add_all([AssociatedFile(dataset_id=dataset.id, filename=f"f{i}", size=1, sha256_hash=str(i)) for i in range(3)])
+        session.commit()
+    auth_as("admin", platform_role=PlatformRole.ADMIN)
+    with _statement_count(db_engine) as statements:
+        response = client.post("/datasets/ds-many/files", json={"filename": "new.h5", "size": 1, "sha256_hash": "n"})
+    assert response.status_code == 200, response.text
+    file_reads = [s for s in statements if s.lstrip().upper().startswith("SELECT") and "FROM associatedfile" in s]
+    collection_loads = [s for s in file_reads if "dataset_id" in s.split("WHERE", 1)[-1] and "filename" not in s.split("WHERE", 1)[-1]]
+    assert collection_loads == []

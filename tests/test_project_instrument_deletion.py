@@ -216,6 +216,19 @@ class TestForcedDeletionProject:
             assert audit.project_mfid == project_mfid
             assert audit.resource_name == "proj_req_1"
 
+    def test_request_and_approval_compute_the_summary_once_each(self, client, db_engine, auth_as, monkeypatch):
+        from app.utils import deletion_utils
+        calls = []
+        original = deletion_utils._project_deletion_summary
+        monkeypatch.setattr(deletion_utils, "_project_deletion_summary", lambda session, mfid: calls.append(mfid) or original(session, mfid))
+        project_mfid = _project(db_engine, "proj_req_once", "proj-owner-3")
+        auth_as("proj-owner-3", groups=[(project_mfid, _group_id_session(db_engine, project_mfid), Role.OWNER)])
+
+        created = _create_deletion_request(client, project_mfid)
+        assert len(calls) == 1
+        _approve_request(client, created["id"])
+        assert len(calls) == 2
+
 
 def _group_id_session(db_engine, name):
     with Session(db_engine) as session:

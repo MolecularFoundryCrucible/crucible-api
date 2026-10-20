@@ -1411,10 +1411,7 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
             **associated_file.model_dump(),
             dataset_id=ds.id,
         )
-
-        if af_obj not in ds.associated_files:
-            ds.associated_files.append(af_obj)
-            session.add(ds)
+        session.add(af_obj)
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
@@ -1422,7 +1419,7 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
 
         session.commit()
         session.refresh(af_obj)
-        return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": af_obj.dataset.unique_id})
+        return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": dsid})
 
 
 @router.post("/datasets/{dataset_mfid}/files/{file_id}/ingest", response_model=IngestionRequest, deprecated = True, responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})

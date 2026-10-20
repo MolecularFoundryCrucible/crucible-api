@@ -240,8 +240,8 @@ def _hard_delete_sample(sample_unique_id: str, session: Session, resource: Resou
     session.execute(delete(Resource).where(Resource.mfid == sample_unique_id))
 
 
-def _hard_delete_project(project_unique_id: str, session: Session, resource: Resource) -> dict:
-    """Caller owns the transaction. Returns the deletion summary."""
+def _hard_delete_project(project_unique_id: str, session: Session, resource: Resource) -> None:
+    """Caller owns the transaction."""
     project = session.exec(
         select(Project).where(Project.unique_id == project_unique_id)
     ).one_or_none()
@@ -255,7 +255,6 @@ def _hard_delete_project(project_unique_id: str, session: Session, resource: Res
         )
     ).one_or_none()
 
-    summary = _project_deletion_summary(session, project_unique_id)
     if group is not None:
         session.execute(delete(ResourceACL).where(
             ResourceACL.accessgroup_id == group.id
@@ -277,11 +276,10 @@ def _hard_delete_project(project_unique_id: str, session: Session, resource: Res
     ))
     session.execute(delete(Project).where(Project.id == project.id))
     session.execute(delete(Resource).where(Resource.mfid == project_unique_id))
-    return summary
 
 
-def _hard_delete_instrument(instrument_unique_id: str, session: Session, resource: Resource) -> dict:
-    """Caller owns the transaction. Returns the deletion summary."""
+def _hard_delete_instrument(instrument_unique_id: str, session: Session, resource: Resource) -> None:
+    """Caller owns the transaction."""
     instrument = session.exec(
         select(Instrument).where(Instrument.unique_id == instrument_unique_id)
     ).one_or_none()
@@ -295,7 +293,6 @@ def _hard_delete_instrument(instrument_unique_id: str, session: Session, resourc
         )
     ).one_or_none()
 
-    summary = _instrument_deletion_summary(session, instrument_unique_id)
     if group is not None:
         session.execute(delete(ResourceACL).where(
             ResourceACL.accessgroup_id == group.id
@@ -314,7 +311,6 @@ def _hard_delete_instrument(instrument_unique_id: str, session: Session, resourc
     ))
     session.execute(delete(Instrument).where(Instrument.id == instrument.id))
     session.execute(delete(Resource).where(Resource.mfid == instrument_unique_id))
-    return summary
 
 
 def hard_delete_resource(resource_id: str, session: Session, resource: Resource | None = None):
@@ -333,8 +329,8 @@ def hard_delete_resource(resource_id: str, session: Session, resource: Resource 
     elif resource.resource_type == "sample":
         _hard_delete_sample(resource_id, session, resource)
     elif resource.resource_type == "project":
-        return _hard_delete_project(resource_id, session, resource)
+        _hard_delete_project(resource_id, session, resource)
     elif resource.resource_type == "instrument":
-        return _hard_delete_instrument(resource_id, session, resource)
+        _hard_delete_instrument(resource_id, session, resource)
     else:
         raise ValueError(f"Unsupported resource type: {resource.resource_type}")

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -112,8 +113,9 @@ def _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename
         url = signed_download_url(_get_gcs_storage_client(), obj, filename, disposition)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found in storage") from None
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not generate signed URL: {e}") from None
+    except Exception:
+        logger.exception("signed_download_failed file=%s dataset=%s", file_mfid, dataset_mfid)
+        raise HTTPException(status_code=503, detail="Could not generate a download link; try again later") from None
     return url, int(DOWNLOAD_LIFETIME.total_seconds())
 
 
@@ -245,8 +247,9 @@ def initiate_resumable_upload(
             json={"name": gcs_path},
         )
         resp.raise_for_status()
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not initiate GCS resumable upload: {e}")
+    except Exception:
+        logger.exception("resumable_upload_initiate_failed dataset=%s", dsid)
+        raise HTTPException(status_code=503, detail="Could not start the upload; try again later") from None
 
     resumable_uri = resp.headers.get("Location")
     if not resumable_uri:
@@ -283,8 +286,9 @@ def initiate_multipart_upload(
 
     try:
         access_token, token_expiry = _mint_upload_token(dsid)
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not generate GCS upload token: {e}")
+    except Exception:
+        logger.exception("upload_token_failed dataset=%s", dsid)
+        raise HTTPException(status_code=503, detail="Could not start the upload; try again later") from None
 
     upload_id = _create_upload_session(dsid, gcs_path, safe_filename, user_unique_id, body.size)
 
@@ -340,8 +344,11 @@ def complete_resumable_upload(
         try:
             blob = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).blob(us.gcs_path)
             blob.reload()
-        except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Could not verify upload in GCS: {e}")
+        except NotFound:
+            raise HTTPException(status_code=422, detail="Uploaded file not found in storage") from None
+        except Exception:
+            logger.exception("upload_verify_failed dataset=%s upload=%s", dsid, us.upload_id)
+            raise HTTPException(status_code=503, detail="Could not verify the upload; try again later") from None
 
         if us.size is not None and blob.size != us.size:
             raise HTTPException(

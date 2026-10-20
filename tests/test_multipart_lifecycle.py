@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import google_crc32c
 import pytest
+from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
 import app.api.routes.gcs_storage as gcs_storage
@@ -1273,3 +1274,35 @@ def test_legacy_completion_touches_the_dataset(flow, monkeypatch):
     response = client.post("/datasets/ds/upload/complete", json={"upload_id": upload_id, "sha256_hash": SHA})
     assert response.status_code == 200, response.text
     assert dataset_touched(engine)
+
+
+LEAKY = "https://storage.googleapis.com/mf-storage-prod/x signer@mf-crucible.iam.gserviceaccount.com"
+
+
+@pytest.mark.parametrize("failure, status", [(NotFound("gone"), 422), (RuntimeError(LEAKY), 503)])
+def test_legacy_completion_storage_errors_stay_server_side(flow, monkeypatch, failure, status):
+    client, engine, _ = flow
+    monkeypatch.setattr("app.api.routes.gcs_storage.engine", engine)
+    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda dsid: ("token", "2030-01-01T00:00:00+00:00"))
+    upload_id = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA)}).json()["upload_id"]
+
+    def reload():
+        raise failure
+    gcs = MagicMock()
+    gcs.bucket.return_value.blob.return_value = SimpleNamespace(size=len(DATA), reload=reload)
+    monkeypatch.setattr("app.api.routes.gcs_storage._get_gcs_storage_client", lambda: gcs)
+    response = client.post("/datasets/ds/upload/complete", json={"upload_id": upload_id, "sha256_hash": SHA})
+    assert response.status_code == status
+    assert "googleapis" not in response.text and "iam" not in response.text and "gone" not in response.text
+
+
+def test_legacy_initiate_token_errors_stay_server_side(flow, monkeypatch):
+    client, engine, _ = flow
+    monkeypatch.setattr("app.api.routes.gcs_storage.engine", engine)
+
+    def mint(dsid):
+        raise RuntimeError(LEAKY)
+    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", mint)
+    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA)})
+    assert response.status_code == 503
+    assert "googleapis" not in response.text and "iam" not in response.text

@@ -9,8 +9,8 @@ Evidence:
 - [Provider and legacy credential checks](parallel_upload_stage1_results.json)
 - [Firefox upload result](parallel_upload_stage1_browser_results.json)
 - [Bucket configuration and final inventory](parallel_upload_stage1_inventory.json)
-- [Provider probe](../scripts/gcs_multipart_probe.py)
-- [Browser probe](../scripts/gcs_multipart_browser_probe.py)
+- [Provider probe](../../scripts/gcs_multipart_probe.py)
+- [Browser probe](../../scripts/gcs_multipart_browser_probe.py)
 
 No application routes, public API models, database tables, production buckets, or production IAM bindings were changed. Infrastructure created for this experiment is listed below.
 

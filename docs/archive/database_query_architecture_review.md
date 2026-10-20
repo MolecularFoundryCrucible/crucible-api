@@ -2,7 +2,7 @@
 
 Date: 2026-09-02
 
-Status: Historical review. The GET query contract, shared pagination service, deterministic cursors, strict query models, and lifecycle timestamp conversion described as future work here were implemented by production commit `24a24ab9ce74b01f841750df7003091ce4b57119`. Use [GET query contract](get_query_contract.md) and [resource timestamp policy](resource_timestamp_policy.md) for current behavior. Remaining findings require fresh validation against the current implementation before work begins.
+Status: Historical review. The GET query contract, shared pagination service, deterministic cursors, strict query models, and lifecycle timestamp conversion described as future work here were implemented by production commit `24a24ab9ce74b01f841750df7003091ce4b57119`. Use [GET query contract](../get_query_contract.md) and [resource timestamp policy](../resource_timestamp_policy.md) for current behavior. Remaining findings require fresh validation against the current implementation before work begins.
 
 ## Scope
 

@@ -1,54 +1,59 @@
 # Documentation index
 
-The deployed OpenAPI document is authoritative for the HTTP contract. `GET /health/ready` identifies the deployed source commit and database schema revisions. This index distinguishes current guidance from deferred designs and historical rollout records.
+The deployed OpenAPI document is authoritative for the HTTP contract. `GET /health/ready` identifies the deployed source commit and database schema revisions. This index lists current guidance and open follow-ups; completed work lives in [`archive/`](archive/README.md).
 
 ## Current API and client guidance
 
-- [Client migration summary](client_migration_summary.md): consolidated downstream client actions and compatibility behavior.
 - [GET query contract](get_query_contract.md): collection filters, sorting, pagination, anchors, facets, and compatibility behavior.
 - [Permission system API changes](permission_system_api_changes.md): role, access, ownership, membership, and authorization contracts.
 - [Resource identifier routes](resource_identifier_routes.md): canonical MFIDs, human-readable lookups, and compatibility aliases.
-- [Database deletion contract](database_deletion_contract.md): reviewed deletion and direct force-delete behavior.
+- [Database deletion contract](database_deletion_contract.md): deletion requests, direct force-delete, and how records pending deletion behave.
 - [Dataset instrument assignment](dataset_instrument_assignment.md): creation, PATCH compatibility, and atomic reassignment behavior.
 - [Instrument access](instrument_access.md): maintainers on the instrument record, the service-account operator group, and dataset access.
-- [Instrument and project identifier changes, October 2026](instrument_and_slug_changes_2026-10.md): client handoff for live instrument names, instrument maintainers, and case-insensitive project slugs.
+- [Join requests](join_requests_design.md): requesting, reviewing, listing, and faceting project join requests.
 - [Resource timestamp policy](resource_timestamp_policy.md): database-owned creation and modification times and the separate producer timestamp field.
-- [Graph route migration](graph_routes_migration.md): current graph security behavior and deferred route consolidation.
-- [Remote file records](remote_file_records.md): implemented non-GCS file catalog behavior and deferred resource-generic attachment and file-identifier naming.
-- [Storage location confinement](storage_download_design.md): the location rule for GCS file downloads and ingestion, download header policy, and the multipart `_files` object layout.
-- [File replacement](file_replace_design.md): replacing a GCS file's content through the multipart flow, ETags, and retirement of the previous object.
+- [Resource graph API](resource_graph_api.md) and [graph route migration](graph_routes_migration.md): graph security behavior and deferred route consolidation.
+- [Remote file records](remote_file_records.md): non-GCS file catalog behavior.
+- [Signed multipart uploads](multipart_upload_api.md): the multipart upload contract and operator guide.
+- [Storage location confinement](storage_download_design.md): the location rule for GCS downloads and ingestion, download headers, and the multipart `_files` layout.
+- [File replacement](file_replace_design.md): replacing a GCS file's content, ETags, and retirement of the previous object.
+- [Explicit privilege mode](explicit_privilege_mode_design.md): the `Crucible-Privilege-Mode` header and elevated requests.
 - [Route package conventions](../app/api/routes/readme.md): route module and shared dependency guidance.
 
-## Operations and accepted data follow-ups
+## Authentication and operations
 
-- [Hub authentication overview](hub_auth_overview.md): sign-in, the five API tables, refresh, logout, and cleanup.
-- [Hub login integration](hub_login_design.md): implemented contract and single-instance pilot requirements.
+- [Hub authentication overview](hub_auth_overview.md): sign-in, the API tables, refresh, logout, and cleanup.
+- [Hub login integration](hub_login_design.md): the implemented contract and integration requirements.
 - [Hub authentication operations](hub_auth_operations.md): secrets, logging, cleanup, and activation gates.
-- [Hub authentication rollout](hub_auth_release_rollout.md): recorded deployment state and remaining migration steps.
-- [Hub authentication security review](hub_auth_security_review.md): activation blockers, dispositions, and verified controls.
-- [Dependency security assessment](dependency_security_assessment.md): advisory reachability and staged upgrade batches.
+- [Hub authentication security review](hub_auth_security_review.md): dispositions and verified controls.
+- [API-key retrieval and rotation](api_key_lifecycle_followup.md): key deprecations and the authentication cache window.
+- [Database migration guidance](../migrations/README.md): schema and data migration safeguards.
+- [Kubernetes deployment notes](../k8s-conf/README.md): metrics and PodMonitoring setup.
 
-- [Release runbook: staging to main, October 2026](release_2026-10_staging_to_main.md): prerequisites, infrastructure, release-day sequence, smoke tests, and rollback for the multipart and storage release.
-- [Database migration guidance](../migrations/README.md): current schema and data migration safeguards.
-- [Production migration data follow-ups](production_migration_data_followups.md): unresolved legacy instrument references and ownership anomalies from the August 2026 migration.
-- [Kubernetes deployment notes](../k8s-conf/README.md): current metrics and PodMonitoring setup.
+## Reviews and open follow-ups
 
-## Deferred designs and backlog
+- [Codebase, query, and security review, October 2026](codebase_review_2026-10.md): the review and its disposition.
+- [Production migration data follow-ups](production_migration_data_followups.md): remaining ownership anomalies from the August 2026 migration.
+- [Sharing and access data](sharing_collections_followup.md): the collections idea, production access repairs, and records without any grant.
+- [Legacy slug columns](legacy_slug_columns_followup.md): dropping the columns the API no longer reads.
+- [File name uniqueness](file_name_uniqueness_followup.md): the legacy upload path and the existing duplicate records.
+- [Stored objects left behind by file deletion](file_object_cleanup_followup.md)
+- [Message queue publishing](message_queue_publishing_followup.md): ingestion and postprocessing publishing problems.
+- [Metadata search performance](metadata_search_followup.md) and [resource embeddings](resource_embedding_review.md)
+- [S3-compatible storage backends](multipart_storage_backends.md)
+- [`/project_graph` performance](project_graph_performance_followup.md)
+- [Per-worker Prometheus counters](prometheus_multiprocess_followup.md) and [public `/metrics` endpoint](public_metrics_endpoint_followup.md)
+- [Unused Cloud SQL proxy sidecar](cloud_sql_proxy_sidecar_followup.md)
 
-- [API-key retrieval and rotation](api_key_lifecycle_followup.md)
-- [Analysis job route migration](analysis_job_routes_migration.md)
+## Deferred designs
+
 - [`idtype` to `resource` rename](idtype_to_resource_rename.md)
 - [Project archiving](project_archiving.md)
-- [Secure parallel upload migration](secure_parallel_upload_migration.md)
 - [User deactivation](user_deactivation.md)
 - [Skipped route backlog](skipped_routes.md)
 
-These documents describe proposed or deferred work. They are not evidence that a route or schema exists. Confirm current behavior in OpenAPI and the implementation before building a client against a proposal.
+These describe proposed or deferred work, not routes or schema that exist. Confirm current behavior in OpenAPI and the implementation before building a client against a proposal.
 
 ## Architecture reference
 
-- [Permission system design](permission_system_plan.md): implemented role model, historical migration design, and remaining future-work analysis. Use the client and API contract documents above for current HTTP behavior.
-
-## Historical records
-
-Completed rollout plans, superseded audits, and legacy product designs are retained in [`docs/archive/`](archive/README.md). They must not be used as current operational instructions.
+- [Permission system design](permission_system_plan.md): the role model, historical migration design, and remaining future-work analysis. Use the contract documents above for current HTTP behavior.

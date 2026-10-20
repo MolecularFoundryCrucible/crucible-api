@@ -2,7 +2,7 @@
 
 Status: Implemented on branch `feat/instrument-maintainers-and-name-resolution`, targeting `staging`. Not yet deployed. Database changes run only when an operator applies them.
 
-This document summarizes the change for downstream clients and agents (Crucible Hub, Nano Crucible, ingestion clients). The detailed contracts live in [instrument access](instrument_access.md), [dataset instrument assignment](dataset_instrument_assignment.md), and [resource identifier routes](resource_identifier_routes.md).
+This document summarizes the change for downstream clients and agents (Crucible Hub, Nano Crucible, ingestion clients). The detailed contracts live in [instrument access](../instrument_access.md), [dataset instrument assignment](../dataset_instrument_assignment.md), and [resource identifier routes](../resource_identifier_routes.md).
 
 ## Summary
 

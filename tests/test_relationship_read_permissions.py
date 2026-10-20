@@ -151,14 +151,13 @@ def test_sample_dataset_relationships_filter_both_directions(client, db_engine, 
     _authorize(auth_as, group_id)
 
     samples = client.get("/datasets/dataset_accessible/samples")
-    datasets = client.get("/samples/sample_accessible/datasets")
+    datasets = client.get("/datasets", params={"sample_mfid": "sample_accessible"})
 
     assert samples.status_code == 200, samples.text
     assert samples.json()["items"] == []
     assert samples.headers["deprecation"] == "@1788307200"
     assert datasets.status_code == 200, datasets.text
-    assert datasets.json() == []
-    assert datasets.headers["deprecation"] == "@1788307200"
+    assert datasets.json()["items"] == []
 
 
 def test_collection_relationship_filters_are_symmetric(client, db_engine, auth_as):

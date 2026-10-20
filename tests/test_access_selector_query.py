@@ -525,7 +525,7 @@ def test_access_selectors_are_repeated_openapi_arrays():
         for parameter in schema["paths"]["/instruments/search"]["get"]["parameters"]
     }
     assert instrument_search_parameters["owner_id"]["required"] is False
-    assert schema["paths"]["/samples/{sample_mfid}/datasets"]["get"]["deprecated"] is True
+    assert "/samples/{sample_mfid}/datasets" not in schema["paths"]
     assert schema["paths"]["/datasets/{dataset_mfid}/samples"]["get"]["deprecated"] is True
     for schema_name in ("DatasetResponse", "SampleResponse"):
         capabilities = schema["components"]["schemas"][schema_name]["properties"]["capabilities"]

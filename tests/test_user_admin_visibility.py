@@ -855,3 +855,10 @@ def test_search_fields_restricts_search_to_named_fields(client, db_engine, auth_
 def test_search_fields_requires_q(client, db_engine, auth_as):
     auth_as("admin-walk", groups=[], platform_role=PlatformRole.ADMIN)
     assert client.get("/users", params={"search_fields": "username"}).status_code == 422
+
+
+def test_removed_routes_are_gone(client, db_engine, auth_as):
+    _seed(db_engine)
+    auth_as(PERSON)
+    assert client.patch("/users/me", json={"first_name": "X"}).status_code in (403, 404, 405)
+    assert client.get("/samples/any/datasets").status_code == 404

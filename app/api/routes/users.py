@@ -35,7 +35,7 @@ from app.utils.project_utils import sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
 from app.api.routes.projects import PROJECT_PAGINATION
-from app.models.users import AccountProfileUpdate, UserCreate, UserPublicRead, UserRead, UserUpdate
+from app.models.users import UserCreate, UserPublicRead, UserRead, UserUpdate
 from app.models.response_schemas import ApiKeyRead, ApiKeyVerify
 from app.models.core_models import ApiToken
 from app.models.projects import ProjectWithLead
@@ -385,25 +385,6 @@ def get_current_user(auth_res: Annotated[Principal, Depends(authorize_user)]):
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-        return _user_read(auth_res, user, with_capabilities=True)
-
-
-@router.patch("/users/me", response_model=UserRead, deprecated=True, include_in_schema=True)
-def update_current_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_update: AccountProfileUpdate):
-    '''Deprecated: use GET /account/profile and PATCH /account/profile.'''
-    user_unique_id = auth_res.user_id
-    with Session(engine) as session:
-        user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        update_data = user_update.model_dump(exclude_unset=True)
-        for key, value in update_data.items():
-            setattr(user, key, value)
-
-        session.add(user)
-        session.commit()
-        session.refresh(user)
         return _user_read(auth_res, user, with_capabilities=True)
 
 

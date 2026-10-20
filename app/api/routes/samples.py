@@ -4,7 +4,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 import os
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from sqlalchemy import exists, func, join
 from sqlalchemy.orm import joinedload
 from sqlmodel import and_, or_, Session, select
@@ -44,7 +44,7 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import add_or_update, assert_mfid_available, assert_not_pending_deletion, deletion_filter_for, select_active, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public
+from app.utils.sql_utils import add_or_update, assert_mfid_available, assert_not_pending_deletion, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public
 
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
@@ -60,7 +60,6 @@ from app.services.resource_pagination import (
 
 router = APIRouter(tags=["samples"])
 engine = get_engine()
-RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
 SAMPLE_PAGINATION = ResourcePaginationSpec(
     kind="sample",
     unique_id_column=Sample.unique_id,
@@ -665,78 +664,6 @@ def read_sample(
                 include_datasets=params.include_datasets,
             ),
         )
-
-
-@router.get("/samples/{sample_mfid}/datasets", deprecated=True)
-def list_sample_datasets(
-    sample_id: SampleMfid,
-    auth_res: Annotated[Principal, Depends(authorize_user)],
-    request: Request,
-    response: Response,
-    include_metadata: bool = False,
-    limit: Optional[int] = None,
-):
-    '''
-    Returns a list of all datasets linked to a given sample.
-    Deprecated: use GET /datasets?sample_mfid={sample_id}.
-    '''
-    response.headers["Deprecation"] = RELATIONSHIP_ROUTE_DEPRECATION
-
-    params_dict = dict(request.query_params)
-    keyword_filter = params_dict.pop("keyword", None)
-
-    with Session(engine) as session:
-        # Verify sample exists
-        sample = session.exec(select_active(Sample, sample_id)).one_or_none()
-
-        if sample is None:
-            raise HTTPException(status_code=404, detail="Sample not found")
-        require_permission(session, auth_res, sample_id, Permission.READ)
-
-        auth_filter = permission_filter(auth_res, Dataset, Permission.READ)
-        deletion_filter = deletion_filter_for(Dataset)
-        if include_metadata:
-            query = (
-                    select(Dataset, ScientificMetadataBinary.scientific_metadata)
-                    .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Dataset.unique_id, isouter=True)
-                    .filter(auth_filter)
-                    .where(deletion_filter)
-                )
-
-        else:
-            query = select(Dataset).filter(auth_filter).where(deletion_filter)
-
-        if keyword_filter:
-            query = generate_kw_query(session, query, keyword_filter)
-
-        for key, value in params_dict.items():
-            if hasattr(Dataset, key):
-                query = query.where(getattr(Dataset, key) == value)
-
-        full_query = query.join(DatasetSampleLink,
-                                DatasetSampleLink.dataset_id == Dataset.id
-                                ).where(
-                                    DatasetSampleLink.sample_id == sample.id
-                                ).distinct()
-
-        if limit is not None:
-            full_query = full_query.limit(limit)
-
-        rows = session.exec(full_query).all()
-        datasets = [row[0] for row in rows] if include_metadata else list(rows)
-        projects = resolve_project_mfids_to_references((d.project_mfid for d in datasets), session)
-        instruments = resolve_instrument_mfids_to_references((d.instrument_mfid for d in datasets), session)
-
-        def item(dataset):
-            project = projects.get(dataset.project_mfid)
-            return {
-                **dataset.model_dump(),
-                **dataset_instrument_fields(dataset, instruments.get(dataset.instrument_mfid)),
-                "project_id": project.project_id if project else None,
-            }
-        if include_metadata:
-            return [{**item(dataset), "scientific_metadata": sci_md} for dataset, sci_md in rows]
-        return [item(dataset) for dataset in datasets]
 
 
 @router.get("/samples/{child_sample_mfid}/parents", response_model=PaginatedResponse[SampleRead])

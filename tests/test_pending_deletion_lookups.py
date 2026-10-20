@@ -41,7 +41,6 @@ def records(client, db_engine, auth_as):
     ("/samples", {"dataset_mfid": "{ds}"}),
     ("/samples/facets", {"dataset_mfid": "{ds}", "field": "project"}),
     ("/datasets/facets", {"sample_mfid": "{sm}", "field": "project"}),
-    ("/samples/{sm}/datasets", {}),
     ("/samples/{sm}/parents", {}),
     ("/samples/{sm}/children", {}),
     (f"/users/{ME}/datasets/{{ds}}", {}),

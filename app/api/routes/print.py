@@ -34,6 +34,13 @@ STATUS_STALE_THRESHOLD = 90
 # bounds a dead/unreachable broker connection.
 STATUS_WAIT_TIMEOUT = 3
 
+# Ceiling for the broker's SUBACK when listing printers; normally one
+# network round trip, so this only bounds a slow/unreachable broker.
+PRINTER_LIST_WAIT = 0.5
+# Small fixed buffer after SUBACK for the broker to finish replaying
+# retained messages for every printer_id matched by the wildcard.
+PRINTER_LIST_REPLAY_BUFFER = 0.15
+
 _PRINTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
@@ -51,6 +58,18 @@ class BarcodePrintResponse(BaseModel):
     ts: float
     status: Literal["ok", "error", "timeout"]
     detail: Optional[str] = None
+
+
+class PrinterStatus(BaseModel):
+    printer_id: str
+    online: bool
+    hostname: Optional[str] = None
+    ip: Optional[str] = None
+    ts: Optional[float] = None
+
+
+class PrinterListResponse(BaseModel):
+    printers: list[PrinterStatus]
 
 
 def _validate_printer_id(printer_id: str) -> str:
@@ -170,6 +189,81 @@ def _offline_detail(status: Optional[dict]) -> Optional[str]:
     if not _printer_online(status):
         return "Requested printer not currently online. Check spelling and the crucible-printer dashboard."
     return None
+
+
+def _list_printer_statuses() -> dict[str, dict]:
+    """Collect the retained status message for every printer_id that has
+    ever published one, via a crucible-printer/+/status wildcard subscribe.
+
+    Waits for the broker's SUBACK (confirming the subscription is live)
+    rather than a flat sleep, then a short fixed buffer for the broker to
+    finish replaying retained messages -- faster than a worst-case timeout
+    in the common case, while still correct if the broker is slow.
+
+    Returns {printer_id: status_dict}. A printer that has never published a
+    status (e.g. configured in inventory but never powered on) is not
+    discoverable this way and will not appear -- there is no separate
+    registry of printer_ids to fall back on.
+    """
+    mqtt_password = get_secret("MQTT_PASSWORD", "mqtt-crucible-printers-passwd/versions/1")
+
+    statuses: dict[str, dict] = {}
+    subscribed = threading.Event()
+
+    def on_message(client, userdata, msg):
+        parts = msg.topic.split("/")
+        if len(parts) != 3:
+            return
+        printer_id = parts[1]
+        try:
+            data = json.loads(msg.payload)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return
+        statuses[printer_id] = data
+
+    def on_subscribe(client, userdata, mid, reason_code_list, properties):
+        subscribed.set()
+
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"crucible-api-list-{uuid.uuid4()}")
+    client.username_pw_set(MQTT_USERNAME, mqtt_password)
+    client.tls_set()
+    client.on_message = on_message
+    client.on_subscribe = on_subscribe
+    client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
+    client.subscribe("crucible-printer/+/status", qos=1)
+    client.loop_start()
+    try:
+        subscribed.wait(timeout=PRINTER_LIST_WAIT)
+        time.sleep(PRINTER_LIST_REPLAY_BUFFER)
+    finally:
+        client.loop_stop()
+        client.disconnect()
+
+    return statuses
+
+
+@router.get("/print/printers", response_model=PrinterListResponse)
+def list_printers(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+):
+    '''Lists printers discovered from their retained MQTT status heartbeat.
+
+    Only printers that have published at least one status message appear;
+    there is no separate registry of valid printer_id values. `online`
+    uses the same staleness rule as `POST /print/barcode`'s `detail` field.
+    '''
+    statuses = _list_printer_statuses()
+    printers = [
+        PrinterStatus(
+            printer_id=printer_id,
+            online=_printer_online(status),
+            hostname=status.get("hostname"),
+            ip=status.get("ip"),
+            ts=status.get("ts"),
+        )
+        for printer_id, status in sorted(statuses.items())
+    ]
+    return PrinterListResponse(printers=printers)
 
 
 @router.post("/print/barcode", response_model=BarcodePrintResponse, status_code=200)

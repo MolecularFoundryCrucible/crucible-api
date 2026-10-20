@@ -735,7 +735,7 @@ PAGINATION_USERS = [
     ("0000-0009-0000-0004", "Dee", "Jones", "Dee", "dee@x.com"),
     ("0000-0009-0000-0005", "eve", "SMITH", None, None),
     ("0000-0009-0000-0006", "Fay", "Adams", "fay", "fay@x.com"),
-    ("0000-0009-0000-0007", "Gus", "smith", "ann", "gus@x.com"),
+    ("0000-0009-0000-0007", "Gus", "smith", "Ann", "gus@x.com"),
 ]
 
 

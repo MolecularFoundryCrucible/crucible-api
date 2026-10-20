@@ -227,14 +227,17 @@ class AccessGroup(SQLModel, table=True):
 
 
 class User(SQLModel, table=True):
-    __table_args__ = (Index("ux_user_email_lower", func.lower(text("email")), unique=True, postgresql_where=text("email IS NOT NULL")),)
+    __table_args__ = (
+        Index("ux_user_email_lower", func.lower(text("email")), unique=True, postgresql_where=text("email IS NOT NULL")),
+        Index("ix_user_username", "username", unique=True, postgresql_where=text("username IS NOT NULL"), sqlite_where=text("username IS NOT NULL")),
+    )
     id: Optional[int] = Field(default=None, primary_key=True)
     first_name: str
     last_name: str
     email: Optional[str]
     unique_id: str = Field(sa_column=Column("orcid", String, index=True, unique=True))
     is_service_account: Optional[bool] = Field(default=False)
-    username: Optional[str] = Field(default=None, max_length=32, index=True)
+    username: Optional[str] = Field(default=None, max_length=32)
     # Platform-wide bypass, deliberately not a group. Postgres enum platform_role.
     platform_role: Optional[str] = Field(default="none")
     last_active_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
@@ -356,6 +359,7 @@ class ScientificMetadataBinary(SQLModel, table = True):
     )
     
     __table_args__ = (
+        UniqueConstraint("unique_id", name="scientific_metadata_new_unique_id_key"),
         Index(
             "ix_scientific_metadata_fts",
             func.to_tsvector(
@@ -494,11 +498,12 @@ class DeletionAuditLog(SQLModel, table=True):
 class Instrument(SQLModel, table=True):
     __table_args__ = (
         Index("ux_instrument_instrument_id_lower", func.lower(text("instrument_id")), unique=True),
+        Index("ix_instrument_instrument_id", "instrument_id", unique=True, postgresql_where=text("instrument_id IS NOT NULL"), sqlite_where=text("instrument_id IS NOT NULL")),
     )
 
     id: int = Field(default=None, primary_key=True)
     unique_id: Optional[str] = Field(default_factory=get_mfid_value, index=True, unique=True)
-    instrument_id: Optional[str] = Field(default=None, index=True, unique=True)
+    instrument_id: Optional[str] = Field(default=None)
     other_id: Optional[str]
     other_id_source: Optional[str]
     instrument_name: str

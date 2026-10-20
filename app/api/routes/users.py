@@ -377,17 +377,6 @@ def resolve_users(
         return results
 
 
-@router.get("/users/me", response_model=UserRead, deprecated=True, include_in_schema=True)
-def get_current_user(auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Deprecated: use GET /account/profile.'''
-    user_unique_id = auth_res.user_id
-    with Session(engine) as session:
-        user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        return _user_read(auth_res, user, with_capabilities=True)
-
-
 @router.get("/users/search", response_model=List[UserPublicRead])
 def search_users(
     auth_res: Annotated[Principal, Depends(authorize_user)],

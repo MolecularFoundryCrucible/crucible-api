@@ -188,18 +188,6 @@ def test_exact_email_query_populates_capabilities_for_self(client, db_engine, au
     assert _capabilities(item)["can_view_private"] is True
 
 
-def test_deprecated_me_route_populates_role_and_capabilities(client, db_engine, auth_as):
-    _seed(db_engine)
-    auth_as(PERSON)
-
-    response = client.get("/users/me")
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["platform_role"] == "none"
-    assert _capabilities(body)["can_view_private"] is True
-
-
 def test_admin_service_account_target_gets_no_role_change_flag(client, db_engine, auth_as):
     _seed(db_engine)
     auth_as(ADMIN, platform_role=PlatformRole.ADMIN)
@@ -270,7 +258,6 @@ def test_no_capabilities_key_on_any_user_response(client, db_engine, auth_as, mo
         client.get("/users"),
         client.get(f"/users/{PERSON}"),
         client.get("/users/by-username/alice_researcher"),
-        client.get("/users/me"),
         client.get("/users/search", params={"q": "alice"}),
         client.post("/users/resolve", json={"usernames": ["alice_researcher"]}),
         client.get("/account"),
@@ -860,5 +847,6 @@ def test_search_fields_requires_q(client, db_engine, auth_as):
 def test_removed_routes_are_gone(client, db_engine, auth_as):
     _seed(db_engine)
     auth_as(PERSON)
+    assert client.get("/users/me").status_code == 404
     assert client.patch("/users/me", json={"first_name": "X"}).status_code in (403, 404, 405)
     assert client.get("/samples/any/datasets").status_code == 404

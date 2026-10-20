@@ -41,6 +41,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Message queue publishing](message_queue_publishing_followup.md): ingestion and postprocessing publishing problems.
 - [Metadata search performance](metadata_search_followup.md) and [resource embeddings](resource_embedding_review.md)
 - [S3-compatible storage backends](multipart_storage_backends.md)
+- [Printer registry](printer_registry_followup.md): a database-backed printer list with search, and printing as an optional integration.
 - [`/project_graph` performance](project_graph_performance_followup.md)
 - [Per-worker Prometheus counters](prometheus_multiprocess_followup.md) and [public `/metrics` endpoint](public_metrics_endpoint_followup.md)
 - [Unused Cloud SQL proxy sidecar](cloud_sql_proxy_sidecar_followup.md)

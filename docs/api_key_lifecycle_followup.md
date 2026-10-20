@@ -26,4 +26,12 @@ The legacy browser `GET /auth/apikey` flow is unchanged.
 
 - Retire reading existing keys after clients have moved to regeneration, then store only key hashes. That needs its own storage migration and compatibility plan.
 - Regeneration revokes the previous key in the database and in the issuing worker's authentication cache; other workers may accept the old key for up to `AUTH_CACHE_TTL` (60 seconds by default).
+
+## Authentication cache window
+
+Accepted on 2026-10-20 as a bounded trade-off. API-key callers are resolved once and cached per worker process (`_auth_cache` in `app/utils/auth_utils.py`) for `AUTH_CACHE_TTL` seconds, 60 by default, to keep database connections off the hot path. Hub sessions are not cached; they load the principal on every request.
+
+For up to the TTL after a change, requests with an API key can still act with the caller's previous standing. This applies to key revocation and regeneration, platform-role demotion (users and service accounts), project membership removal or demotion, instrument service-account unbinding, and access group changes. Revocation clears the entry only in the worker that handled it; nothing clears other workers or pods before expiry, and role and membership changes clear nothing.
+
+Lowering `AUTH_CACHE_TTL` shrinks the window at the cost of more principal loads; measure connection-pool load before changing it. If immediate revocation becomes a requirement, the planned mechanism is a Postgres `LISTEN/NOTIFY` channel: every change to a key, platform role, or group membership notifies, and each worker evicts that user's cached principals.
 - Decide whether `max_age` should also be verified against `auth_time` at the callback, rather than only enforcing freshness at credential creation.

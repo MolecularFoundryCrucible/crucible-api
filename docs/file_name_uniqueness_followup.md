@@ -25,3 +25,7 @@ SELECT d.unique_id, f.filename, count(*)
 FROM associatedfile f JOIN dataset d ON d.id = f.dataset_id
 GROUP BY 1, 2 HAVING count(*) > 1;
 ```
+
+## Legacy GCS filename shapes
+
+Production GCS records also hold filenames that the non-GCS rules (`remote_file_records.md`) would reject (counted 2026-10-20): 149,514 start with `/`, mostly the original instrument path (`/home/...` 105,526, `/mnt/...` 39,054, `/data/...` 4,928; the stored object usually keeps only the base name), 1,393 contain `.` segments (consumer output such as `./generated_files/...`), and 1 contains `//`. They are descriptive and do not affect downloads, which use `storage_path`. Normalizing them could lose the recorded source path and create new duplicate names, so decide them together with the duplicate cleanup before extending the path rules or the unique index to GCS.

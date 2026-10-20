@@ -123,6 +123,14 @@ def update_file(
         assert_not_pending_deletion(session, ds.unique_id)
 
         changed = updates.model_dump(exclude_unset=True)
+        if "storage_backend" in changed and (changed["storage_backend"] == "gcs") != (af.storage_backend == "gcs"):
+            raise HTTPException(status_code=409, detail={"code": "storage_backend_class_change", "message": "A file cannot move between GCS and non-GCS storage"})
+        if "filename" in changed and changed["filename"] != af.filename:
+            if af.storage_backend != "gcs":
+                raise HTTPException(status_code=409, detail={"code": "filename_immutable", "message": "The filename of a non-GCS file is its identity and cannot change"})
+            taken = session.exec(select(AssociatedFile.mfid).where(AssociatedFile.dataset_id == af.dataset_id, AssociatedFile.filename == changed["filename"])).first()
+            if taken is not None:
+                raise HTTPException(status_code=409, detail={"code": "filename_exists", "file_mfid": taken, "message": "Filename already exists"})
         if af.storage_generation is not None:
             target_backend = changed.get("storage_backend", af.storage_backend)
             target_path = changed.get("storage_path", af.storage_path)

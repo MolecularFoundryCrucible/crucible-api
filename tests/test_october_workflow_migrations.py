@@ -120,3 +120,36 @@ def test_dropping_legacy_slug_foreign_keys_lets_projects_be_renamed():
         finally:
             transaction.rollback()
     engine.dispose()
+
+
+@pytest.mark.skipif(not os.getenv("CRUCIBLE_TEST_PG_URL"), reason="requires isolated test PostgreSQL")
+@pytest.mark.parametrize("bad_row", [None, "('/abs', 'globus', 1)", "('dup', 'globus', 1), ('dup', 'globus', 1)"])
+def test_non_gcs_filename_identity_migration(bad_row):
+    migration = _load("20261020_b8f2d6e41c07_non_gcs_filename_identity.py")
+    engine = create_engine(os.environ["CRUCIBLE_TEST_PG_URL"])
+    schema = "test_filename_identity_" + uuid4().hex
+    with engine.connect() as connection:
+        transaction = connection.begin()
+        try:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+            connection.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+            connection.execute(text("CREATE TABLE associatedfile (id serial PRIMARY KEY, filename varchar NOT NULL, storage_backend varchar NOT NULL, dataset_id integer NOT NULL)"))
+            connection.execute(text("INSERT INTO associatedfile (filename, storage_backend, dataset_id) VALUES ('/home/x/scan.tif', 'gcs', 1), ('/home/x/scan.tif', 'gcs', 1), ('ok/file', 'globus', 1)"))
+            if bad_row:
+                connection.execute(text(f"INSERT INTO associatedfile (filename, storage_backend, dataset_id) VALUES {bad_row}"))
+            with Operations.context(MigrationContext.configure(connection)):
+                if bad_row:
+                    with pytest.raises(RuntimeError):
+                        migration.upgrade()
+                    return
+                migration.upgrade()
+                for statement in ("INSERT INTO associatedfile (filename, storage_backend, dataset_id) VALUES ('ok/file', 'globus', 1)",
+                                  "INSERT INTO associatedfile (filename, storage_backend, dataset_id) VALUES ('../x', 'globus', 2)",
+                                  "INSERT INTO associatedfile (filename, storage_backend, dataset_id) VALUES (E'a\\x01b', 'globus', 2)"):
+                    _fails(connection, statement)
+                connection.execute(text("INSERT INTO associatedfile (filename, storage_backend, dataset_id) VALUES ('/home/x/scan.tif', 'gcs', 1)"))
+                migration.downgrade()
+                connection.execute(text("INSERT INTO associatedfile (filename, storage_backend, dataset_id) VALUES ('ok/file', 'globus', 1)"))
+        finally:
+            transaction.rollback()
+    engine.dispose()

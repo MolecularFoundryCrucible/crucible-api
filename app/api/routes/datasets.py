@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import exists, func, join
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from sqlmodel import and_, or_, Session, select
@@ -1380,8 +1381,10 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
                         associated_file: AssociatedFileCreate):
     '''
     Adds a file record to a dataset.
-    Filenames are unique within a dataset. Repeating a filename with the same sha256_hash and size returns the existing record unchanged;
-    repeating it with different content returns 409 `filename_exists` with the existing file's MFID and ETag.
+    Filenames are unique within a dataset, so identical content under different filenames gets separate records.
+    Repeating a filename with the same sha256_hash, size, and storage_backend returns the existing record unchanged
+    (storage_path and access_note are not compared); any other difference returns 409 `filename_exists` with the
+    existing file's MFID and ETag. Non-GCS filenames must be canonical relative POSIX paths (422 otherwise).
     Use POST /datasets/{dataset_mfid}/files/{file_id}/ingest to trigger ingestion.
     Requires contributor access.
     '''
@@ -1393,25 +1396,41 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
         require_permission(session, auth_res, dsid, Permission.CREATE)
         assert_not_pending_deletion(session, dsid)
 
-        existing = session.exec(
-            select(AssociatedFile).where(
-                AssociatedFile.dataset_id == ds.id,
-                AssociatedFile.filename == associated_file.filename,
-            )
-        ).first()
-        if existing is not None:
-            if existing.sha256_hash == associated_file.sha256_hash and existing.size == associated_file.size:
-                return AssociatedFileRead.model_validate(existing, update={"dataset_mfid": ds.unique_id})
+        dataset_pk = ds.id
+
+        def same_name():
+            return session.exec(
+                select(AssociatedFile).where(
+                    AssociatedFile.dataset_id == dataset_pk,
+                    AssociatedFile.filename == associated_file.filename,
+                )
+            ).first()
+
+        def retry_or_conflict(existing):
+            if all(getattr(existing, field) == getattr(associated_file, field) for field in ("sha256_hash", "size", "storage_backend")):
+                return AssociatedFileRead.model_validate(existing, update={"dataset_mfid": dsid})
             raise HTTPException(409, {"code": "filename_exists", "file_mfid": existing.mfid, "etag": file_etag(existing.storage_path, existing.storage_generation, existing.sha256_hash, existing.size), "message": "Filename already exists"})
+
+        existing = same_name()
+        if existing is not None:
+            return retry_or_conflict(existing)
 
         if multipart.filename_reserved(session, dsid, associated_file.filename):
             raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
 
         af_obj = AssociatedFile(
             **associated_file.model_dump(),
-            dataset_id=ds.id,
+            dataset_id=dataset_pk,
         )
         session.add(af_obj)
+        try:
+            session.flush()
+        except IntegrityError:
+            session.rollback()
+            existing = same_name()
+            if existing is None:
+                raise
+            return retry_or_conflict(existing)
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:

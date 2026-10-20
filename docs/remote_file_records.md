@@ -20,6 +20,17 @@ Let a dataset's `AssociatedFile` entries catalog files that live outside GCS —
 
 Existing rows were migrated to `storage_backend='gcs'` through the column default, preserving their behavior.
 
+## Identity and filenames
+
+A file's identity in its dataset is its `filename` (from PR #335 by Peter Doak, extended to every backend):
+
+- `POST /datasets/{dataset_mfid}/files` with an existing filename returns the existing record when `sha256_hash`, `size`, and `storage_backend` match (`storage_path` and `access_note` are not compared and are not updated), and `409 filename_exists` otherwise. Identical content under different filenames gets separate records, so a dataset like `freq_001/kpoints.json`, `freq_002/kpoints.json` keeps every file.
+- Non-GCS filenames must be canonical relative POSIX paths: not empty, no leading, trailing, or repeated `/`, no `.` or `..` components, no ASCII control characters (U+0001 to U+001F, U+007F). Invalid names return `422`; nothing is normalized. Clients rebuild datasets on disk from these paths.
+- The database enforces both for non-GCS rows: check constraints on the path and a partial unique index on `(dataset_id, filename)`, which also settles two concurrent posts of the same name (migration `b8f2d6e41c07`).
+- `PATCH /files/{file_id}` cannot change a non-GCS filename (`409 filename_immutable`), cannot move a record between GCS and non-GCS (`409 storage_backend_class_change`), and cannot rename a GCS file onto a filename already used in the dataset (`409 filename_exists`).
+
+GCS filenames keep their legacy shapes: many production records store the original instrument path (for example `/mnt/gcs/...` or `/home/...`) and some consumer-generated files start with `./`. The path rules and the database index apply to GCS only after those and the duplicate records are resolved (`file_name_uniqueness_followup.md`).
+
 ## API Behavior
 
 - `GET /files/{file_id}/download_link` and `GET /datasets/{dataset_mfid}/download_links` return a `null` URL for non-GCS files, with **no change to either route's response shape** — a client checks `storage_backend` (via `GET /files/{file_id}` / `GET /datasets/{dataset_mfid}/files`) to know what to expect, rather than the download-link routes growing new fields.

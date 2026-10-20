@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import join
 from sqlmodel import Session, select
 
+from app.models.access import EntryCapabilities
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.core_models import (
     AccessGroup,
@@ -24,15 +25,16 @@ from app.models.projects import ProjectWithLead
 from app.models.samples import SampleResponse
 from app.models.users import UserPublicRead
 from app.utils.auth_utils import (
+    entry_capabilities,
     fetch_acl_rows,
     require_permission,
     resource_capabilities,
 )
-from app.services.resource_access import load_member_grants, may_view_members, record_role
-from app.utils.deletion_utils import deletion_blockers
+from app.services.resource_access import load_member_grants, may_view_members, record_role, with_grant_capabilities
+from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
-from app.utils.permissions import Permission, Principal, Role
+from app.utils.permissions import Permission, Principal, Role, effective_role
 from app.utils.project_utils import resolve_project_mfids_to_references
 from app.utils.sql_utils import get_active_deletion_request
 
@@ -103,6 +105,15 @@ def load_project_members(session: Session, project_id: str) -> list[AccessGroupM
     ]
 
 
+def with_member_capabilities(session: Session, principal: Principal, project_mfid: str, members: list[AccessGroupMemberRead]) -> list[AccessGroupMemberRead]:
+    actor = effective_role(principal, fetch_acl_rows(session, project_mfid))
+    for member in members:
+        current = Role.from_db(member.role) if member.role in {role.db_value for role in Role} else None
+        member.capabilities = EntryCapabilities(**entry_capabilities(
+            principal, actor, current, floor=Role.EDITOR, is_self=member.unique_id == principal.user_id))
+    return members
+
+
 def load_dataset_detail(
     session: Session,
     principal: Principal,
@@ -143,7 +154,7 @@ def load_dataset_detail(
     return DatasetResponse.model_validate({
         **dataset.model_dump(),
         **dataset_instrument_fields(dataset, instrument_reference),
-        "project_id": project_reference.project_id if project_reference else dataset.project_id,
+        "project_id": project_reference.project_id if project_reference else None,
         "project": project_reference,
         "public": resource.public if resource else dataset.public,
         "creation_time": resource.creation_time if resource else None,
@@ -219,14 +230,14 @@ def load_sample_detail(
     )
     return SampleResponse.model_validate({
         **sample.model_dump(),
-        "project_id": project_references[sample.project_mfid].project_id if sample.project_mfid in project_references else sample.project_id,
+        "project_id": project_references[sample.project_mfid].project_id if sample.project_mfid in project_references else None,
         "project": project_references.get(sample.project_mfid),
         "public": resource.public if resource else False,
         "datasets": [
             DatasetRead.model_validate({
                 **dataset.model_dump(),
                 **dataset_instrument_fields(dataset, instrument_references.get(dataset.instrument_mfid)),
-                "project_id": project_references[dataset.project_mfid].project_id if dataset.project_mfid in project_references else dataset.project_id,
+                "project_id": project_references[dataset.project_mfid].project_id if dataset.project_mfid in project_references else None,
                 "project": project_references.get(dataset.project_mfid),
             })
             for dataset in readable_datasets
@@ -290,10 +301,10 @@ def load_instrument_detail(
             principal,
             resource_id,
             acl_rows=acl_rows,
-            can_delete=not deletion_blockers(session, "instrument", resource_id),
+            can_delete=lambda: not has_deletion_blockers(session, "instrument", resource_id),
         ),
         "deletion_request": _deletion_request_payload(deletion_request),
-        "members": load_member_grants(session, resource_id)
+        "members": with_grant_capabilities(session, principal, resource_id, load_member_grants(session, resource_id))
         if options.include_members and may_view_members(session, principal, resource_id) else None,
         "role": role.db_value if (role := record_role(principal, acl_rows)) is not None else None,
     })
@@ -322,7 +333,7 @@ def load_project_detail(
     return ProjectWithLead(
         **project.model_dump(),
         lead=lead,
-        members=load_project_members(session, project.project_id)
+        members=with_member_capabilities(session, principal, project.unique_id, load_project_members(session, project.project_id))
         if options.include_members and is_member else None,
         creation_time=resource.creation_time if resource else None,
         modification_time=resource.modification_time if resource else None,
@@ -336,9 +347,8 @@ def load_project_detail(
             principal,
             resource_id,
             manage_access_floor=Role.EDITOR,
-            allow_peer_grants=False,
             status_permission=Permission.EDIT,
-            can_delete=not deletion_blockers(session, "project", resource_id),
+            can_delete=lambda: not has_deletion_blockers(session, "project", resource_id),
         ),
         deletion_request=_deletion_request_payload(deletion_request),
         role=role.db_value if (role := principal.role_in(project.unique_id)) is not None else None,

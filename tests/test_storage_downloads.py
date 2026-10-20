@@ -197,3 +197,17 @@ def test_retire_object_missing_object_is_false():
     blob.reload.side_effect = NotFound("gone")
     assert retire_object(client, "bucket", f"{DS}/a.txt", None, WHEN) is False
     blob.patch.assert_not_called()
+
+
+def test_signing_errors_stay_server_side(monkeypatch):
+    from fastapi import HTTPException
+    from app.api.routes import gcs_storage
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("https://iamcredentials.googleapis.com signer@mf-crucible.iam.gserviceaccount.com")
+    monkeypatch.setattr(gcs_storage, "signed_download_url", fail)
+    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: MagicMock())
+    with pytest.raises(HTTPException) as raised:
+        gcs_storage._signed_download("file", DS, f"mf-storage-prod/{DS}/scan.tif", None, "scan.tif")
+    assert raised.value.status_code == 503
+    assert "googleapis" not in raised.value.detail and "iam" not in raised.value.detail

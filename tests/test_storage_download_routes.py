@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
@@ -148,6 +149,30 @@ def test_backfill_skips_multipart_objects(db_engine, monkeypatch):
     assert gcs_storage._determine_storage_path(DS, "scan.pdf") == f"mf-storage-prod/{DS}/raw/scan.pdf"
 
 
+def _listing(monkeypatch, *names):
+    client = MagicMock()
+    client.bucket.return_value.list_blobs.return_value = [SimpleNamespace(name=f"{DS}/{name}") for name in names]
+    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: client)
+
+
+def test_backfill_needs_a_whole_name_match(monkeypatch):
+    _listing(monkeypatch, "foobar.tif", "raw/bar.tif")
+    assert gcs_storage._determine_storage_path(DS, "bar.tif") == f"mf-storage-prod/{DS}/raw/bar.tif"
+    _listing(monkeypatch, "foobar.tif")
+    with pytest.raises(HTTPException) as error:
+        gcs_storage._determine_storage_path(DS, "bar.tif")
+    assert error.value.status_code == 404
+
+
+def test_backfill_prefers_the_exact_path_and_refuses_to_guess(monkeypatch):
+    _listing(monkeypatch, "a/bar.tif", "bar.tif", "b/bar.tif")
+    assert gcs_storage._determine_storage_path(DS, "bar.tif") == f"mf-storage-prod/{DS}/bar.tif"
+    _listing(monkeypatch, "a/bar.tif", "b/bar.tif")
+    with pytest.raises(HTTPException) as error:
+        gcs_storage._determine_storage_path(DS, "bar.tif")
+    assert error.value.status_code == 409
+
+
 def _ingestion_requests(db_engine):
     with Session(db_engine) as session:
         return session.exec(select(IngestionRequest)).all()
@@ -192,8 +217,8 @@ def test_patch_rejects_gcs_content_fields(client, db_engine, admin, body, detail
 def test_patch_cannot_switch_a_located_record_to_gcs(client, db_engine, admin):
     file_mfid = _file(db_engine, f"mf-storage-prod/{OTHER}/secret.pdf", backend="globus")
     response = client.patch(f"/files/{file_mfid}", json={"storage_backend": "gcs"})
-    assert response.status_code == 422
-    assert response.json()["detail"] == PATH_ERROR
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "storage_backend_class_change"
 
 
 def test_patch_echoing_current_values_is_accepted(client, db_engine, admin):
@@ -233,8 +258,8 @@ def test_patch_cannot_switch_a_published_multipart_record_off_gcs(client, db_eng
     monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", MULTIPART)
     file_mfid = _file(db_engine, f"{MULTIPART}/{DS}/_files/abc", generation="7")
     response = client.patch(f"/files/{file_mfid}", json={"storage_backend": "local"})
-    assert response.status_code == 422
-    assert response.json()["detail"] == PATH_ERROR
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "storage_backend_class_change"
 
 
 def test_patch_may_rename_a_published_multipart_record(client, db_engine, admin, monkeypatch):
@@ -248,14 +273,12 @@ def test_patch_may_rename_a_published_multipart_record(client, db_engine, admin,
         assert af.storage_generation == "7"
 
 
-def test_legacy_record_round_trip_backend_switch_then_back_to_gcs_is_refused(client, db_engine, admin):
+def test_legacy_gcs_record_cannot_switch_to_a_non_gcs_backend(client, db_engine, admin):
     file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
     switched = client.patch(f"/files/{file_mfid}", json={"storage_backend": "local"})
-    assert switched.status_code == 200, switched.text
-    assert switched.json()["storage_path"] == f"mf-storage-prod/{DS}/scan.pdf"
-    back = client.patch(f"/files/{file_mfid}", json={"storage_backend": "gcs"})
-    assert back.status_code == 422
-    assert back.json()["detail"] == PATH_ERROR
+    assert switched.status_code == 409
+    assert switched.json()["detail"]["code"] == "storage_backend_class_change"
+    assert client.get(f"/files/{file_mfid}").json()["storage_backend"] == "gcs"
 
 
 def test_catalog_only_record_lifecycle_is_unchanged(client, db_engine, admin):
@@ -263,6 +286,9 @@ def test_catalog_only_record_lifecycle_is_unchanged(client, db_engine, admin):
     created = client.post(f"/datasets/{DS}/files", json={"filename": "remote.h5", "size": 42, "sha256_hash": "e" * 64, "storage_backend": "globus", "storage_path": "globus://endpoint/a/remote.h5", "access_note": "on NERSC"})
     assert created.status_code == 200, created.text
     file_mfid = created.json()["mfid"]
+    again = client.post(f"/datasets/{DS}/files", json={"filename": "remote.h5", "size": 43, "sha256_hash": "f" * 64, "storage_backend": "globus"})
+    assert again.status_code == 409
+    assert again.json()["detail"]["file_mfid"] == file_mfid
     updated = client.patch(f"/files/{file_mfid}", json={"storage_path": "/global/cfs/b/remote.h5", "storage_backend": "local", "size": 43, "sha256_hash": "f" * 64})
     assert updated.status_code == 200, updated.text
     assert updated.json()["storage_path"] == "/global/cfs/b/remote.h5"

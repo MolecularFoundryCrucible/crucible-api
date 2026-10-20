@@ -1,14 +1,15 @@
+from sqlalchemy import update
 from sqlmodel import Session, select
 
 from app.models.core_models import AssociatedFile, Dataset, DatasetSampleLink, Resource, Sample
 from app.utils.permissions import PlatformRole
 
 
-def _resource_pair(db_engine, *, project_mfid="project-one"):
+def _resource_pair(db_engine, *, project_mfid="project-one", dataset_name="Dataset One"):
     with Session(db_engine) as session:
         dataset = Dataset(
             unique_id="dataset-one",
-            dataset_name="Dataset One",
+            dataset_name=dataset_name,
             project_mfid=project_mfid,
         )
         sample = Sample(
@@ -23,6 +24,9 @@ def _resource_pair(db_engine, *, project_mfid="project-one"):
             Resource(mfid=sample.unique_id, resource_type="sample"),
         ])
         session.commit()
+        if dataset_name is None:
+            session.execute(update(Dataset).where(Dataset.unique_id == "dataset-one").values(dataset_name=None))
+            session.commit()
 
 
 def test_service_account_can_read_but_not_edit_private_resources(client, db_engine, auth_as):
@@ -57,16 +61,15 @@ def test_service_account_can_add_a_file_without_updating_an_existing_one(client,
     )
     repeated = client.post(
         "/datasets/dataset-one/files",
-        json={"filename": "changed.dat", "size": 99, "sha256_hash": "same-hash"},
+        json={"filename": "first.dat", "size": 99, "sha256_hash": "other-hash"},
     )
 
     assert created.status_code == 200, created.text
-    assert repeated.status_code == 200, repeated.text
-    assert repeated.json()["mfid"] == created.json()["mfid"]
-    assert repeated.json()["filename"] == "first.dat"
-    assert repeated.json()["size"] == 10
+    assert repeated.status_code == 409, repeated.text
+    assert repeated.json()["detail"]["file_mfid"] == created.json()["mfid"]
     with Session(db_engine) as session:
-        assert len(session.exec(select(AssociatedFile)).all()) == 1
+        files = session.exec(select(AssociatedFile)).all()
+        assert [(f.size, f.sha256_hash) for f in files] == [(10, "same-hash")]
 
 
 def test_service_account_can_link_resources_in_the_same_project(client, db_engine, auth_as):
@@ -83,6 +86,21 @@ def test_service_account_can_link_resources_in_the_same_project(client, db_engin
     assert response.status_code == 200, response.text
     with Session(db_engine) as session:
         assert session.exec(select(DatasetSampleLink)).one_or_none() is not None
+
+
+def test_linking_a_sample_to_an_unnamed_dataset_returns_the_link(client, db_engine, auth_as):
+    _resource_pair(db_engine, dataset_name=None)
+    auth_as(
+        "service-account",
+        groups=[],
+        platform_role=PlatformRole.CONTRIBUTOR,
+        is_service_account=True,
+    )
+
+    response = client.post("/datasets/dataset-one/samples/sample-one")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["dataset_name"] is None
 
 
 def test_service_account_cannot_link_resources_across_projects(client, db_engine, auth_as):

@@ -231,4 +231,4 @@ def test_projects_and_instruments_sort_and_filter_by_activity(client, records, a
 def test_key_verify_reports_last_use(client, people, auth_as):
     activity.record_caller_activity(people, ALICE, KEY)
     auth_as(ALICE)
-    assert client.get("/account/verify").json()["last_used_at"] is not None
+    assert client.get("/account/verify", headers={"Authorization": f"Bearer {KEY}"}).json()["last_used_at"] is not None

@@ -1,8 +1,9 @@
 import hashlib
 from typing import List, Literal, Optional
-from pydantic import ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import MISSING, ConfigDict, Field, computed_field, field_validator, model_validator
 from sqlmodel import SQLModel
 from app.general_utils import blank_to_none, is_valid_mfid
+from app.models.fields import NonEmptyStr
 from app.models.links import LinkedResource
 from app.models.instrument import InstrumentReferenceRead
 from app.models.projects import ProjectReferenceRead, ProjectRelation
@@ -178,8 +179,7 @@ class DatasetInstrumentRead(SQLModel):
     previous_instrument: Optional[InstrumentReferenceRead] = None
     previous_instrument_name: Optional[str] = Field(
         default=None,
-        description="The dataset's instrument_name before the change. For datasets whose "
-                    "name never named a registered instrument, this is the only record of it.",
+        description="Name of the dataset's previous registered instrument, or null when it had none.",
     )
     instrument: InstrumentReferenceRead
 
@@ -255,6 +255,19 @@ def file_etag(storage_path, storage_generation, sha256_hash, size):
     return '"' + hashlib.sha256(identity.encode()).hexdigest()[:32] + '"'
 
 
+def validate_non_gcs_filename(value: str) -> str:
+    """A non-GCS filename is the file's identity in its dataset, and clients rebuild datasets on disk from it."""
+    if not value:
+        raise ValueError("filename must not be empty")
+    if any(ord(character) <= 0x1F or ord(character) == 0x7F for character in value):
+        raise ValueError("filename must not contain ASCII control characters")
+    if value.startswith("/") or value.endswith("/") or "//" in value:
+        raise ValueError("filename must be a canonical relative POSIX path")
+    if any(component in {".", ".."} for component in value.split("/")):
+        raise ValueError("filename must not contain '.' or '..' components")
+    return value
+
+
 class AssociatedFileCreate(SQLModel):
     '''Fields required to attach an associated file to a dataset.
     filename should be in the format {cloud-bucket}/{path-to-file}
@@ -262,6 +275,8 @@ class AssociatedFileCreate(SQLModel):
     storage_backend defaults to "gcs"; any other value marks this as a catalog-only
     reference to a file living outside GCS (e.g. an HPC partition or Globus path) —
     Crucible does not verify existence or broker access for non-gcs files.
+    For non-gcs files, filename must be a canonical relative POSIX path: no leading,
+    trailing, or repeated "/", no "." or ".." components, and no ASCII control characters.
     '''
     filename: str
     size: int
@@ -277,6 +292,8 @@ class AssociatedFileCreate(SQLModel):
     def validate_storage_path(self):
         if self.storage_backend == "gcs" and self.storage_path is not None:
             raise ValueError("storage_path is assigned by the upload API for GCS files")
+        if self.storage_backend != "gcs":
+            validate_non_gcs_filename(self.filename)
         return self
 
 
@@ -301,12 +318,12 @@ class AssociatedFileRead(SQLModel):
 
 class AssociatedFileUpdate(SQLModel):
     '''Partial update schema for AssociatedFile. Only provided fields are modified.'''
-    filename: Optional[str] = None
+    filename: NonEmptyStr | MISSING = MISSING
     storage_path: Optional[str] = None
-    storage_backend: Optional[str] = None
+    storage_backend: NonEmptyStr | MISSING = MISSING
     access_note: Optional[str] = None
-    size: Optional[int] = None
-    sha256_hash: Optional[str] = None
+    size: int | MISSING = MISSING
+    sha256_hash: NonEmptyStr | MISSING = MISSING
     
 
 class ScientificMetadataBinaryRead(SQLModel):

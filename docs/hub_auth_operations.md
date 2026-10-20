@@ -1,6 +1,6 @@
 # Hub authentication operations
 
-Start with [How Hub authentication works](hub_auth_overview.md) for the login flow and table lifecycle. Deployment status and remaining approvals are tracked in [the rollout guide](hub_auth_release_rollout.md).
+Start with [How Hub authentication works](hub_auth_overview.md) for the login flow and table lifecycle. Deployment status and remaining approvals are tracked in [the rollout guide](archive/hub_auth_release_rollout.md).
 
 The Hub authentication routes use exact configured callbacks, OIDC validation, a one-use PKCE-bound handoff, and hashed API credentials. Code consumption and token issuance commit together. Refresh locks the family and reloads the token state after acquiring that lock; concurrent reuse revokes the family.
 
@@ -35,7 +35,7 @@ Production reserves `https://crucible.lbl.gov/hub/auth/callback` as the Hub call
 
 Before activation:
 
-Both schema migrations completed on 2026-09-28. See the [rollout record](hub_auth_release_rollout.md); do not repeat its completed migration steps.
+Both schema migrations completed on 2026-09-28. See the [rollout record](archive/hub_auth_release_rollout.md); do not repeat its completed migration steps.
 
 1. The four secrets and API secret-level grants are provisioned. When deploying the Hub, confirm its runtime identity can access only the main shared client secret unless it already inherits broader project access. Do not add new project-wide grants.
 2. Confirm the pinned numeric references remain enabled. Do not put secret values in shell arguments, git, or chat. Future rotations require a separate approved version update; do not recreate or overwrite the provisioned credentials.
@@ -73,7 +73,7 @@ On 2026-09-28, production ORCID authentication was temporarily disabled at the u
 
 ## Proxy throttling
 
-Ingress hardening is deferred by user decision on 2026-09-28. Existing API access and performance must remain unchanged. See [the recorded scope and activation restriction](hub_auth_release_rollout.md#deferred-ingress-changes). No bypass or transport mitigation is claimed complete, and deferral does not authorize public authentication activation.
+Ingress hardening is deferred by user decision on 2026-09-28. Existing API access and performance must remain unchanged. See [the recorded scope and activation restriction](archive/hub_auth_release_rollout.md#deferred-ingress-changes). No bypass or transport mitigation is claimed complete, and deferral does not authorize public authentication activation.
 
 The implementation and rollout guide now live in the `crucible-nginx` repository: `nginx.conf`, `docs/hub-auth-ingress.md`, and `tests/check_hub_ingress.py`, on branch `feat/hub-auth-ingress`. They cover main and staging Hub authentication paths, separate browser/server rate limits, 8 KiB request bodies, proxy timeouts, and sanitized access logs. Normal upload limits are unchanged. This replaces the earlier illustrative configuration; do not deploy both.
 

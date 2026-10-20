@@ -38,10 +38,36 @@ class Thumbnail(SQLModel, table=True):
     dataset: "Dataset" = Relationship(back_populates="thumbnails")
 
 
+NON_GCS_FILENAME_PATH_CHECK = (
+    "storage_backend = 'gcs' OR ("
+    "filename <> '' AND filename NOT LIKE '/%' AND filename NOT LIKE '%/' "
+    "AND filename NOT LIKE '%//%' AND filename NOT IN ('.', '..') "
+    "AND filename NOT LIKE './%' AND filename NOT LIKE '../%' "
+    "AND filename NOT LIKE '%/./%' AND filename NOT LIKE '%/../%' "
+    "AND filename NOT LIKE '%/.' AND filename NOT LIKE '%/..')"
+)
+
+
 class AssociatedFile(SQLModel, table=True):
+    __table_args__ = (
+        CheckConstraint(NON_GCS_FILENAME_PATH_CHECK, name="ck_associatedfile_non_gcs_filename_path"),
+        CheckConstraint(
+            "storage_backend = 'gcs' OR filename !~ E'[\\x01-\\x1F\\x7F]'",
+            name="ck_associatedfile_non_gcs_filename_controls",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "storage_backend = 'gcs' OR filename NOT GLOB '*[' || char(1) || '-' || char(31) || char(127) || ']*'",
+            name="ck_associatedfile_non_gcs_filename_controls_sqlite",
+        ).ddl_if(dialect="sqlite"),
+        Index(
+            "uq_associatedfile_non_gcs_dataset_filename", "dataset_id", "filename", unique=True,
+            postgresql_where=text("storage_backend <> 'gcs'"), sqlite_where=text("storage_backend <> 'gcs'"),
+        ),
+    )
+
     id: Optional[int] = Field(default=None, primary_key=True)
     mfid: str = Field(default_factory=get_mfid_value, unique=True, index=True)
-    filename: str                        # relative path within the dataset: "{safe_filename}"
+    filename: str                        # path within the dataset; a canonical relative path for non-GCS files
     storage_path: Optional[str] = None  # GCS bucket/blob path when storage_backend="gcs"; a backend-specific location string otherwise
     storage_backend: str = Field(default="gcs")  # "gcs" triggers signed-URL generation; any other value is catalog-only
     access_note: Optional[str] = None    # how to access this file when there's no self-service path (non-gcs backends)
@@ -89,10 +115,9 @@ class Sample(SQLModel, table = True):
     unique_id: str = Field(default_factory= get_mfid_value, index = True, unique = True)
     sample_name: str = Field(index = True, default = None) 
     sample_type: Optional[str] = Field(index = True, default = None)
-    owner_orcid: Optional[str]
+    owner_orcid: Optional[str] = Field(default=None, index=True)
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
     timestamp: Optional[str] = Field(default_factory=get_utc_isoformat, alias="date_created")
-    project_id: Optional[str] = None
     project_mfid: Optional[str] = Field(default=None, index=True, foreign_key="project.unique_id")
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
@@ -129,13 +154,10 @@ class Dataset(SQLModel, table=True):
     public: bool = Field(default = False, index = True)
     dataset_name: Optional[str] = Field(default = "")   
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
-    owner_orcid: Optional[str] = Field(default = None)
-    project_id: Optional[str] = Field(default=None, index=True, foreign_key="project.project_id")
+    owner_orcid: Optional[str] = Field(default=None, index=True)
     project_mfid: Optional[str] = Field(default=None, index=True, foreign_key="project.unique_id")
-    instrument_id: Optional[int]  = Field(default = None, index = True, foreign_key = "instrument.id")
     instrument_mfid: Optional[str] = Field(default=None, index=True, foreign_key="instrument.unique_id")
     source_folder: Optional[str]
-    instrument_name: Optional[str]
     timestamp: Optional[str] = Field(default_factory=get_utc_isoformat)
     size: Optional[int] = Field(sa_column=Column(BigInteger())) 
     data_format: Optional[str]
@@ -230,28 +252,21 @@ class AccessGroup(SQLModel, table=True):
     acl: List["ResourceACL"] = Relationship(back_populates="accessgroup")
 
 
-class UserProjectLink(SQLModel, table=True):
-    user_id: Optional[int] = Field(
-        default=None, foreign_key="user.id", primary_key=True
-    )
-    project_id: Optional[str] = Field(
-        default=None, foreign_key="project.project_id", primary_key=True
-    )
-
-
 class User(SQLModel, table=True):
-    __table_args__ = (Index("ux_user_email_lower", func.lower(text("email")), unique=True, postgresql_where=text("email IS NOT NULL")),)
+    __table_args__ = (
+        Index("ux_user_email_lower", func.lower(text("email")), unique=True, postgresql_where=text("email IS NOT NULL")),
+        Index("ix_user_username", "username", unique=True, postgresql_where=text("username IS NOT NULL"), sqlite_where=text("username IS NOT NULL")),
+    )
     id: Optional[int] = Field(default=None, primary_key=True)
     first_name: str
     last_name: str
     email: Optional[str]
     unique_id: str = Field(sa_column=Column("orcid", String, index=True, unique=True))
     is_service_account: Optional[bool] = Field(default=False)
-    username: Optional[str] = Field(default=None, max_length=32, index=True)
+    username: Optional[str] = Field(default=None, max_length=32)
     # Platform-wide bypass, deliberately not a group. Postgres enum platform_role.
     platform_role: Optional[str] = Field(default="none")
     last_active_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
-    projects: List["Project"] = Relationship(back_populates="users", link_model=UserProjectLink)
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
 
 
@@ -352,7 +367,6 @@ class Project(SQLModel, table=True):
     project_lead_orcid: str = Field(foreign_key="user.orcid", index=True)
     project_lead_email: Optional[str] = None  # stored for old-API backward compat; not exposed in new response schemas
     last_activity_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
-    users: List[User] = Relationship(back_populates="projects", link_model=UserProjectLink)
     resource: Optional["Resource"] = Relationship(
         sa_relationship_kwargs={"primaryjoin": "foreign(Resource.mfid)==Project.unique_id", "lazy": "noload"}
     )
@@ -371,6 +385,7 @@ class ScientificMetadataBinary(SQLModel, table = True):
     )
     
     __table_args__ = (
+        UniqueConstraint("unique_id", name="scientific_metadata_new_unique_id_key"),
         Index(
             "ix_scientific_metadata_fts",
             func.to_tsvector(
@@ -469,6 +484,10 @@ class AccessGroupJoinRequest(SQLModel, table=True):
             postgresql_where=text("status = 'pending'"),
             sqlite_where=text("status = 'pending'"),
         ),
+        Index("ix_agjr_group_status_time", "accessgroup_id", "status", "request_time"),
+        CheckConstraint("status IN ('pending', 'approved', 'rejected', 'withdrawn')", name="ck_agjr_status"),
+        CheckConstraint("length(reason) <= 2000", name="ck_agjr_reason_length"),
+        CheckConstraint("length(reviewer_notes) <= 2000", name="ck_agjr_reviewer_notes_length"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -476,10 +495,11 @@ class AccessGroupJoinRequest(SQLModel, table=True):
     requester_id: str = Field(foreign_key="user.orcid", index=True)
     reason: Optional[str] = Field(default=None)
     status: str = Field(default="pending", index=True)
-    request_time: Optional[str] = Field(default_factory=get_utc_isoformat)
-    review_time: Optional[str] = Field(default=None)
+    request_time: datetime = Field(default_factory=get_utc_datetime, sa_column=Column(DateTime(timezone=True), nullable=False))
+    review_time: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     reviewer_id: Optional[str] = Field(default=None, foreign_key="user.orcid")
     reviewer_notes: Optional[str] = Field(default=None)
+    granted_role: Optional[str] = Field(default=None)
 
 
 class DeletionAuditLog(SQLModel, table=True):
@@ -504,11 +524,12 @@ class DeletionAuditLog(SQLModel, table=True):
 class Instrument(SQLModel, table=True):
     __table_args__ = (
         Index("ux_instrument_instrument_id_lower", func.lower(text("instrument_id")), unique=True),
+        Index("ix_instrument_instrument_id", "instrument_id", unique=True, postgresql_where=text("instrument_id IS NOT NULL"), sqlite_where=text("instrument_id IS NOT NULL")),
     )
 
     id: int = Field(default=None, primary_key=True)
     unique_id: Optional[str] = Field(default_factory=get_mfid_value, index=True, unique=True)
-    instrument_id: Optional[str] = Field(default=None, index=True, unique=True)
+    instrument_id: Optional[str] = Field(default=None)
     other_id: Optional[str]
     other_id_source: Optional[str]
     instrument_name: str
@@ -539,10 +560,33 @@ class IngestionRequest(SQLModel, table=True):
     associated_file: Optional["AssociatedFile"] = Relationship(back_populates="ingestion_requests")
 
 
+class PostprocessingRun(SQLModel, table=True):
+    __table_args__ = (
+        Index("ix_postprocessingrun_dataset_requested", "dataset_mfid", "requested_at"),
+        Index("uq_postprocessingrun_idempotency", "requested_by", "dataset_mfid", "idempotency_key", unique=True,
+              postgresql_where=text("idempotency_key IS NOT NULL"), sqlite_where=text("idempotency_key IS NOT NULL")),
+        CheckConstraint("status IN ('requested', 'running', 'completed', 'failed')", name="ck_postprocessingrun_status"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    dataset_mfid: str = Field(sa_column=Column(String, ForeignKey("dataset.unique_id", ondelete="CASCADE"), nullable=False))
+    pipeline: str
+    parameters: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON().with_variant(JSONB(), "postgresql"), nullable=False))
+    status: str = "requested"
+    error: Optional[str] = Field(default=None, sa_type=Text)
+    requested_by: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("user.orcid", ondelete="SET NULL")))
+    requested_at: datetime = Field(sa_type=DateTime(timezone=True))
+    started_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    finished_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    idempotency_key: Optional[str] = Field(default=None, max_length=128)
+    request_fingerprint: Optional[str] = Field(default=None, max_length=64)
+
+
 class UploadSession(SQLModel, table=True):
     __tablename__ = "upload_sessions"
     __table_args__ = (
         Index("ix_upload_sessions_work", "protocol", "next_attempt_at"),
+        Index("upload_sessions_expires_at_idx", "expires_at"),
         UniqueConstraint("owner_user_id", "dataset_mfid", "protocol", "idempotency_key", name="uq_upload_session_idempotency"),
         CheckConstraint("protocol IS NULL OR (protocol = 'gcs_xml_v1' AND state IS NOT NULL AND state IN ('initiating', 'uploading', 'finalizing', 'verifying', 'completed', 'aborting', 'aborted', 'expired', 'failed'))", name="ck_upload_session_protocol_state"),
         CheckConstraint("part_size IS NULL OR part_size > 0", name="ck_upload_session_part_size"),
@@ -554,7 +598,7 @@ class UploadSession(SQLModel, table=True):
     gcs_path: str           # full blob path in prod bucket: "{dsid}/{filename}"
     associated_file_name: str   # relative filename within the dataset: "{safe_filename}"
     owner_user_id: str
-    expires_at: str         # written as ISO 8601 string; DB returns datetime, handle both
+    expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     size: Optional[int] = Field(default=None, sa_column=Column(BigInteger()))
     protocol: Optional[str] = None
     bucket: Optional[str] = None

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -18,7 +19,7 @@ from app.services import multipart
 from app.services.storage_downloads import DOWNLOAD_LIFETIME, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, retire_object, signed_download_url, upload_bucket
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
-from app.utils.sql_utils import add_or_update
+from app.utils.sql_utils import add_or_update, assert_not_pending_deletion, touch_resource_modification_time
 
 router = APIRouter(tags=["storage"])
 engine = get_engine()
@@ -70,17 +71,23 @@ def _determine_storage_path(dataset_mfid, filename):
     folder and return the storage path for the file. 
     """
     basename = filename.split("/")[-1]
-    ds_blobs = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
-    for blob in ds_blobs:
-        if blob.name.startswith(multipart_prefix(dataset_mfid)):
-            continue
-        if blob.name.endswith(basename):
-            return f"{_DOWNLOAD_BUCKET}/{blob.name}"
-    else:
+    exact = f"{dataset_mfid}/{filename}"
+    names = [
+        blob.name
+        for blob in _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
+        if not blob.name.startswith(multipart_prefix(dataset_mfid))
+    ]
+    if exact in names:
+        return f"{_DOWNLOAD_BUCKET}/{exact}"
+    candidates = [name for name in names if name.endswith(f"/{basename}")]
+    if len(candidates) == 1:
+        return f"{_DOWNLOAD_BUCKET}/{candidates[0]}"
+    if candidates:
         raise HTTPException(
-            status_code=404,
-            detail="File not found in production storage",
+            status_code=409,
+            detail=f"Several stored objects match {basename!r}; the file's location cannot be determined",
         )
+    raise HTTPException(status_code=404, detail="File not found in production storage")
 
 def _retire_object(storage_path, generation, retired_at):
     bucket, _, key = storage_path.partition("/")
@@ -106,8 +113,9 @@ def _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename
         url = signed_download_url(_get_gcs_storage_client(), obj, filename, disposition)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found in storage") from None
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not generate signed URL: {e}") from None
+    except Exception:
+        logger.exception("signed_download_failed file=%s dataset=%s", file_mfid, dataset_mfid)
+        raise HTTPException(status_code=503, detail="Could not generate a download link; try again later") from None
     return url, int(DOWNLOAD_LIFETIME.total_seconds())
 
 
@@ -158,17 +166,7 @@ def _validate_and_prepare_upload(
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         require_permission(session, principal, dsid, Permission.CREATE)
-
-        if body.sha256_hash:
-            existing = session.exec(
-                select(AssociatedFile).where(
-                    AssociatedFile.dataset_id == ds.id,
-                    AssociatedFile.sha256_hash == body.sha256_hash,
-                    multipart.trusted_hash(),
-                )
-            ).first()
-            if existing is not None:
-                return existing # TODO - this feels wrong, can return relative storage path, filename
+        assert_not_pending_deletion(session, dsid)
 
         from pathlib import PurePosixPath
         parts = [p for p in PurePosixPath(body.filename).parts if p not in ("", "/", ".", "..")]
@@ -177,6 +175,17 @@ def _validate_and_prepare_upload(
         if parts[0] == MULTIPART_SEGMENT:
             raise HTTPException(status_code=400, detail=f"Filenames starting with {MULTIPART_SEGMENT}/ are reserved")
         safe_filename = str(PurePosixPath(*parts))
+        if body.sha256_hash:
+            existing = session.exec(
+                select(AssociatedFile).where(
+                    AssociatedFile.dataset_id == ds.id,
+                    AssociatedFile.filename == safe_filename,
+                    AssociatedFile.sha256_hash == body.sha256_hash,
+                    multipart.trusted_hash(),
+                )
+            ).first()
+            if existing is not None:
+                return existing
         if multipart.filename_reserved(session, dsid, safe_filename):
             raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
     return f"{dsid}/{safe_filename}", safe_filename
@@ -190,7 +199,7 @@ def _create_upload_session(
     size: int,
 ) -> str:
     """Persist an UploadSession record and return the generated upload_id."""
-    expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
     us = UploadSession(
         dataset_mfid=dsid,
         gcs_path=gcs_path,
@@ -238,8 +247,9 @@ def initiate_resumable_upload(
             json={"name": gcs_path},
         )
         resp.raise_for_status()
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not initiate GCS resumable upload: {e}")
+    except Exception:
+        logger.exception("resumable_upload_initiate_failed dataset=%s", dsid)
+        raise HTTPException(status_code=503, detail="Could not start the upload; try again later") from None
 
     resumable_uri = resp.headers.get("Location")
     if not resumable_uri:
@@ -276,8 +286,9 @@ def initiate_multipart_upload(
 
     try:
         access_token, token_expiry = _mint_upload_token(dsid)
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Could not generate GCS upload token: {e}")
+    except Exception:
+        logger.exception("upload_token_failed dataset=%s", dsid)
+        raise HTTPException(status_code=503, detail="Could not start the upload; try again later") from None
 
     upload_id = _create_upload_session(dsid, gcs_path, safe_filename, user_unique_id, body.size)
 
@@ -315,8 +326,7 @@ def complete_resumable_upload(
             raise HTTPException(status_code=403, detail="Not the owner of this upload session")
         if us.protocol is not None:
             raise HTTPException(status_code=409, detail="Use the multipart completion route for this upload session")
-        expires_at = us.expires_at if isinstance(us.expires_at, datetime) else datetime.fromisoformat(us.expires_at)
-        if expires_at < datetime.now(timezone.utc):
+        if multipart.utc(us.expires_at) < datetime.now(timezone.utc):
             session.delete(us)
             session.commit()
             raise HTTPException(status_code=410, detail="Upload session has expired")
@@ -327,14 +337,18 @@ def complete_resumable_upload(
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         require_permission(session, auth_res, dsid, Permission.CREATE)
+        assert_not_pending_deletion(session, dsid)
         if multipart.filename_reserved(session, dsid, us.associated_file_name):
             raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
 
         try:
             blob = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).blob(us.gcs_path)
             blob.reload()
-        except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Could not verify upload in GCS: {e}")
+        except NotFound:
+            raise HTTPException(status_code=422, detail="Uploaded file not found in storage") from None
+        except Exception:
+            logger.exception("upload_verify_failed dataset=%s upload=%s", dsid, us.upload_id)
+            raise HTTPException(status_code=503, detail="Could not verify the upload; try again later") from None
 
         if us.size is not None and blob.size != us.size:
             raise HTTPException(
@@ -351,6 +365,7 @@ def complete_resumable_upload(
         )
         session.add(assoc)
         session.delete(us)
+        touch_resource_modification_time(session, dsid)
         session.commit()
         session.refresh(assoc)
         return AssociatedFileRead.model_validate(assoc, update={"dataset_mfid": assoc.dataset.unique_id})

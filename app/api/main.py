@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.routes import multipart
@@ -20,7 +20,7 @@ from app.utils.permissions import PrivilegeMode, PrivilegeModeSource
 from app.api.routes import (account, auth, files, datasets, gcs_storage, resources,
                             samples, instruments, users, projects,
                             access_groups, entities, misc, deletion,
-                            ingestion_requests, ai, service_accounts,
+                            ingestion_requests, join_requests, pipelines, service_accounts,
                             resource_graph, hub_auth, print as print_routes)
 
 logging.basicConfig(
@@ -148,16 +148,26 @@ class _NonFiniteNumber:
         self.literal = literal
 
 
-def _unsupported_reason(text: str):
-    for character in text:
-        code = ord(character)
-        if code == 0:
-            return "NUL characters (\\u0000) cannot be stored; remove them before sending"
-        if 0xD800 <= code <= 0xDFFF:
-            return "unpaired UTF-16 surrogates are not valid Unicode text"
-        if 0xFDD0 <= code <= 0xFDEF or (code & 0xFFFE) == 0xFFFE:
-            return "Unicode noncharacters are not allowed in JSON text"
+NUL_REASON = "NUL characters (\\u0000) cannot be stored; remove them before sending"
+
+
+def _character_reason(code: int):
+    if code == 0:
+        return NUL_REASON
+    if 0xD800 <= code <= 0xDFFF:
+        return "unpaired UTF-16 surrogates are not valid Unicode text"
+    if 0xFDD0 <= code <= 0xFDEF or (code & 0xFFFE) == 0xFFFE:
+        return "Unicode noncharacters are not allowed in JSON text"
     return None
+
+
+def _unsupported_reason(text: str):
+    if text.isascii():
+        return NUL_REASON if "\x00" in text else None
+    offending = [character for character in set(text) if _character_reason(ord(character))]
+    if not offending:
+        return None
+    return _character_reason(ord(min(offending, key=text.index)))
 
 
 def _printable(key: str) -> str:
@@ -194,6 +204,10 @@ async def reject_unstorable_json(request: Request, call_next):
                 problems = _unstorable(json.loads(body, parse_constant=_NonFiniteNumber))
             except ValueError:
                 problems = []
+            except RecursionError:
+                return JSONResponse(status_code=422, content={"detail": [
+                    {"type": "json_too_deep", "loc": ["body"], "msg": "JSON nesting is too deep"}
+                ]})
             if problems:
                 return JSONResponse(status_code=422, content={"detail": [
                     {"type": kind, "loc": list(location), "msg": message}
@@ -272,13 +286,14 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-Instrumentator(excluded_handlers=["^/metrics$", "^/health(/.*)?$"]).instrument(app).expose(app)
+Instrumentator(excluded_handlers=["^/metrics$", "^/health(/.*)?$"]).instrument(app).expose(app, response_class=PlainTextResponse, responses={200: {"description": "Prometheus metrics in the text exposition format"}})
 
 app.include_router(account.router)
 app.include_router(auth.router)
 app.include_router(hub_auth.router)
 app.include_router(files.router)
 app.include_router(ingestion_requests.router)
+app.include_router(pipelines.router)
 app.include_router(datasets.router)
 app.include_router(gcs_storage.router)
 app.include_router(multipart.router)
@@ -289,10 +304,10 @@ app.include_router(instruments.router)
 app.include_router(users.router)
 app.include_router(projects.router)
 app.include_router(access_groups.router)
+app.include_router(join_requests.router)
 app.include_router(entities.router)
 app.include_router(misc.router)
 app.include_router(deletion.router)
-app.include_router(ai.router)
 app.include_router(service_accounts.router)
 app.include_router(print_routes.router)
 

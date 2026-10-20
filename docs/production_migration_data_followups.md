@@ -4,6 +4,8 @@ Recorded during the production permission migration on 2026-08-31. These accepte
 
 ## Legacy instrument references
 
+Resolved 2026-10-20: the remaining labels were mapped to registered instruments or cleared, with explicit approval; see [legacy slug columns](legacy_slug_columns_followup.md). The section below is the August record.
+
 The project reference backfill populated `project_mfid` for 125,425 datasets and 10,842 samples, with no dangling project references.
 
 The instrument reference backfill populated `instrument_mfid` for 125,672 datasets by the existing instrument row ID and 10,208 datasets by an exact case-insensitive instrument name. It intentionally left 1,144 datasets unresolved because their legacy labels do not exactly identify a registered instrument.
@@ -46,6 +48,8 @@ ORDER BY count(*) DESC, instrument_name;
 The existing `migrations/data/20260811_backfill_instrument_mfid.py` remains safe to rerun, but it only resolves registered row IDs and exact case-insensitive names. It will not apply aliases.
 
 ## Legacy ownership anomalies
+
+Update 2026-10-20: the 19 rows without an `idtype` row were orphaned dataset rows from a failed RGA/TEY ingestion on 2026-05-20 and were deleted with an audit entry each (see [sharing and access data](sharing_collections_followup.md)). The 946 unresolved owner references remain open.
 
 The initial permission backfill promoted every identity-group ACL to `owner`. The production repair corrected the mapping by keeping the stored canonical owner at `owner` and demoting other legacy writable identity grants to `editor`. No read-only identity grants required demotion.
 

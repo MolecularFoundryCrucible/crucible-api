@@ -19,9 +19,10 @@ from app.models.core_models import (
 )
 from app.general_utils import get_secret, get_utc_isoformat
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
-from app.utils.sql_utils import touch_resource_modification_time
+from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_readable_file, touch_resource_modification_time
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.pagination import PaginatedResponse
+from app.models.response_schemas import DownloadLinkRead, MessageResponse
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 from app.services.storage_downloads import StorageLocationError, resolve_storage_object
 
@@ -33,19 +34,11 @@ engine = get_engine()
 
 
 def _get_af_with_read_access(session: Session, file_id: str, principal) -> tuple[AssociatedFile, Dataset]:
-    """Fetch an AssociatedFile by mfid and verify the caller has read access to its parent dataset."""
-    af = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == file_id)).one_or_none()
-    if af is None:
+    """Fetch an AssociatedFile by mfid with its dataset; 404 when missing or unreadable."""
+    row = session.exec(select_readable_file(file_id, principal)).one_or_none()
+    if row is None:
         raise HTTPException(status_code=404, detail="File not found")
-
-    ds = session.exec(
-        select(Dataset)
-        .where(Dataset.id == af.dataset_id)
-        .where(permission_filter(principal, Dataset, Permission.READ))
-    ).one_or_none()
-    if ds is None:
-        raise HTTPException(status_code=403, detail="Access denied")
-    return af, ds
+    return row
 
 
 @router.get("/files", response_model=PaginatedResponse[AssociatedFileRead])
@@ -63,6 +56,7 @@ def list_files(
             select(AssociatedFile)
             .join(Dataset, Dataset.id == AssociatedFile.dataset_id)
             .filter(auth_filter)
+            .where(deletion_filter_for(Dataset))
             .options(selectinload(AssociatedFile.dataset))
         )
         if sha256_hash is not None:
@@ -86,7 +80,7 @@ def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: s
         return read
 
 
-@router.get("/files/{file_id}/download_link", responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
+@router.get("/files/{file_id}/download_link", response_model=DownloadLinkRead, responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def get_file_download_link(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
@@ -126,8 +120,17 @@ def update_file(
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
         require_permission(session, auth_res, ds.unique_id, Permission.EDIT)
+        assert_not_pending_deletion(session, ds.unique_id)
 
         changed = updates.model_dump(exclude_unset=True)
+        if "storage_backend" in changed and (changed["storage_backend"] == "gcs") != (af.storage_backend == "gcs"):
+            raise HTTPException(status_code=409, detail={"code": "storage_backend_class_change", "message": "A file cannot move between GCS and non-GCS storage"})
+        if "filename" in changed and changed["filename"] != af.filename:
+            if af.storage_backend != "gcs":
+                raise HTTPException(status_code=409, detail={"code": "filename_immutable", "message": "The filename of a non-GCS file is its identity and cannot change"})
+            taken = session.exec(select(AssociatedFile.mfid).where(AssociatedFile.dataset_id == af.dataset_id, AssociatedFile.filename == changed["filename"])).first()
+            if taken is not None:
+                raise HTTPException(status_code=409, detail={"code": "filename_exists", "file_mfid": taken, "message": "Filename already exists"})
         if af.storage_generation is not None:
             target_backend = changed.get("storage_backend", af.storage_backend)
             target_path = changed.get("storage_path", af.storage_path)
@@ -154,13 +157,14 @@ def update_file(
         return AssociatedFileRead.model_validate(af, update={"dataset_mfid": ds.unique_id})
 
 
-@router.delete("/files/{file_id}")
+@router.delete("/files/{file_id}", response_model=MessageResponse)
 def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
     '''Deletes a file and its ingestion requests. Requires admin on the parent dataset.'''
 
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
         require_permission(session, auth_res, ds.unique_id, Permission.DELETE)
+        assert_not_pending_deletion(session, ds.unique_id)
 
         for ir in session.exec(
             select(IngestionRequest).where(IngestionRequest.file_mfid == af.mfid)
@@ -194,6 +198,7 @@ def create_file_ingestion_request(
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
         require_permission(session, auth_res, ds.unique_id, Permission.CREATE)
+        assert_not_pending_deletion(session, ds.unique_id)
 
         if af.storage_backend != "gcs":
             raise HTTPException(

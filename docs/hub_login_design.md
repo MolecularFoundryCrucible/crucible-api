@@ -1,8 +1,8 @@
 # Hub login design
 
-Status: API implementation on `feat/hub-login-design`, integrated with the local Hub; not deployed to production.
+Status: implemented and enabled on production. The Tailscale URLs below describe the original local pilot.
 
-For the plain-language flow and table lifecycle, start with [How Hub authentication works](hub_auth_overview.md). Use [the rollout guide](hub_auth_release_rollout.md) for dated deployment status.
+For the plain-language flow and table lifecycle, start with [How Hub authentication works](hub_auth_overview.md). Use [the rollout guide](archive/hub_auth_release_rollout.md) for dated deployment status.
 
 Local integration is working through Tailscale. The API public base URL is `https://leviathan.rooster-chimaera.ts.net/testapi` and the Hub callback is `https://leviathan.rooster-chimaera.ts.net/hub/auth/callback`. The ORCID redirect is the API base URL plus `/auth/hub/callback`. These supersede the earlier loopback reservations. Production deployment remains gated by [authentication operations](hub_auth_operations.md).
 

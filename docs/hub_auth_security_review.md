@@ -10,7 +10,7 @@ Scope: API-owned Hub login, token lifecycle, secret loading, authorization integ
 
 ## High-priority findings
 
-Disposition for findings 1 and 2, recorded 2026-09-28: infrastructure changes are deferred to preserve existing API access and performance. No sufficiently small, verified non-disruptive solution has been established. Private Tailscale testing may continue; public Hub authentication remains disabled pending mitigation or explicit acceptance of the residual risks. This deferral does not mark either finding as fixed. See [the release decision](hub_auth_release_rollout.md#deferred-ingress-changes).
+Disposition for findings 1 and 2, recorded 2026-09-28: infrastructure changes are deferred to preserve existing API access and performance. No sufficiently small, verified non-disruptive solution has been established. Private Tailscale testing may continue; public Hub authentication remains disabled pending mitigation or explicit acceptance of the residual risks. This deferral does not mark either finding as fixed. See [the release decision](archive/hub_auth_release_rollout.md#deferred-ingress-changes).
 
 ### 1. Public auth can bypass the proposed proxy limits
 
@@ -52,7 +52,7 @@ Remediated in `b35c825`, released to `main` through PR #287 on 2026-09-28: HTML 
 
 ### 5. Dependency remediation remains outstanding
 
-Focused assessment completed on 2026-09-28: see [dependency security assessment](dependency_security_assessment.md) for call-path mitigations, advisory fix floors, and separately tested upgrade batches. No dependencies were changed.
+Focused assessment completed on 2026-09-28: see [dependency security assessment](archive/dependency_security_assessment.md) for call-path mitigations, advisory fix floors, and separately tested upgrade batches. No dependencies were changed.
 
 - Rule: FASTAPI-SUPPLY-001. Severity: Medium review requirement, individual exploit severity depends on reachable features.
 - Evidence: `uv.lock:2144` pins Starlette 0.46.2; `pyproject.toml:12` pins FastAPI 0.115.14. Starlette is within the affected ranges for [Range parsing](https://github.com/Kludex/starlette/security/advisories/GHSA-7f5h-v6xp-fcq8) and [multipart rollover](https://github.com/Kludex/starlette/security/advisories/GHSA-2c2j-9gv5-cj73). No direct FileResponse, StaticFiles, UploadFile, or request.form use was found in `app`, so those specific exploit paths were not established.

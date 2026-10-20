@@ -432,7 +432,6 @@ def test_query_parameter_conflicts_and_time_validation_return_422(client, db_eng
         {"affiliation": "owner", "owner_id": ALICE},
         {"owner_id": ALICE, "owner_orcid": BOB},
         {"owner_id": ""},
-        {"creation_time_gte": "2026-01-01T00:00:00"},
         {"creation_time_gte": "2026-02-01T00:00:00+00:00", "creation_time_lte": "2026-01-01T00:00:00+00:00"},
         [("accessible_to_user", "")],
         [("affiliation", "member")],
@@ -440,6 +439,18 @@ def test_query_parameter_conflicts_and_time_validation_return_422(client, db_eng
     for params in cases:
         response = client.get("/datasets", params=params)
         assert response.status_code == 422, (params, response.text)
+
+
+def test_times_without_an_offset_are_utc(client, db_engine, auth_as):
+    group_id = _seed_owned_resources(db_engine)
+    auth_as(ALICE, groups=[(ALICE, group_id, Role.OWNER)])
+
+    def ids(value):
+        response = client.get("/datasets", params={"creation_time_gte": value})
+        assert response.status_code == 200, response.text
+        return [item["unique_id"] for item in response.json()["items"]]
+
+    assert ids("2026-01-01T00:00:00") == ids("2026-01-01T00:00:00Z") == ids("2026-01-01T02:00:00+02:00")
 
 
 def test_cursor_takes_precedence_over_offset(client, db_engine, auth_as):

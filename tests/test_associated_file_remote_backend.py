@@ -120,7 +120,7 @@ def test_associated_file_read_and_update_schemas_have_new_fields():
     assert read.storage_backend == "gcs"
 
     update = AssociatedFileUpdate()
-    assert update.storage_backend is None
+    assert update.model_dump(exclude_unset=True) == {}
     assert update.access_note is None
 
 
@@ -343,3 +343,91 @@ def test_contributor_can_reach_ingestion_request_validation(client, db_engine, a
 
     assert resp.status_code == 400, resp.text
     assert "globus" in resp.json()["detail"]
+
+
+def _writer(db_engine, auth_as, dsid):
+    user_id = "0000-0000-0000-0001"
+    group_id = _grant_write_access(db_engine, dsid, user_id)
+    auth_as(user_id, groups=[(dsid, group_id)])
+
+
+def test_non_gcs_distinct_filenames_keep_identical_content(client, db_engine, auth_as):
+    _writer(db_engine, auth_as, "ds_duplicate_content")
+    common = {"size": 42, "sha256_hash": "same", "storage_backend": "globus"}
+    first = client.post("/datasets/ds_duplicate_content/files", json={**common, "filename": "freq_001/kpoints.json"})
+    second = client.post("/datasets/ds_duplicate_content/files", json={**common, "filename": "freq_002/kpoints.json"})
+    assert first.status_code == second.status_code == 200, (first.text, second.text)
+    assert first.json()["mfid"] != second.json()["mfid"]
+
+
+def test_non_gcs_retry_ignores_storage_path_and_access_note(client, db_engine, auth_as):
+    _writer(db_engine, auth_as, "ds_filename_retry")
+    original = {"filename": "results/result.dat", "size": 42, "sha256_hash": "first", "storage_backend": "globus",
+                "storage_path": "globus://first", "access_note": "original"}
+    first = client.post("/datasets/ds_filename_retry/files", json=original)
+    retry = client.post("/datasets/ds_filename_retry/files", json={**original, "storage_path": "globus://retry", "access_note": "retry note"})
+    assert first.status_code == retry.status_code == 200, (first.text, retry.text)
+    assert retry.json()["mfid"] == first.json()["mfid"]
+    assert (retry.json()["storage_path"], retry.json()["access_note"]) == ("globus://first", "original")
+
+
+@pytest.mark.parametrize(("field", "replacement"), [("size", 99), ("sha256_hash", "replacement"), ("storage_backend", "lawrencium")])
+def test_non_gcs_same_filename_with_different_identity_conflicts(client, db_engine, auth_as, field, replacement):
+    _writer(db_engine, auth_as, "ds_filename_conflict")
+    original = {"filename": "results/result.dat", "size": 42, "sha256_hash": "first", "storage_backend": "globus", "access_note": "original"}
+    created = client.post("/datasets/ds_filename_conflict/files", json=original)
+    conflict = client.post("/datasets/ds_filename_conflict/files", json={**original, field: replacement})
+    assert created.status_code == 200, created.text
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "filename_exists"
+    read = client.get(f"/files/{created.json()['mfid']}").json()
+    assert (read["sha256_hash"], read["access_note"]) == ("first", "original")
+
+
+@pytest.mark.parametrize("filename", ["", "/file", "../file", "a/../file", "a/./file", "a//file", "a/", ".", "a/\x1f", "a/\x7f"])
+def test_non_gcs_rejects_noncanonical_filenames(client, db_engine, auth_as, filename):
+    _writer(db_engine, auth_as, "ds_bad_filename")
+    response = client.post("/datasets/ds_bad_filename/files", json={"filename": filename, "size": 1, "sha256_hash": "h", "storage_backend": "globus"})
+    assert response.status_code == 422, response.text
+
+
+def test_gcs_filenames_keep_legacy_shapes(client, db_engine, auth_as):
+    _writer(db_engine, auth_as, "ds_gcs_legacy")
+    response = client.post("/datasets/ds_gcs_legacy/files", json={"filename": "/home/user/run/scan.tif", "size": 1, "sha256_hash": "g"})
+    assert response.status_code == 200, response.text
+
+
+def test_non_gcs_database_enforces_unique_canonical_filenames(db_engine):
+    from sqlalchemy.exc import IntegrityError
+    with Session(db_engine) as session:
+        ds = Dataset(unique_id="ds_db_constraints", dataset_name="test")
+        session.add(ds)
+        session.commit()
+        session.refresh(ds)
+        session.add(AssociatedFile(filename="same", storage_backend="globus", size=1, sha256_hash="1", dataset_id=ds.id))
+        session.commit()
+        for bad in (AssociatedFile(filename="same", storage_backend="globus", size=1, sha256_hash="2", dataset_id=ds.id),
+                    AssociatedFile(filename="bad\x1fname", storage_backend="globus", size=1, sha256_hash="3", dataset_id=ds.id),
+                    AssociatedFile(filename="../escape", storage_backend="globus", size=1, sha256_hash="4", dataset_id=ds.id)):
+            session.add(bad)
+            with pytest.raises(IntegrityError):
+                session.commit()
+            session.rollback()
+        session.add(AssociatedFile(filename="same", storage_backend="gcs", size=1, sha256_hash="5", dataset_id=ds.id))
+        session.commit()
+
+
+def test_patch_guards_file_identity(client, db_engine, auth_as):
+    _writer(db_engine, auth_as, "ds_patch_identity")
+    remote = client.post("/datasets/ds_patch_identity/files", json={"filename": "dir/file", "size": 1, "sha256_hash": "h", "storage_backend": "globus"}).json()["mfid"]
+    gcs = client.post("/datasets/ds_patch_identity/files", json={"filename": "a.tif", "size": 1, "sha256_hash": "g"}).json()["mfid"]
+    client.post("/datasets/ds_patch_identity/files", json={"filename": "b.tif", "size": 1, "sha256_hash": "g2"})
+    renamed = client.patch(f"/files/{remote}", json={"filename": "other/file"})
+    assert (renamed.status_code, renamed.json()["detail"]["code"]) == (409, "filename_immutable")
+    assert client.patch(f"/files/{remote}", json={"filename": "dir/file"}).status_code == 200
+    switched = client.patch(f"/files/{remote}", json={"storage_backend": "gcs"})
+    assert (switched.status_code, switched.json()["detail"]["code"]) == (409, "storage_backend_class_change")
+    assert client.patch(f"/files/{remote}", json={"storage_backend": "lawrencium"}).status_code == 200
+    clash = client.patch(f"/files/{gcs}", json={"filename": "b.tif"})
+    assert (clash.status_code, clash.json()["detail"]["code"]) == (409, "filename_exists")
+    assert client.patch(f"/files/{gcs}", json={"filename": "c.tif"}).status_code == 200

@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
@@ -36,6 +36,7 @@ from app.models.deletion import (
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import SortDirection
 from app.models.users import UserPublicRead
+from app.models.response_schemas import DetailResponse
 from app.utils.auth_utils import (
     authorize_user,
     fetch_acl_rows,
@@ -64,16 +65,14 @@ def _resolve_project_refs(
     resource_type: Optional[str],
     session: Session,
 ) -> tuple[Optional[str], Optional[str]]:
-    if resource_type == "dataset":
-        ds = session.exec(
-            select(Dataset).where(Dataset.unique_id == resource_id)
+    if resource_type in ("dataset", "sample"):
+        model = Dataset if resource_type == "dataset" else Sample
+        row = session.exec(
+            select(model.project_mfid, Project.project_id)
+            .outerjoin(Project, Project.unique_id == model.project_mfid)
+            .where(model.unique_id == resource_id)
         ).one_or_none()
-        return (ds.project_id, ds.project_mfid) if ds else (None, None)
-    if resource_type == "sample":
-        samp = session.exec(
-            select(Sample).where(Sample.unique_id == resource_id)
-        ).one_or_none()
-        return (samp.project_id, samp.project_mfid) if samp else (None, None)
+        return (row[1], row[0]) if row else (None, None)
     if resource_type == "project":
         project = session.exec(
             select(Project).where(Project.unique_id == resource_id)
@@ -361,11 +360,14 @@ def list_deletion_requests(
             DeletionRequest.status == DeletionRequestStatus.PENDING.value,
             review_authority,
         )
+        resource_project = aliased(Project)
         project_mfid_column = func.coalesce(
             Dataset.project_mfid,
             Sample.project_mfid,
+            resource_project.unique_id,
         )
-        project_id_column = func.coalesce(Dataset.project_id, Sample.project_id)
+        record_project = aliased(Project)
+        project_id_column = record_project.project_id
         requester_user = aliased(User)
         reviewer_user = aliased(User)
         sort_expressions = _deletion_sort_expressions(
@@ -388,6 +390,8 @@ def list_deletion_requests(
             .outerjoin(Resource, Resource.mfid == DeletionRequest.resource_id)
             .outerjoin(Dataset, Dataset.unique_id == DeletionRequest.resource_id)
             .outerjoin(Sample, Sample.unique_id == DeletionRequest.resource_id)
+            .outerjoin(resource_project, resource_project.unique_id == DeletionRequest.resource_id)
+            .outerjoin(record_project, record_project.unique_id == project_mfid_column)
             .outerjoin(requester_user, requester_user.unique_id == DeletionRequest.requester_id)
             .outerjoin(reviewer_user, reviewer_user.unique_id == DeletionRequest.reviewer_id)
         )
@@ -399,6 +403,7 @@ def list_deletion_requests(
                 count_query
                 .outerjoin(Dataset, Dataset.unique_id == DeletionRequest.resource_id)
                 .outerjoin(Sample, Sample.unique_id == DeletionRequest.resource_id)
+                .outerjoin(resource_project, resource_project.unique_id == DeletionRequest.resource_id)
                 .where(project_mfid_column == project_mfid)
             )
             data_query = data_query.where(project_mfid_column == project_mfid)
@@ -710,7 +715,7 @@ def review_deletion_request(
 # Owner or platform-admin direct deletion with explicit acknowledgement.
 # Projects and instruments preview first and delete only with confirm=true.
 # ---------------------------------------------------------------------------
-@router.delete("/resources/{mfid}")
+@router.delete("/resources/{mfid}", response_model=Union[DeletionPreviewRead, DetailResponse])
 def hard_delete_resource_route(
     resource_id: ResourceMfid,
     background_tasks: BackgroundTasks,

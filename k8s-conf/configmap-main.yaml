@@ -17,6 +17,8 @@ data:
 
   # api
   API_CONF_FILE: "app/conf/api_conf.yaml"
+  ORCID_CLIENT_ID: "APP-E5VUS6XSJS5VFNEN"
+  ORCID_CLIENT_SECRET_VERSION: "projects/776258882599/secrets/orcid_client_secret_esb/versions/latest"
 
   # rmq
   RMQ_ROUTING_SUFFIX: "main"
@@ -27,6 +29,7 @@ data:
 
   # storage
   UPLOAD_BUCKET: "mf-storage-prod"
+  RECORD_BUCKET: "mf-record-prod"
   MULTIPART_UPLOAD_ENABLED: "true"
   MULTIPART_UPLOAD_BUCKET: "mf-storage-prod"
   MULTIPART_UPLOAD_SIGNER: "crucible-mpu-signer-prod@mf-crucible.iam.gserviceaccount.com"
@@ -38,4 +41,4 @@ data:
   db_username: "crucible-api-user"
   db_database: "crucible"
   db_auth: "true"
-  EXPECTED_DB_REVISIONS: "b644cf2e7240"
+  EXPECTED_DB_REVISIONS: "b8f2d6e41c07"

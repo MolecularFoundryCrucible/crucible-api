@@ -1,4 +1,3 @@
-import asyncio
 
 import pytest
 from fastapi import BackgroundTasks
@@ -97,7 +96,7 @@ def test_dataset_owner_reference_resolves_to_canonical_identity(db_engine):
         owner_id = owner.id
         owner_group_id = owner_group.id
 
-    response = asyncio.run(create_dataset(
+    response = create_dataset(
         Principal(
             user_id=SERVICE_ACCOUNT_ID,
             platform_role=PlatformRole.CONTRIBUTOR,
@@ -105,7 +104,7 @@ def test_dataset_owner_reference_resolves_to_canonical_identity(db_engine):
         ),
         DatasetCreate(dataset_name="owned-by-reference", owner="dataset-owner"),
         BackgroundTasks(),
-    ))
+    )
 
     assert response.owner_orcid == human_id
     with Session(db_engine) as session:

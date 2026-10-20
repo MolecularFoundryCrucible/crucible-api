@@ -14,7 +14,7 @@ from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import DatasetMfid, UserRef
 from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import (
-    AccessGroup, ApiToken, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, UserProjectLink, get_mfid_value,
+    AccessGroup, ApiToken, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
 )
 from app.utils.auth_utils import API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
 from app.utils.cursor_utils import (
@@ -29,14 +29,14 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import deletion_filter_for, table_obj_to_dict
+from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, get_active_deletion_request, select_active, table_obj_to_dict
 from app.utils.user_utils import assert_profile_fields_available, commit_user, find_mf_user_proposals, resolve_user_by_identifier, sql_add_user_to_access_group
-from app.utils.project_utils import sql_get_projects_for_user
+from app.utils.project_utils import resolve_project_reference, sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
 from app.api.routes.projects import PROJECT_PAGINATION
-from app.models.users import AccountProfileUpdate, UserCreate, UserPublicRead, UserRead, UserUpdate
-from app.models.response_schemas import ApiKeyRead, ApiKeyVerify
+from app.models.users import UserCreate, UserPublicRead, UserRead, UserUpdate
+from app.models.response_schemas import ApiKeyRead, ApiKeyVerify, DetailResponse
 from app.models.core_models import ApiToken
 from app.models.projects import ProjectWithLead
 from app.models.access_groups import AccessGroupRead
@@ -56,6 +56,7 @@ engine = get_engine()
 USER_PROJECT_PAGINATION = replace(PROJECT_PAGINATION, kind="user_project")
 
 USER_COLLECTION_DEPRECATION = "@1799280000"
+API_KEY_VERIFY_DEPRECATION = "@1792368000"
 USER_LIST_DECLARED_PARAMS = {
     "unique_id", "username", "email", "permissive", "is_service_account",
     "first_name", "last_name", "q", "search_fields", "platform_role", "include_total",
@@ -376,36 +377,6 @@ def resolve_users(
         return results
 
 
-@router.get("/users/me", response_model=UserRead, deprecated=True, include_in_schema=True)
-def get_current_user(auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Deprecated: use GET /account/profile.'''
-    user_unique_id = auth_res.user_id
-    with Session(engine) as session:
-        user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        return _user_read(auth_res, user, with_capabilities=True)
-
-
-@router.patch("/users/me", response_model=UserRead, deprecated=True, include_in_schema=True)
-def update_current_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_update: AccountProfileUpdate):
-    '''Deprecated: use GET /account/profile and PATCH /account/profile.'''
-    user_unique_id = auth_res.user_id
-    with Session(engine) as session:
-        user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        update_data = user_update.model_dump(exclude_unset=True)
-        for key, value in update_data.items():
-            setattr(user, key, value)
-
-        session.add(user)
-        session.commit()
-        session.refresh(user)
-        return _user_read(auth_res, user, with_capabilities=True)
-
-
 @router.get("/users/search", response_model=List[UserPublicRead])
 def search_users(
     auth_res: Annotated[Principal, Depends(authorize_user)],
@@ -543,39 +514,24 @@ def regenerate_user_apikey(
     return ApiKeyRead(api_key=find_or_add_api_access(user_id, engine, regenerate=True))
 
 
-@router.get("/users/{user_ref}/apikey/verify", response_model=ApiKeyVerify)
-def verify_user_apikey(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''Returns validity and expiry info for the given user's API key. Admin only.'''
+@router.get("/users/{user_ref}/apikey/verify", response_model=ApiKeyVerify, deprecated=True)
+def verify_user_apikey(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)], response: Response):
+    '''Returns validity and expiry info for the given user's API key. Admin only.
+
+    Deprecated: administrators get the same status as `api_key_status` from GET /users/{user_ref}.
+    '''
     user_id = _canonical_user_id(user_ref)
     require_platform_admin(auth_res)
+    response.headers["Deprecation"] = API_KEY_VERIFY_DEPRECATION
 
     with Session(engine) as session:
         user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-
-        one_year_ago = date.today() - timedelta(days=365)
-        token = session.exec(
-            select(ApiToken).where(ApiToken.user_unique_id == user_id)
-            .order_by(ApiToken.token_created.desc())
-        ).first()
-        if token is None:
+        status = _admin_key_status(session, auth_res, user)
+        if status is None:
             raise HTTPException(status_code=404, detail="No API key found for this user")
-
-        created_at = token.token_created
-        if isinstance(created_at, str):
-            created_dt = datetime.strptime(created_at, "%Y-%m-%d")
-        else:
-            created_dt = created_at
-
-        expires_dt = created_dt + timedelta(days=365)
-        valid = created_dt.date() >= one_year_ago
-        return ApiKeyVerify(
-            valid=valid,
-            created_at=created_dt.date().isoformat(),
-            expires_at=expires_dt.date().isoformat(),
-            last_used_at=token.last_used_at,
-        )
+        return ApiKeyVerify(**status.model_dump())
 
 @router.post("/users", response_model=UserRead, responses={409: {"description": "Identifier, username, or email already in use; username and email conflicts use `{\"detail\": {\"code\": \"already_in_use\", \"fields\": [...], \"message\": ...}}`"}})
 def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_info: UserCreate,
@@ -606,19 +562,28 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
             raise HTTPException(status_code=409, detail=f"Identity group '{unique_id}' already exists")
         assert_profile_fields_available(session, username=user_info.username or None, email=user_info.email)
 
-        projects = session.exec(
-            select(Project).where(Project.project_id.in_(requested_project_ids))
-        ).all() if requested_project_ids else []
-        projects_by_id = {project.project_id: project for project in projects}
-        missing_explicit = sorted(explicit_project_ids - projects_by_id.keys())
+        projects_by_mfid = {}
+        missing_explicit = []
+        for ref in sorted(requested_project_ids):
+            project = resolve_project_reference(ref, session)
+            if project is None:
+                if ref in explicit_project_ids:
+                    missing_explicit.append(ref)
+                else:
+                    logger.warning("Ignoring proposal project not provisioned in Crucible: %s", ref)
+                continue
+            if ref in explicit_project_ids:
+                assert_not_pending_deletion(session, project.unique_id)
+            elif get_active_deletion_request(session, project.unique_id) is not None:
+                logger.warning("Ignoring proposal project pending deletion: %s", ref)
+                continue
+            projects_by_mfid[project.unique_id] = project
         if missing_explicit:
             raise HTTPException(
                 status_code=404,
                 detail=f"Projects not found: {', '.join(missing_explicit)}",
             )
-        missing_discovered = sorted(discovered_project_ids - projects_by_id.keys())
-        if missing_discovered:
-            logger.warning("Ignoring proposal projects not provisioned in Crucible: %s", missing_discovered)
+        projects = list(projects_by_mfid.values())
 
         project_group_names = {project.unique_id for project in projects}
         project_groups = session.exec(
@@ -659,10 +624,6 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
                 accessgroup_id=groups_by_name[project.unique_id].id,
                 role=Role.CONTRIBUTOR.db_value,
             )
-            for project in projects
-        ])
-        session.add_all([
-            UserProjectLink(user_id=user.id, project_id=project.project_id)
             for project in projects
         ])
         session.commit()
@@ -806,9 +767,7 @@ def read_user_access_to_dataset(dataset_mfid: DatasetMfid, user_ref: UserRef, au
     '''Returns the user's effective role on one dataset. Limited to self and platform administrators.'''
     with Session(engine) as session:
         access_principal = resolve_access_principal(session, auth_res, user_ref)
-        dataset = session.exec(
-            select(Dataset).where(Dataset.unique_id == dataset_mfid)
-        ).one_or_none()
+        dataset = session.exec(select_active(Dataset, dataset_mfid)).one_or_none()
         if dataset is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
@@ -886,6 +845,7 @@ def list_user_access_groups(auth_res: Annotated[Principal, Depends(authorize_use
 
 @router.delete(
     "/users/{user_ref}/access_groups/{group_name}",
+    response_model=DetailResponse,
     deprecated=True,
 )
 def remove_user_from_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], user_ref: UserRef, group_name: str):

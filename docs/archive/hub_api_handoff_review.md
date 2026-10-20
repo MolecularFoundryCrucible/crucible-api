@@ -54,7 +54,7 @@ Required decisions and verification:
 
 ### 2. Web authentication contract
 
-Status updated 2026-09-28: resumed and implemented on `feat/hub-login-design`, with successful local Hub integration. PR #286 remains open against staging; production activation is pending. See [the authentication overview](hub_auth_overview.md), [selected design](hub_login_design.md), and [rollout gates](hub_auth_release_rollout.md). The options below record the original design discussion; the API-owned exchange was selected.
+Status updated 2026-09-28: resumed and implemented on `feat/hub-login-design`, with successful local Hub integration. PR #286 remains open against staging; production activation is pending. See [the authentication overview](../hub_auth_overview.md), [selected design](../hub_login_design.md), and [rollout gates](hub_auth_release_rollout.md). The options below record the original design discussion; the API-owned exchange was selected.
 
 Use an opaque server-side Hub session so API credentials and OAuth tokens are not exposed to browser JavaScript. Do not adapt the current browser API-key page into the Hub login mechanism.
 

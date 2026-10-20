@@ -167,3 +167,40 @@ def test_printer_online_false_for_explicit_offline():
 
 def test_printer_online_false_when_never_published():
     assert print_routes._printer_online(None) is False
+
+
+def test_list_printers_returns_sorted_discovered_printers(client, auth_as, monkeypatch):
+    auth_as("0000-0000-0000-0001")
+
+    def fake_list_statuses():
+        return {
+            "spinbot": {"state": "online", "hostname": "pi-spinbot", "ip": "10.0.0.5", "ts": time.time()},
+            "ncem": {"state": "offline", "hostname": "pi-ncem", "ip": "10.0.0.6"},
+        }
+
+    monkeypatch.setattr(print_routes, "_list_printer_statuses", fake_list_statuses)
+
+    response = client.get("/print/printers")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [p["printer_id"] for p in body["printers"]] == ["ncem", "spinbot"]
+    ncem, spinbot = body["printers"]
+    assert ncem["online"] is False
+    assert spinbot["online"] is True
+    assert all(set(printer) == {"printer_id", "online", "ts"} for printer in body["printers"])
+
+
+def test_list_printers_empty_when_none_discovered(client, auth_as, monkeypatch):
+    auth_as("0000-0000-0000-0001")
+    monkeypatch.setattr(print_routes, "_list_printer_statuses", lambda: {})
+
+    response = client.get("/print/printers")
+
+    assert response.status_code == 200
+    assert response.json() == {"printers": []}
+
+
+def test_list_printers_requires_authentication(client):
+    response = client.get("/print/printers")
+    assert response.status_code in (401, 403)

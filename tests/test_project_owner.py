@@ -104,27 +104,3 @@ def test_no_standing_at_all_is_not_ownership():
         session.commit()
 
         assert is_project_owner("0000-0005", "proj_c", session) is False
-
-
-def test_led_accessgroup_ids_aggregates_every_project_owned():
-    from app.api.routes.access_groups import _led_accessgroup_ids
-
-    engine = _engine()
-    with Session(engine) as session:
-        proj1 = _project(session, "proj_lead_1", "0000-0006")
-        proj2 = _project(session, "proj_lead_2", "0000-0006")
-        _project(session, "proj_not_led", "0000-0007")
-        ag1 = AccessGroup(group_name=proj1.unique_id, group_type=AccessGroupType.PROJECT.value)
-        ag2 = AccessGroup(group_name=proj2.unique_id, group_type=AccessGroupType.PROJECT.value)
-        session.add(ag1)
-        session.add(ag2)
-        user = _user(session, "0000-0006")
-        session.commit()
-        session.refresh(ag1)
-        session.refresh(ag2)
-
-        session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=ag1.id, role="owner"))
-        session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=ag2.id, role="admin"))
-        session.commit()
-
-        assert set(_led_accessgroup_ids("0000-0006", session)) == {ag1.id}

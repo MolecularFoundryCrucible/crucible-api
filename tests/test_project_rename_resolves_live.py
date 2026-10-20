@@ -125,3 +125,26 @@ def test_get_resource_shows_renamed_project_id_for_dataset_and_sample(client, db
 # itself uses postgres-only pg_trgm and isn't testable against SQLite --
 # same pre-existing gap as every other test in this suite, none of which
 # cover /datasets/search or /samples/search either.
+
+
+def test_rename_through_the_api_then_move_a_record(client, db_engine, auth_as):
+    project_mfid = _setup(db_engine)
+    auth_as("0000-0001", platform_role=PlatformRole.ADMIN)
+    with Session(db_engine) as session:
+        other = Project(project_id="proj_other", organization="LBNL", project_lead_orcid="0000-0001")
+        session.add(other)
+        session.commit()
+        session.refresh(other)
+        session.add(AccessGroup(group_name=other.unique_id, group_type="project"))
+        session.add(Resource(mfid=other.unique_id, resource_type="project"))
+        session.commit()
+        other_mfid = other.unique_id
+
+    renamed = client.patch(f"/projects/{project_mfid}", json={"project_id": "proj_renamed"})
+    assert renamed.status_code == 200, renamed.text
+    assert client.get("/datasets/ds_1").json()["project_id"] == "proj_renamed"
+
+    moved = client.post("/resources/ds_1/project", params={"confirm": True}, json={"project_mfid": other_mfid})
+    assert moved.status_code == 200, moved.text
+    assert (moved.json()["previous_project_id"], moved.json()["new_project_id"]) == ("proj_renamed", "proj_other")
+    assert client.get("/datasets/ds_1").json()["project_id"] == "proj_other"

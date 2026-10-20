@@ -29,11 +29,11 @@ from app.models.query_params import (
 )
 from app.models.users import UserPublicRead
 from app.services.resource_filters import resource_scope_predicates
-from app.utils.auth_utils import permission_filter
 from app.utils.cursor_utils import CursorError, filter_fingerprint, new_cursor, validate_cursor
 from app.utils.instrument_utils import resolve_instrument_filter_mfid, resolve_instrument_mfids_to_references
-from app.utils.permissions import Permission, Principal
+from app.utils.permissions import Principal
 from app.utils.project_utils import resolve_project_filter_mfid, resolve_project_mfids_to_references
+from app.utils.sql_utils import select_active
 
 
 DATASET_FACET_COLUMNS = {
@@ -307,9 +307,7 @@ def list_dataset_facets(
 
     if params.sample_mfid is not None:
         sample_id = session.exec(
-            select(Sample.id)
-            .where(Sample.unique_id == params.sample_mfid)
-            .where(permission_filter(principal, Sample, Permission.READ))
+            select_active(Sample, params.sample_mfid, Sample.id, principal=principal)
         ).one_or_none()
         if sample_id is None:
             raise HTTPException(status_code=404, detail="Sample not found or access denied")
@@ -383,9 +381,7 @@ def list_sample_facets(
 
     if params.dataset_mfid is not None:
         dataset_id = session.exec(
-            select(Dataset.id)
-            .where(Dataset.unique_id == params.dataset_mfid)
-            .where(permission_filter(principal, Dataset, Permission.READ))
+            select_active(Dataset, params.dataset_mfid, Dataset.id, principal=principal)
         ).one_or_none()
         if dataset_id is None:
             raise HTTPException(status_code=404, detail="Dataset not found or access denied")

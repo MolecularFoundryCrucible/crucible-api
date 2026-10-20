@@ -1,8 +1,8 @@
 import json
-from datetime import datetime
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from app.models.timestamps import UtcDatetime
 
 PREFERENCES_SCHEMA_VERSION = 1
 MAX_NAMESPACE_BYTES = 4 * 1024
@@ -33,7 +33,7 @@ class PreferencesDocument(BaseModel):
 class PreferencesRead(BaseModel):
     schema_version: int
     revision: int
-    updated_at: Optional[datetime] = None
+    updated_at: Optional[UtcDatetime] = None
     preferences: dict[str, Any]
 
 
@@ -48,4 +48,4 @@ class RecentResourceRead(BaseModel):
     resource_type: Literal["dataset", "sample", "project", "instrument"]
     name: Optional[str] = None
     project_id: Optional[str] = None
-    viewed_at: datetime
+    viewed_at: UtcDatetime

@@ -35,7 +35,7 @@ Do not set `EXPECTED_DB_REVISIONS=old,new`: this means the database must contain
 
 ## Failure handling
 
-If the bridge rollout cannot complete, stop before migrating. If a migration fails, leave the compatible existing image serving, inspect the actual schema, and repair only the failed migration's artifacts. The concurrent-index revision may partially commit; follow the index inspection and retry instructions in [Hub authentication operations](hub_auth_operations.md#expired-record-cleanup). Do not stamp a failed migration or blindly rerun it.
+If the bridge rollout cannot complete, stop before migrating. If a migration fails, leave the compatible existing image serving, inspect the actual schema, and repair only the failed migration's artifacts. The concurrent-index revision may partially commit; follow the index inspection and retry instructions in [Hub authentication operations](../hub_auth_operations.md#expired-record-cleanup). Do not stamp a failed migration or blindly rerun it.
 
 If the application rollout fails after a successful migration, restore the previous compatible image while retaining the new tables and the verified target revision setting. Do not use a blind deployment undo that restores the stale expected revision. Do not downgrade the Hub tables: staging already contains local-test sessions, and future activation will create live sessions. Restore exact readiness validation against the verified actual revision even when the feature release is postponed.
 

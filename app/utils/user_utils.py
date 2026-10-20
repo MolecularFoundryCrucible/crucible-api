@@ -11,6 +11,8 @@ from app.general_utils import get_secret, is_orcid, is_valid_mfid
 from app.models.core_models import AccessGroup, Project, User
 
 logger = logging.getLogger(__name__)
+# urllib3 logs request URLs at DEBUG, and the proposal service takes its API key in the query string.
+logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
 MF_PROPOSAL_DB_URL = "https://foundry-admin.lbl.gov/api/JSON/sciCat-GetUser.aspx"
 MF_PROPOSAL_DB_TIMEOUT = 10
@@ -204,7 +206,7 @@ def resolve_create_owner(session, owner: str | None, owner_orcid: str | None, au
     return resolve_user(session, orcid=owner_orcid or authenticated_user_id)
 
 
-def sql_add_user_to_access_group(orcid, group_name, session, role=None, group_type=None):
+def sql_add_user_to_access_group(orcid, group_name, session, role=None, group_type=None, actor_id=None):
     """Add a user to an access group by ORCID, creating the group if needed.
 
     `role` is the standing in that group, defaulting to contributor. Appending
@@ -244,7 +246,32 @@ def sql_add_user_to_access_group(orcid, group_name, session, role=None, group_ty
     elif link.role is None:
         link.role = (role or Role.CONTRIBUTOR).db_value
         session.add(link)
+    if ag.group_type == AccessGroupType.PROJECT.value:
+        close_pending_join_requests(session, ag.id, orcid, link.role if link is not None else (role or Role.CONTRIBUTOR).db_value, actor_id)
     return ag
+
+
+def close_pending_join_requests(session, accessgroup_id, orcid, granted_role, actor_id=None):
+    from sqlalchemy import update
+    from app.general_utils import get_utc_datetime
+    from app.models.core_models import AccessGroupJoinRequest
+
+    session.execute(
+        update(AccessGroupJoinRequest)
+        .where(
+            AccessGroupJoinRequest.accessgroup_id == accessgroup_id,
+            AccessGroupJoinRequest.requester_id == orcid,
+            AccessGroupJoinRequest.status == "pending",
+        )
+        .values(
+            status="approved",
+            review_time=get_utc_datetime(),
+            reviewer_id=actor_id,
+            reviewer_notes="Added to the project directly",
+            granted_role=granted_role,
+        )
+        .execution_options(synchronize_session=False)
+    )
 
 
 def find_mf_user_proposals(orcid: str) -> List[str]:
@@ -267,7 +294,8 @@ def find_mf_user_proposals(orcid: str) -> List[str]:
         response.raise_for_status()
         payload = response.json()
     except (requests.RequestException, ValueError) as exc:
-        logger.warning("MF proposal lookup failed for %s: %s", orcid, exc)
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        logger.warning("MF proposal lookup failed for %s: %s%s", orcid, type(exc).__name__, f" {status}" if status else "")
         return []
 
     if not isinstance(payload, list) or any(not isinstance(item, dict) for item in payload):
@@ -286,6 +314,7 @@ def find_mf_user_proposals(orcid: str) -> List[str]:
 
 def assign_projects_to_user(session, user_id: str, project_ids: List[str]) -> Dict[str, List[str]]:
     """Add project memberships without removing existing memberships."""
+    from app.models.core_models import UserAccessGroupLink
     from app.utils.permissions import AccessGroupType, Role
 
     user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
@@ -302,11 +331,12 @@ def assign_projects_to_user(session, user_id: str, project_ids: List[str]) -> Di
             not_found.append(project_id)
             continue
 
-        if project in user.projects:
-            already_member.append(project_id)
-        else:
-            user.projects.append(project)
-            added.append(project_id)
+        member = session.exec(
+            select(UserAccessGroupLink.user_id)
+            .join(AccessGroup, AccessGroup.id == UserAccessGroupLink.accessgroup_id)
+            .where(UserAccessGroupLink.user_id == user.id, AccessGroup.group_name == project.unique_id)
+        ).first()
+        (already_member if member is not None else added).append(project_id)
         sql_add_user_to_access_group(
             user_id,
             project.unique_id,

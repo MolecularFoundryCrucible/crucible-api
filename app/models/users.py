@@ -1,10 +1,11 @@
-from datetime import datetime
 from typing import Any, List, Literal, Optional
-from pydantic import AliasChoices, ConfigDict, Field, field_validator
+from pydantic import MISSING, AliasChoices, ConfigDict, Field, field_validator
 from sqlmodel import SQLModel
 from app.general_utils import is_orcid, is_valid_mfid
 from app.utils.permissions import PlatformRole, PrivilegeMode
 from app.utils.user_utils import validate_username_format
+from app.models.fields import NonBlankStr
+from app.models.timestamps import UtcDatetime
 
 
 class UserCreate(SQLModel):
@@ -58,7 +59,7 @@ class ServiceAccountKeyStatus(SQLModel):
     valid: bool
     created_at: str
     expires_at: str
-    last_used_at: Optional[datetime] = Field(default=None, description="Last authenticated use, recorded at most every 10 minutes.")
+    last_used_at: Optional[UtcDatetime] = Field(default=None, description="Last authenticated use, recorded at most every 10 minutes.")
 
 
 class UserRead(SQLModel):
@@ -71,7 +72,7 @@ class UserRead(SQLModel):
     platform_role: Optional[PlatformRole] = None
     user_capabilities: Optional[UserCapabilities] = None
     api_key_status: Optional[ServiceAccountKeyStatus] = None
-    last_active_at: Optional[datetime] = Field(default=None, description="Last authenticated request, recorded at most hourly. Returned to platform administrators and to the user themselves.")
+    last_active_at: Optional[UtcDatetime] = Field(default=None, description="Last authenticated request, recorded at most hourly. Returned to platform administrators and to the user themselves.")
 
 
 class AccountCapabilities(SQLModel):
@@ -116,8 +117,8 @@ class AccountProfileUpdate(SQLModel):
     '''Self-service profile update. Does not allow changing is_service_account.'''
     model_config = ConfigDict(extra="forbid")
 
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
+    first_name: NonBlankStr | MISSING = MISSING
+    last_name: NonBlankStr | MISSING = MISSING
     email: Optional[str] = None
     username: Optional[str] = None
 
@@ -140,8 +141,8 @@ class UserUpdate(SQLModel):
     '''Admin partial update schema for mutable user profile fields.'''
     model_config = ConfigDict(extra="forbid")
 
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
+    first_name: NonBlankStr | MISSING = MISSING
+    last_name: NonBlankStr | MISSING = MISSING
     email: Optional[str] = None
     username: Optional[str] = None
 

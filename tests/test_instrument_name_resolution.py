@@ -46,22 +46,21 @@ class TestDisplayNameFollowsTheInstrument:
         assert resp.status_code == 200, resp.text
         assert resp.json()["instrument_name"] == "XRD Two"
 
-    def test_legacy_dataset_keeps_its_stored_label(self, client, db_engine, auth_as):
+    def test_dataset_without_a_registered_instrument_shows_none(self, client, db_engine, auth_as):
         _register(client, db_engine, auth_as)
         with Session(db_engine) as session:
-            session.add(Dataset(unique_id="0legacy0000000000000000000", dataset_name="old", instrument_name="hand typed"))
+            session.add(Dataset(unique_id="0legacy0000000000000000000", dataset_name="old"))
             session.add(Resource(mfid="0legacy0000000000000000000", resource_type="dataset"))
             session.commit()
         body = client.get("/datasets/0legacy0000000000000000000").json()
-        assert body["instrument_name"] == "hand typed"
-        assert body["instrument"] is None
+        assert (body["instrument_name"], body["instrument_id"], body["instrument"]) == (None, None, None)
 
-    def test_patch_still_accepts_the_stored_or_current_name(self, client, db_engine, auth_as):
+    def test_patch_accepts_only_the_current_name(self, client, db_engine, auth_as):
         mfid = _register(client, db_engine, auth_as)
         dsid = client.post("/datasets", json={"dataset_name": "d", "instrument_id": "xrd-1"}).json()["unique_id"]
         _rename(client, mfid, "XRD Two")
-        assert client.patch(f"/datasets/{dsid}", json={"instrument_name": "XRD One"}).status_code == 200
         assert client.patch(f"/datasets/{dsid}", json={"instrument_name": "xrd two"}).status_code == 200
+        assert client.patch(f"/datasets/{dsid}", json={"instrument_name": "XRD One"}).status_code == 409
         assert client.patch(f"/datasets/{dsid}", json={"instrument_name": "Other"}).status_code == 409
 
 
@@ -73,13 +72,13 @@ class TestDeprecatedNameFilter:
         assert _total(client, instrument_name="XRD Two") == 1
         assert _total(client, instrument_name="XRD One") == 0
 
-    def test_filter_matches_legacy_labels(self, client, db_engine, auth_as):
+    def test_filter_matches_only_registered_instruments(self, client, db_engine, auth_as):
         _register(client, db_engine, auth_as)
         with Session(db_engine) as session:
-            session.add(Dataset(unique_id="0legacy0000000000000000000", dataset_name="old", instrument_name="hand typed"))
+            session.add(Dataset(unique_id="0legacy0000000000000000000", dataset_name="old"))
             session.add(Resource(mfid="0legacy0000000000000000000", resource_type="dataset"))
             session.commit()
-        assert _total(client, instrument_name="hand typed") == 1
+        assert _total(client, instrument_name="XRD One") == 0
 
     def test_filter_is_deprecated_in_openapi(self, client):
         parameters = client.get("/openapi.json").json()["paths"]["/datasets"]["get"]["parameters"]

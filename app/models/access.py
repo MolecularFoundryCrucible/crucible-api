@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Optional
 
-from sqlmodel import SQLModel
+from sqlmodel import Field, SQLModel
 
 
 class AccessPrincipalType(str, Enum):
@@ -38,6 +38,13 @@ class EffectiveResourceAccessRead(SQLModel):
     effective_access: EffectiveAccess
 
 
+class EntryCapabilities(SQLModel):
+    """What the caller may do to one member or grant, as the matching routes would decide."""
+    can_remove: bool = Field(description="The matching DELETE would succeed: removal up to your own role, or leaving yourself.")
+    can_change_role: bool = Field(description="The matching PATCH or PUT would succeed for at least one other role.")
+    assignable_roles: list[AccessPermission] = Field(description="Roles the matching PATCH or PUT would accept for this entry.")
+
+
 class AccessGrantRead(SQLModel):
     """One canonical principal grant on a resource."""
     principal_id: str
@@ -45,6 +52,7 @@ class AccessGrantRead(SQLModel):
     permission: AccessPermission
     slug: Optional[str] = None
     display_name: Optional[str] = None
+    capabilities: Optional[EntryCapabilities] = None
 
 
 class AccessGrantWrite(SQLModel):

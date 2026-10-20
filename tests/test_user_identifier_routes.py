@@ -223,3 +223,24 @@ def test_user_routes_document_user_ref(client):
         assert "orcid" not in parameters
 
     assert "/users/{user_id}" not in schema["paths"]
+
+
+def test_deprecated_key_verify_matches_admin_key_status_for_both_date_formats(client, db_engine, auth_as):
+    from datetime import datetime, timedelta, timezone
+    from app.models.core_models import ApiToken
+    _setup(db_engine)
+    recent = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    with Session(db_engine) as session:
+        session.add(ApiToken(user_unique_id=PERSON_ORCID, token_created=recent, token="k1", access_group_id="g"))
+        session.add(ApiToken(user_unique_id=OTHER_ORCID, token_created="2024-01-02", token="k2", access_group_id="g"))
+        session.commit()
+    auth_as("admin", platform_role=PlatformRole.ADMIN)
+
+    for orcid, valid in ((PERSON_ORCID, True), (OTHER_ORCID, False)):
+        verify = client.get(f"/users/{orcid}/apikey/verify")
+        assert verify.status_code == 200, verify.text
+        assert verify.headers["deprecation"].startswith("@")
+        assert verify.json()["valid"] is valid
+        status = client.get(f"/users/{orcid}").json()["api_key_status"]
+        assert verify.json() == status
+    assert client.get(f"/users/{SERVICE_ACCOUNT_MFID}/apikey/verify").status_code == 404

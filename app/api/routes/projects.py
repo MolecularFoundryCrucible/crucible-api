@@ -3,22 +3,19 @@ from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select, col
-import networkx as nx
-from networkx.readwrite import json_graph
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ProjectRef, UserRef
 from app.models.core_models import (
-    AccessGroup, Project, Resource, Sample, ScientificMetadataBinary, User, UserProjectLink, UserAccessGroupLink,
-    Dataset, DatasetSampleLink,
+    AccessGroup, Project, Resource, ScientificMetadataBinary, User, UserAccessGroupLink,
 )
 from app.services.resource_pagination import (
     ResourcePaginationSpec, execute_resource_page, prepare_resource_pagination)
 from app.utils.auth_utils import (
     access_selector_filter, authorize_user,
-    load_principal, permission_filter, project_member_filter, project_owner_affiliation_filter,
+    load_principal, project_member_filter, project_owner_affiliation_filter,
     require_grant, require_permission, resolve_access_principal,
     resource_capabilities)
 from app.utils.permissions import (
@@ -31,7 +28,8 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import add_or_update, deletion_filter_for, sql_create_resource_acl, touch_resource_modification_time
-from app.utils.deletion_utils import assert_not_pending_deletion, deletion_blockers
+from app.utils.deletion_utils import has_deletion_blockers
+from app.utils.sql_utils import assert_not_pending_deletion
 from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import (
     assert_project_id_available, is_project_owner, project_id_matches, sql_add_user_to_project,
@@ -46,6 +44,7 @@ from app.services.resource_details import (
     ResourceDetailOptions,
     load_project_detail,
     load_project_members,
+    with_member_capabilities,
 )
 
 router = APIRouter(tags=["projects"])
@@ -73,9 +72,8 @@ def _project_capabilities(session, principal, project):
         principal,
         project.unique_id,
         manage_access_floor=Role.EDITOR,
-        allow_peer_grants=False,
         status_permission=Permission.EDIT,
-        can_delete=not deletion_blockers(session, "project", project.unique_id),
+        can_delete=lambda: not has_deletion_blockers(session, "project", project.unique_id),
     )
 
 
@@ -132,9 +130,6 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
                       api_version_githash=API_VERSION_GITHASH)
         sql_create_resource_acl(ag, prop.unique_id, read=True, write=True,
                                 session=session, permission=Role.OWNER)
-
-        if prop not in project_lead.projects:
-            project_lead.projects.append(prop)
 
         session.commit()
         session.refresh(prop)
@@ -246,7 +241,7 @@ def list_projects(
             may_see_private_fields = has_global_permission(auth_res, Permission.READ) or caller_role is not None
             lead_user = leads.get(proj.project_lead_orcid)
             lead = UserPublicRead.model_validate(lead_user) if lead_user else None
-            members = _get_project_users(proj.project_id, session) if include_members and may_see_private_fields else None
+            members = _get_project_users(proj, session, auth_res) if include_members and may_see_private_fields else None
             items.append(ProjectWithLead(
                 **proj.model_dump(),
                 lead=lead,
@@ -359,9 +354,8 @@ def update_project(project_ref: ProjectRef, auth_res: Annotated[Principal, Depen
     fields (extra="forbid" 422s if you send one). Use
     POST /resources/{proj_id}/transfer_ownership instead.
 
-    project_id may be changed (renamed) here. Every foreign key that names a
-    project stores its MFID (Project.unique_id), never project_id, so a
-    rename does not orphan any dataset/sample/ACL row.
+    project_id may be changed (renamed) here. Datasets, samples, and memberships
+    link to the project by MFID, so a rename changes only the project row.
     '''
     with Session(engine) as session:
         project = resolve_project_reference(project_ref, session)
@@ -402,9 +396,9 @@ def update_project(project_ref: ProjectRef, auth_res: Annotated[Principal, Depen
         )
 
 
-def _get_project_users(proj_id: str, session) -> List[AccessGroupMemberRead]:
-    '''Public-safe project members and their role.'''
-    return load_project_members(session, proj_id)
+def _get_project_users(project: Project, session, principal: Principal) -> List[AccessGroupMemberRead]:
+    '''Public-safe project members, their role, and what the caller may do to each.'''
+    return with_member_capabilities(session, principal, project.unique_id, load_project_members(session, project.project_id))
 @router.get("/projects/{project_ref}/users", response_model=PaginatedResponse[AccessGroupMemberRead])
 def read_users_on_project(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)],
                           limit: int = Query(default=100, ge=1, le=1000),
@@ -420,7 +414,7 @@ def read_users_on_project(project_ref: ProjectRef, auth_res: Annotated[Principal
 
         require_permission(session, auth_res, project.unique_id, Permission.READ)
 
-        all_users = _get_project_users(project.project_id, session)
+        all_users = _get_project_users(project, session, auth_res)
         return PaginatedResponse(total=len(all_users), limit=limit, offset=offset, items=all_users[offset:offset + limit])
 
 
@@ -442,8 +436,7 @@ def add_users_to_project(
     '''
     Add a user to a project at `role`, defaulting to contributor.
 
-    Requires editor or above in the project. Editors may grant contributor or
-    viewer, admins may grant editor or below, and owners may grant admin or below.
+    Requires editor or above in the project, granting at most your own role.
     Cannot seat someone as owner this way; a project has exactly one owner,
     changed only via POST /resources/{mfid}/transfer_ownership.
     '''
@@ -474,7 +467,7 @@ def add_users_to_project(
             if existing_link is not None and existing_link.role is not None:
                 current_role = Role.from_db(existing_link.role)
                 if current_role == internal_role:
-                    return _get_project_users(proj.project_id, session)
+                    return _get_project_users(proj, session, auth_res)
                 raise HTTPException(
                     status_code=409,
                     detail=(
@@ -491,13 +484,12 @@ def add_users_to_project(
             proj.unique_id,
             internal_role,
             floor=Role.EDITOR,
-            allow_peer=False,
         )
 
-        sql_add_user_to_project(user, proj.project_id, session, role=internal_role)
+        sql_add_user_to_project(user, proj.project_id, session, role=internal_role, actor_id=auth_res.user_id)
         session.commit()
 
-        return _get_project_users(proj.project_id, session)
+        return _get_project_users(proj, session, auth_res)
 
 
 @router.patch("/projects/{project_ref}/users/{user_ref}", response_model=List[AccessGroupMemberRead])
@@ -557,7 +549,6 @@ def set_project_user_role(
             internal_role,
             current=current,
             floor=Role.EDITOR,
-            allow_peer=False,
         )
 
         link.role = internal_role.db_value
@@ -565,7 +556,7 @@ def set_project_user_role(
         touch_resource_modification_time(session, proj.unique_id)
         session.commit()
 
-        return _get_project_users(proj.project_id, session)
+        return _get_project_users(proj, session, auth_res)
 
 
 @router.delete("/projects/{project_ref}/users/{user_ref}", response_model=List[AccessGroupMemberRead])
@@ -577,40 +568,19 @@ def remove_user_from_project(
     username: Annotated[Optional[str], Query(deprecated=True, description="Deprecated. Put the username in the path instead.")] = None,
 ):
     '''
-    Remove a user from a project and its associated access group.
-    Admins or the project lead can remove any member. A member can also
-    remove themselves (leave the project), but the project lead cannot
-    remove themselves — transfer leadership first.
+    Remove a user from a project. Members may leave on their own; otherwise this
+    requires editor or above in the project and a member whose role is at most
+    your own. The owner cannot be removed; transfer ownership first.
     '''
-    user_unique_id = auth_res.user_id
-    is_admin = auth_res.is_platform_admin
-
     with Session(engine) as session:
         proj = resolve_project_reference(project_ref, session)
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project {project_ref} not found")
+        user = _resolve_member(session, user_ref, email, username)
+        is_self = auth_res.user_id == user.unique_id
+        if not is_self:
+            require_permission(session, auth_res, proj.unique_id, Permission.EDIT)
 
-        caller_is_owner = (
-            not auth_res.is_service_account
-            and is_project_owner(user_unique_id, proj.project_id, session)
-        )
-        try:
-            user = _resolve_member(session, user_ref, email, username)
-        except HTTPException:
-            if not is_admin and not caller_is_owner:
-                raise HTTPException(status_code=403, detail="Only platform admins, the project lead, or the member themselves can remove a member.")
-            raise
-        is_self = user_unique_id == user.unique_id
-        if not is_admin and not caller_is_owner and not is_self:
-            raise HTTPException(status_code=403, detail="Only platform admins, the project lead, or the member themselves can remove a member.")
-
-        if is_self and caller_is_owner:
-            raise HTTPException(status_code=409, detail="The project lead cannot remove themselves. Transfer leadership first.")
-
-
-        # The access-group standing is the real membership record — see
-        # is_project_member. A missing UserAccessGroupLink means the user has
-        # no actual access regardless of what UserProjectLink says.
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == proj.unique_id)).one_or_none()
         ag_link = session.exec(
             select(UserAccessGroupLink).where(
@@ -620,149 +590,15 @@ def remove_user_from_project(
         ).one_or_none() if ag else None
         if ag_link is None:
             raise HTTPException(status_code=404, detail=f"User {user.unique_id} is not a member of project {proj.project_id}")
+        current = Role.from_db(ag_link.role)
+        if current is Role.OWNER:
+            raise HTTPException(status_code=409, detail="The project owner cannot be removed; use POST /resources/{mfid}/transfer_ownership first")
+        if not is_self:
+            require_grant(session, auth_res, proj.unique_id, current, current=current, floor=Role.EDITOR)
         session.delete(ag_link)
-
-        # Best-effort cleanup of the legacy link table; its absence is not an error.
-        link = session.exec(
-            select(UserProjectLink).where(
-                UserProjectLink.user_id == user.id,
-                UserProjectLink.project_id == proj.project_id
-            )
-        ).one_or_none()
-        if link is not None:
-            session.delete(link)
 
         touch_resource_modification_time(session, proj.unique_id)
         session.commit()
-        return _get_project_users(proj.project_id, session)
+        return _get_project_users(proj, session, auth_res)
 
 
-@router.get("/projects/{project_ref}/sample_graph")
-def project_sample_graph(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
-
-    with Session(engine) as session:
-        proj = resolve_project_reference(project_ref, session)
-        if proj is None:
-            raise HTTPException(status_code=404, detail="Project not found")
-        require_permission(session, auth_res, proj.unique_id, Permission.READ)
-
-        samp_cmd = (
-            select(Sample)
-            .options(joinedload(Sample.parents))
-            .where(permission_filter(auth_res, Sample, Permission.READ))
-            .where(deletion_filter_for(Sample))
-        )
-
-        # Filter samples by the project's MFID, not its (renamable) project_id
-        samp_cmd = samp_cmd.where(Sample.project_mfid == proj.unique_id)
-        samp_list = session.exec(samp_cmd).unique().all()
-
-        allowed_ids = {sample.unique_id for sample in samp_list}
-        edges = []
-        for sample in samp_list:
-            for parent in sample.parents:
-                if parent.unique_id in allowed_ids:
-                    edges.append((parent.unique_id, sample.unique_id))
-
-        G = nx.DiGraph(edges)
-        for sample in samp_list:
-            G.add_node(sample.unique_id,
-                       sample_name=sample.sample_name)
-
-        return json_graph.node_link_data(G)
-
-@router.get("/projects/{project_ref}/dataset_graph")
-def project_dataset_graph(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
-
-    with Session(engine) as session:
-        proj = resolve_project_reference(project_ref, session)
-        if proj is None:
-            raise HTTPException(status_code=404, detail="Project not found")
-
-        ds_cmd = (
-            select(Dataset)
-            .options(joinedload(Dataset.parents))
-            .filter(permission_filter(auth_res, Dataset, Permission.READ))
-            .where(deletion_filter_for(Dataset))
-            .where(Dataset.project_mfid == proj.unique_id)
-        )
-
-        ds_list = session.exec(ds_cmd).unique().all()
-
-        allowed_ids = {dataset.unique_id for dataset in ds_list}
-        edges = []
-        for dataset in ds_list:
-            for parent in dataset.parents:
-                if parent.unique_id in allowed_ids:
-                    edges.append((parent.unique_id, dataset.unique_id))
-
-        G = nx.DiGraph(edges)
-        for dataset in ds_list:
-            G.add_node(dataset.unique_id,
-                       dataset_name=dataset.dataset_name)
-
-        return json_graph.node_link_data(G)
-
-
-@router.get("/projects/{project_ref}/entity_graph")
-def project_entity_graph(project_ref: ProjectRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''
-    Returns a NetworkX node-link graph of all samples and datasets in the
-    project, connected via sample lineage, dataset lineage, and sample-dataset
-    associations. Nodes carry entity_type ('sample' or 'dataset') and name.
-    '''
-    with Session(engine) as session:
-        proj = resolve_project_reference(project_ref, session)
-        if proj is None:
-            raise HTTPException(status_code=404, detail="Project not found")
-        require_permission(session, auth_res, proj.unique_id, Permission.READ)
-
-        # Load all samples in the project with parent relationships. Filtered
-        # by the project's MFID, not its (renamable) project_id.
-        proj_mfid = proj.unique_id
-        samp_cmd = (
-            select(Sample)
-            .options(joinedload(Sample.parents))
-            .where(permission_filter(auth_res, Sample, Permission.READ))
-            .where(deletion_filter_for(Sample))
-            .where(Sample.project_mfid == proj_mfid)
-        )
-        samp_list = session.exec(samp_cmd).unique().all()
-
-        # Load all authorized datasets in the project with parent relationships
-        ds_list = session.exec(
-            select(Dataset)
-            .options(joinedload(Dataset.parents))
-            .filter(permission_filter(auth_res, Dataset, Permission.READ))
-            .where(deletion_filter_for(Dataset))
-            .where(Dataset.project_mfid == proj_mfid)
-        ).unique().all()
-
-        s_int_to_uid = {s.id: s.unique_id for s in samp_list}
-        d_int_to_uid = {d.id: d.unique_id for d in ds_list}
-        sample_mfids = set(s_int_to_uid.values())
-        dataset_mfids = set(d_int_to_uid.values())
-
-        # Load sample-dataset associations scoped to this project's entities
-        sd_links = session.exec(
-            select(DatasetSampleLink)
-            .where(DatasetSampleLink.sample_id.in_(s_int_to_uid.keys()))
-            .where(DatasetSampleLink.dataset_id.in_(d_int_to_uid.keys()))
-        ).all() if s_int_to_uid and d_int_to_uid else []
-
-        # Build combined graph — no subgraph extraction needed, include everything
-        G = nx.DiGraph()
-        for s in samp_list:
-            G.add_node(s.unique_id, entity_type='sample', name=s.sample_name)
-            for parent in s.parents:
-                if parent.unique_id in sample_mfids:
-                    G.add_edge(parent.unique_id, s.unique_id)
-        for d in ds_list:
-            G.add_node(d.unique_id, entity_type='dataset', name=d.dataset_name)
-            for parent in d.parents:
-                if parent.unique_id in dataset_mfids:
-                    G.add_edge(parent.unique_id, d.unique_id)
-        for link in sd_links:
-            G.add_edge(s_int_to_uid[link.sample_id], d_int_to_uid[link.dataset_id])
-
-        return json_graph.node_link_data(G)

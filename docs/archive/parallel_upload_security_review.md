@@ -46,7 +46,7 @@ Reviewed the current GCS parallel upload initiation and completion routes, their
 
 ### PU-5: File records can point downloads at arbitrary objects
 
-- **Status (2026-10-13):** Fixed. Found during the storage review: `PATCH /files/{file_id}` accepted any `storage_path`, and download and ingestion signed or forwarded it with the project-owner `GCS_SA` identity. Downloads and ingestion now enforce the location rule in `app/services/storage_downloads.py`, and `PATCH` no longer changes where a GCS file's bytes live. See [storage location confinement](storage_download_design.md).
+- **Status (2026-10-13):** Fixed. Found during the storage review: `PATCH /files/{file_id}` accepted any `storage_path`, and download and ingestion signed or forwarded it with the project-owner `GCS_SA` identity. Downloads and ingestion now enforce the location rule in `app/services/storage_downloads.py`, and `PATCH` no longer changes where a GCS file's bytes live. See [storage location confinement](../storage_download_design.md).
 
 ## Recommended release path
 

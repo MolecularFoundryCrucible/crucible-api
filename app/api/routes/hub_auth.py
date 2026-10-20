@@ -1,6 +1,5 @@
 import os
 import secrets
-from datetime import datetime
 
 import requests
 from authlib.integrations.base_client.errors import OAuthError
@@ -19,6 +18,7 @@ from app.utils.hub_login import (
 from app.utils.hub_orcid import exchange_orcid_code, orcid_authorization_url
 from app.utils.hub_tokens import InvalidHubGrant, HubTokenPair, refresh_hub_tokens, revoke_hub_tokens
 from app.utils.hub_secrets import HubSecretUnavailable, get_hub_secret, hub_auth_enabled
+from app.models.timestamps import UtcDatetime
 
 
 router = APIRouter(prefix="/auth/hub", tags=["auth"])
@@ -44,8 +44,8 @@ class HubTokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "Bearer"
-    access_expires_at: datetime
-    refresh_expires_at: datetime
+    access_expires_at: UtcDatetime
+    refresh_expires_at: UtcDatetime
     user_unique_id: str
 
 

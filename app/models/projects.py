@@ -1,9 +1,10 @@
 import warnings
 from enum import Enum
 from typing import List, Literal, Optional
-from pydantic import ConfigDict, field_validator, model_validator
+from pydantic import MISSING, ConfigDict, field_validator, model_validator
 from sqlmodel import Field, SQLModel
 from app.models.access_groups import AccessGroupMemberRead
+from app.models.fields import NonBlankStr
 from app.models.resource import ResourceCapabilities
 from app.models.timestamps import UtcDatetime
 from app.models.users import UserPublicRead
@@ -99,8 +100,8 @@ class ProjectUpdate(SQLModel):
     '''
     model_config = ConfigDict(extra="forbid")
 
-    project_id: Optional[str] = None
-    organization: Optional[str] = None
+    project_id: str | MISSING = MISSING
+    organization: NonBlankStr | MISSING = MISSING
     status: Optional[str] = None
     title: Optional[str] = None
 

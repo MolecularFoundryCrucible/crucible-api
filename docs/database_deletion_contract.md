@@ -18,7 +18,15 @@ PATCH /deletion_requests/{request_id}?status=approved
 PATCH /deletion_requests/{request_id}?status=rejected
 ```
 
-Contributor or above may create a request for a dataset or sample. Admin on the resource may create a request for a project or instrument. A pending request hides the resource from normal reads. Admin, owner, or platform admin may review it.
+Contributor or above may create a request for a dataset or sample. Admin on the resource may create a request for a project or instrument. Admin, owner, or platform admin may review it.
+
+While a dataset or sample has a pending or approved request:
+
+- Exact lookups still work: its detail (which carries `deletion_request`), its files, file detail and download link, and its ingestion requests and postprocessing runs by id. Reviewers can inspect what they are approving, and data can still be retrieved.
+- Searches, lists, facets, filters, and traversals hide it: `GET /datasets`, `GET /files`, `GET /ingestion_requests`, `GET /postprocessing_runs`, filters such as `sample_mfid` or `dataset_mfid` naming it (404), and its parents, children, and linked samples or datasets (404).
+- Writes return 409 `{"detail": {"code": "pending_deletion", "status": ..., "message": ...}}`: adding files or thumbnails, every upload path (a multipart upload completing after the request was made fails with `dataset_pending_deletion`), editing or deleting files, starting ingestion or postprocessing, and creating links. Status updates on existing ingestion requests and postprocessing runs are still accepted so in-flight work can finish.
+
+Route code uses the shared helpers in `app/utils/sql_utils.py`: `select_readable` and `select_readable_file` for exact lookups, `select_active` and `deletion_filter_for` for filters, traversals, and lists, and `assert_not_pending_deletion` for writes.
 
 Creating a request for a project or instrument that still has assigned datasets or samples returns 409. The response body carries a structured detail of the form `{"detail": "...", "blocking": {"datasets": 12, "samples": 3}}`.
 

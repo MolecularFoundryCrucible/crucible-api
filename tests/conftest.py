@@ -6,10 +6,10 @@ from sqlalchemy.pool import StaticPool
 from app.api.main import app
 from app.models.core_models import (
     User, AccessGroup, UserAccessGroupLink, ResourceACL, Resource, Dataset,
-    AssociatedFile, IngestionRequest, Project, UserProjectLink, Sample,
+    AssociatedFile, IngestionRequest, Project, Sample,
     DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
     DatasetLink, ApiToken, UploadSession, DeletionAuditLog, DatasetKeywordLink, Thumbnail,
-    ResourceEmbedding, UserPreferences, UserRecentResource,
+    ResourceEmbedding, UserPreferences, UserRecentResource, PostprocessingRun,
 )
 from app.utils.auth_utils import authenticate_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
@@ -21,6 +21,8 @@ import app.api.routes.deletion as deletion_routes
 import app.api.routes.entities as entities_routes
 import app.api.routes.instruments as instruments_routes
 import app.api.routes.ingestion_requests as ingestion_requests_routes
+import app.api.routes.pipelines as pipelines_routes
+import app.api.routes.join_requests as join_requests_routes
 import app.api.routes.projects as projects_routes
 import app.api.routes.resources as resources_routes
 import app.api.routes.resource_graph as resource_graph_routes
@@ -34,11 +36,12 @@ TEST_TABLES = [
     User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__,
     ResourceACL.__table__, Resource.__table__, Dataset.__table__,
     AssociatedFile.__table__, IngestionRequest.__table__, Project.__table__,
-    UserProjectLink.__table__, Sample.__table__, DeletionRequest.__table__,
+    Sample.__table__, DeletionRequest.__table__,
     Instrument.__table__, AccessGroupJoinRequest.__table__, DatasetSampleLink.__table__,
     SampleLink.__table__, DatasetLink.__table__, ApiToken.__table__, UploadSession.__table__,
     DeletionAuditLog.__table__, DatasetKeywordLink.__table__, Thumbnail.__table__,
     ResourceEmbedding.__table__, UserPreferences.__table__, UserRecentResource.__table__,
+    PostprocessingRun.__table__,
 ]
 
 
@@ -68,6 +71,8 @@ def db_engine():
     entities_routes.engine = engine
     instruments_routes.engine = engine
     ingestion_requests_routes.engine = engine
+    pipelines_routes.engine = engine
+    join_requests_routes.engine = engine
     projects_routes.engine = engine
     resources_routes.engine = engine
     resource_graph_routes.engine = engine

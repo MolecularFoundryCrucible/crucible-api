@@ -35,7 +35,8 @@ from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import ResourceDetailQuery, ResourceEmbeddingListQuery
-from app.services.resource_access import access_grant_read
+from app.models.response_schemas import DetailResponse
+from app.services.resource_access import access_grant_read, access_grant_reads, with_grant_capabilities
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
 from app.utils.auth_utils import (
     authorize_user,
@@ -58,8 +59,8 @@ from app.utils.permissions import (
 from app.utils.sql_utils import add_or_update, set_public, sql_create_resource_acl, touch_resource_modification_time
 from app.utils.gcs_record_utils import write_metadata
 from app.utils.link_utils import fetch_readable_links
-from app.utils.project_utils import is_project_group, resolve_project_identifiers, resolve_project_reference
-from app.utils.user_utils import resolve_user_by_identifier
+from app.utils.project_utils import resolve_project_identifiers, resolve_project_reference
+from app.utils.user_utils import close_pending_join_requests, resolve_user_by_identifier
 from app.utils.cursor_utils import (
     CursorError,
     filter_fingerprint,
@@ -432,7 +433,7 @@ def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
 
     with Session(engine) as session:
         resource = session.exec(
-            select(Resource).where(Resource.mfid == unique_id)
+            select(Resource).where(Resource.mfid == unique_id).with_for_update()
         ).one_or_none()
 
         if resource is None:
@@ -474,7 +475,7 @@ def update_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
 
     with Session(engine) as session:
         resource = session.exec(
-            select(Resource).where(Resource.mfid == unique_id)
+            select(Resource).where(Resource.mfid == unique_id).with_for_update()
         ).one_or_none()
 
         if resource is None:
@@ -519,7 +520,7 @@ def create_deletion_request(
     requester_id = auth_res.user_id
     with Session(engine) as session:
         resource = session.exec(
-            select(Resource).where(Resource.mfid == resource_id)
+            select(Resource).where(Resource.mfid == resource_id).with_for_update()
         ).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail=f"Resource {resource_id} not found.")
@@ -559,8 +560,10 @@ def create_deletion_request(
                 detail=f"A deletion request for {resource_id} already exists (status: {existing.status}).",
             )
 
+        summary = None
         if resource.resource_type in ("project", "instrument"):
-            blocking = deletion_summary(session, resource.resource_type, resource_id)["blocking"]
+            summary = deletion_summary(session, resource.resource_type, resource_id)
+            blocking = summary["blocking"]
             if blocking:
                 raise HTTPException(
                     status_code=409,
@@ -580,13 +583,11 @@ def create_deletion_request(
             ds = session.exec(select(Dataset).where(Dataset.unique_id == resource_id)).one_or_none()
             if ds is not None:
                 resource_name = ds.dataset_name
-                project_id = ds.project_id
                 project_mfid = ds.project_mfid
         elif resource.resource_type == "sample":
             samp = session.exec(select(Sample).where(Sample.unique_id == resource_id)).one_or_none()
             if samp is not None:
                 resource_name = samp.sample_name
-                project_id = samp.project_id
                 project_mfid = samp.project_mfid
         elif resource.resource_type == "project":
             project = session.exec(select(Project).where(Project.unique_id == resource_id)).one_or_none()
@@ -598,6 +599,8 @@ def create_deletion_request(
             instrument = session.exec(select(Instrument).where(Instrument.unique_id == resource_id)).one_or_none()
             if instrument is not None:
                 resource_name = instrument.instrument_name
+        if project_id is None and project_mfid is not None:
+            project_id = session.exec(select(Project.project_id).where(Project.unique_id == project_mfid)).first()
 
         deletion_req = DeletionRequest(
             resource_id=resource_id,
@@ -628,8 +631,7 @@ def create_deletion_request(
             select(User).where(User.unique_id == requester_id)
         ).one_or_none()
         preview = None
-        if resource.resource_type in ("project", "instrument"):
-            summary = deletion_summary(session, resource.resource_type, resource_id)
+        if summary is not None:
             preview = deletion_preview_read(
                 resource_id, resource.resource_type, False, summary
             )
@@ -734,6 +736,7 @@ def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, aut
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
         if ag is None:
             raise HTTPException(status_code=404, detail="Access Group not found")
+        _guard_grant(session, resource, ag)
         acl = _set_resource_access_grant(session, auth_res, mfid, ag, permission)
         session.commit()
         session.refresh(acl)
@@ -751,6 +754,27 @@ def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, aut
 # `public`), typed by path segment so that a username cannot be mistaken for a
 # project id.
 # ---------------------------------------------------------------------------
+
+def _reject_project_grants(resource: Resource) -> None:
+    if resource.resource_type == "project":
+        raise HTTPException(status_code=409, detail={
+            "code": "use_project_members",
+            "message": "Project access is managed through membership; use /projects/{project_ref}/users",
+        })
+
+
+def _guard_grant(session, resource: Resource, access_group: AccessGroup) -> None:
+    """Projects are shared through membership, and a record's own project grant follows its assignment."""
+    _reject_project_grants(resource)
+    if resource.resource_type in ("dataset", "sample") and access_group.group_type == AccessGroupType.PROJECT.value:
+        model = Dataset if resource.resource_type == "dataset" else Sample
+        owning = session.exec(select(model.project_mfid).where(model.unique_id == resource.mfid)).first()
+        if owning == access_group.group_name:
+            raise HTTPException(status_code=409, detail={
+                "code": "owning_project_grant",
+                "message": "The record's own project grant follows its assignment; use POST /resources/{mfid}/project",
+            })
+
 
 def _resolve_grantee(session, kind: str, principal: str):
     """(AccessGroup, canonical principal) for a typed path segment."""
@@ -803,7 +827,7 @@ def list_resource_access(mfid: str, auth_res: Annotated[Principal, Depends(autho
             .where(ResourceACL.mfid == mfid)
         ).all()
 
-        return [access_grant_read(session, ag, acl.permission) for acl, ag in rows]
+        return with_grant_capabilities(session, auth_res, mfid, access_grant_reads(session, [(ag, acl.permission) for acl, ag in rows]))
 
 
 @router.put("/resources/{mfid}/access/{kind}/{principal}", response_model=AccessGrantRead)
@@ -814,6 +838,8 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
     `kind` is `users` or `projects`. Requires admin on the resource, and you
     may not grant above your own role nor overwrite a grant above it. Owner
     grants and changes to an existing owner require transfer_ownership.
+    Projects are shared through /projects/{project_ref}/users, and a record's
+    own project grant changes only with POST /resources/{mfid}/project (409).
     """
     if kind not in ("users", "projects"):
         raise HTTPException(status_code=404,
@@ -834,14 +860,16 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
                 status_code=409,
                 detail=f"Cannot grant owner access this way; use POST /resources/{mfid}/transfer_ownership")
 
+        _reject_project_grants(resource)
         ag, canonical = _resolve_grantee(session, kind, principal)
+        _guard_grant(session, resource, ag)
         _set_resource_access_grant(session, auth_res, mfid, ag, target)
         session.commit()
 
         return access_grant_read(session, ag, target.db_value)
 
 
-@router.delete("/resources/{mfid}/access/{kind}/{principal}")
+@router.delete("/resources/{mfid}/access/{kind}/{principal}", response_model=DetailResponse)
 def revoke_resource_access(mfid: str, kind: str, principal: str,
                            auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Revoke a principal's access.
@@ -858,7 +886,9 @@ def revoke_resource_access(mfid: str, kind: str, principal: str,
             raise HTTPException(status_code=404, detail="Resource not found")
         require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
 
+        _reject_project_grants(resource)
         ag, canonical = _resolve_grantee(session, kind, principal)
+        _guard_grant(session, resource, ag)
         existing = session.exec(
             select(ResourceACL).where(ResourceACL.mfid == mfid)
             .where(ResourceACL.accessgroup_id == ag.id)).one_or_none()
@@ -905,7 +935,7 @@ def publish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize
         return access_grant_read(session, ag, Role.VIEWER.db_value)
 
 
-@router.delete("/resources/{mfid}/access/public")
+@router.delete("/resources/{mfid}/access/public", response_model=DetailResponse)
 def unpublish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Withdraw public access."""
     with Session(engine) as session:
@@ -977,6 +1007,7 @@ def _transfer_project_ownership(session, mfid: str, new_owner: User) -> Optional
     else:
         new_owner_link.role = Role.OWNER.db_value
         session.add(new_owner_link)
+    close_pending_join_requests(session, ag.id, new_owner.unique_id, Role.OWNER.db_value)
 
     project.project_lead_orcid = new_owner.unique_id
     project.project_lead_email = new_owner.email
@@ -1120,13 +1151,12 @@ def transfer_ownership(mfid: str, body: TransferOwnershipRequest,
         )
 
 
-def _current_project_grants(session, mfid: str) -> List[tuple]:
-    rows = session.exec(
-        select(ResourceACL, AccessGroup)
+def _project_grant(session, project: Project, mfid: str) -> Optional[ResourceACL]:
+    return session.exec(
+        select(ResourceACL)
         .join(AccessGroup, AccessGroup.id == ResourceACL.accessgroup_id)
-        .where(ResourceACL.mfid == mfid)
-    ).all()
-    return [(acl, ag) for acl, ag in rows if is_project_group(ag.group_name, session)]
+        .where(ResourceACL.mfid == mfid, AccessGroup.group_name == project.unique_id)
+    ).one_or_none()
 
 
 @router.post("/resources/{mfid}/project", response_model=ReassignProjectRead)
@@ -1151,14 +1181,12 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
             raise HTTPException(status_code=404,
                                 detail=f"Project '{body.project_id or body.project_mfid}' not found")
         require_permission(session, auth_res, new_proj.unique_id, Permission.CREATE)
-        from app.utils.deletion_utils import assert_not_pending_deletion
-        assert_not_pending_deletion(session, new_proj.unique_id)
+        from app.utils.sql_utils import assert_parent_accepts_assignment
+        assert_parent_accepts_assignment(session, new_proj.unique_id)
 
-        current_grants = _current_project_grants(session, mfid)
-        prev_proj = None
-        if current_grants:
-            _, prev_ag = current_grants[0]
-            prev_proj = session.exec(select(Project).where(Project.unique_id == prev_ag.group_name)).one_or_none()
+        entity_model = Dataset if resource.resource_type == "dataset" else Sample
+        entity = session.exec(select(entity_model).where(entity_model.unique_id == mfid)).one_or_none()
+        prev_proj = session.exec(select(Project).where(Project.unique_id == entity.project_mfid)).one_or_none() if entity is not None and entity.project_mfid else None
         result = ReassignProjectRead(
             resource_id=mfid,
             resource_mfid=mfid,
@@ -1175,15 +1203,18 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
         if new_ag is None:
             raise HTTPException(status_code=409, detail=f"No access group for project '{new_proj.project_id}'")
 
-        for acl, _ in current_grants:
-            session.delete(acl)
-        session.flush()
-        sql_create_resource_acl(new_ag, mfid, read=True, write=True, session=session, permission=Role.ADMIN)
+        if prev_proj is not None and prev_proj.unique_id != new_proj.unique_id:
+            previous_grant = _project_grant(session, prev_proj, mfid)
+            if previous_grant is not None:
+                session.delete(previous_grant)
+                session.flush()
+        grant = sql_create_resource_acl(new_ag, mfid, read=True, write=True, session=session, permission=Role.ADMIN)
+        if grant.permission is None or Role[grant.permission.upper()] < Role.ADMIN:
+            grant.permission = Role.ADMIN.db_value
+            grant.read = grant.write = True
+            session.add(grant)
 
-        entity_model = Dataset if resource.resource_type == "dataset" else Sample
-        entity = session.exec(select(entity_model).where(entity_model.unique_id == mfid)).one_or_none()
         if entity is not None:
-            entity.project_id = new_proj.project_id
             entity.project_mfid = new_proj.unique_id
             session.add(entity)
 

@@ -36,3 +36,9 @@ kubectl apply -f k8s-conf/pod-monitoring-staging.yaml
 ```
 
 After deployment, verify the pod labels match the selected manifest, the API `/metrics` endpoint responds inside the cluster, and the PodMonitoring resource reports healthy collection. Do not add another instrumentation instance or duplicate dependency setup.
+
+## Autoscaling and network policy
+
+`hpa-main.yaml` records the live `crucible-api-main` HorizontalPodAutoscaler (1 to 3 replicas at 80% CPU). Cloud Build does not apply it; apply changes manually and check with `kubectl diff -f k8s-conf/hpa-main.yaml`. Staging has no autoscaler.
+
+The live NetworkPolicy `allow-web` selects `app: crucible-api-lb`, which is a Service name, not a pod label, so it matches no pods and restricts nothing (verified 2026-10-16). Pointing it at the API pods would limit ingress to `10.128.0.0/9` and could cut off the public load balancer, so any policy needs testing on staging first. It is not tracked in this directory.

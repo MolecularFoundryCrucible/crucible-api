@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -14,7 +15,7 @@ from app.utils.permissions import Principal
 
 
 def make_session(**kwargs):
-    values = dict(dataset_mfid="ds", gcs_path="uploads/object", associated_file_name="data", owner_user_id="owner", expires_at="2000-01-01T00:00:00+00:00", size=10)
+    values = dict(dataset_mfid="ds", gcs_path="uploads/object", associated_file_name="data", owner_user_id="owner", expires_at=datetime(2000, 1, 1, tzinfo=timezone.utc), size=10)
     values.update(kwargs)
     return UploadSession(**values)
 

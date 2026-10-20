@@ -145,7 +145,7 @@ def sql_create_resource_acl(ag, mfid, read, write, session, permission):
     return acl
 
 
-def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None):
+def create_standard_acls(session, mfid, owner_id, requestor_id, project_mfid=None):
     '''
     Create the standard set of ResourceACL entries for a newly created resource.
     - owner's ORCID group gets `owner`
@@ -159,7 +159,7 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None)
     No requestor row either. The creator reaches the resource through the
     project group; a row per creator per resource expresses nothing.
     '''
-    from app.models.core_models import AccessGroup, Project
+    from app.models.core_models import AccessGroup
     from app.utils.permissions import AccessGroupType, Role
     from sqlmodel import select
 
@@ -176,19 +176,15 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_id=None)
         sql_create_resource_acl(owner_ag, mfid, read=True, write=True,
                                 session=session, permission=Role.OWNER)
 
-    if project_id:
-        project = session.exec(select(Project).where(Project.project_id == project_id)).one_or_none()
-        proj_ag = (
-            session.exec(select(AccessGroup).where(
-                AccessGroup.group_name == project.unique_id,
-                AccessGroup.group_type == AccessGroupType.PROJECT.value,
-            )).one_or_none()
-            if project else None
-        )
+    if project_mfid:
+        proj_ag = session.exec(select(AccessGroup).where(
+            AccessGroup.group_name == project_mfid,
+            AccessGroup.group_type == AccessGroupType.PROJECT.value,
+        )).one_or_none()
         if proj_ag is None:
             raise HTTPException(
                 status_code=409,
-                detail=f"Project '{project_id}' has no access group",
+                detail=f"Project '{project_mfid}' has no access group",
             )
         sql_create_resource_acl(proj_ag, mfid, read=True, write=True,
                                 session=session, permission=Role.ADMIN)
@@ -252,6 +248,59 @@ def get_active_deletion_request(session, resource_id: str):
         .where(DeletionRequest.resource_id == resource_id)
         .where(DeletionRequest.status.in_(["pending", "approved"]))
     ).first()
+
+
+def assert_not_pending_deletion(session, mfid: str) -> None:
+    active = get_active_deletion_request(session, mfid)
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "pending_deletion",
+                "status": active.status,
+                "message": f"'{mfid}' has an active deletion request (status: {active.status}) and cannot be changed.",
+            },
+        )
+
+
+def assert_parent_accepts_assignment(session, parent_mfid: str) -> None:
+    """Refuse a parent pending deletion and share-lock its resource row until commit, so a
+    deletion request on the parent cannot pass its blocker check while this assignment is in flight."""
+    from app.models.core_models import Resource
+    session.exec(select(Resource.mfid).where(Resource.mfid == parent_mfid).with_for_update(read=True)).first()
+    assert_not_pending_deletion(session, parent_mfid)
+
+
+def select_active(resource_model, mfid, *columns, principal=None):
+    """Select the record named `mfid` unless it has an active deletion request; with a principal,
+    also unless that principal cannot read it. For filters, traversals, and lists."""
+    query = select(*(columns or (resource_model,))).where(resource_model.unique_id == mfid).where(deletion_filter_for(resource_model))
+    if principal is not None:
+        from app.utils.auth_utils import permission_filter
+        from app.utils.permissions import Permission
+        query = query.where(permission_filter(principal, resource_model, Permission.READ))
+    return query
+
+
+def select_readable(resource_model, mfid, *columns, principal):
+    """Select the record named `mfid` if `principal` can read it, even while it has an active
+    deletion request. For exact lookups of a record and its own content."""
+    from app.utils.auth_utils import permission_filter
+    from app.utils.permissions import Permission
+    return select(*(columns or (resource_model,))).where(resource_model.unique_id == mfid).where(permission_filter(principal, resource_model, Permission.READ))
+
+
+def select_readable_file(file_mfid, principal):
+    """Select (AssociatedFile, Dataset) for `file_mfid` if `principal` can read its dataset."""
+    from app.models.core_models import AssociatedFile, Dataset
+    from app.utils.auth_utils import permission_filter
+    from app.utils.permissions import Permission
+    return (
+        select(AssociatedFile, Dataset)
+        .join(Dataset, Dataset.id == AssociatedFile.dataset_id)
+        .where(AssociatedFile.mfid == file_mfid)
+        .where(permission_filter(principal, Dataset, Permission.READ))
+    )
 
 
 def deletion_filter_for(resource_model):

@@ -44,6 +44,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- `POST /datasets/{dataset_mfid}/samples/{sample_mfid}` returned 500 after creating the link when the dataset has no name; `dataset_name` is now nullable in the response, as in other dataset responses.
 - `GET /users/{user_ref}/apikey/verify` returned 500 for keys stored with a full timestamp (every key issued by current code); it now reports the same status as `api_key_status`.
 - Project roles could be granted outside membership: `PUT /resources/{project_mfid}/access/users|projects/...` gave a project role that bypassed the membership rules, did not appear among the project's members, and survived removal from the project. These routes, their `DELETE` forms, and `POST /resources/{project_mfid}/access_groups` now return 409 `use_project_members`. Changing or revoking a dataset or sample's grant for its own project returns 409 `owning_project_grant`; it follows `POST /resources/{mfid}/project`. Sharing records with other projects is unchanged.
 - Renaming a project (`PATCH /projects/{project_ref}` with a new `project_id`) failed with 500 for every project, because legacy slug columns on datasets and project memberships still referenced the old slug. Datasets, samples, and memberships now link to projects only by MFID, so a rename changes only the project row, and moving a record of a renamed project to another project no longer returns 422. Requires migration `9d41c6a2e7f3`.

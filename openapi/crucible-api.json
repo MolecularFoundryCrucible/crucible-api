@@ -1956,8 +1956,15 @@
             "type": "string"
           },
           "dataset_name": {
-            "title": "Dataset Name",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Name"
           },
           "sample_id": {
             "deprecated": true,
@@ -1988,7 +1995,6 @@
         "required": [
           "dataset_id",
           "dataset_mfid",
-          "dataset_name",
           "sample_id",
           "sample_mfid",
           "sample_name",

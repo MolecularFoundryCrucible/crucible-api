@@ -44,7 +44,7 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import add_or_update, assert_mfid_available, assert_not_pending_deletion, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public
+from app.utils.sql_utils import add_or_update, assert_mfid_available, assert_parent_accepts_assignment, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public
 
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
@@ -258,7 +258,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         sample_details['owner_orcid'] = resolved_owner_orcid
         sample_details['owner_user_id'] = owner_user.id
         if project is not None:
-            assert_not_pending_deletion(session, project.unique_id)
+            assert_parent_accepts_assignment(session, project.unique_id)
             sample_details['project_mfid'] = project.unique_id
 
         sample = Sample(**sample_details)

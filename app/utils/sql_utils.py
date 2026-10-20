@@ -263,6 +263,14 @@ def assert_not_pending_deletion(session, mfid: str) -> None:
         )
 
 
+def assert_parent_accepts_assignment(session, parent_mfid: str) -> None:
+    """Refuse a parent pending deletion and share-lock its resource row until commit, so a
+    deletion request on the parent cannot pass its blocker check while this assignment is in flight."""
+    from app.models.core_models import Resource
+    session.exec(select(Resource.mfid).where(Resource.mfid == parent_mfid).with_for_update(read=True)).first()
+    assert_not_pending_deletion(session, parent_mfid)
+
+
 def select_active(resource_model, mfid, *columns, principal=None):
     """Select the record named `mfid` unless it has an active deletion request; with a principal,
     also unless that principal cannot read it. For filters, traversals, and lists."""

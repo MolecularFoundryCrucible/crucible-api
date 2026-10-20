@@ -630,6 +630,25 @@ def test_unverified_multipart_hash_does_not_dedupe_legacy_paths(flow, monkeypatc
     assert response.json()["existing_file"] is None
 
 
+def test_dataset_hard_deleted_during_completion_returns_409_and_removes_the_object(flow):
+    client, engine, storage = flow
+    identifier = start(flow)
+    put(flow, identifier)
+
+    def delete_dataset():
+        from app.utils.deletion_utils import hard_delete_resource
+        with Session(engine) as session:
+            hard_delete_resource("ds", session)
+            session.commit()
+    storage.complete_hook = delete_dataset
+    response = complete(flow, identifier)
+    assert response.status_code == 409, response.text
+    assert "dataset_deleted" in response.text
+    assert storage.objects == {}
+    with Session(engine) as session:
+        assert session.exec(select(AssociatedFile)).all() == []
+
+
 def test_upload_does_not_publish_into_a_dataset_put_up_for_deletion(flow):
     client, engine, _ = flow
     identifier = start(flow)

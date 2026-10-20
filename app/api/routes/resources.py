@@ -432,7 +432,7 @@ def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
 
     with Session(engine) as session:
         resource = session.exec(
-            select(Resource).where(Resource.mfid == unique_id)
+            select(Resource).where(Resource.mfid == unique_id).with_for_update()
         ).one_or_none()
 
         if resource is None:
@@ -474,7 +474,7 @@ def update_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
 
     with Session(engine) as session:
         resource = session.exec(
-            select(Resource).where(Resource.mfid == unique_id)
+            select(Resource).where(Resource.mfid == unique_id).with_for_update()
         ).one_or_none()
 
         if resource is None:
@@ -519,7 +519,7 @@ def create_deletion_request(
     requester_id = auth_res.user_id
     with Session(engine) as session:
         resource = session.exec(
-            select(Resource).where(Resource.mfid == resource_id)
+            select(Resource).where(Resource.mfid == resource_id).with_for_update()
         ).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail=f"Resource {resource_id} not found.")
@@ -1180,8 +1180,8 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
             raise HTTPException(status_code=404,
                                 detail=f"Project '{body.project_id or body.project_mfid}' not found")
         require_permission(session, auth_res, new_proj.unique_id, Permission.CREATE)
-        from app.utils.sql_utils import assert_not_pending_deletion
-        assert_not_pending_deletion(session, new_proj.unique_id)
+        from app.utils.sql_utils import assert_parent_accepts_assignment
+        assert_parent_accepts_assignment(session, new_proj.unique_id)
 
         entity_model = Dataset if resource.resource_type == "dataset" else Sample
         entity = session.exec(select(entity_model).where(entity_model.unique_id == mfid)).one_or_none()

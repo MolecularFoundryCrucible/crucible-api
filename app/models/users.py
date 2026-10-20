@@ -1,9 +1,10 @@
 from typing import Any, List, Literal, Optional
-from pydantic import AliasChoices, ConfigDict, Field, field_validator
+from pydantic import MISSING, AliasChoices, ConfigDict, Field, field_validator
 from sqlmodel import SQLModel
 from app.general_utils import is_orcid, is_valid_mfid
 from app.utils.permissions import PlatformRole, PrivilegeMode
 from app.utils.user_utils import validate_username_format
+from app.models.fields import NonBlankStr
 from app.models.timestamps import UtcDatetime
 
 
@@ -116,8 +117,8 @@ class AccountProfileUpdate(SQLModel):
     '''Self-service profile update. Does not allow changing is_service_account.'''
     model_config = ConfigDict(extra="forbid")
 
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
+    first_name: NonBlankStr | MISSING = MISSING
+    last_name: NonBlankStr | MISSING = MISSING
     email: Optional[str] = None
     username: Optional[str] = None
 
@@ -140,8 +141,8 @@ class UserUpdate(SQLModel):
     '''Admin partial update schema for mutable user profile fields.'''
     model_config = ConfigDict(extra="forbid")
 
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
+    first_name: NonBlankStr | MISSING = MISSING
+    last_name: NonBlankStr | MISSING = MISSING
     email: Optional[str] = None
     username: Optional[str] = None
 

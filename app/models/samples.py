@@ -1,9 +1,10 @@
 from typing import List, Optional
-from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic import MISSING, ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
 
 from app.general_utils import blank_to_none, is_valid_mfid
 from app.models.datasets import DatasetRead
+from app.models.fields import NonBlankStr
 from app.models.links import LinkedResource
 from app.models.projects import ProjectReferenceRead, ProjectRelation
 from app.models.resource import ResourceCapabilities
@@ -86,7 +87,7 @@ class SampleUpdate(SQLModel):
     '''
     model_config = ConfigDict(extra="forbid")
 
-    sample_name: Optional[str] = None
+    sample_name: NonBlankStr | MISSING = MISSING
     sample_type: Optional[str] = None
     description: Optional[str] = None
     timestamp: Optional[str] = None

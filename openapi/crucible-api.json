@@ -447,26 +447,14 @@
             "title": "Email"
           },
           "first_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "First Name"
+            "minLength": 1,
+            "title": "First Name",
+            "type": "string"
           },
           "last_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Name"
+            "minLength": 1,
+            "title": "Last Name",
+            "type": "string"
           },
           "username": {
             "anyOf": [
@@ -677,48 +665,23 @@
             "title": "Access Note"
           },
           "filename": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filename"
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
           },
           "sha256_hash": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sha256 Hash"
+            "minLength": 1,
+            "title": "Sha256 Hash",
+            "type": "string"
           },
           "size": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Size"
+            "title": "Size",
+            "type": "integer"
           },
           "storage_backend": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Storage Backend"
+            "minLength": 1,
+            "title": "Storage Backend",
+            "type": "string"
           },
           "storage_path": {
             "anyOf": [
@@ -5773,26 +5736,13 @@
         "description": "Partial update schema for Project. Only provided fields are modified.\n\nNo project_lead_orcid/email/username: leadership changes only through\nPOST /resources/{proj_id}/transfer_ownership, which moves the owner\nstanding and the denormalized lead pointer atomically — a bare field\nedit here never touched the actual owner standing at all. extra=\"forbid\"\nmeans sending one of those fields 422s at the schema layer rather than\nbeing silently dropped or requiring a runtime check in the route.",
         "properties": {
           "organization": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Organization"
+            "minLength": 1,
+            "title": "Organization",
+            "type": "string"
           },
           "project_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Project Id"
+            "title": "Project Id",
+            "type": "string"
           },
           "status": {
             "anyOf": [
@@ -7103,15 +7053,9 @@
             "title": "Public"
           },
           "sample_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sample Name"
+            "minLength": 1,
+            "title": "Sample Name",
+            "type": "string"
           },
           "sample_type": {
             "anyOf": [
@@ -8097,26 +8041,14 @@
             "title": "Email"
           },
           "first_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "First Name"
+            "minLength": 1,
+            "title": "First Name",
+            "type": "string"
           },
           "last_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Name"
+            "minLength": 1,
+            "title": "Last Name",
+            "type": "string"
           },
           "username": {
             "anyOf": [

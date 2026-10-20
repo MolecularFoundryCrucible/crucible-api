@@ -120,7 +120,7 @@ def test_associated_file_read_and_update_schemas_have_new_fields():
     assert read.storage_backend == "gcs"
 
     update = AssociatedFileUpdate()
-    assert update.storage_backend is None
+    assert update.model_dump(exclude_unset=True) == {}
     assert update.access_note is None
 
 

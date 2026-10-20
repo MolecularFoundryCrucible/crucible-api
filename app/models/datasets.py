@@ -1,8 +1,9 @@
 import hashlib
 from typing import List, Literal, Optional
-from pydantic import ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import MISSING, ConfigDict, Field, computed_field, field_validator, model_validator
 from sqlmodel import SQLModel
 from app.general_utils import blank_to_none, is_valid_mfid
+from app.models.fields import NonEmptyStr
 from app.models.links import LinkedResource
 from app.models.instrument import InstrumentReferenceRead
 from app.models.projects import ProjectReferenceRead, ProjectRelation
@@ -300,12 +301,12 @@ class AssociatedFileRead(SQLModel):
 
 class AssociatedFileUpdate(SQLModel):
     '''Partial update schema for AssociatedFile. Only provided fields are modified.'''
-    filename: Optional[str] = None
+    filename: NonEmptyStr | MISSING = MISSING
     storage_path: Optional[str] = None
-    storage_backend: Optional[str] = None
+    storage_backend: NonEmptyStr | MISSING = MISSING
     access_note: Optional[str] = None
-    size: Optional[int] = None
-    sha256_hash: Optional[str] = None
+    size: int | MISSING = MISSING
+    sha256_hash: NonEmptyStr | MISSING = MISSING
     
 
 class ScientificMetadataBinaryRead(SQLModel):

@@ -46,3 +46,15 @@ Read-only findings on 2026-10-19, resolved on 2026-10-20 with explicit approval:
 4. **35 custom groups with no grants** (`AUM_DEMO…`, `MFP…`, `test…`, ORCID-named, and others). Removed with their 19 memberships (Morgan Wall, Behzad Rad, Michael Connolly, Peter Ercius).
 
 Also on 2026-10-20: 7,638 datasets linked to an instrument but missing the instrument group's grant were repaired through `PUT /datasets/{dataset_mfid}/instrument`. The four `nsf-summer-school-2026-mkw-*` groups (43 grants) are workshop sharing and were left in place.
+
+## Records without any grant (open)
+
+Read-only counts on 2026-10-20, after the repairs above. Nothing changed; to decide later.
+
+| Records with no `resourceacl` row | Count | Notes |
+|---|---|---|
+| Datasets | about 180,600 | Created 2024-07 to 2026-06. None has an owner, project, or instrument, and none has the legacy `public` flag. About 167,000 were already grantless before 2026-10-20; 13,445 joined when the `unknown` group was removed. Only platform administrators can read them. Names suggest bulk automated output (for example RGA/TEY logs such as `TF001221_total_outgassing_averaged`). |
+| `idtype` rows of type `dataset` with no `dataset` row | 37,537 | Resource rows pointing at nothing; the reverse of the 19 orphaned dataset rows deleted on 2026-10-20. |
+| Samples | 242 | Created 2026-02 to 2026-06; includes the 3 samples unassigned from the deleted empty-slug project. |
+
+Options: attribute the datasets (by name pattern, upload path, or ingestion history) to an owner or project, or leave them admin-only; delete the orphaned `idtype` rows after checking deletion history, as was done for the 19 dataset rows.

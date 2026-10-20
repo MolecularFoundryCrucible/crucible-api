@@ -34,12 +34,12 @@ STATUS_STALE_THRESHOLD = 90
 # bounds a dead/unreachable broker connection.
 STATUS_WAIT_TIMEOUT = 3
 
-# Window to collect retained status messages from every printer_id that has
-# ever published one, via a crucible-printer/+/status wildcard subscribe.
-# Retained messages are replayed by the broker right after the subscribe is
-# acknowledged, so this is not a per-printer network round trip -- it just
-# bounds how long the broker is given to finish that replay.
+# Ceiling for the broker's SUBACK when listing printers; normally one
+# network round trip, so this only bounds a slow/unreachable broker.
 PRINTER_LIST_WAIT = 0.5
+# Small fixed buffer after SUBACK for the broker to finish replaying
+# retained messages for every printer_id matched by the wildcard.
+PRINTER_LIST_REPLAY_BUFFER = 0.15
 
 _PRINTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -195,6 +195,11 @@ def _list_printer_statuses() -> dict[str, dict]:
     """Collect the retained status message for every printer_id that has
     ever published one, via a crucible-printer/+/status wildcard subscribe.
 
+    Waits for the broker's SUBACK (confirming the subscription is live)
+    rather than a flat sleep, then a short fixed buffer for the broker to
+    finish replaying retained messages -- faster than a worst-case timeout
+    in the common case, while still correct if the broker is slow.
+
     Returns {printer_id: status_dict}. A printer that has never published a
     status (e.g. configured in inventory but never powered on) is not
     discoverable this way and will not appear -- there is no separate
@@ -203,6 +208,7 @@ def _list_printer_statuses() -> dict[str, dict]:
     mqtt_password = get_secret("MQTT_PASSWORD", "mqtt-crucible-printers-passwd/versions/1")
 
     statuses: dict[str, dict] = {}
+    subscribed = threading.Event()
 
     def on_message(client, userdata, msg):
         parts = msg.topic.split("/")
@@ -215,15 +221,20 @@ def _list_printer_statuses() -> dict[str, dict]:
             return
         statuses[printer_id] = data
 
+    def on_subscribe(client, userdata, mid, reason_code_list, properties):
+        subscribed.set()
+
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"crucible-api-list-{uuid.uuid4()}")
     client.username_pw_set(MQTT_USERNAME, mqtt_password)
     client.tls_set()
     client.on_message = on_message
+    client.on_subscribe = on_subscribe
     client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
     client.subscribe("crucible-printer/+/status", qos=1)
     client.loop_start()
     try:
-        time.sleep(PRINTER_LIST_WAIT)
+        subscribed.wait(timeout=PRINTER_LIST_WAIT)
+        time.sleep(PRINTER_LIST_REPLAY_BUFFER)
     finally:
         client.loop_stop()
         client.disconnect()

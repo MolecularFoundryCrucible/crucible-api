@@ -47,6 +47,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- `POST /users` resolves `project_ids` like every other project reference: an MFID or a case-insensitive `project_id`, with duplicates counted once. A wrong-case slug or an MFID no longer returns a false 404. A requested project with an active deletion request returns 409 `pending_deletion` before the user is created; proposal-discovered projects that are unknown or pending deletion are skipped with a warning.
 - `GET /deletion_requests` returned `null` `project_id` and `project_mfid` for project deletion requests, left them out of `?project_mfid=` for that project, and sorted them as projectless under `sort=project_id`; they now report their own project, as `GET /deletion_requests/{request_id}` and the create response already did.
 - `POST /datasets/{dataset_mfid}/samples/{sample_mfid}` returned 500 after creating the link when the dataset has no name; `dataset_name` is now nullable in the response, as in other dataset responses.
 - `GET /users/{user_ref}/apikey/verify` returned 500 for keys stored with a full timestamp (every key issued by current code); it now reports the same status as `api_key_status`.

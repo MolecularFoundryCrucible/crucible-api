@@ -29,9 +29,9 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import deletion_filter_for, select_active, table_obj_to_dict
+from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, get_active_deletion_request, select_active, table_obj_to_dict
 from app.utils.user_utils import assert_profile_fields_available, commit_user, find_mf_user_proposals, resolve_user_by_identifier, sql_add_user_to_access_group
-from app.utils.project_utils import sql_get_projects_for_user
+from app.utils.project_utils import resolve_project_reference, sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
 from app.api.routes.projects import PROJECT_PAGINATION
@@ -562,19 +562,28 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
             raise HTTPException(status_code=409, detail=f"Identity group '{unique_id}' already exists")
         assert_profile_fields_available(session, username=user_info.username or None, email=user_info.email)
 
-        projects = session.exec(
-            select(Project).where(Project.project_id.in_(requested_project_ids))
-        ).all() if requested_project_ids else []
-        projects_by_id = {project.project_id: project for project in projects}
-        missing_explicit = sorted(explicit_project_ids - projects_by_id.keys())
+        projects_by_mfid = {}
+        missing_explicit = []
+        for ref in sorted(requested_project_ids):
+            project = resolve_project_reference(ref, session)
+            if project is None:
+                if ref in explicit_project_ids:
+                    missing_explicit.append(ref)
+                else:
+                    logger.warning("Ignoring proposal project not provisioned in Crucible: %s", ref)
+                continue
+            if ref in explicit_project_ids:
+                assert_not_pending_deletion(session, project.unique_id)
+            elif get_active_deletion_request(session, project.unique_id) is not None:
+                logger.warning("Ignoring proposal project pending deletion: %s", ref)
+                continue
+            projects_by_mfid[project.unique_id] = project
         if missing_explicit:
             raise HTTPException(
                 status_code=404,
                 detail=f"Projects not found: {', '.join(missing_explicit)}",
             )
-        missing_discovered = sorted(discovered_project_ids - projects_by_id.keys())
-        if missing_discovered:
-            logger.warning("Ignoring proposal projects not provisioned in Crucible: %s", missing_discovered)
+        projects = list(projects_by_mfid.values())
 
         project_group_names = {project.unique_id for project in projects}
         project_groups = session.exec(

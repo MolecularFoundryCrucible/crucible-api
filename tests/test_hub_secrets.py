@@ -185,3 +185,9 @@ def test_direct_api_orcid_config_and_secret_version(monkeypatch):
     assert dependencies.get_orcid_client_secret() == "fetched-orcid-secret"
     assert captured["secret_name"] == version_path
 
+    monkeypatch.delenv("ORCID_CLIENT_SECRET", raising=False)
+    monkeypatch.setenv("ORCID_CLIENT_SECRET_VERSION", "projects/776258882599/secrets/orcid_client_secret_esb/versions/latest")
+    assert dependencies.get_orcid_client_secret() == "fetched-orcid-secret"
+    assert captured["secret_name"] == f"{general_utils.secret_store}/orcid_client_secret_esb/versions/latest"
+
+

@@ -35,11 +35,11 @@ def get_api_root_path():
 
 
 def get_orcid_client_id():
-    return get_api_config()["orcid_client_id"]
+    return os.getenv("ORCID_CLIENT_ID") or get_api_config()["orcid_client_id"]
 
 
 def get_orcid_client_secret():
-    return get_secret("CLIENT_SECRET", "orcid_client_secret/versions/2")
+    return get_secret("ORCID_CLIENT_SECRET", os.getenv("ORCID_CLIENT_SECRET_VERSION"))
 
 
 def get_redirect_uri():

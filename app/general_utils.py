@@ -36,21 +36,56 @@ def blank_to_none(val):
     return val
     
 def get_secret(secret_env_var, gcs_secret_name = None, sa_creds: str = None, cred_file: bool = False): 
-    '''
-    sa_creds defaults to None in which case it is assumed that you are running the function from a GCP instance with a service account that can authenticate itself. 
-    If a value is provided, the function will check to see if the argument cred_file is set to True or False (default).
+    """Retrieve a secret from the environment or Google Cloud Secret Manager.
 
-    If cred_file is True, then the sa_creds should be a filepath to the service account credentials.  
-    If cred_file is False, then sa_creds should be the name of an environment variable in which the credentials are stored. 
+    Resolution order:
+    1. Loads any local `.env` file via `dotenv.load_dotenv()`.
+    2. Checks `os.getenv(secret_env_var)`. If already present (from `.env`, the
+       container environment, or a prior lookup), returns it immediately without
+       calling Secret Manager.
+    3. Otherwise, fetches the secret from Google Cloud Secret Manager using
+       `gcs_secret_name`, caches the value in `os.environ[secret_env_var]` for
+       subsequent calls in the same worker process, and returns it.
 
-    '''
+    Args:
+        secret_env_var (str): Environment variable name to check first and use
+            as the in-process cache key once fetched from Secret Manager.
+        gcs_secret_name (str | None): Secret Manager version reference used when
+            `secret_env_var` is not set. Accepts either a full resource name
+            (`"projects/<project>/secrets/<secret>/versions/<version>"`) or a
+            path relative to `secret_store` / `GCS_SECRET_STORE`
+            (`"<secret>/versions/<version>"`).
+        sa_creds (str | None): Path to a service-account JSON key file when
+            `cred_file=True`. Ignored when running as `root` in a container
+            (where Application Default Credentials / GKE Workload Identity are
+            used) or when `cred_file=False`.
+        cred_file (bool): Controls non-root Secret Manager authentication in
+            `get_gcs_secret()`:
+            - `False` (default): parses service-account JSON from `os.getenv("GCS_SA")`.
+            - `True`: loads service-account credentials from the file path in `sa_creds`.
+
+    Returns:
+        str: The resolved secret string.
+
+    Raises:
+        RuntimeError: If `secret_env_var` is not set in the environment and
+            `gcs_secret_name` is `None`.
+    """
     from dotenv import load_dotenv
     load_dotenv()
+    if gcs_secret_name is not None:
+        gcs_secret_path = (
+            gcs_secret_name
+            if gcs_secret_name.startswith("projects/")
+            else f"{secret_store}/{gcs_secret_name}"
+        )
     secret = os.getenv(secret_env_var)
     if secret is None:
         if gcs_secret_name is None:
-            raise RuntimeError(f"Secret {secret_env_var} is not set and has no Secret Manager name")
-        secret = get_gcs_secret(f"{secret_store}/{gcs_secret_name}", sa_creds, cred_file)
+            raise RuntimeError(
+                f"Neither {secret_env_var} nor a GCP secret path is configured"
+            )
+        secret = get_gcs_secret(gcs_secret_path, sa_creds, cred_file)
         os.environ[secret_env_var] = secret
     return(secret)
 

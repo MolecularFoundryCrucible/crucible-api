@@ -15,9 +15,10 @@ data:
 
   # api
   API_CONF_FILE: "app/conf/api_conf-staging.yaml"
+  ORCID_CLIENT_ID: "APP-E5VUS6XSJS5VFNEN"
+  ORCID_CLIENT_SECRET_VERSION: "projects/776258882599/secrets/orcid_client_secret_esb/versions/latest"
   hostname: "crucible.lbl.gov"
   api_path: "api/v1"
-  orcid_client_id: "APP-AXDIPEVR6IMA0RL7"
   gcs_config_name: "mf-cloud-storage"
 
   # rmq

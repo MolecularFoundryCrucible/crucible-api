@@ -28,6 +28,7 @@ def test_create_project_creates_resource_and_owner_acl(client, db_engine, auth_a
         "can_change_status": True,
         "can_transfer": True,
         "can_delete": True,
+        "can_request_deletion": True,
         "max_grant_role": "admin",
     }
 

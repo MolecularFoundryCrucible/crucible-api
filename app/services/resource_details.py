@@ -174,6 +174,8 @@ def load_dataset_detail(
             resource_id,
             status_permission=None,
             acl_rows=acl_rows,
+            request_deletion_with=Permission.CREATE,
+            deletion_requested=deletion_request is not None,
         ),
     })
 
@@ -260,6 +262,8 @@ def load_sample_detail(
             resource_id,
             status_permission=None,
             acl_rows=acl_rows,
+            request_deletion_with=Permission.CREATE,
+            deletion_requested=deletion_request is not None,
         ),
     })
 
@@ -302,6 +306,7 @@ def load_instrument_detail(
             resource_id,
             acl_rows=acl_rows,
             can_delete=lambda: not has_deletion_blockers(session, "instrument", resource_id),
+            deletion_requested=deletion_request is not None,
         ),
         "deletion_request": _deletion_request_payload(deletion_request),
         "members": with_grant_capabilities(session, principal, resource_id, load_member_grants(session, resource_id))
@@ -349,6 +354,7 @@ def load_project_detail(
             manage_access_floor=Role.EDITOR,
             status_permission=Permission.EDIT,
             can_delete=lambda: not has_deletion_blockers(session, "project", resource_id),
+            deletion_requested=deletion_request is not None,
         ),
         deletion_request=_deletion_request_payload(deletion_request),
         role=role.db_value if (role := principal.role_in(project.unique_id)) is not None else None,

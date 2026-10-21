@@ -305,7 +305,7 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
         rows = rows[:params.limit]
 
         key_status_by_user = {}
-        if is_admin and exact_lookup:
+        if is_admin:
             private_ids = [user.unique_id for user in rows]
             for token in session.exec(
                 select(ApiToken).where(ApiToken.user_unique_id.in_(private_ids))
@@ -314,10 +314,9 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
                 if token.user_unique_id not in key_status_by_user:
                     key_status_by_user[token.user_unique_id] = _key_status(token)
         items = [
-            _user_read(auth_res, user, key_status=key_status_by_user.get(user.unique_id),
-                       with_capabilities=exact_lookup)
+            _user_read(auth_res, user, key_status=key_status_by_user.get(user.unique_id), with_capabilities=True)
             if is_admin or user.unique_id == auth_res.user_id
-            else _user_public_read(auth_res, user, with_capabilities=exact_lookup)
+            else _user_public_read(auth_res, user, with_capabilities=True)
             for user in rows
         ]
         next_cursor = None

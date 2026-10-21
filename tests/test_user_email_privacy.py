@@ -131,4 +131,4 @@ def test_broad_admin_directory_returns_private_fields(db_engine):
 
     assert isinstance(result.items[0], UserRead)
     assert result.items[0].email == "alice@example.com"
-    assert result.items[0].user_capabilities is None
+    assert result.items[0].user_capabilities.can_view_private is True

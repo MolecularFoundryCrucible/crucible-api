@@ -40,7 +40,7 @@ UserCapabilities = {
 }
 ```
 
-It is the reliable discriminator for what the caller may do to a user; do not infer capability from the presence of `email`. `UserRead` now also exposes `platform_role` to the user themselves and to platform administrators, and the singleton and exact platform-admin views expose non-secret `api_key_status` when a key exists.
+It is the reliable discriminator for what the caller may do to a user; do not infer capability from the presence of `email`. `UserRead` now also exposes `platform_role` to the user themselves and to platform administrators, and platform administrators see non-secret `api_key_status` on the singleton and on every `GET /users` item when a key exists.
 
 ### `POST /resources/{mfid}/transfer_ownership`
 

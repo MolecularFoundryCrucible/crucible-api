@@ -86,7 +86,7 @@ Declared filters are `unique_id`, `username`, `email`, `first_name`, `last_name`
 
 Any other query parameter is ignored without filtering. The response carries a `Deprecation: @1799280000` (2027-01-07) header and the ignored parameters are logged. The parameters will be rejected with 422 at that announced date. No `Sunset` header is sent.
 
-`user_capabilities` is populated for singleton and exact lookups only and remains null on broad listings, `/users/search`, and `/users/resolve`.
+`user_capabilities` is populated on `GET /users/{user_ref}` and on every `GET /users` item, and remains null on `/users/search` and `/users/resolve`. Platform administrators also receive `api_key_status` on every `GET /users` item that has a key.
 
 ## Singleton GETs
 

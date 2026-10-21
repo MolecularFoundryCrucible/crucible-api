@@ -544,6 +544,37 @@ def owner_affiliation_filter(principal: Principal, resource_model):
     )
 
 
+def member_affiliation_filter(principal: Principal, resource_model):
+    """Resources the caller reaches through one of their own grants, not only because they are public."""
+    from sqlalchemy import exists, false
+    from app.models.core_models import ResourceACL
+    from app.utils.permissions import PUBLIC_GROUP_NAME
+
+    group_ids = [m.id for m in principal.groups if m.group_name != PUBLIC_GROUP_NAME and m.role >= Role.VIEWER]
+    if not group_ids:
+        return false()
+    return (
+        exists()
+        .where(
+            ResourceACL.mfid == resource_model.unique_id,
+            ResourceACL.accessgroup_id.in_(group_ids),
+            ResourceACL.permission.in_([r.db_value for r in Role if r >= Role.VIEWER]),
+        )
+        .select_from(ResourceACL)
+        .correlate(resource_model)
+    )
+
+
+def resource_affiliation_filter(principal: Principal, resource_model, affiliation):
+    from sqlalchemy import or_
+    from app.models.query_params import ResourceAffiliation
+    predicates = {
+        ResourceAffiliation.OWNER: owner_affiliation_filter,
+        ResourceAffiliation.MEMBER: member_affiliation_filter,
+    }
+    return or_(*(predicates[value](principal, resource_model) for value in dict.fromkeys(affiliation)))
+
+
 def maintainer_affiliation_filter(principal: Principal, resource_model):
     """Resources where the caller's own identity holds editor or admin."""
     from sqlalchemy import exists

@@ -41,6 +41,20 @@ class Affiliation(str, Enum):
     OWNER = "owner"
 
 
+class ResourceAffiliation(str, Enum):
+    OWNER = "owner"
+    MEMBER = "member"
+
+
+RESOURCE_AFFILIATION_DESCRIPTION = (
+    AFFILIATION_DESCRIPTION
+    + " owner matches records the caller owns. member matches records the caller reaches through"
+    " one of their own grants (personal, project, instrument, or group), so records visible only"
+    " because they are public are excluded; combine with visibility to narrow further. For platform"
+    " administrators, member counts only their own grants, not their global access."
+)
+
+
 class InstrumentAffiliation(str, Enum):
     OWNER = "owner"
     MAINTAINER = "maintainer"
@@ -269,11 +283,11 @@ class ResourceCollectionQuery(StrictQueryModel):
         max_length=10,
         description=ACCESSIBLE_TO_PROJECT_DESCRIPTION,
     )
-    affiliation: Optional[list[Affiliation]] = Field(
+    affiliation: Optional[list[ResourceAffiliation]] = Field(
         default=None,
         min_length=1,
         max_length=5,
-        description=AFFILIATION_DESCRIPTION,
+        description=RESOURCE_AFFILIATION_DESCRIPTION,
     )
     include_metadata: bool = False
     include_links: bool = False
@@ -493,11 +507,11 @@ class ResourceFacetQuery(StrictQueryModel):
         max_length=10,
         description=ACCESSIBLE_TO_PROJECT_DESCRIPTION,
     )
-    affiliation: Optional[list[Affiliation]] = Field(
+    affiliation: Optional[list[ResourceAffiliation]] = Field(
         default=None,
         min_length=1,
         max_length=5,
-        description=AFFILIATION_DESCRIPTION,
+        description=RESOURCE_AFFILIATION_DESCRIPTION,
     )
     visibility: Literal["all", "public", "private"] = Field(default="all", description="Restrict the resources contributing to bucket counts by public visibility.")
     project_id: Optional[str] = Field(default=None, description="Project slug. May be combined with a matching project_mfid.")
@@ -938,6 +952,12 @@ class SearchQuery(StrictQueryModel):
 
 
 class ResourceSearchQuery(SearchQuery):
+    affiliation: Optional[list[ResourceAffiliation]] = Field(
+        default=None,
+        min_length=1,
+        max_length=5,
+        description=RESOURCE_AFFILIATION_DESCRIPTION,
+    )
     owner_id: Optional[str] = Field(
         default=None,
         min_length=1,

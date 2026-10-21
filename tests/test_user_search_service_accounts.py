@@ -56,7 +56,7 @@ def test_user_search_filters_service_accounts_before_limiting(db_engine, monkeyp
         q="picker",
         is_service_account=True,
         limit=1,
-    )
+    ).items
 
     assert [user.unique_id for user in results] == ["aa-service-account-search"]
     assert results[0].is_service_account is True
@@ -72,13 +72,13 @@ def test_user_search_can_filter_humans_or_return_both(db_engine, monkeypatch):
         q="picker",
         is_service_account=False,
         limit=20,
-    )
+    ).items
     all_users = users_routes.search_users(
         principal,
         q="picker",
         is_service_account=None,
         limit=20,
-    )
+    ).items
 
     assert [user.unique_id for user in humans] == ["zz-human-search"]
     assert {user.unique_id for user in all_users} == {

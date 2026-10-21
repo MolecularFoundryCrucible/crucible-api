@@ -200,7 +200,7 @@ def test_admin_service_account_target_gets_no_role_change_flag(client, db_engine
     assert _capabilities(body)["can_change_platform_role"] is False
 
 
-def test_capabilities_are_null_on_broad_listing(client, db_engine, auth_as):
+def test_capabilities_are_present_on_broad_listing(client, db_engine, auth_as):
     _seed(db_engine)
     auth_as(ADMIN, platform_role=PlatformRole.ADMIN)
 
@@ -208,7 +208,7 @@ def test_capabilities_are_null_on_broad_listing(client, db_engine, auth_as):
 
     assert response.status_code == 200, response.text
     for item in response.json()["items"]:
-        assert _capabilities(item) is None
+        assert _capabilities(item)["can_manage_api_key"] is True
         assert item["platform_role"] in {"none", "contributor", "admin"}
 
 
@@ -224,7 +224,8 @@ def test_capabilities_are_null_on_search_and_resolve(client, db_engine, auth_as,
 
     search = client.get("/users/search", params={"q": "alice"})
     assert search.status_code == 200, search.text
-    for item in search.json():
+    assert search.json()["limit"] == 20
+    for item in search.json()["items"]:
         assert _capabilities(item) is None
         assert "email" not in item
 
@@ -647,7 +648,7 @@ def test_delete_apikey_works_for_service_accounts(client, db_engine, auth_as):
     assert response.status_code == 204, response.text
 
 
-def test_api_key_status_present_for_admin_singleton_only(client, db_engine, auth_as):
+def test_api_key_status_present_for_admins_only(client, db_engine, auth_as):
     _seed(db_engine)
     auth_as(ADMIN, platform_role=PlatformRole.ADMIN)
 
@@ -658,8 +659,8 @@ def test_api_key_status_present_for_admin_singleton_only(client, db_engine, auth
     assert exact.json()["items"][0]["api_key_status"] is not None
 
     listing = client.get("/users")
-    for item in listing.json()["items"]:
-        assert item["api_key_status"] is None
+    statuses = {item["unique_id"]: item["api_key_status"] for item in listing.json()["items"]}
+    assert statuses[PERSON] == exact.json()["items"][0]["api_key_status"]
 
     auth_as(PERSON)
     self_view = client.get(f"/users/{PERSON}")

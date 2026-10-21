@@ -78,13 +78,13 @@ def test_exact_collection_returns_private_self_and_public_other(db_engine):
         auth_res=Principal(user_id=USER_ID),
         request=_request(b"username=alice_researcher"),
         response=Response(),
-        params=_params(username="alice_researcher"),
+        params=_params(username=["alice_researcher"]),
     )
     other_result = list_users(
         auth_res=Principal(user_id="0000-0002-3456-7890"),
         request=_request(b"username=alice_researcher"),
         response=Response(),
-        params=_params(username="alice_researcher"),
+        params=_params(username=["alice_researcher"]),
     )
 
     assert isinstance(self_result.items[0], UserRead)
@@ -131,4 +131,4 @@ def test_broad_admin_directory_returns_private_fields(db_engine):
 
     assert isinstance(result.items[0], UserRead)
     assert result.items[0].email == "alice@example.com"
-    assert result.items[0].user_capabilities is None
+    assert result.items[0].user_capabilities.can_view_private is True

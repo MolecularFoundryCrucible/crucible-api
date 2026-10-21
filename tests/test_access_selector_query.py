@@ -1,5 +1,5 @@
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 from sqlmodel import Session, select
 
 from app.models.core_models import (
@@ -332,6 +332,7 @@ def test_project_scope_collection_responses_report_relation(db_engine):
     datasets = list_datasets(
         auth_res=caller,
         request=Request({"type": "http", "query_string": query_string, "headers": []}),
+        response=Response(),
         params=DatasetListQuery(
             project_id=seeded["project_x_id"],
             project_scope="all",
@@ -340,6 +341,7 @@ def test_project_scope_collection_responses_report_relation(db_engine):
     samples = list_samples(
         auth_res=caller,
         request=Request({"type": "http", "query_string": query_string, "headers": []}),
+        response=Response(),
         params=SampleListQuery(
             project_id=seeded["project_x_id"],
             project_scope="all",
@@ -374,6 +376,7 @@ def test_dataset_cursor_precedence_and_total_control(db_engine):
     first = list_datasets(
         auth_res=caller,
         request=request,
+        response=Response(),
         params=DatasetListQuery(limit=1),
     )
     assert first.total == 2
@@ -382,6 +385,7 @@ def test_dataset_cursor_precedence_and_total_control(db_engine):
     continuation = list_datasets(
         auth_res=caller,
         request=request,
+        response=Response(),
         params=DatasetListQuery(
             limit=1,
             cursor=first.next_cursor,
@@ -396,6 +400,7 @@ def test_dataset_cursor_precedence_and_total_control(db_engine):
     suppressed = list_datasets(
         auth_res=caller,
         request=request,
+        response=Response(),
         params=DatasetListQuery(include_total=False),
     )
     assert suppressed.total is None

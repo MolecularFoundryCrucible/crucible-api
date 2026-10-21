@@ -6,7 +6,7 @@ from sqlmodel import Session
 from app.models.core_models import Resource
 from app.utils.auth_utils import (
     access_selector_filter,
-    owner_affiliation_filter,
+    resource_affiliation_filter,
     project_scope_filter,
 )
 from app.utils.permissions import Principal
@@ -41,7 +41,7 @@ def resource_scope_predicates(
         deletion_filter_for(model),
     ]
     if params.affiliation:
-        predicates.append(owner_affiliation_filter(principal, model))
+        predicates.append(resource_affiliation_filter(principal, model, params.affiliation))
     if params.visibility != "all":
         predicates.append(visibility_filter_for(model, params.visibility))
     for parameter, column, comparison in (

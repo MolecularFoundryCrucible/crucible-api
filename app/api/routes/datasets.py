@@ -63,7 +63,7 @@ from app.services.resource_pagination import (
 from app.services.thumbnails import InvalidThumbnailImage, ThumbnailTooLarge, normalize_thumbnail
 from app.utils.auth_utils import (
     authorize_user, permission_filter, project_scope_filter,
-    owner_affiliation_filter, require_permission)
+    require_permission, resource_affiliation_filter)
 from app.utils.permissions import (
     AccessGroupType, Permission, Principal, Role, has_global_permission)
 from app.utils.project_utils import (
@@ -802,7 +802,7 @@ def search_datasets(
                 effective_project_scope,
             ))
         if params.affiliation:
-            query = query.where(owner_affiliation_filter(auth_res, Dataset))
+            query = query.where(resource_affiliation_filter(auth_res, Dataset, params.affiliation))
         if params.owner_id is not None:
             query = query.where(Dataset.owner_orcid == params.owner_id)
         query = query.order_by(

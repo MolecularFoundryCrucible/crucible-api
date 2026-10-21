@@ -27,7 +27,7 @@ from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleU
 
 from app.utils.auth_utils import (
     authorize_user, permission_filter, project_scope_filter,
-    owner_affiliation_filter, require_permission)
+    require_permission, resource_affiliation_filter)
 from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import reject_lineage_cycle, reject_self_link, require_link_create_permissions
 from app.utils.permissions import Principal, Permission, Role, has_global_permission
@@ -615,7 +615,7 @@ def search_samples(
                 effective_project_scope,
             ))
         if params.affiliation:
-            query = query.where(owner_affiliation_filter(auth_res, Sample))
+            query = query.where(resource_affiliation_filter(auth_res, Sample, params.affiliation))
         if params.owner_id is not None:
             query = query.where(Sample.owner_orcid == params.owner_id)
         query = query.order_by(

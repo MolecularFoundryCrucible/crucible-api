@@ -110,3 +110,40 @@ def test_deletion_request_and_new_dataset_cannot_both_succeed(pg_engine, monkeyp
     assert deletion == 200
     assert creation[0] == 409 and creation[1]["code"] == "pending_deletion", creation
     assert assigned == []
+
+
+def test_metadata_search_member_affiliation_narrows_only_datasets_and_samples(pg_engine, monkeypatch):
+    from app.models.core_models import AccessGroup, Dataset, Instrument, ResourceACL, Sample
+    from app.models.query_params import ResourceAffiliation
+    from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, GroupMembership, Role
+    with Session(pg_engine) as session:
+        public = AccessGroup(group_name=PUBLIC_GROUP_NAME, group_type=AccessGroupType.SYSTEM.value)
+        project = AccessGroup(group_name="my-project", group_type=AccessGroupType.PROJECT.value)
+        session.add_all([public, project])
+        session.flush()
+        records = {"ds-public-only": "dataset", "ds-public-mine": "dataset", "ds-mine": "dataset", "sm-public-only": "sample", "inst-public": "instrument"}
+        for mfid, kind in records.items():
+            session.add(Resource(mfid=mfid, resource_type=kind))
+            if kind == "dataset":
+                session.add(Dataset(unique_id=mfid, dataset_name=mfid))
+            elif kind == "sample":
+                session.add(Sample(unique_id=mfid, sample_name=mfid))
+            else:
+                session.add(Instrument(unique_id=mfid, instrument_id=mfid, instrument_name=mfid, owner="0000-0008-0000-0009", location="lab", manufacturer="m", model="m", other_id="o", other_id_source="o", description="d", instrument_type="t"))
+            session.add(ScientificMetadataBinary(unique_id=mfid, scientific_metadata={"material": "perovskite"}))
+            if "public" in mfid:
+                session.add(ResourceACL(mfid=mfid, accessgroup_id=public.id, read=True, write=False, permission="viewer"))
+            if "mine" in mfid:
+                session.add(ResourceACL(mfid=mfid, accessgroup_id=project.id, read=True, write=True, permission="admin"))
+        session.commit()
+        caller = Principal(user_id="0000-0008-0000-0001", groups=(
+            GroupMembership(id=public.id, group_name=PUBLIC_GROUP_NAME, role=Role.VIEWER),
+            GroupMembership(id=project.id, group_name="my-project", role=Role.EDITOR),
+        ))
+    monkeypatch.setattr(resources_routes, "engine", pg_engine)
+
+    def found(affiliation):
+        return sorted(item.unique_id for item in resources_routes.search_resource_metadata_v2(caller, "perovskite", 20, affiliation).items)
+
+    assert found(None) == sorted(records)
+    assert found([ResourceAffiliation.MEMBER]) == ["ds-mine", "ds-public-mine", "inst-public"]

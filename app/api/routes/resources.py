@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from typing import Annotated, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from sqlalchemy import desc, func, join, text, Text
+from sqlalchemy import desc, func, join, or_, text, Text, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import attributes, selectinload
 from sqlalchemy.sql import and_, exists
@@ -34,7 +34,7 @@ from app.models.samples import SampleResponse
 from app.models.users import UserPublicRead
 from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
-from app.models.query_params import ResourceDetailQuery, ResourceEmbeddingListQuery
+from app.models.query_params import RESOURCE_AFFILIATION_DESCRIPTION, ResourceAffiliation, ResourceDetailQuery, ResourceEmbeddingListQuery
 from app.models.response_schemas import DetailResponse
 from app.services.resource_access import access_grant_read, access_grant_reads, with_grant_capabilities
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
@@ -45,6 +45,7 @@ from app.utils.auth_utils import (
     require_grant,
     require_permission,
     require_platform_admin,
+    resource_affiliation_filter,
 )
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME,
@@ -262,6 +263,12 @@ def search_resource_metadata_v2(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     q: str = Query(min_length=3, description="Full-text search against scientific metadata content."),
     limit: int = Query(default=20, ge=1, le=50),
+    affiliation: Optional[List[ResourceAffiliation]] = Query(
+        default=None,
+        min_length=1,
+        max_length=5,
+        description=RESOURCE_AFFILIATION_DESCRIPTION + " Applies to dataset and sample results; project and instrument results are not narrowed.",
+    ),
 ):
     """
     Search resources by scientific metadata content using full-text search.
@@ -290,6 +297,10 @@ def search_resource_metadata_v2(
                 auth_filter,
                 metadata_vector.op('@@')(search_query),
                 ~active_deletion,
+                or_(
+                    Resource.resource_type.notin_(("dataset", "sample")),
+                    resource_affiliation_filter(auth_res, ScientificMetadataBinary, affiliation),
+                ) if affiliation else true(),
             ))
             .order_by(desc("rank"))
             .limit(limit)

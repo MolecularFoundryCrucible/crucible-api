@@ -5395,6 +5395,60 @@
         "title": "PaginatedResponse[Union[UserRead, UserPublicRead]]",
         "type": "object"
       },
+      "PaginatedResponse_UserPublicRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UserPublicRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offset"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "limit",
+          "items"
+        ],
+        "title": "PaginatedResponse[UserPublicRead]",
+        "type": "object"
+      },
       "PipelineRead": {
         "properties": {
           "description": {
@@ -27615,7 +27669,7 @@
     },
     "/users/search": {
       "get": {
-        "description": "Search users by username, first name, or last name. Returns public profiles only (no email).\nMinimum query length: 3 characters. Maximum results: 50.",
+        "description": "Search users by username, first name, or last name, ordered by match quality.\nReturns public profiles only (no email) in the shared paginated envelope.\nMinimum query length: 3 characters. Maximum results: 50.",
         "operationId": "search_users_users_search_get",
         "parameters": [
           {
@@ -27685,11 +27739,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/UserPublicRead"
-                  },
-                  "title": "Response Search Users Users Search Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/PaginatedResponse_UserPublicRead_"
                 }
               }
             },

@@ -224,7 +224,8 @@ def test_capabilities_are_null_on_search_and_resolve(client, db_engine, auth_as,
 
     search = client.get("/users/search", params={"q": "alice"})
     assert search.status_code == 200, search.text
-    for item in search.json():
+    assert search.json()["limit"] == 20
+    for item in search.json()["items"]:
         assert _capabilities(item) is None
         assert "email" not in item
 

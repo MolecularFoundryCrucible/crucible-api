@@ -1,6 +1,6 @@
 # User representation and search: follow-up
 
-Status: proposed 2026-10-21, not scheduled. Nothing here changes current behavior.
+Status: proposed 2026-10-21. The `/users/search` envelope is implemented on `feat/users-search-envelope`; the rest is not scheduled.
 
 ## One user schema with null fields
 
@@ -14,14 +14,17 @@ Proposal: one user schema whose private fields are always present and `null` whe
 
 ## `/users/search` and `q` on `GET /users`
 
-They serve different purposes and both stay for now:
+They serve different purposes:
 
 - `GET /users/search` (June 2026) is a type-ahead for everyone: trigram match on names and username, ranked by relevance, at most 50 results, public profiles only.
 - `q` on `GET /users` (October 2026) was added for the administrator directory: substring match that can include email and unique ID, combined with sorting, cursor pagination, and totals, which the search route cannot do.
 
-Problem: `/users/search` returns a plain array while every other search route returns `PaginatedResponse`. The shape cannot change in place without breaking clients, including old nano-crucible releases installed from PyPI, so an opt-in flag whose default later flips is not safe either.
+Both stay. `/users/search` keeps its route, consistent with `/<type>/search` on the other collections, and `q` on `GET /users` stays the directory filter.
 
-Proposal: add `sort=relevance` to `GET /users` (valid only with `q`; trigram ranking as in `/users/search`), keep the current `q` behavior when `sort` is omitted, mark `/users/search` deprecated with a `Deprecation` header, and remove it after the Hub and nano-crucible have moved and a minimum nano-crucible version is announced. Users then have one text-search path.
+`/users/search` used to return a plain array while every other search route returns `PaginatedResponse`. Branch `feat/users-search-envelope` changes it to the envelope (`limit` and `items`; no `total` or cursor, as on the other search routes). Compatibility:
+
+- nano-crucible: every release with `users.search()` (v3.0.0 onward; earlier releases never call the route) reads `result['items']` and falls back to a bare list, so no release breaks. The minimum supported nano-crucible version is 3.0.0.
+- Hub: reads the response as an array (`search.server.ts`), so it must ship a release that accepts the envelope (or both shapes) before the API change deploys.
 
 ## Search route layout
 

@@ -381,7 +381,7 @@ def resolve_users(
         return results
 
 
-@router.get("/users/search", response_model=List[UserPublicRead])
+@router.get("/users/search", response_model=PaginatedResponse[UserPublicRead])
 def search_users(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     q: str = Query(
@@ -399,7 +399,8 @@ def search_users(
     limit: int = Query(default=20, ge=1, le=50),
 ):
     '''
-    Search users by username, first name, or last name. Returns public profiles only (no email).
+    Search users by username, first name, or last name, ordered by match quality.
+    Returns public profiles only (no email) in the shared paginated envelope.
     Minimum query length: 3 characters. Maximum results: 50.
     '''
     normalized_q, tokens = normalize_search_query(q)
@@ -421,7 +422,7 @@ def search_users(
             )
             .limit(limit)
         ).all()
-    return results
+    return PaginatedResponse(limit=limit, items=results)
 
 
 @router.get("/users/by-username/{username}", response_model=Union[UserRead, UserPublicRead], deprecated=True)

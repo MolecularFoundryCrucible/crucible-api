@@ -29,7 +29,7 @@ The collection accepts a strict query model: `sort=name|username|unique_id|email
 
 Any other query parameter is ignored without filtering, and the response carries `Deprecation: @1799280000` (2027-01-07). The parameters will be rejected with 422 at that announced date. `?projects=x` and `?id=1` no longer filter or fail.
 
-`user_capabilities` is populated on singleton and exact lookups only and remains null on broad listings, `/users/search`, and `/users/resolve`:
+`user_capabilities` is populated on singleton lookups and every `GET /users` item, and remains null on `/users/search` and `/users/resolve`:
 
 ```
 UserCapabilities = {
@@ -40,7 +40,7 @@ UserCapabilities = {
 }
 ```
 
-It is the reliable discriminator for what the caller may do to a user; do not infer capability from the presence of `email`. `UserRead` now also exposes `platform_role` to the user themselves and to platform administrators, and the singleton and exact platform-admin views expose non-secret `api_key_status` when a key exists.
+It is the reliable discriminator for what the caller may do to a user; do not infer capability from the presence of `email`. `UserRead` now also exposes `platform_role` to the user themselves and to platform administrators, and platform administrators see non-secret `api_key_status` on the singleton and on every `GET /users` item when a key exists.
 
 ### `POST /resources/{mfid}/transfer_ownership`
 

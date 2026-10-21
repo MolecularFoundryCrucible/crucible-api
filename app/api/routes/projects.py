@@ -172,6 +172,7 @@ def list_projects(
     Pass sort=project_id|title|created|updated|activity with direction=asc|desc to change the order,
     and active_since to keep only projects with recent activity.
     Pass include_total=false to omit the exact authorization-filtered count.
+    Exact project_id and mfid lookups find any project, like GET /projects/{project_ref}.
     '''
     project_id = params.project_id
     include_metadata = params.include_metadata
@@ -194,7 +195,7 @@ def list_projects(
                 user_refs=params.accessible_to_user,
                 project_refs=params.accessible_to_project,
             )
-        elif project_id is not None or has_global_permission(auth_res, Permission.READ):
+        elif project_id is not None or params.mfid is not None or has_global_permission(auth_res, Permission.READ):
             visibility = None
         else:
             visibility = project_member_filter(auth_res.user_id, Project)
@@ -204,6 +205,8 @@ def list_projects(
             base = base.where(visibility)
         if project_id is not None:
             base = base.where(project_id_matches(project_id))
+        if params.mfid is not None:
+            base = base.where(Project.unique_id.in_(params.mfid))
         if params.member_ref:
             roles = [Role.from_db(r.value) for r in params.member_role or ()]
             for member_id in _resolve_member_selectors(session, auth_res, params.member_ref):

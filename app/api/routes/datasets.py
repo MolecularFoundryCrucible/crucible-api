@@ -47,7 +47,7 @@ from app.models.instrument import InstrumentReferenceRead
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
-    DatasetDetailQuery, DatasetFacetQuery, DatasetListQuery, ResourceSearchQuery)
+    UNIQUE_ID_FILTER_DEPRECATION, DatasetDetailQuery, DatasetFacetQuery, DatasetListQuery, ResourceSearchQuery)
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleRead
 from app.models.users import UserPublicRead
@@ -498,6 +498,7 @@ def get_dataset_facets(
 def list_datasets(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     request: Request,
+    response: Response,
     params: Annotated[DatasetListQuery, Query()],
 ):
     '''
@@ -535,11 +536,13 @@ def list_datasets(
     project_mfid = params.project_mfid
     sample_mfid = params.sample_mfid
     keyword_filter = params.keyword
+    if "unique_id" in request.query_params:
+        response.headers["Deprecation"] = UNIQUE_ID_FILTER_DEPRECATION
     param_values = params.model_dump()
     exact_filters = {
         key: param_values[key]
         for key in (
-            "unique_id", "public", "dataset_name",
+            "public", "dataset_name",
             "timestamp", "size", "data_format",
             "data_type", "measurement", "session_name",
         )
@@ -597,6 +600,8 @@ def list_datasets(
                     )
                     .correlate(Dataset)
                 )
+            if params.mfid is not None:
+                q = q.where(Dataset.unique_id.in_(params.mfid))
             for key, value in exact_filters.items():
                 q = q.where(getattr(Dataset, key) == value)
             if param_values["instrument_name"] is not None:

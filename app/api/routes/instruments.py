@@ -157,7 +157,7 @@ def list_instruments(
     Each item carries the caller's effective role on the instrument record in role.
     Pass include_total=false to omit the exact authorization-filtered count.
     Defaults to status=active; pass ?status=maintenance or ?status=decommissioned to see others.
-    An exact instrument_id lookup searches every status unless status is also provided.
+    Exact instrument_id and mfid lookups search every status unless status is also provided.
     '''
     param_values = params.model_dump()
     instrument_id = params.instrument_id
@@ -168,7 +168,7 @@ def list_instruments(
     cursor = params.cursor
     offset = params.offset
     param_values["owner"] = params.owner_id or param_values["owner"]
-    if instrument_id is None and params.status is None:
+    if instrument_id is None and params.mfid is None and params.status is None:
         param_values["status"] = "active"
     filters = [
         func.lower(getattr(Instrument, key)) == value.lower().strip()
@@ -178,6 +178,8 @@ def list_instruments(
     ]
     if instrument_id is not None:
         filters.append(func.lower(Instrument.instrument_id) == instrument_id.lower().strip())
+    if params.mfid is not None:
+        filters.append(Instrument.unique_id.in_(params.mfid))
     pagination = prepare_resource_pagination(
         params=params,
         query_params=request.query_params if request is not None else {},

@@ -1,4 +1,5 @@
 from starlette.requests import Request
+from starlette.responses import Response
 from sqlmodel import Session
 
 import app.api.routes.datasets as datasets_routes
@@ -339,11 +340,13 @@ def test_collection_link_expansion_stays_filtered_and_batched(
     datasets = datasets_routes.list_datasets(
         principal,
         _request(),
+        Response(),
         DatasetListQuery(include_links=True),
     )
     samples = samples_routes.list_samples(
         principal,
         _request(),
+        Response(),
         SampleListQuery(include_links=True),
     )
 

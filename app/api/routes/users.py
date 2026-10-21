@@ -57,6 +57,7 @@ USER_PROJECT_PAGINATION = replace(PROJECT_PAGINATION, kind="user_project")
 
 USER_COLLECTION_DEPRECATION = "@1799280000"
 API_KEY_VERIFY_DEPRECATION = "@1792368000"
+USER_RESOLVE_DEPRECATION = "@1792540800"
 USER_LIST_DECLARED_PARAMS = {
     "unique_id", "username", "email", "permissive", "is_service_account",
     "first_name", "last_name", "q", "search_fields", "platform_role", "include_total",
@@ -168,8 +169,9 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
     Returns a paginated list of users. Platform administrators receive the full
     directory with email and platform roles; other callers receive public-safe
     profiles scoped to users who share an access group with them.
-    Exact unique_id, username, and email filters return the same authorized
-    representation as GET /users/{user_ref}. Any other query parameter is ignored
+    Exact unique_id, username, and email filters search every user and return the same
+    authorized representation as GET /users/{user_ref}; unique_id and username are
+    repeatable, at most 100 values each. Any other query parameter is ignored
     and reported through the Deprecation response header.
     '''
     query_params = set(request.query_params.keys())
@@ -217,9 +219,9 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
 
     search_cmd = select(User)
     if params.unique_id is not None:
-        search_cmd = search_cmd.where(User.unique_id == params.unique_id)
+        search_cmd = search_cmd.where(User.unique_id.in_(params.unique_id))
     if params.username is not None:
-        search_cmd = search_cmd.where(func.lower(User.username) == params.username.lower())
+        search_cmd = search_cmd.where(func.lower(User.username).in_([username.lower() for username in params.username]))
     if params.email is not None:
         search_cmd = search_cmd.where(func.lower(User.email) == params.email.lower())
 
@@ -303,7 +305,7 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
         rows = rows[:params.limit]
 
         key_status_by_user = {}
-        if is_admin and exact_lookup:
+        if is_admin:
             private_ids = [user.unique_id for user in rows]
             for token in session.exec(
                 select(ApiToken).where(ApiToken.user_unique_id.in_(private_ids))
@@ -312,10 +314,9 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
                 if token.user_unique_id not in key_status_by_user:
                     key_status_by_user[token.user_unique_id] = _key_status(token)
         items = [
-            _user_read(auth_res, user, key_status=key_status_by_user.get(user.unique_id),
-                       with_capabilities=exact_lookup)
+            _user_read(auth_res, user, key_status=key_status_by_user.get(user.unique_id), with_capabilities=True)
             if is_admin or user.unique_id == auth_res.user_id
-            else _user_public_read(auth_res, user, with_capabilities=exact_lookup)
+            else _user_public_read(auth_res, user, with_capabilities=True)
             for user in rows
         ]
         next_cursor = None
@@ -339,9 +340,10 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
         )
 
 
-@router.post("/users/resolve", response_model=Dict[str, UserPublicRead])
+@router.post("/users/resolve", response_model=Dict[str, UserPublicRead], deprecated=True)
 def resolve_users(
     auth_res: Annotated[Principal, Depends(authorize_user)],
+    response: Response,
     orcids: Optional[List[str]] = Body(default=None),
     usernames: Optional[List[str]] = Body(default=None),
     emails: Optional[List[str]] = Body(default=None),
@@ -351,7 +353,9 @@ def resolve_users(
     `orcids` is matched against unique_id, so it also accepts service-account
     MFIDs; the response is keyed by unique_id. No email included.
     Any authenticated user can call this. Admins needing email should use GET /users/{user_ref}.
+    Deprecated: use GET /users with repeatable unique_id or username filters, or an exact email filter.
     '''
+    response.headers["Deprecation"] = USER_RESOLVE_DEPRECATION
     if not orcids and not usernames and not emails:
         return {}
 
@@ -377,7 +381,7 @@ def resolve_users(
         return results
 
 
-@router.get("/users/search", response_model=List[UserPublicRead])
+@router.get("/users/search", response_model=PaginatedResponse[UserPublicRead])
 def search_users(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     q: str = Query(
@@ -395,7 +399,8 @@ def search_users(
     limit: int = Query(default=20, ge=1, le=50),
 ):
     '''
-    Search users by username, first name, or last name. Returns public profiles only (no email).
+    Search users by username, first name, or last name, ordered by match quality.
+    Returns public profiles only (no email) in the shared paginated envelope.
     Minimum query length: 3 characters. Maximum results: 50.
     '''
     normalized_q, tokens = normalize_search_query(q)
@@ -417,7 +422,7 @@ def search_users(
             )
             .limit(limit)
         ).all()
-    return results
+    return PaginatedResponse(limit=limit, items=results)
 
 
 @router.get("/users/by-username/{username}", response_model=Union[UserRead, UserPublicRead], deprecated=True)

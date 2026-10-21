@@ -4,7 +4,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 import os
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import exists, func, join
 from sqlalchemy.orm import joinedload
 from sqlmodel import and_, or_, Session, select
@@ -21,7 +21,7 @@ from app.models.facets import FacetResponse
 from app.models.links import LinkedResource
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
-    ResourceSearchQuery, SampleDetailQuery, SampleFacetQuery, SampleListQuery)
+    UNIQUE_ID_FILTER_DEPRECATION, ResourceSearchQuery, SampleDetailQuery, SampleFacetQuery, SampleListQuery)
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleCreate, SampleRead, SampleResponse, SampleUpdate
 
@@ -315,6 +315,7 @@ def get_sample_facets(
 def list_samples(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     request: Request,
+    response: Response,
     params: Annotated[SampleListQuery, Query()],
 ):
     '''
@@ -347,6 +348,8 @@ def list_samples(
 
     include_metadata = params.include_metadata
     include_links = params.include_links
+    if "unique_id" in request.query_params:
+        response.headers["Deprecation"] = UNIQUE_ID_FILTER_DEPRECATION
     param_values = params.model_dump()
     include_datasets = param_values["include_datasets"]
     include_owner = params.include_owner
@@ -361,7 +364,7 @@ def list_samples(
     exact_filters = {
         key: param_values[key]
         for key in (
-            "unique_id", "public", "sample_name", "sample_type",
+            "public", "sample_name", "sample_type",
             "description", "timestamp",
         )
         if param_values[key] is not None
@@ -415,6 +418,8 @@ def list_samples(
                     )
                     .correlate(Sample)
                 )
+            if params.mfid is not None:
+                q = q.where(Sample.unique_id.in_(params.mfid))
             for key, value in exact_filters.items():
                 q = q.where(getattr(Sample, key) == value)
             for column, value in (

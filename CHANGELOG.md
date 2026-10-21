@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Batch lookup by MFID: `GET /datasets`, `GET /samples`, `GET /projects`, and `GET /instruments` accept a repeatable `mfid` filter (at most 100 values). Unreadable, missing, and pending-deletion MFIDs are omitted; projects and instruments are found as with an exact slug lookup. `GET /users` accepts repeatable `unique_id` and `username` filters (at most 100 values each).
 - `affiliation=member` on `GET /datasets`, `GET /samples`, their `/search` and `/facets` routes, and `GET /resources/metadata/search` (where it narrows dataset and sample results only): records the caller reaches through one of their own grants (personal, project, instrument, or group), excluding records visible only because they are public. Combines with `affiliation=owner` (OR) and with `visibility` (for example `affiliation=member&visibility=public` lists public records the caller also has access to). For platform administrators it counts only their own grants. Project list and search keep `affiliation=owner` only.
 - Resource capabilities include `can_request_deletion`: whether `POST /resources/{mfid}/delete` would be accepted. For datasets and samples that is contributor access; for projects and instruments it matches `can_delete`; in both cases it is false while a deletion request is already active.
 - Added authenticated `GET /print/printers`, listing printers discovered from their retained MQTT status heartbeat with an `online` flag and the last heartbeat time `ts` (printer hostnames and IP addresses are not returned). Only printers that have published at least one status message appear; there is no separate registry of valid `printer_id` values.
@@ -40,6 +41,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Deprecated
 
+- `POST /users/resolve`: use `GET /users` with repeatable `unique_id` or `username`, or an exact `email`. Responses carry a `Deprecation` header.
+- The `unique_id` filter on `GET /datasets` and `GET /samples`: use `mfid`. It now accepts repeated values like `mfid`, and requests using it carry a `Deprecation` header.
 - `GET /users/{user_ref}/apikey/verify`, which returns `Deprecation: @1792368000`. Administrators get the same status as `api_key_status` from `GET /users/{user_ref}`; callers checking their own key use `GET /account/verify`.
 - `POST /access_groups/{group_name}/join` is deprecated in favor of `POST /projects/{project_ref}/join_requests`, and `GET /account/join_requests` in favor of `GET /join_requests?scope=submitted`. The `group_name` field and query parameter of join requests are deprecated in favor of `project` and `project_mfid`.
 - `POST /datasets/{dataset_mfid}/carrier_segmentation`, `/insitu_spec_aggregation`, `/rga_analysis`, and `/mosaic_stitch` are deprecated in favor of `POST /datasets/{dataset_mfid}/postprocess`. They now start a tracked postprocessing run and return it instead of an empty body.

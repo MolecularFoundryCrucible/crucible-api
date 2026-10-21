@@ -161,6 +161,14 @@ class SampleFacetField(str, Enum):
     PROJECT = "project"
 
 
+MFID_FILTER_MAX = 100
+UNIQUE_ID_FILTER_DEPRECATION = "@1792540800"
+MFID_FILTER_DESCRIPTION = (
+    f"Repeatable exact MFID filter, at most {MFID_FILTER_MAX} values, OR semantics. "
+    "MFIDs the caller cannot read, that do not exist, or that are pending deletion are omitted."
+)
+
+
 class StrictQueryModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -289,6 +297,13 @@ class ResourceCollectionQuery(StrictQueryModel):
         max_length=5,
         description=RESOURCE_AFFILIATION_DESCRIPTION,
     )
+    mfid: Optional[list[str]] = Field(default=None, min_length=1, max_length=MFID_FILTER_MAX, description=MFID_FILTER_DESCRIPTION)
+    unique_id: Annotated[Optional[list[str]], Field(
+        min_length=1,
+        max_length=MFID_FILTER_MAX,
+        deprecated=True,
+        description="Deprecated alias of mfid. Cannot be combined with mfid.",
+    )] = None
     include_metadata: bool = False
     include_links: bool = False
     include_owner: bool = False
@@ -357,6 +372,12 @@ class ResourceCollectionQuery(StrictQueryModel):
 
     @model_validator(mode="after")
     def validate_combinations(self):
+        unique_id = self.__dict__.get("unique_id")
+        if self.mfid is not None and unique_id is not None:
+            raise ValueError("mfid and unique_id cannot be combined; use mfid")
+        if unique_id is not None:
+            self.mfid = unique_id
+            self.__dict__["unique_id"] = None
         if self.project_scope is not None and self.project_id is None and self.project_mfid is None:
             raise ValueError("project_scope requires project_id or project_mfid")
         if self.creation_time_gte and self.creation_time_lte and self.creation_time_gte > self.creation_time_lte:
@@ -396,7 +417,6 @@ class DatasetListQuery(ResourceCollectionQuery):
         description="Filter datasets assigned to this instrument slug (case-insensitive). May be combined with a matching instrument_mfid.",
     )
     keyword: Optional[str] = None
-    unique_id: Optional[str] = None
     public: Optional[bool] = None
     dataset_name: Optional[str] = None
     owner_id: Optional[str] = Field(
@@ -459,7 +479,6 @@ class SampleListQuery(ResourceCollectionQuery):
         default=None,
         description="Filter samples linked to this canonical dataset MFID.",
     )
-    unique_id: Optional[str] = None
     public: Optional[bool] = None
     sample_name: Optional[str] = None
     sample_type: Optional[str] = None
@@ -625,6 +644,7 @@ class SampleFacetQuery(ResourceFacetQuery):
 
 class ProjectListQuery(StrictQueryModel):
     project_id: Optional[str] = Field(default=None, description="Exact project slug.")
+    mfid: Optional[list[str]] = Field(default=None, min_length=1, max_length=MFID_FILTER_MAX, description=MFID_FILTER_DESCRIPTION)
     accessible_to_user: Optional[list[str]] = Field(
         default=None,
         min_length=1,
@@ -749,6 +769,12 @@ class UserProjectListQuery(StrictQueryModel):
 
 class InstrumentListQuery(StrictQueryModel):
     instrument_id: Optional[str] = Field(default=None, description="Exact instrument slug.")
+    mfid: Optional[list[str]] = Field(
+        default=None,
+        min_length=1,
+        max_length=MFID_FILTER_MAX,
+        description=MFID_FILTER_DESCRIPTION + " Searches every status unless status is also provided.",
+    )
     affiliation: Optional[list[InstrumentAffiliation]] = Field(
         default=None,
         min_length=1,
@@ -822,19 +848,23 @@ class InstrumentListQuery(StrictQueryModel):
             },
         )
         values["owner_id"] = self.owner_id or self.__dict__.get("owner")
-        if self.instrument_id is None and self.status is None:
+        if self.instrument_id is None and self.mfid is None and self.status is None:
             values["status"] = InstrumentStatus.ACTIVE.value
         return values
 
 
 class UserListQuery(BaseModel):
-    unique_id: Optional[str] = Field(
+    unique_id: Optional[list[str]] = Field(
         default=None,
-        description="Exact ORCID or service-account MFID.",
+        min_length=1,
+        max_length=MFID_FILTER_MAX,
+        description=f"Repeatable exact ORCID or service-account MFID, at most {MFID_FILTER_MAX} values, OR semantics.",
     )
-    username: Optional[str] = Field(
+    username: Optional[list[str]] = Field(
         default=None,
-        description="Exact username, matched case-insensitively.",
+        min_length=1,
+        max_length=MFID_FILTER_MAX,
+        description=f"Repeatable exact username, matched case-insensitively, at most {MFID_FILTER_MAX} values, OR semantics.",
     )
     email: Optional[str] = Field(
         default=None,

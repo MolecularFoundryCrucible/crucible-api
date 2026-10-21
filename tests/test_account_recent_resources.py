@@ -29,7 +29,7 @@ def me(client, db_engine, auth_as):
         _resource(session, "ds1", "dataset", dataset_name="Spectra", project_mfid="pr1")
         _resource(session, "sm1", "sample", sample_name="Film 7", project_mfid="pr1")
         _resource(session, "pr1", "project", project_id="proj-a", title="Project A", organization="MF", status="active", project_lead_orcid=ME, project_lead_email="lead@example.org")
-        _resource(session, "in1", "instrument", instrument_name="TEM", owner="facility", location="B67")
+        _resource(session, "in1", "instrument", instrument_id="tem-1", instrument_name="TEM", owner="facility", location="B67")
         _resource(session, "hidden", "dataset", readable=False, dataset_name="Secret")
         session.commit()
     auth_as(ME, groups=[("test_group", 1, Role.VIEWER)])
@@ -62,9 +62,9 @@ def test_record_and_list_newest_first(me, db_engine):
     assert response.status_code == 200
     body = response.json()
     assert [item["resource_mfid"] for item in body] == ["in1", "pr1", "sm1", "ds1"]
-    assert body[0] | {"viewed_at": None} == {"resource_mfid": "in1", "resource_type": "instrument", "name": "TEM", "project_id": None, "viewed_at": None}
-    assert {item["resource_mfid"]: (item["name"], item["project_id"]) for item in body} == {
-        "in1": ("TEM", None), "pr1": ("Project A", "proj-a"), "sm1": ("Film 7", "proj-a"), "ds1": ("Spectra", "proj-a"),
+    assert body[0] | {"viewed_at": None} == {"resource_mfid": "in1", "resource_type": "instrument", "name": "TEM", "project_id": None, "identifier": "tem-1", "viewed_at": None}
+    assert {item["resource_mfid"]: (item["name"], item["project_id"], item["identifier"]) for item in body} == {
+        "in1": ("TEM", None, "tem-1"), "pr1": ("Project A", "proj-a", "proj-a"), "sm1": ("Film 7", "proj-a", None), "ds1": ("Spectra", "proj-a", None),
     }
     assert [item["resource_mfid"] for item in me.get(URL, params={"limit": 2}).json()] == ["in1", "pr1"]
 

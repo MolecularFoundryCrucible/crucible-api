@@ -1,7 +1,9 @@
 """Enforce canonical, unique filenames for non-GCS file records.
 
 Adapted from PR #335 (Peter Doak). Stops instead of choosing a survivor when existing non-GCS rows
-violate the rules; production had no non-GCS rows when this was written (2026-10-20).
+violate the rules; production had no non-GCS rows when this was written (2026-10-20). The constraints
+are added NOT VALID and validated, and the index is built concurrently, so reads and writes on
+associatedfile are not blocked while the table is checked.
 """
 import sqlalchemy as sa
 from alembic import op
@@ -32,15 +34,19 @@ def upgrade():
     )).scalar()
     if duplicates:
         raise RuntimeError(f"{duplicates} (dataset, filename) pairs have more than one non-GCS record; resolve them before this migration")
-    op.create_check_constraint("ck_associatedfile_non_gcs_filename_path", "associatedfile", PATH_CHECK)
-    op.create_check_constraint("ck_associatedfile_non_gcs_filename_controls", "associatedfile", CONTROLS_CHECK)
-    op.create_index(
-        "uq_associatedfile_non_gcs_dataset_filename", "associatedfile", ["dataset_id", "filename"], unique=True,
-        postgresql_where=sa.text("storage_backend <> 'gcs'"),
-    )
+    for name, check in (("ck_associatedfile_non_gcs_filename_path", PATH_CHECK), ("ck_associatedfile_non_gcs_filename_controls", CONTROLS_CHECK)):
+        op.execute(f"ALTER TABLE associatedfile ADD CONSTRAINT {name} CHECK ({check}) NOT VALID")
+    with op.get_context().autocommit_block():
+        for name in ("ck_associatedfile_non_gcs_filename_path", "ck_associatedfile_non_gcs_filename_controls"):
+            op.execute(f"ALTER TABLE associatedfile VALIDATE CONSTRAINT {name}")
+        op.create_index(
+            "uq_associatedfile_non_gcs_dataset_filename", "associatedfile", ["dataset_id", "filename"], unique=True,
+            postgresql_where=sa.text("storage_backend <> 'gcs'"), postgresql_concurrently=True, if_not_exists=True,
+        )
 
 
 def downgrade():
-    op.drop_index("uq_associatedfile_non_gcs_dataset_filename", table_name="associatedfile")
+    with op.get_context().autocommit_block():
+        op.drop_index("uq_associatedfile_non_gcs_dataset_filename", table_name="associatedfile", postgresql_concurrently=True, if_exists=True)
     op.drop_constraint("ck_associatedfile_non_gcs_filename_controls", "associatedfile", type_="check")
     op.drop_constraint("ck_associatedfile_non_gcs_filename_path", "associatedfile", type_="check")

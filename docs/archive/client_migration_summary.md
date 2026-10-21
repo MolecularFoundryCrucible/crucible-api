@@ -2,7 +2,7 @@
 
 Status: deployed to production from `main` commit `24a24ab9ce74b01f841750df7003091ce4b57119` with database revision `3f2b6a9c1d84`. Verify `GET /health/ready` and the deployed OpenAPI before testing any environment. This repository does not establish downstream client rollout status.
 
-Use this document to update Crucible clients for the identifier, permission, ownership, query, and response-contract changes. Production exposes [Swagger UI](https://crucible.lbl.gov/api/v3/docs) and [OpenAPI JSON](https://crucible.lbl.gov/api/v3/openapi.json). The repository pins the reviewed contract in [`openapi/crucible-api.json`](../openapi/crucible-api.json).
+Use this document to update Crucible clients for the identifier, permission, ownership, query, and response-contract changes. Production exposes [Swagger UI](https://crucible.lbl.gov/api/v3/docs) and [OpenAPI JSON](https://crucible.lbl.gov/api/v3/openapi.json). The repository pins the reviewed contract in [`openapi/crucible-api.json`](../../openapi/crucible-api.json).
 
 ## Contract authority and ownership
 
@@ -77,7 +77,7 @@ The client should classify a supplied reference locally and issue one request.
 | Person ORCID, service-account MFID, or username | `GET /users/{user_ref}` | Return the singleton response. |
 | Email | `GET /users?email={email}` | Return the only item, report not found for zero, and report an integrity error for more than one. Another user's public-safe response does not echo the email. Email lookups may match more than one user until uniqueness is enforced; see [email uniqueness follow-up](email_uniqueness_followup.md). |
 
-Singleton responses requested by slug or username include `Content-Location` pointing to the MFID or ORCID route. `GET /users/{email}` still resolves but email in paths is deprecated, as is `GET /users/by-username/{username}`. Exact collection filters (`GET /projects?project_id=`, `GET /instruments?instrument_id=`, `GET /users?username=`) remain available. See [resource identifier routes](resource_identifier_routes.md) for the full convention.
+Singleton responses requested by slug or username include `Content-Location` pointing to the MFID or ORCID route. `GET /users/{email}` still resolves but email in paths is deprecated, as is `GET /users/by-username/{username}`. Exact collection filters (`GET /projects?project_id=`, `GET /instruments?instrument_id=`, `GET /users?username=`) remain available. See [resource identifier routes](../resource_identifier_routes.md) for the full convention.
 
 Canonical resource detail responses, exact project and instrument slug-filter results, and supported create or update responses may include:
 
@@ -123,7 +123,7 @@ Content-Type: application/json
 
 Use `?confirm=true` to execute. Dataset and sample PATCH requests no longer accept project reassignment fields. Dataset PATCH also rejects `owner_orcid`, and project PATCH rejects all project-lead identity fields.
 
-Dataset instrument assignment is no longer mutable through generic PATCH. Omit `instrument_id` and `instrument_name` when updating a dataset. Existing clients may temporarily resubmit the current value, but changing or clearing it returns `409 Conflict`. Use `PUT /datasets/{dataset_mfid}/instrument` for assignment or reassignment. See [dataset instrument assignment](dataset_instrument_assignment.md).
+Dataset instrument assignment is no longer mutable through generic PATCH. Omit `instrument_id` and `instrument_name` when updating a dataset. Existing clients may temporarily resubmit the current value, but changing or clearing it returns `409 Conflict`. Use `PUT /datasets/{dataset_mfid}/instrument` for assignment or reassignment. See [dataset instrument assignment](../dataset_instrument_assignment.md).
 
 ## Deletion contract
 
@@ -177,7 +177,7 @@ The legacy `POST` and `GET /resources/{mfid}/access_groups` routes are deprecate
 - `GET /projects?project_id={slug}&include_members=true` provides the same member expansion for one-request slug resolution. Using `include_members=true` without `project_id` returns 422.
 - Generic `POST` and `DELETE /users/{user_ref}/access_groups/{group_name}` routes are deprecated. They reject identity and system groups, direct project membership to project routes, and reject adding human users to instrument groups.
 - Instrument service-account membership should use `POST` or `DELETE /instruments/{instrument_ref}/service_accounts/{service_account_ref}`.
-- Instrument maintainers are grants on the instrument record through `PUT` and `DELETE /resources/{instrument_mfid}/access/users/{user_ref}`. `GET /instruments/{instrument_ref}?include_members=true` and `GET /instruments?instrument_id={slug}&include_members=true` return them to callers holding a role on the instrument and to platform administrators. `affiliation=maintainer` lists instruments where the caller holds editor or admin. See [instrument access](instrument_access.md).
+- Instrument maintainers are grants on the instrument record through `PUT` and `DELETE /resources/{instrument_mfid}/access/users/{user_ref}`. `GET /instruments/{instrument_ref}?include_members=true` and `GET /instruments?instrument_id={slug}&include_members=true` return them to callers holding a role on the instrument and to platform administrators. `affiliation=maintainer` lists instruments where the caller holds editor or admin. See [instrument access](../instrument_access.md).
 
 ## User resource access
 
@@ -192,7 +192,7 @@ GET /projects?accessible_to_user={user_ref}
 GET /projects?accessible_to_project={project_ref}
 ```
 
-`GET /users/{user_ref}/projects` lists only the projects a user is a member of, each with the user's standing `role` in that project's access group, while `GET /projects?accessible_to_user=` lists every project the user can read, including explicit grants and, for a selected platform contributor or administrator, all projects. Both require the same authority to inspect another user: `platform_role` `contributor` or `admin`. See [`GET /users/{user_ref}/projects`](permission_system_api_changes.md#get-usersuser_idprojects).
+`GET /users/{user_ref}/projects` lists only the projects a user is a member of, each with the user's standing `role` in that project's access group, while `GET /projects?accessible_to_user=` lists every project the user can read, including explicit grants and, for a selected platform contributor or administrator, all projects. Both require the same authority to inspect another user: `platform_role` `contributor` or `admin`. See [`GET /users/{user_ref}/projects`](../permission_system_api_changes.md#get-usersuser_idprojects).
 
 References are resolved by the API, so users may be identified by MFID, ORCID, username, or email and projects by MFID or slug. Repeat parameters to request an intersection. All selectors use AND semantics, are deduplicated after resolution, and may total at most 10. They only narrow resources readable by the caller. With no selector, dataset and sample collections list resources accessible to the caller and the project collection retains its existing discovery behavior.
 
@@ -361,10 +361,10 @@ Use the returned `unique_id` MFID for canonical user routes. To authenticate as 
 
 ## Detailed references
 
-- [Permission API changes](permission_system_api_changes.md)
-- [Identifier route contract](resource_identifier_routes.md)
-- [Remote file records](remote_file_records.md)
-- [Historical permission migration runbook](archive/permission_migration_runbook_2026-08.md)
-- [Repository OpenAPI artifact](../openapi/crucible-api.json)
+- [Permission API changes](../permission_system_api_changes.md)
+- [Identifier route contract](../resource_identifier_routes.md)
+- [Remote file records](../remote_file_records.md)
+- [Historical permission migration runbook](permission_migration_runbook_2026-08.md)
+- [Repository OpenAPI artifact](../../openapi/crucible-api.json)
 - [Production OpenAPI](https://crucible.lbl.gov/api/v3/openapi.json)
 - [Staging OpenAPI](https://crucible.lbl.gov/testapi-staging/openapi.json)

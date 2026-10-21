@@ -60,7 +60,7 @@ The future dedicated atomic operation and its ACL requirements are recorded in [
 
 ### 6. Multipart upload exposes a bucket-wide credential
 
-Status: Deferred because parallel upload is required for very large datasets. The agreed secure replacement retains the existing initiation and completion route paths while moving to XML multipart uploads and exact-object downscoped credentials. See [`docs/secure_parallel_upload_migration.md`](../secure_parallel_upload_migration.md).
+Status: Deferred because parallel upload is required for very large datasets. The agreed secure replacement retains the existing initiation and completion route paths while moving to XML multipart uploads and exact-object downscoped credentials. See [`docs/secure_parallel_upload_migration.md`](secure_parallel_upload_migration.md).
 
 GCS multipart initiation in [`app/api/routes/gcs_storage.py`](../../app/api/routes/gcs_storage.py) returns a short-lived OAuth token with bucket-wide read/write scope. The supplied object prefix does not constrain that token.
 
@@ -68,7 +68,7 @@ Do not remove parallel uploads without a client replacement. During the future c
 
 ### 7. Analysis jobs lack resource authorization
 
-Status: Deferred. The future compatible hardening keeps all existing route paths, requires contributor permission, and returns a typed `202 Accepted` response. Durable idempotency and task tracking remain a later coordinated change. See [`docs/analysis_job_routes_migration.md`](../analysis_job_routes_migration.md).
+Status: Deferred. The future compatible hardening keeps all existing route paths, requires contributor permission, and returns a typed `202 Accepted` response. Durable idempotency and task tracking remain a later coordinated change. See [`docs/analysis_job_routes_migration.md`](analysis_job_routes_migration.md).
 
 Dataset analysis actions in [`app/api/routes/datasets.py`](../../app/api/routes/datasets.py) can enqueue work without consistently verifying dataset existence or contributor access.
 

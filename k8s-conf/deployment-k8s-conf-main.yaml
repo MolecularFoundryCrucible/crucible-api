@@ -39,6 +39,11 @@ spec:
             configMapKeyRef:
               key: UPLOAD_BUCKET
               name: crucible-api-config-main
+        - name: "RECORD_BUCKET"
+          valueFrom:
+            configMapKeyRef:
+              key: RECORD_BUCKET
+              name: crucible-api-config-main
         - name: "MULTIPART_UPLOAD_ENABLED"
           valueFrom:
             configMapKeyRef:
@@ -105,6 +110,16 @@ spec:
           valueFrom:
             configMapKeyRef:
               key: API_CONF_FILE
+              name: crucible-api-config-main
+        - name: "ORCID_CLIENT_ID"
+          valueFrom:
+            configMapKeyRef:
+              key: ORCID_CLIENT_ID
+              name: crucible-api-config-main
+        - name: "ORCID_CLIENT_SECRET_VERSION"
+          valueFrom:
+            configMapKeyRef:
+              key: ORCID_CLIENT_SECRET_VERSION
               name: crucible-api-config-main
         - name: "DB_TYPE"
           valueFrom:

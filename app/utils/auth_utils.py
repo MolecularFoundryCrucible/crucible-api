@@ -1,4 +1,4 @@
-from typing import Annotated, Iterable, Optional, Sequence
+from typing import Annotated, Callable, Iterable, Optional, Sequence
 import logging
 import re
 import os
@@ -15,7 +15,6 @@ from jose import jwt, JWTError
 logger = logging.getLogger(__name__)
 
 from fastapi import Depends, Header, HTTPException, Request
-from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.general_utils import  get_secret
@@ -134,8 +133,11 @@ def delete_apikey(orcid, session):
     session.commit()
 
 
+ORCID_TIMEOUT = 10
+
+
 def code_for_token_exchange(code: str, client_id, client_secret, redirect_uri):
-    token_req = requests.post(url = "https://orcid.org/oauth/token", 
+    token_req = requests.post(url = "https://orcid.org/oauth/token", timeout = ORCID_TIMEOUT,
                               data = {  "client_id": client_id,
                                         "client_secret": client_secret, 
                                         "grant_type":"authorization_code", 
@@ -158,8 +160,7 @@ def decode_token(token: str, secret_key = SECRET_KEY, alg = ALGORITHM):
         payload = jwt.decode(token, secret_key, algorithms=[alg])
         return payload
     except JWTError:
-        login_path = ''.join([api_path, '/login'])
-        return RedirectResponse(login_path)
+        return None
 
 
 def find_key(credentials, engine):
@@ -348,7 +349,7 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
                           allow_peer_grants: bool = True,
                           status_permission: Optional[Permission] = Permission.DELETE,
                           acl_rows: Optional[Sequence[tuple[int, Role]]] = None,
-                          can_delete: bool = False) -> ResourceCapabilities:
+                          can_delete: bool | Callable[[], bool] = False) -> ResourceCapabilities:
     if acl_rows is None:
         acl_rows = fetch_acl_rows(session, mfid)
     actor_role = effective_role(principal, acl_rows)
@@ -367,10 +368,10 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
                 max_grant_role = target.db_value
                 break
 
-    may_delete = can_delete and (
+    may_delete = (
         _has_resource_permission(principal, acl_rows, Permission.DELETE)
         or _has_resource_permission(principal, acl_rows, Permission.HARD_DELETE)
-    )
+    ) and (can_delete() if callable(can_delete) else can_delete)
 
     return ResourceCapabilities(
         can_edit=_has_resource_permission(
@@ -405,6 +406,31 @@ def require_permission(session, principal: Principal, mfid: str,
     if principal.is_platform_admin:
         return None
     return effective_role(principal, acl_rows)
+
+
+GRANTABLE_ROLES = (Role.VIEWER, Role.CONTRIBUTOR, Role.EDITOR, Role.ADMIN)
+
+
+def entry_capabilities(principal: Principal, actor: Optional[Role], current: Optional[Role], *,
+                       floor: Role, is_self: bool = False, fixed: bool = False) -> dict:
+    """The capabilities object for one member or grant, decided by the same rule as require_grant."""
+    from app.utils.permissions import can_grant
+
+    if fixed or current is Role.OWNER:
+        return {"can_remove": False, "can_change_role": False, "assignable_roles": []}
+    if principal.is_platform_admin:
+        assignable = list(GRANTABLE_ROLES)
+        may_remove = True
+    elif principal.is_service_account:
+        assignable, may_remove = [], False
+    else:
+        assignable = [role for role in GRANTABLE_ROLES if can_grant(actor, role, current, floor=floor)]
+        may_remove = can_grant(actor, current or Role.VIEWER, current, floor=floor)
+    return {
+        "can_remove": may_remove or is_self,
+        "can_change_role": any(role != current for role in assignable),
+        "assignable_roles": [role.db_value for role in assignable],
+    }
 
 
 def require_grant(session, principal: Principal, mfid: str, target: Role,

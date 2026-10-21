@@ -289,3 +289,66 @@ def test_platform_admin_graph_still_excludes_pending_deletions(
     assert "sample-private" in {node["id"] for node in graph["nodes"]}
     assert "dataset-private" in {node["id"] for node in graph["nodes"]}
     assert "sample-deleted" not in {node["id"] for node in graph["nodes"]}
+
+
+def _visible_chain(db_engine, group_id):
+    with Session(db_engine) as session:
+        entities = {
+            "s-a": Sample(unique_id="s-a", sample_name="a"),
+            "s-b": Sample(unique_id="s-b", sample_name="b"),
+            "d-a": Dataset(unique_id="d-a", dataset_name="a"),
+            "d-b": Dataset(unique_id="d-b", dataset_name="b"),
+            "d-c": Dataset(unique_id="d-c", dataset_name="c"),
+        }
+        session.add_all(entities.values())
+        session.commit()
+        for mfid, entity in entities.items():
+            session.refresh(entity)
+            session.add(Resource(mfid=mfid, resource_type="sample" if mfid.startswith("s") else "dataset"))
+            session.add(ResourceACL(mfid=mfid, accessgroup_id=group_id, read=True, write=False, permission=Role.VIEWER.db_value))
+        session.add_all([
+            SampleLink(parent_sample_id=entities["s-a"].id, sample_id=entities["s-b"].id, relationship_type="is_part_of"),
+            DatasetSampleLink(sample_id=entities["s-b"].id, dataset_id=entities["d-a"].id),
+            DatasetLink(parent_dataset_id=entities["d-a"].id, child_dataset_id=entities["d-b"].id, relationship_type="is_derived_from"),
+            DatasetLink(parent_dataset_id=entities["d-b"].id, child_dataset_id=entities["d-c"].id),
+        ])
+        session.commit()
+
+
+@pytest.mark.parametrize("root", ["s-a", "d-c"])
+def test_recursive_graph_spans_samples_and_datasets(db_engine, monkeypatch, root):
+    group_id = _setup(db_engine)
+    _visible_chain(db_engine, group_id)
+    monkeypatch.setattr(entities_routes, "engine", db_engine)
+
+    graph = entities_routes.entity_graph_cte(root, _reader(group_id), recursive=True)
+
+    assert {node["id"] for node in graph["nodes"]} == {"s-a", "s-b", "d-a", "d-b", "d-c"}
+    assert {(edge["source"], edge["target"], edge["relationship_type"]) for edge in graph["edges"]} == {
+        ("s-a", "s-b", "is_part_of"),
+        ("s-b", "d-a", None),
+        ("d-a", "d-b", "is_derived_from"),
+        ("d-b", "d-c", None),
+    }
+
+
+def test_one_hop_graph_returns_direct_neighbours(db_engine, monkeypatch):
+    group_id = _setup(db_engine)
+    _visible_chain(db_engine, group_id)
+    monkeypatch.setattr(entities_routes, "engine", db_engine)
+
+    graph = entities_routes.entity_graph_cte("d-b", _reader(group_id), recursive=False)
+
+    assert {node["id"] for node in graph["nodes"]} == {"d-a", "d-b", "d-c", "s-b"}
+    assert {(edge["source"], edge["target"]) for edge in graph["edges"]} == {("d-a", "d-b"), ("d-b", "d-c"), ("s-b", "d-a")}
+
+
+@pytest.mark.parametrize("root", ["sample-visible-root", "dataset-visible-root"])
+def test_one_hop_graph_hides_private_and_deleted_neighbours(db_engine, monkeypatch, root):
+    group_id = _setup(db_engine)
+    monkeypatch.setattr(entities_routes, "engine", db_engine)
+
+    graph = entities_routes.entity_graph_cte(root, _reader(group_id), recursive=False)
+
+    assert {node["id"] for node in graph["nodes"]} == {root}
+    assert graph["edges"] == []

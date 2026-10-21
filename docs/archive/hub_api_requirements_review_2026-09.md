@@ -1,6 +1,6 @@
 # Hub API requirements implementation review
 
-Archived status: Superseded by the active [Hub API handoff review](../hub_api_handoff_review.md). The web authentication exchange has since shipped; see [Hub authentication overview](../hub_auth_overview.md). Revalidate every item against the implementation before reusing it.
+Archived status: Superseded by the active [Hub API handoff review](hub_api_handoff_review.md). The web authentication exchange has since shipped; see [Hub authentication overview](../hub_auth_overview.md). Revalidate every item against the implementation before reusing it.
 
 Date: 2026-09-16
 

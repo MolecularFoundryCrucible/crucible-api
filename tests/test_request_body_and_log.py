@@ -94,3 +94,33 @@ def test_valid_unicode_and_numbers_are_accepted(dataset, db_engine):
     response = dataset.post("/resources/ds-nul/metadata", content=body, headers={"Content-Type": "application/json"})
     assert response.status_code == 200, response.text
     assert stored(db_engine)["emoji"] == "\U0001F600"
+
+
+@pytest.mark.parametrize("body", ["[" * 100_000 + "]" * 100_000, '{"a":' * 100_000 + "1" + "}" * 100_000], ids=["arrays", "objects"])
+def test_absurdly_nested_json_is_422_not_500(dataset, db_engine, body):
+    response = dataset.post("/resources/ds-nul/metadata", content=body, headers={"Content-Type": "application/json"})
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"][0]["type"] == "json_too_deep"
+
+
+@pytest.mark.parametrize("text, reason", [
+    ("plain ascii", None),
+    ("ascii with \x00 nul", "NUL"),
+    ("température \x00 then ﷐", "NUL"),
+    ("température ﷐ then \x00", "noncharacters"),
+    ("\ud800 lone surrogate", "surrogates"),
+    ("emoji \U0001F600 and \U0010fffe", "noncharacters"),
+])
+def test_the_first_offending_character_is_reported(text, reason):
+    from app.api.main import _unsupported_reason
+    result = _unsupported_reason(text)
+    assert result is None if reason is None else reason in result
+
+
+def test_large_ascii_bodies_are_scanned_quickly():
+    import time
+    from app.api.main import _unsupported_reason
+    text = "spectrum value 1.234e-05, " * 200_000
+    started = time.perf_counter()
+    assert _unsupported_reason(text) is None
+    assert time.perf_counter() - started < 0.05

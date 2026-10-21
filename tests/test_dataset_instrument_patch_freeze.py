@@ -14,7 +14,7 @@ def disable_record_writes(monkeypatch):
     monkeypatch.setattr(datasets_routes, "write_record", lambda *args, **kwargs: None)
 
 
-def _setup(db_engine, *, legacy=False, assigned=True):
+def _setup(db_engine, *, assigned=True):
     with Session(db_engine) as session:
         instrument = Instrument(
             unique_id="instrument-mfid",
@@ -30,9 +30,7 @@ def _setup(db_engine, *, legacy=False, assigned=True):
         dataset = Dataset(
             unique_id="dataset-mfid",
             dataset_name="before",
-            instrument_id=instrument.id if assigned and not legacy else None,
-            instrument_mfid=instrument.unique_id if assigned and not legacy else None,
-            instrument_name=instrument.instrument_name if assigned else None,
+            instrument_mfid=instrument.unique_id if assigned else None,
         )
         session.add(dataset)
         session.add(Resource(mfid=dataset.unique_id, resource_type="dataset", public=False))
@@ -81,19 +79,6 @@ def test_patch_rejects_changed_or_cleared_instrument(db_engine):
                 background_tasks=BackgroundTasks(),
             )
         assert exc.value.status_code == 409
-
-
-def test_patch_accepts_current_legacy_instrument_name(db_engine):
-    _setup(db_engine, legacy=True)
-
-    response = update_dataset(
-        auth_res=Principal(user_id="admin", platform_role=PlatformRole.ADMIN),
-        dsid="dataset-mfid",
-        updated_dataset=DatasetUpdate(dataset_name="after", instrument_name="xrd 1"),
-        background_tasks=BackgroundTasks(),
-    )
-
-    assert response.dataset_name == "after"
 
 
 def test_patch_accepts_null_instrument_values_for_unassigned_dataset(db_engine):

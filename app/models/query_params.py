@@ -2,8 +2,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Literal, Optional
 
+from app.models.timestamps import UtcDatetime
 from pydantic import (
-    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
@@ -302,10 +302,10 @@ class ResourceCollectionQuery(StrictQueryModel):
         ge=0,
         description="Compatibility offset. A supplied cursor takes precedence.",
     )
-    creation_time_gte: Optional[AwareDatetime] = Field(default=None, description="Inclusive creation-time lower bound.")
-    creation_time_lte: Optional[AwareDatetime] = Field(default=None, description="Inclusive creation-time upper bound.")
-    modification_time_gte: Optional[AwareDatetime] = Field(default=None, description="Inclusive modification-time lower bound.")
-    modification_time_lte: Optional[AwareDatetime] = Field(default=None, description="Inclusive modification-time upper bound.")
+    creation_time_gte: Optional[UtcDatetime] = Field(default=None, description="Inclusive creation-time lower bound.")
+    creation_time_lte: Optional[UtcDatetime] = Field(default=None, description="Inclusive creation-time upper bound.")
+    modification_time_gte: Optional[UtcDatetime] = Field(default=None, description="Inclusive modification-time lower bound.")
+    modification_time_lte: Optional[UtcDatetime] = Field(default=None, description="Inclusive modification-time upper bound.")
     visibility: Literal["all", "public", "private"] = Field(
         default="all",
         description="Restrict results by public visibility.",
@@ -503,10 +503,10 @@ class ResourceFacetQuery(StrictQueryModel):
     project_id: Optional[str] = Field(default=None, description="Project slug. May be combined with a matching project_mfid.")
     project_mfid: Optional[str] = Field(default=None, description="Canonical project MFID. May be combined with a matching project_id.")
     project_scope: Optional[ProjectScope] = Field(default=None, description="Project relationship to include. Requires a project filter and defaults to assigned.")
-    creation_time_gte: Optional[AwareDatetime] = Field(default=None, description="Inclusive creation-time lower bound.")
-    creation_time_lte: Optional[AwareDatetime] = Field(default=None, description="Inclusive creation-time upper bound.")
-    modification_time_gte: Optional[AwareDatetime] = Field(default=None, description="Inclusive modification-time lower bound.")
-    modification_time_lte: Optional[AwareDatetime] = Field(default=None, description="Inclusive modification-time upper bound.")
+    creation_time_gte: Optional[UtcDatetime] = Field(default=None, description="Inclusive creation-time lower bound.")
+    creation_time_lte: Optional[UtcDatetime] = Field(default=None, description="Inclusive creation-time upper bound.")
+    modification_time_gte: Optional[UtcDatetime] = Field(default=None, description="Inclusive modification-time lower bound.")
+    modification_time_lte: Optional[UtcDatetime] = Field(default=None, description="Inclusive modification-time upper bound.")
     sort: FacetSort = Field(
         default=FacetSort.VALUE,
         description="Order buckets by raw value, canonical label, or count.",
@@ -653,7 +653,7 @@ class ProjectListQuery(StrictQueryModel):
         max_length=5,
         description="Restrict member_ref to these project roles. Repeated values use OR semantics. Requires member_ref.",
     )
-    active_since: Optional[datetime] = Field(default=None, description=ACTIVE_SINCE_DESCRIPTION)
+    active_since: Optional[UtcDatetime] = Field(default=None, description=ACTIVE_SINCE_DESCRIPTION)
     sort: Optional[ProjectSort] = Field(default=None, description=PROJECT_SORT_DESCRIPTION)
     direction: Optional[SortDirection] = Field(default=None, description=SORT_DIRECTION_DESCRIPTION)
     limit: int = Field(default=100, ge=1, le=1000)
@@ -785,7 +785,7 @@ class InstrumentListQuery(StrictQueryModel):
         default=None,
         description="Restrict results to one lifecycle status.",
     )
-    active_since: Optional[datetime] = Field(default=None, description=ACTIVE_SINCE_DESCRIPTION)
+    active_since: Optional[UtcDatetime] = Field(default=None, description=ACTIVE_SINCE_DESCRIPTION)
 
     @model_validator(mode="after")
     def validate_affiliation(self):
@@ -857,11 +857,11 @@ class UserListQuery(BaseModel):
             "email is administrator only; other callers receive 403."
         ),
     )
-    active_since: Optional[datetime] = Field(
+    active_since: Optional[UtcDatetime] = Field(
         default=None,
         description="Users active at or after this time (hourly precision). Administrator only.",
     )
-    inactive_since: Optional[datetime] = Field(
+    inactive_since: Optional[UtcDatetime] = Field(
         default=None,
         description="Users not active since this time, including users never seen active. Administrator only.",
     )

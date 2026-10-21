@@ -1,21 +1,20 @@
 import json
 import logging
 import os
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, Dict, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
-import networkx as nx
-from networkx.readwrite import json_graph
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import exists, func, join, text
+from sqlalchemy import exists, func, join
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
-from app.general_utils import get_secret, get_utc_datetime
+from app.general_utils import get_utc_datetime
 from app.models.core_models import (
     AccessGroup,
     AssociatedFile,
@@ -36,12 +35,12 @@ from app.models.core_models import (
     User,
     UserAccessGroupLink,
 )
-from app.models.response_schemas import DatasetSampleLinkResponse
+from app.models.response_schemas import DatasetSampleLinkResponse, MessageResponse
 from app.models.facets import FacetResponse
 from app.models.datasets import (
     AssociatedFileCreate, AssociatedFileRead,
     DatasetCreate, DatasetInstrumentAssign, DatasetInstrumentRead,
-    DatasetRead, DatasetResponse, DatasetUpdate,
+    DatasetRead, DatasetResponse, DatasetUpdate, file_etag,
     ThumbnailCreate, ThumbnailPreviewRead, ThumbnailRead, ThumbnailUpdate,
 )
 from app.models.instrument import InstrumentReferenceRead
@@ -81,8 +80,10 @@ from app.utils.instrument_utils import (
     resolve_instrument_identifiers,
     resolve_instrument_mfids_to_references,
 )
-from app.utils.link_utils import require_link_create_permissions
-from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
+from app.utils.link_utils import reject_lineage_cycle, reject_self_link, require_link_create_permissions
+from app.utils.rmq_utils import get_ingestion_tier
+from app.api.routes.pipelines import start_postprocessing_run
+from app.models.pipelines import PostprocessingRunRead
 from app.utils.search_utils import (
     apply_trigram_search,
     configure_trigram_search,
@@ -90,8 +91,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.user_utils import resolve_create_owner
-from app.utils.sql_utils import add_or_update, assert_mfid_available, only_update, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
-from app.utils.deletion_utils import assert_not_pending_deletion
+from app.utils.sql_utils import add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, only_update, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 
@@ -136,84 +136,34 @@ def _normalize_thumbnail_input(dsid: str, thumbnail_b64str: str) -> str:
         raise HTTPException(status_code=500, detail="Unable to process thumbnail image") from exc
 
 
-@router.post("/datasets/{dataset_mfid}/carrier_segmentation")
+@router.post("/datasets/{dataset_mfid}/carrier_segmentation", response_model=PostprocessingRunRead, deprecated=True)
 def request_carrier_segmentation(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    msg = {
-        "dsid": dsid,
-    }
+    '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "carrier_segmentation".'''
+    return start_postprocessing_run(auth_res, dsid, "carrier_segmentation", {})
 
-    send_pika_message(
-        message=json.dumps(msg),
-        exchange="",
-        routing_key="carrier-segmentation",
-        user="admin",
-        rmq_pw=rmq_pw
-    )
-    return
 
-@router.post("/datasets/{dataset_mfid}/insitu_spec_aggregation")
+@router.post("/datasets/{dataset_mfid}/insitu_spec_aggregation", response_model=PostprocessingRunRead, deprecated=True)
 def request_insitu_aggregation(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    msg = {
-        "dsid": dsid,
-    }
+    '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "insitu_aggregation".'''
+    return start_postprocessing_run(auth_res, dsid, "insitu_aggregation", {})
 
-    send_pika_message(
-        message=json.dumps(msg),
-        exchange="",
-        routing_key="insitu-aggregation",
-        user="admin",
-        rmq_pw=rmq_pw
-    )
-    return
 
-@router.post("/datasets/{dataset_mfid}/rga_analysis")
+@router.post("/datasets/{dataset_mfid}/rga_analysis", response_model=PostprocessingRunRead, deprecated=True)
 def request_rga_analysis(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    with Session(engine) as session:
-        dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-    if dataset is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "rga_analysis".'''
+    return start_postprocessing_run(auth_res, dsid, "rga_analysis", {})
 
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    msg = {
-        "dsid": dataset.unique_id,
-    }
 
-    send_pika_message(
-        message=json.dumps(msg),
-        exchange="",
-        routing_key="rga-analysis",
-        user="admin",
-        rmq_pw=rmq_pw
-    )
-    return
-
-@router.post("/datasets/{dataset_mfid}/mosaic_stitch")
+@router.post("/datasets/{dataset_mfid}/mosaic_stitch", response_model=PostprocessingRunRead, deprecated=True)
 def request_mosaic_stitch(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    with Session(engine) as session:
-        dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
-    if dataset is None:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "mosaic_stitch".'''
+    return start_postprocessing_run(auth_res, dsid, "mosaic_stitch", {})
 
-    rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
-    msg = {
-        "dsid": dataset.unique_id,
-    }
-
-    send_pika_message(
-        message=json.dumps(msg),
-        exchange="",
-        routing_key="mosaic-stitch",
-        user="admin",
-        rmq_pw=rmq_pw
-    )
-    return
 
 @router.post("/datasets", response_model=DatasetResponse)
-async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
-                         dataset: DatasetCreate,
-                         background_tasks: BackgroundTasks):
+def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
+                   dataset: DatasetCreate,
+                   background_tasks: BackgroundTasks):
     
     logger.info(f"Creating dataset: {dataset.unique_id}")
     dataset_details = dataset.model_dump(exclude_unset=True)
@@ -254,8 +204,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                         detail=f"Caller '{user_unique_id}' must be contributor or above in project '{project.project_id}' to create there")
 
         if project is not None:
-            assert_not_pending_deletion(session, project.unique_id)
-            dataset_details['project_id'] = project.project_id
+            assert_parent_accepts_assignment(session, project.unique_id)
             dataset_details['project_mfid'] = project.unique_id
 
         instrument_id_slug = dataset_details.pop('instrument_id', None)
@@ -265,9 +214,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
             instrument_id_slug,
             instrument_mfid,
         )
-        if instrument is not None:
-            dataset_details['instrument_name'] = instrument.instrument_name
-        elif dataset_details.get('instrument_name', None):
+        if instrument is None and dataset_details.get('instrument_name', None):
             matches = session.exec(
                 select(Instrument).where(func.lower(Instrument.instrument_name) == dataset_details['instrument_name'].lower())
             ).all()
@@ -282,8 +229,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
                             "instrument. Use instrument_id or instrument_mfid."))
             instrument = matches[0]
         if instrument is not None:
-            assert_not_pending_deletion(session, instrument.unique_id)
-            dataset_details['instrument_id'] = instrument.id
+            assert_parent_accepts_assignment(session, instrument.unique_id)
             dataset_details['instrument_mfid'] = instrument.unique_id
 
         ds = Dataset(**dataset_details)
@@ -312,7 +258,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         create_standard_acls(session, ds.unique_id,
                              owner_id=dataset_details.get('owner_orcid'),
                              requestor_id=user_unique_id,
-                             project_id=dataset_details.get('project_id'))
+                             project_mfid=dataset_details.get('project_mfid'))
 
         if instrument is not None:
             inst_ag = session.exec(select(AccessGroup).where(
@@ -353,6 +299,7 @@ async def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)]
         return DatasetResponse.model_validate({
             **ds.model_dump(),
             **dataset_instrument_fields(ds, InstrumentReferenceRead.model_validate(instrument) if instrument else None),
+            "project_id": project_references[ds.project_mfid].project_id if ds.project_mfid in project_references else None,
             "project": project_references.get(ds.project_mfid),
             "public": ri.public,
             "creation_time": ri.creation_time,
@@ -389,13 +336,11 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
                 current_instrument = session.exec(
                     select(Instrument).where(Instrument.unique_id == ds.instrument_mfid)
                 ).one_or_none()
-            elif ds.instrument_id is not None:
-                current_instrument = session.get(Instrument, ds.instrument_id)
 
             current_instrument_id = current_instrument.instrument_id if current_instrument else None
             current_instrument_names = {
                 name.casefold()
-                for name in (ds.instrument_name, current_instrument.instrument_name if current_instrument else None)
+                for name in (current_instrument.instrument_name if current_instrument else None,)
                 if name is not None
             }
             name_matches = "instrument_name" not in instrument_updates or (
@@ -440,7 +385,7 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
         return DatasetResponse.model_validate({
             **upds.model_dump(),
             **dataset_instrument_fields(upds, instrument_reference),
-            "project_id": project_reference.project_id if project_reference else upds.project_id,
+            "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
             "public": ri.public if ri else upds.public,
             "creation_time": ri.creation_time if ri else None,
@@ -455,10 +400,8 @@ def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_u
     '''
     Assign or reassign the dataset's instrument, by slug or MFID.
 
-    The three instrument columns are written from one resolved instrument row,
-    so instrument_id (the integer FK), instrument_mfid, and the instrument_name
-    label cannot drift apart. Nothing about the instrument is taken from the
-    request body beyond the identifier used to look it up.
+    Only instrument_mfid is stored; the instrument's slug and name in responses
+    are read from the instrument row.
 
     The instrument's access group is granted contributor on the dataset, the
     same grant dataset creation makes. Reassignment removes the grant belonging
@@ -480,16 +423,13 @@ def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_u
 
         instrument = resolve_instrument_identifiers(
             session, assignment.instrument_id, assignment.instrument_mfid)
-        assert_not_pending_deletion(session, instrument.unique_id)
+        assert_parent_accepts_assignment(session, instrument.unique_id)
 
         previous_instrument = None
         if ds.instrument_mfid is not None:
             previous_instrument = session.exec(
                 select(Instrument).where(Instrument.unique_id == ds.instrument_mfid)
             ).one_or_none()
-        elif ds.instrument_id is not None:
-            previous_instrument = session.get(Instrument, ds.instrument_id)
-        previous_instrument_name = ds.instrument_name
         # Built before the commit expires these rows, so the response never
         # depends on reloading an instrument mid-serialization.
         previous_reference = (
@@ -530,9 +470,7 @@ def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_u
         sql_create_resource_acl(new_ag, dsid, read=True, write=True,
                                 session=session, permission=Role.CONTRIBUTOR)
 
-        ds.instrument_id = instrument.id
         ds.instrument_mfid = instrument.unique_id
-        ds.instrument_name = instrument.instrument_name
         session.add(ds)
 
         ri = touch_resource_modification_time(session, dsid)
@@ -544,7 +482,7 @@ def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_u
         return DatasetInstrumentRead(
             dataset_mfid=dsid,
             previous_instrument=previous_reference,
-            previous_instrument_name=previous_instrument_name,
+            previous_instrument_name=previous_reference.instrument_name if previous_reference else None,
             instrument=new_reference,
         )
 @router.get("/datasets/facets", response_model=FacetResponse)
@@ -633,11 +571,7 @@ def list_datasets(
             session, params.instrument_id, instrument_mfid)
         linked_sample_id = None
         if sample_mfid is not None:
-            linked_sample_id = session.exec(
-                select(Sample.id)
-                .where(Sample.unique_id == sample_mfid)
-                .where(permission_filter(auth_res, Sample, Permission.READ))
-            ).one_or_none()
+            linked_sample_id = session.exec(select_active(Sample, sample_mfid, Sample.id, principal=auth_res)).one_or_none()
             if linked_sample_id is None:
                 raise HTTPException(status_code=404, detail="Sample not found or access denied")
 
@@ -791,7 +725,7 @@ def list_datasets(
             items.append(DatasetResponse.model_validate({
                 **dataset.model_dump(),
                 **dataset_instrument_fields(dataset, instrument_reference),
-                "project_id": project_id if project_id is not None else dataset.project_id,
+                "project_id": project_id,
                 "project": project_reference,
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
@@ -883,7 +817,7 @@ def search_datasets(
                 instrument_id=instrument_id,
                 instrument_name=instrument_name,
             ) if instrument_mfid else None),
-            "project_id": resolved_project_id if resolved_project_id is not None else dataset.project_id,
+            "project_id": resolved_project_id,
             "project": ProjectReferenceRead(
                 unique_id=resolved_project_mfid,
                 project_id=resolved_project_id,
@@ -939,6 +873,7 @@ def link_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_datase
     editor access to both datasets.
     '''
 
+    reject_self_link(parent_dataset_id, child_dataset_id)
     with Session(engine) as session:
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).first()
         if not parent:
@@ -962,6 +897,7 @@ def link_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_datase
             require_permission(session, auth_res, child_dataset_id, Permission.EDIT)
             link.relationship_type = relationship_type
         else:
+            reject_lineage_cycle(session, DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id, parent.id, child.id)
             link = DatasetLink(
                 parent_dataset_id=parent.id,
                 child_dataset_id=child.id,
@@ -977,7 +913,7 @@ def link_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_datase
         return link
 
 
-@router.delete("/datasets/{parent_dataset_mfid}/children/{child_dataset_mfid}")
+@router.delete("/datasets/{parent_dataset_mfid}/children/{child_dataset_mfid}", response_model=MessageResponse)
 def unlink_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_dataset_id: ChildDatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
     with Session(engine) as session:
@@ -1026,7 +962,7 @@ def list_parent_datasets(child_dataset_id: ChildDatasetMfid, auth_res: Annotated
     recorded type are excluded when the filter is set.
     '''
     with Session(engine) as session:
-        child = session.exec(select(Dataset).where(Dataset.unique_id == child_dataset_id)).one_or_none()
+        child = session.exec(select_active(Dataset, child_dataset_id)).one_or_none()
         if child is None:
             raise HTTPException(status_code=404, detail="Child dataset not found")
         require_permission(session, auth_res, child_dataset_id, Permission.READ)
@@ -1050,7 +986,7 @@ def list_parent_datasets(child_dataset_id: ChildDatasetMfid, auth_res: Annotated
         items = [DatasetRead.model_validate({
             **d.model_dump(),
             **dataset_instrument_fields(d, instrument_references.get(d.instrument_mfid)),
-            "project_id": project_references[d.project_mfid].project_id if d.project_mfid in project_references else d.project_id,
+            "project_id": project_references[d.project_mfid].project_id if d.project_mfid in project_references else None,
             "project": project_references.get(d.project_mfid),
         }) for d in parents]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
@@ -1068,7 +1004,7 @@ def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotate
     recorded type are excluded when the filter is set.
     '''
     with Session(engine) as session:
-        parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
+        parent = session.exec(select_active(Dataset, parent_dataset_id)).one_or_none()
         if parent is None:
             raise HTTPException(status_code=404, detail="Parent dataset not found")
         require_permission(session, auth_res, parent_dataset_id, Permission.READ)
@@ -1092,7 +1028,7 @@ def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotate
         items = [DatasetRead.model_validate({
             **d.model_dump(),
             **dataset_instrument_fields(d, instrument_references.get(d.instrument_mfid)),
-            "project_id": project_references[d.project_mfid].project_id if d.project_mfid in project_references else d.project_id,
+            "project_id": project_references[d.project_mfid].project_id if d.project_mfid in project_references else None,
             "project": project_references.get(d.project_mfid),
         }) for d in children]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
@@ -1100,7 +1036,7 @@ def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotate
 
 
 
-@router.delete('/datasets/{dataset_mfid}/samples/{sample_mfid}')
+@router.delete('/datasets/{dataset_mfid}/samples/{sample_mfid}', response_model=MessageResponse)
 def unlink_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, sample_id: SampleMfid):
 
     with Session(engine) as session:
@@ -1267,6 +1203,7 @@ def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
     with Session(engine) as session:
         if session.exec(ds_cmd).one_or_none() is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
+        assert_not_pending_deletion(session, dsid)
 
     thumbnail_b64str = _normalize_thumbnail_input(dsid, thumbnail.thumbnail_b64str)
 
@@ -1368,7 +1305,7 @@ def delete_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)], ds
         return {"message": f"Thumbnail {thumbnail_id} deleted from dataset {dsid}"}
 
 
-@router.get("/datasets/{dataset_mfid}/download_links")
+@router.get("/datasets/{dataset_mfid}/download_links", response_model=Dict[str, Optional[str]])
 def generate_dataset_download_links(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
@@ -1438,15 +1375,18 @@ def read_associated_files(auth_res: Annotated[Principal, Depends(authorize_user)
         return [AssociatedFileRead.model_validate(f, update={"dataset_mfid": f.dataset.unique_id}) for f in files]
 
 
-@router.post("/datasets/{dataset_mfid}/files", response_model=AssociatedFileRead)
+@router.post("/datasets/{dataset_mfid}/files", response_model=AssociatedFileRead, responses={409: {"description": "A file with this filename already exists in the dataset with different content: `{\"detail\": {\"code\": \"filename_exists\", \"file_mfid\": ..., \"etag\": ..., \"message\": ...}}`; update it through `PATCH /files/{file_mfid}` (remote files) or `POST /files/{file_mfid}/upload/multipart/initiate` (GCS files). A filename reserved by an active multipart upload returns a plain string detail"}})
 def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
                         dsid: DatasetMfid,
                         associated_file: AssociatedFileCreate):
     '''
     Adds a file record to a dataset.
-    Creates the record if one with the same sha256_hash and dataset does not already exist.
+    Filenames are unique within a dataset, so identical content under different filenames gets separate records.
+    Repeating a filename with the same sha256_hash, size, and storage_backend returns the existing record unchanged
+    (storage_path and access_note are not compared); any other difference returns 409 `filename_exists` with the
+    existing file's MFID and ETag. Non-GCS filenames must be canonical relative POSIX paths (422 otherwise).
     Use POST /datasets/{dataset_mfid}/files/{file_id}/ingest to trigger ingestion.
-    Requires contributor access. A repeated hash returns the existing record unchanged.
+    Requires contributor access.
     '''
 
     with Session(engine) as session:
@@ -1454,31 +1394,43 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         require_permission(session, auth_res, dsid, Permission.CREATE)
+        assert_not_pending_deletion(session, dsid)
 
-        af_obj = session.exec(
-            select(AssociatedFile).where(
-                AssociatedFile.sha256_hash == associated_file.sha256_hash,
-                AssociatedFile.dataset_id == ds.id,
-                multipart.trusted_hash(),
-            )
-        ).first()
-        if af_obj is not None:
-            return AssociatedFileRead.model_validate(
-                af_obj,
-                update={"dataset_mfid": ds.unique_id},
-            )
+        dataset_pk = ds.id
+
+        def same_name():
+            return session.exec(
+                select(AssociatedFile).where(
+                    AssociatedFile.dataset_id == dataset_pk,
+                    AssociatedFile.filename == associated_file.filename,
+                )
+            ).first()
+
+        def retry_or_conflict(existing):
+            if all(getattr(existing, field) == getattr(associated_file, field) for field in ("sha256_hash", "size", "storage_backend")):
+                return AssociatedFileRead.model_validate(existing, update={"dataset_mfid": dsid})
+            raise HTTPException(409, {"code": "filename_exists", "file_mfid": existing.mfid, "etag": file_etag(existing.storage_path, existing.storage_generation, existing.sha256_hash, existing.size), "message": "Filename already exists"})
+
+        existing = same_name()
+        if existing is not None:
+            return retry_or_conflict(existing)
 
         if multipart.filename_reserved(session, dsid, associated_file.filename):
             raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
 
         af_obj = AssociatedFile(
             **associated_file.model_dump(),
-            dataset_id=ds.id,
+            dataset_id=dataset_pk,
         )
-
-        if af_obj not in ds.associated_files:
-            ds.associated_files.append(af_obj)
-            session.add(ds)
+        session.add(af_obj)
+        try:
+            session.flush()
+        except IntegrityError:
+            session.rollback()
+            existing = same_name()
+            if existing is None:
+                raise
+            return retry_or_conflict(existing)
 
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
@@ -1486,7 +1438,7 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
 
         session.commit()
         session.refresh(af_obj)
-        return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": af_obj.dataset.unique_id})
+        return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": dsid})
 
 
 @router.post("/datasets/{dataset_mfid}/files/{file_id}/ingest", response_model=IngestionRequest, deprecated = True, responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
@@ -1621,9 +1573,7 @@ def read_samples_in_dataset(dsid: DatasetMfid, auth_res: Annotated[Principal, De
     response.headers["Deprecation"] = RELATIONSHIP_ROUTE_DEPRECATION
     with Session(engine) as session:
         ds = session.exec(
-            select(Dataset)
-            .where(Dataset.unique_id == dsid)
-            .where(permission_filter(auth_res, Dataset, Permission.READ))
+            select_active(Dataset, dsid, principal=auth_res)
         ).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found or access denied")
@@ -1640,140 +1590,8 @@ def read_samples_in_dataset(dsid: DatasetMfid, auth_res: Annotated[Principal, De
         project_references = resolve_project_mfids_to_references((s.project_mfid for s in samples), session)
         items = [SampleRead.model_validate({
             **s.model_dump(),
-            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else s.project_id,
+            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else None,
             "project": project_references.get(s.project_mfid),
         }) for s in samples]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
-@router.get("/datasets/{dataset_mfid}/dataset_graph")
-def dataset_graph(dataset_id: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''
-    Returns a NetworkX node-link graph of all datasets connected (via parent/child
-    relationships) to the given dataset. Loads all authorized datasets in the
-    project and returns the directed lineage subgraph (ancestors + descendants) of the target.
-    '''
-
-    with Session(engine) as session:
-        auth_filter = permission_filter(auth_res, Dataset)
-        deletion_filter = deletion_filter_for(Dataset)
-
-        target = session.exec(
-            select(Dataset)
-            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
-            .where(auth_filter).where(deletion_filter)
-            .where(Dataset.unique_id == dataset_id)
-        ).first()
-
-        if target is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
-        ds_list = session.exec(
-            select(Dataset)
-            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
-            .where(auth_filter).where(deletion_filter)
-            .where(Dataset.project_mfid == target.project_mfid)
-        ).unique().all()
-
-        # Read edges from the link table rather than walking Dataset.parents, so
-        # each edge can carry its relationship_type. Restricting both endpoints
-        # to ds_list yields the same edge set the relationship walk did.
-        id_to_uid = {dataset.id: dataset.unique_id for dataset in ds_list}
-        node_ids = list(id_to_uid.keys())
-        edge_rows = session.exec(
-            select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id, DatasetLink.relationship_type)
-            .where(DatasetLink.parent_dataset_id.in_(node_ids))
-            .where(DatasetLink.child_dataset_id.in_(node_ids))
-        ).all() if node_ids else []
-
-        edges = [(id_to_uid[r[0]], id_to_uid[r[1]], {"relationship_type": r[2]}) for r in edge_rows]
-
-        G = nx.DiGraph(edges)
-        for dataset in ds_list:
-            G.add_node(dataset.unique_id, dataset_name=dataset.dataset_name)
-
-        if target.unique_id not in G:
-            G.add_node(target.unique_id, dataset_name=target.dataset_name)
-
-        # Use directed ancestors + descendants rather than the weakly connected
-        # component. WCC would include siblings (nodes that share a parent with
-        # the target but are not in its direct lineage). nx.ancestors/descendants
-        # traverses strictly along the target's own lineage chain in both
-        # directions, excluding siblings.
-        component_nodes = nx.ancestors(G, target.unique_id) | nx.descendants(G, target.unique_id) | {target.unique_id}
-        return json_graph.node_link_data(G.subgraph(component_nodes))
-
-
-@router.get("/datasets/{dataset_mfid}/dataset_graph_cte")
-def dataset_graph_cte(dataset_id: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''
-    CTE-based implementation (kept for reference). Prefer /dataset_graph.
-    Returns a NetworkX node-link graph of all datasets connected (via parent/child
-    relationships) to the given dataset, i.e. its full lineage subgraph.
-    '''
-
-    with Session(engine) as session:
-        auth_filter = permission_filter(auth_res, Dataset)
-        deletion_filter = deletion_filter_for(Dataset)
-
-        target = session.exec(
-            select(Dataset)
-            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
-            .where(auth_filter).where(deletion_filter)
-            .where(Dataset.unique_id == dataset_id)
-        ).first()
-
-        if target is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-
-        # Two recursive CTEs — ancestors (walk up) and descendants (walk down)
-        cte_sql = text("""
-            WITH RECURSIVE
-            ancestors(id, unique_id, dataset_name) AS (
-                SELECT id, unique_id, dataset_name
-                FROM dataset WHERE unique_id = :dataset_uid
-              UNION
-                SELECT d.id, d.unique_id, d.dataset_name
-                FROM dataset d
-                JOIN datasetlink dl ON dl.parent_dataset_id = d.id
-                JOIN ancestors a ON dl.child_dataset_id = a.id
-            ),
-            descendants(id, unique_id, dataset_name) AS (
-                SELECT id, unique_id, dataset_name
-                FROM dataset WHERE unique_id = :dataset_uid
-              UNION
-                SELECT d.id, d.unique_id, d.dataset_name
-                FROM dataset d
-                JOIN datasetlink dl ON dl.child_dataset_id = d.id
-                JOIN descendants desc_ ON dl.parent_dataset_id = desc_.id
-            )
-            SELECT DISTINCT id, unique_id, dataset_name
-            FROM (SELECT * FROM ancestors UNION ALL SELECT * FROM descendants) combined
-        """)
-        rows = session.execute(cte_sql, {"dataset_uid": dataset_id}).all()
-
-        # Restrict CTE results to datasets the user is authorized to read and
-        # that don't have a pending/approved deletion request.
-        all_uids = [r.unique_id for r in rows]
-        visible_uids = set(session.exec(
-            select(Dataset.unique_id)
-            .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
-            .where(auth_filter).where(deletion_filter)
-            .where(Dataset.unique_id.in_(all_uids))
-        ).all()) if all_uids else set()
-
-        rows = [r for r in rows if r.unique_id in visible_uids]
-        id_to_uid = {r.id: r.unique_id for r in rows}
-        node_ids = list(id_to_uid.keys())
-
-        # Fetch all edges whose both endpoints are within the component
-        edge_rows = session.exec(
-            select(DatasetLink.parent_dataset_id, DatasetLink.child_dataset_id, DatasetLink.relationship_type)
-            .where(DatasetLink.parent_dataset_id.in_(node_ids))
-            .where(DatasetLink.child_dataset_id.in_(node_ids))
-        ).all()
-
-        G = nx.DiGraph((id_to_uid[r[0]], id_to_uid[r[1]], {"relationship_type": r[2]}) for r in edge_rows)
-        for r in rows:
-            G.add_node(r.unique_id, dataset_name=r.dataset_name)
-
-        return json_graph.node_link_data(G)

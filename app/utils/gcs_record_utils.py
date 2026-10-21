@@ -1,13 +1,20 @@
 import hashlib
 import json
 import logging
+import os
 
 from app.general_utils import get_utc_isoformat
 
 logger = logging.getLogger(__name__)
 
-_RECORD_BUCKET = "mf-record-prod"
 _SCHEMA_VERSION = 1
+
+
+def _record_bucket():
+    bucket = os.environ.get("RECORD_BUCKET", "").strip()
+    if not bucket:
+        logger.warning("RECORD_BUCKET is not set; record files are not written")
+    return bucket
 
 
 def _get_client():
@@ -57,8 +64,8 @@ def _build_audit(blob, payload: dict, actor: str, operation: str) -> dict | None
 def dataset_record(ds, ri) -> dict:
     return {
         "unique_id": ds.unique_id, "dataset_name": ds.dataset_name,
-        "owner_orcid": ds.owner_orcid, "project_id": ds.project_id,
-        "instrument_name": ds.instrument_name, "measurement": ds.measurement,
+        "owner_orcid": ds.owner_orcid, "project_mfid": ds.project_mfid,
+        "instrument_mfid": ds.instrument_mfid, "measurement": ds.measurement,
         "data_type": ds.data_type, "data_format": ds.data_format,
         "session_name": ds.session_name,
         "timestamp": ds.timestamp, "size": ds.size,
@@ -73,7 +80,7 @@ def sample_record(samp, ri) -> dict:
     return {
         "unique_id": samp.unique_id, "sample_name": samp.sample_name,
         "sample_type": samp.sample_type, "owner_orcid": samp.owner_orcid,
-        "project_id": samp.project_id, "description": samp.description,
+        "project_mfid": samp.project_mfid, "description": samp.description,
         "timestamp": samp.timestamp,
         "public": ri.public if ri else False,
         "resource_type": "sample",
@@ -99,8 +106,11 @@ def instrument_record(inst, ri) -> dict:
 
 def write_record(mfid: str, record: dict, actor: str, operation: str) -> None:
     """Upload record.json for a resource. Best-effort — logs and returns on failure."""
+    bucket = _record_bucket()
+    if not bucket:
+        return
     try:
-        blob = _get_client().bucket(_RECORD_BUCKET).blob(f"{mfid}/record.json")
+        blob = _get_client().bucket(bucket).blob(f"{mfid}/record.json")
         audit = _build_audit(blob, record, actor, operation)
         if audit is None:
             return
@@ -115,8 +125,11 @@ def write_record(mfid: str, record: dict, actor: str, operation: str) -> None:
 
 def write_metadata(mfid: str, metadata: dict, actor: str, operation: str) -> None:
     """Upload metadata.json for a resource. Best-effort — logs and returns on failure."""
+    bucket = _record_bucket()
+    if not bucket:
+        return
     try:
-        blob = _get_client().bucket(_RECORD_BUCKET).blob(f"{mfid}/metadata.json")
+        blob = _get_client().bucket(bucket).blob(f"{mfid}/metadata.json")
         audit = _build_audit(blob, metadata, actor, operation)
         if audit is None:
             return

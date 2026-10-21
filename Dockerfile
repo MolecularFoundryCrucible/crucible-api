@@ -1,12 +1,16 @@
 FROM python:3.11-trixie
 #UV
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
 
 USER root
 WORKDIR /root/
 
 # Disable development dependencies
 ENV UV_NO_DEV=1
+
+# dependencies first, so code-only changes reuse this layer
+COPY pyproject.toml uv.lock .python-version /root/
+RUN /bin/uv sync --locked --no-install-project
 
 ARG githash
 ENV GITHASH=$githash
@@ -19,20 +23,14 @@ ARG BRANCH_NAME
 ENV BRANCH_NAME=$BRANCH_NAME
 RUN if [ "$BRANCH_NAME" = "main" ]; then echo 7777 > /root/.port; else echo 8889 > /root/.port; fi
 
-# rclone
-RUN curl https://rclone.org/install.sh | bash
-
 # files
 COPY app/ /root/app/
 COPY migrations/versions/ /root/migrations/versions/
 COPY scripts/cleanup_hub_auth.py /root/scripts/cleanup_hub_auth.py
-COPY pyproject.toml /root/
-COPY uv.lock /root/
-COPY .python-version /root/
 RUN mkdir uploads
 RUN mkdir download-zips
 
-RUN /bin/uv sync --locked 
+RUN /bin/uv sync --locked
 
 # Run app
 #CMD python -m app.api.test

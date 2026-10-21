@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, AccessGroupJoinRequest, Project, User, UserAccessGroupLink
+from app.models.core_models import AccessGroup, AccessGroupJoinRequest, Project, ResourceACL, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 
@@ -34,6 +34,7 @@ def _setup(db_engine, lead_orcid="0000-0001", member_orcid="0000-0002"):
         session.refresh(ag)
 
         session.add(UserAccessGroupLink(user_id=lead.id, accessgroup_id=ag.id, role="owner"))
+        session.add(ResourceACL(mfid=proj.unique_id, accessgroup_id=ag.id, read=True, write=True, permission="owner"))
         session.commit()
         return ag.id, requester.id
 
@@ -140,7 +141,7 @@ def test_non_lead_cannot_review(client, db_engine, auth_as):
     resp = client.post("/access_groups/proj_x/join", json={})
     request_id = resp.json()["id"]
 
-    auth_as("0000-0002", platform_role=PlatformRole.NONE)
+    auth_as("0000-0002", groups=[], platform_role=PlatformRole.NONE)
     resp = client.patch(f"/join_requests/{request_id}", json={"status": "approved"})
     assert resp.status_code == 403
 
@@ -159,8 +160,9 @@ def test_service_account_cannot_use_project_lead_standing(client, db_engine, aut
     listed = client.get("/join_requests", params={"group_name": "proj_x"})
     reviewed = client.patch(f"/join_requests/{request_id}", json={"status": "approved"})
 
-    assert listed.status_code == 403
-    assert reviewed.status_code == 403
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 0
+    assert reviewed.status_code == 404
 
 
 def test_platform_role_admin_can_list_and_review(client, db_engine, auth_as):

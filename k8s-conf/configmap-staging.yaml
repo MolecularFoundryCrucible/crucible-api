@@ -15,9 +15,10 @@ data:
 
   # api
   API_CONF_FILE: "app/conf/api_conf-staging.yaml"
+  ORCID_CLIENT_ID: "APP-E5VUS6XSJS5VFNEN"
+  ORCID_CLIENT_SECRET_VERSION: "projects/776258882599/secrets/orcid_client_secret_esb/versions/latest"
   hostname: "crucible.lbl.gov"
   api_path: "api/v1"
-  orcid_client_id: "APP-AXDIPEVR6IMA0RL7"
   gcs_config_name: "mf-cloud-storage"
 
   # rmq
@@ -33,10 +34,11 @@ data:
   db_username: "crucible-api-user"
   db_database: "crucible-staging"
   db_auth: "true"
-  EXPECTED_DB_REVISIONS: "b644cf2e7240"
+  EXPECTED_DB_REVISIONS: "b8f2d6e41c07"
 
   # multipart uploads
   UPLOAD_BUCKET: "mf-storage-staging"
+  RECORD_BUCKET: "mf-record-staging"
   STORAGE_READ_BUCKETS: "mf-storage-prod"
   MULTIPART_UPLOAD_ENABLED: "true"
   MULTIPART_UPLOAD_BUCKET: "mf-storage-staging"

@@ -25,7 +25,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.core_models import (
     AccessGroup, Dataset, Instrument, Project, Resource, ResourceACL, Sample,
-    User, UserAccessGroupLink, UserProjectLink,
+    User, UserAccessGroupLink,
 )
 
 PG_URL = os.getenv("CRUCIBLE_TEST_PG_URL")
@@ -46,7 +46,7 @@ def load_backfill_module():
     return module
 
 TABLES = [User, Project, Instrument, Resource, Dataset, Sample, AccessGroup,
-          ResourceACL, UserAccessGroupLink, UserProjectLink]
+          ResourceACL, UserAccessGroupLink]
 
 LEAD, MEMBER, STAFF, PLATFORM_ADMIN, SA = (
     "0000-0001", "0000-0002", "0000-0003", "0000-0004", "0000-0009")

@@ -36,7 +36,7 @@ def _setup(db_engine):
         session.add(Resource(mfid=proj_old.unique_id, resource_type="project"))
         session.add(Resource(mfid=proj_new.unique_id, resource_type="project"))
         session.add(Resource(mfid="ds_1", resource_type="dataset"))
-        session.add(Dataset(unique_id="ds_1", dataset_name="d", owner_orcid="0000-0031", project_id="proj_old"))
+        session.add(Dataset(unique_id="ds_1", dataset_name="d", owner_orcid="0000-0031", project_mfid=proj_old.unique_id))
         session.commit()
         session.add(UserAccessGroupLink(user_id=caller.id, accessgroup_id=old_proj_ag.id, role="admin"))
         session.add(UserAccessGroupLink(user_id=caller.id, accessgroup_id=new_proj_ag.id, role="contributor"))
@@ -62,7 +62,7 @@ def test_preview_does_not_mutate_anything(client, db_engine, auth_as):
         acls = {a.accessgroup_id for a in session.exec(select(ResourceACL).where(ResourceACL.mfid == "ds_1")).all()}
         assert acls == {old_ag_id}
         ds = session.exec(select(Dataset).where(Dataset.unique_id == "ds_1")).one()
-        assert ds.project_id == "proj_old"
+        assert ds.project_mfid == session.exec(select(Project.unique_id).where(Project.project_id == "proj_old")).one()
 
 
 def test_confirm_moves_the_acl_row_and_syncs_project_id(client, db_engine, auth_as):
@@ -79,7 +79,7 @@ def test_confirm_moves_the_acl_row_and_syncs_project_id(client, db_engine, auth_
         assert acls[new_ag_id] == "admin"
 
         ds = session.exec(select(Dataset).where(Dataset.unique_id == "ds_1")).one()
-        assert ds.project_id == "proj_new"
+        assert ds.project_mfid == session.exec(select(Project.unique_id).where(Project.project_id == "proj_new")).one()
 
 
 def test_confirm_updates_project_mfid_too(client, db_engine, auth_as):
@@ -117,3 +117,60 @@ def test_unknown_target_project_404s(client, db_engine, auth_as):
 
     resp = client.post("/resources/ds_1/project?confirm=true", json={"project_id": "does_not_exist"})
     assert resp.status_code == 404
+
+
+def _share(db_engine, project_id, permission="viewer"):
+    with Session(db_engine) as session:
+        project = Project(project_id=project_id, organization="LBNL", project_lead_orcid="0000-0031")
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+        group = _group(session, project.unique_id)
+        session.add(Resource(mfid=project.unique_id, resource_type="project"))
+        session.add(ResourceACL(mfid="ds_1", accessgroup_id=group.id, read=True, write=False, permission=permission))
+        session.commit()
+        return group.id
+
+
+def _grants(db_engine):
+    with Session(db_engine) as session:
+        return {a.accessgroup_id: a.permission for a in session.exec(select(ResourceACL).where(ResourceACL.mfid == "ds_1")).all()}
+
+
+def test_shares_with_other_projects_survive_a_move(client, db_engine, auth_as):
+    shared_ag_id = _share(db_engine, "proj_shared")
+    old_ag_id, new_ag_id = _setup(db_engine)
+    auth_as("0000-0031", groups=[("proj_old", old_ag_id, Role.ADMIN), ("proj_new", new_ag_id, Role.CONTRIBUTOR)])
+
+    preview = client.post("/resources/ds_1/project", json={"project_id": "proj_new"}).json()
+    assert preview["previous_project_id"] == "proj_old"
+
+    assert client.post("/resources/ds_1/project?confirm=true", json={"project_id": "proj_new"}).status_code == 200
+    assert _grants(db_engine) == {new_ag_id: "admin", shared_ag_id: "viewer"}
+
+
+def test_moving_into_a_project_it_was_shared_with_raises_that_grant(client, db_engine, auth_as):
+    old_ag_id, new_ag_id = _setup(db_engine)
+    with Session(db_engine) as session:
+        session.add(ResourceACL(mfid="ds_1", accessgroup_id=new_ag_id, read=True, write=False, permission="viewer"))
+        session.commit()
+    auth_as("0000-0031", groups=[("proj_old", old_ag_id, Role.ADMIN), ("proj_new", new_ag_id, Role.CONTRIBUTOR)])
+
+    assert client.post("/resources/ds_1/project?confirm=true", json={"project_id": "proj_new"}).status_code == 200
+    assert _grants(db_engine) == {new_ag_id: "admin"}
+
+
+def test_moving_an_unassigned_record_keeps_its_shares(client, db_engine, auth_as):
+    shared_ag_id = _share(db_engine, "proj_shared", permission="admin")
+    old_ag_id, new_ag_id = _setup(db_engine)
+    with Session(db_engine) as session:
+        dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds_1")).one()
+        dataset.project_mfid = None
+        session.add(dataset)
+        session.commit()
+    auth_as("0000-0031", groups=[("proj_shared", shared_ag_id, Role.ADMIN), ("proj_new", new_ag_id, Role.CONTRIBUTOR)])
+
+    preview = client.post("/resources/ds_1/project", json={"project_id": "proj_new"}).json()
+    assert preview["previous_project_id"] is None
+    assert client.post("/resources/ds_1/project?confirm=true", json={"project_id": "proj_new"}).status_code == 200
+    assert _grants(db_engine) == {old_ag_id: "admin", shared_ag_id: "admin", new_ag_id: "admin"}

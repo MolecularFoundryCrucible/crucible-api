@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, AfterValidator, field_validator
 
 from app.models.datasets import AssociatedFileRead
+from app.models.timestamps import UtcDatetime
 
 
 def validate_crc32c(value: str) -> str:
@@ -93,7 +94,7 @@ class SignedPart(BaseModel):
     headers: dict[str, str]
     offset: int
     size: int
-    expires_at: datetime
+    expires_at: UtcDatetime
 
 
 class SignedParts(BaseModel):

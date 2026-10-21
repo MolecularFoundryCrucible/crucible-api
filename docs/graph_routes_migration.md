@@ -42,9 +42,9 @@ Update clients in this order:
 4. Keep the compatibility wrappers for one documented release window.
 5. Remove the compatibility wrappers and unused graph implementations in the next versioned API contract.
 
-## Cleanup candidates
+## Removed duplicate routes
 
-No external caller was found for:
+Removed on 2026-10-16:
 
 ```text
 GET /entity_graph/{entity_id}
@@ -58,7 +58,9 @@ GET /projects/{project_ref}/dataset_graph
 GET /projects/{project_ref}/entity_graph
 ```
 
-Before removing them, confirm production access logs and publish deprecation metadata in OpenAPI. The BFS and type-specific CTE implementations should not remain as reference code in production routes because they duplicate authorization and traversal behavior.
+The API's Prometheus request counters (retained from 2026-03-26) showed no call to any of them after 2026-08-01, and four were never called. Neither nano-crucible nor crucible-labs calls them; crucible-labs used the three project routes until 2026-05-28 (`b8576f6`). Several of them traversed through unreadable or pending-deletion datasets before filtering, or returned unreadable parent MFIDs.
+
+`GET /entity_graph_cte/{entity_mfid}` walks lineage level by level with the shared permission and deletion filters (2026-10-16) instead of recursive SQL that checked visibility across every sample and dataset, and its edges now carry `relationship_type`.
 
 ## Open design decisions
 

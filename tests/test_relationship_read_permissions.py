@@ -151,14 +151,13 @@ def test_sample_dataset_relationships_filter_both_directions(client, db_engine, 
     _authorize(auth_as, group_id)
 
     samples = client.get("/datasets/dataset_accessible/samples")
-    datasets = client.get("/samples/sample_accessible/datasets")
+    datasets = client.get("/datasets", params={"sample_mfid": "sample_accessible"})
 
     assert samples.status_code == 200, samples.text
     assert samples.json()["items"] == []
     assert samples.headers["deprecation"] == "@1788307200"
     assert datasets.status_code == 200, datasets.text
-    assert datasets.json() == []
-    assert datasets.headers["deprecation"] == "@1788307200"
+    assert datasets.json()["items"] == []
 
 
 def test_collection_relationship_filters_are_symmetric(client, db_engine, auth_as):
@@ -194,29 +193,23 @@ def test_sample_graphs_omit_inaccessible_nodes(client, db_engine, auth_as):
     project_mfid, group_id = _setup(db_engine)
     _authorize(auth_as, group_id)
 
-    sample_graph = client.get("/samples/sample_accessible/sample_graph")
-    sample_graph_cte = client.get("/samples/sample_accessible/sample_graph_cte")
-    project_graph = client.get(f"/projects/{project_mfid}/sample_graph")
-    entity_graph = client.get(f"/projects/{project_mfid}/entity_graph")
+    entity_graph = client.get("/entity_graph_cte/sample_accessible")
+    project_graph = client.get(f"/project_graph/{project_mfid}")
 
-    assert sample_graph.status_code == 200, sample_graph.text
-    assert sample_graph_cte.status_code == 200, sample_graph_cte.text
-    assert project_graph.status_code == 200, project_graph.text
     assert entity_graph.status_code == 200, entity_graph.text
-    assert {node["id"] for node in sample_graph.json()["nodes"]} == {"sample_accessible"}
-    assert {node["id"] for node in sample_graph_cte.json()["nodes"]} == {"sample_accessible"}
-    assert {node["id"] for node in project_graph.json()["nodes"]} == {"sample_accessible"}
+    assert project_graph.status_code == 200, project_graph.text
     assert "sample_private" not in {node["id"] for node in entity_graph.json()["nodes"]}
+    assert "sample_private" not in {node["id"] for node in project_graph.json()["nodes"]}
 
 
 def test_dataset_graphs_do_not_leak_inaccessible_parent_ids(client, db_engine, auth_as):
     project_mfid, group_id = _setup(db_engine)
     _authorize(auth_as, group_id)
 
-    dataset_graph = client.get("/datasets/dataset_accessible/dataset_graph")
-    project_graph = client.get(f"/projects/{project_mfid}/dataset_graph")
+    entity_graph = client.get("/entity_graph_cte/dataset_accessible")
+    project_graph = client.get(f"/project_graph/{project_mfid}")
 
-    assert dataset_graph.status_code == 200, dataset_graph.text
+    assert entity_graph.status_code == 200, entity_graph.text
     assert project_graph.status_code == 200, project_graph.text
-    assert {node["id"] for node in dataset_graph.json()["nodes"]} == {"dataset_accessible"}
-    assert {node["id"] for node in project_graph.json()["nodes"]} == {"dataset_accessible"}
+    assert "dataset_private" not in {node["id"] for node in entity_graph.json()["nodes"]}
+    assert "dataset_private" not in {node["id"] for node in project_graph.json()["nodes"]}

@@ -280,7 +280,6 @@ class TestCreateSample:
             sample = session.exec(select(Sample).where(
                 Sample.sample_name == "s2-mf-only"
             )).one()
-            assert sample.project_id == "proj_mfid_only_s"
             assert sample.project_mfid == project_mfid
 
     def test_create_sample_with_nonexistent_project_id_is_404_for_platform_admin(self, client, db_engine, auth_as):

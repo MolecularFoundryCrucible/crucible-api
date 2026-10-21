@@ -507,7 +507,6 @@ class TestProjectMfidOnDataset:
             dataset = session.exec(select(Dataset).where(
                 Dataset.dataset_name == "d10-mf-only"
             )).one()
-            assert dataset.project_id == "proj_mfid_only_1"
             assert dataset.project_mfid == project_mfid
 
     def test_create_dataset_with_nonexistent_project_id_is_404_for_a_regular_user(self, client, db_engine, auth_as):

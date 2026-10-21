@@ -4,10 +4,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 import os
-import networkx as nx
-from networkx.readwrite import json_graph
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import exists, func, join, text
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from sqlalchemy import exists, func, join
 from sqlalchemy.orm import joinedload
 from sqlmodel import and_, or_, Session, select
 
@@ -31,7 +29,7 @@ from app.utils.auth_utils import (
     authorize_user, permission_filter, project_scope_filter,
     owner_affiliation_filter, require_permission)
 from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
-from app.utils.link_utils import require_link_create_permissions
+from app.utils.link_utils import reject_lineage_cycle, reject_self_link, require_link_create_permissions
 from app.utils.permissions import Principal, Permission, Role, has_global_permission
 from app.utils.project_utils import (
     project_not_found,
@@ -46,12 +44,12 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import add_or_update, assert_mfid_available, deletion_filter_for, generate_kw_query, create_standard_acls, touch_resource_modification_time, set_public
-from app.utils.deletion_utils import assert_not_pending_deletion
+from app.utils.sql_utils import add_or_update, assert_mfid_available, assert_parent_accepts_assignment, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public
 
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
 from app.models.users import UserPublicRead
+from app.models.response_schemas import MessageResponse
 from app.services.resource_details import ResourceDetailOptions, load_sample_detail
 from app.services.resource_facets import list_sample_facets
 from app.services.resource_filters import resource_scope_predicates
@@ -63,7 +61,6 @@ from app.services.resource_pagination import (
 
 router = APIRouter(tags=["samples"])
 engine = get_engine()
-RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
 SAMPLE_PAGINATION = ResourcePaginationSpec(
     kind="sample",
     unique_id_column=Sample.unique_id,
@@ -92,6 +89,7 @@ def link_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id
     editor access to both samples.
     '''
 
+    reject_self_link(parent_sample_id, child_sample_id)
     with Session(engine) as session:
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()
         if not parent_sample:
@@ -115,6 +113,7 @@ def link_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id
             require_permission(session, auth_res, child_sample_id, Permission.EDIT)
             link.relationship_type = relationship_type
         else:
+            reject_lineage_cycle(session, SampleLink.parent_sample_id, SampleLink.sample_id, parent_sample.id, child_sample.id)
             link = SampleLink(
                 parent_sample_id=parent_sample.id,
                 sample_id=child_sample.id,
@@ -130,7 +129,7 @@ def link_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id
         return link
 
 
-@router.delete("/samples/{parent_sample_mfid}/children/{child_sample_mfid}")
+@router.delete("/samples/{parent_sample_mfid}/children/{child_sample_mfid}", response_model=MessageResponse)
 def unlink_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id: ChildSampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
     with Session(engine) as session:
@@ -198,7 +197,7 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
         project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
-            "project_id": project_reference.project_id if project_reference else sample.project_id,
+            "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
             "public": ri.public if ri else False,
             "creation_time": ri.creation_time if ri else None,
@@ -260,8 +259,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         sample_details['owner_orcid'] = resolved_owner_orcid
         sample_details['owner_user_id'] = owner_user.id
         if project is not None:
-            assert_not_pending_deletion(session, project.unique_id)
-            sample_details['project_id'] = project.project_id
+            assert_parent_accepts_assignment(session, project.unique_id)
             sample_details['project_mfid'] = project.unique_id
 
         sample = Sample(**sample_details)
@@ -286,7 +284,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         create_standard_acls(session, sample.unique_id,
                              owner_id=sample.owner_orcid,
                              requestor_id=user_unique_id,
-                             project_id=sample.project_id)
+                             project_mfid=sample.project_mfid)
 
         session.add(sample)
         session.commit()
@@ -296,7 +294,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
-            "project_id": project_reference.project_id if project_reference else sample.project_id,
+            "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
             "public": ri.public if ri else False,
             "creation_time": ri.creation_time if ri else None,
@@ -393,9 +391,7 @@ def list_samples(
         linked_dataset_id = None
         if dataset_mfid is not None:
             linked_dataset_id = session.exec(
-                select(Dataset.id)
-                .where(Dataset.unique_id == dataset_mfid)
-                .where(permission_filter(auth_res, Dataset, Permission.READ))
+                select_active(Dataset, dataset_mfid, Dataset.id, principal=auth_res)
             ).one_or_none()
             if linked_dataset_id is None:
                 raise HTTPException(status_code=404, detail="Dataset not found or access denied")
@@ -506,7 +502,7 @@ def list_samples(
                     dataset_reads_by_sample.setdefault(sid, []).append(DatasetRead.model_validate({
                         **ds.model_dump(),
                         **dataset_instrument_fields(ds, instrument_references.get(ds.instrument_mfid)),
-                        "project_id": ds_project_references[ds.project_mfid].project_id if ds.project_mfid in ds_project_references else ds.project_id,
+                        "project_id": ds_project_references[ds.project_mfid].project_id if ds.project_mfid in ds_project_references else None,
                         "project": ds_project_references.get(ds.project_mfid),
                     }))
 
@@ -542,7 +538,7 @@ def list_samples(
                     compat_datasets = dataset_reads_by_sample.get(samp.id, [])
             items.append(SampleResponse.model_validate({
                 **samp.model_dump(),
-                "project_id": resolved_project_id if resolved_project_id is not None else samp.project_id,
+                "project_id": resolved_project_id,
                 "project": project_reference,
                 "public": public if public is not None else False,
                 "creation_time": creation_time,
@@ -629,7 +625,7 @@ def search_samples(
         results = session.exec(query).all()
         items = [SampleResponse.model_validate({
             **samp.model_dump(),
-            "project_id": resolved_project_id if resolved_project_id is not None else samp.project_id,
+            "project_id": resolved_project_id,
             "project": ProjectReferenceRead(
                 unique_id=project_mfid,
                 project_id=resolved_project_id,
@@ -671,71 +667,6 @@ def read_sample(
         )
 
 
-@router.get("/samples/{sample_mfid}/datasets", deprecated=True)
-def list_sample_datasets(
-    sample_id: SampleMfid,
-    auth_res: Annotated[Principal, Depends(authorize_user)],
-    request: Request,
-    response: Response,
-    include_metadata: bool = False,
-    limit: Optional[int] = None,
-):
-    '''
-    Returns a list of all datasets linked to a given sample.
-    Deprecated: use GET /datasets?sample_mfid={sample_id}.
-    '''
-    response.headers["Deprecation"] = RELATIONSHIP_ROUTE_DEPRECATION
-
-    params_dict = dict(request.query_params)
-    keyword_filter = params_dict.pop("keyword", None)
-
-    with Session(engine) as session:
-        # Verify sample exists
-        sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
-
-        if sample is None:
-            raise HTTPException(status_code=404, detail="Sample not found")
-        require_permission(session, auth_res, sample_id, Permission.READ)
-
-        auth_filter = permission_filter(auth_res, Dataset, Permission.READ)
-        deletion_filter = deletion_filter_for(Dataset)
-        if include_metadata:
-            query = (
-                    select(Dataset, ScientificMetadataBinary.scientific_metadata)
-                    .join(ScientificMetadataBinary, ScientificMetadataBinary.unique_id == Dataset.unique_id, isouter=True)
-                    .filter(auth_filter)
-                    .where(deletion_filter)
-                )
-
-        else:
-            query = select(Dataset).filter(auth_filter).where(deletion_filter)
-
-        if keyword_filter:
-            query = generate_kw_query(session, query, keyword_filter)
-
-        for key, value in params_dict.items():
-            if hasattr(Dataset, key):
-                query = query.where(getattr(Dataset, key) == value)
-
-        full_query = query.join(DatasetSampleLink,
-                                DatasetSampleLink.dataset_id == Dataset.id
-                                ).where(
-                                    DatasetSampleLink.sample_id == sample.id
-                                ).distinct()
-
-        if limit is not None:
-            full_query = full_query.limit(limit)
-
-        results = session.exec(full_query).all()
-        if include_metadata:
-            return [{**dataset.model_dump(),
-                    "scientific_metadata": sci_md
-                    }
-                    for dataset, sci_md in results]
-        else:
-            return results
-
-
 @router.get("/samples/{child_sample_mfid}/parents", response_model=PaginatedResponse[SampleRead])
 def list_parent_samples(child_sample_id: ChildSampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)],
                         limit: int = Query(default=100, ge=1, le=1000),
@@ -748,7 +679,7 @@ def list_parent_samples(child_sample_id: ChildSampleMfid, auth_res: Annotated[Pr
     recorded type are excluded when the filter is set.
     '''
     with Session(engine) as session:
-        child_sample = session.exec(select(Sample).where(Sample.unique_id == child_sample_id)).one_or_none()
+        child_sample = session.exec(select_active(Sample, child_sample_id)).one_or_none()
         if child_sample is None:
             raise HTTPException(status_code=404, detail="Child sample not found")
         require_permission(session, auth_res, child_sample_id, Permission.READ)
@@ -767,7 +698,7 @@ def list_parent_samples(child_sample_id: ChildSampleMfid, auth_res: Annotated[Pr
         project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
         items = [SampleRead.model_validate({
             **s.model_dump(),
-            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else s.project_id,
+            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else None,
             "project": project_references.get(s.project_mfid),
         }) for s in rows]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
@@ -785,7 +716,7 @@ def list_child_samples(parent_sample_id: ParentSampleMfid, auth_res: Annotated[P
     recorded type are excluded when the filter is set.
     '''
     with Session(engine) as session:
-        parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).one_or_none()
+        parent_sample = session.exec(select_active(Sample, parent_sample_id)).one_or_none()
         if parent_sample is None:
             raise HTTPException(status_code=404, detail="Parent sample not found")
         require_permission(session, auth_res, parent_sample_id, Permission.READ)
@@ -804,133 +735,8 @@ def list_child_samples(parent_sample_id: ParentSampleMfid, auth_res: Annotated[P
         project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
         items = [SampleRead.model_validate({
             **s.model_dump(),
-            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else s.project_id,
+            "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else None,
             "project": project_references.get(s.project_mfid),
         }) for s in rows]
         return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
-@router.get("/samples/{sample_mfid}/sample_graph")
-def sample_graph(sample_id: SampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''
-    Returns a NetworkX node-link graph of all samples connected (via parent/child
-    relationships) to the given sample. Loads all samples in the project and
-    returns the directed lineage subgraph (ancestors + descendants) of the target.
-    '''
-
-    with Session(engine) as session:
-        target = session.exec(
-            select(Sample).where(Sample.unique_id == sample_id)
-        ).one_or_none()
-
-        if target is None:
-            raise HTTPException(status_code=404, detail="Sample not found")
-
-        require_permission(session, auth_res, sample_id, Permission.READ)
-
-        samp_list = session.exec(
-            select(Sample)
-            .where(permission_filter(auth_res, Sample, Permission.READ))
-            .where(deletion_filter_for(Sample))
-            .where(Sample.project_mfid == target.project_mfid)
-        ).unique().all()
-
-        # Read edges from the link table rather than walking Sample.parents, so
-        # each edge can carry its relationship_type. Restricting both endpoints
-        # to samp_list yields the same edge set the relationship walk did.
-        id_to_uid = {sample.id: sample.unique_id for sample in samp_list}
-        node_ids = list(id_to_uid.keys())
-        edge_rows = session.exec(
-            select(SampleLink.parent_sample_id, SampleLink.sample_id, SampleLink.relationship_type)
-            .where(SampleLink.parent_sample_id.in_(node_ids))
-            .where(SampleLink.sample_id.in_(node_ids))
-        ).all() if node_ids else []
-
-        edges = [(id_to_uid[r[0]], id_to_uid[r[1]], {"relationship_type": r[2]}) for r in edge_rows]
-
-        G = nx.DiGraph(edges)
-        for sample in samp_list:
-            G.add_node(sample.unique_id, sample_name=sample.sample_name)
-
-        if target.unique_id not in G:
-            G.add_node(target.unique_id, sample_name=target.sample_name)
-
-        # Use directed ancestors + descendants rather than the weakly connected
-        # component. WCC would include siblings (nodes that share a parent with
-        # the target but are not in its direct lineage). nx.ancestors/descendants
-        # traverses strictly along the target's own lineage chain in both
-        # directions, excluding siblings.
-        component_nodes = nx.ancestors(G, target.unique_id) | nx.descendants(G, target.unique_id) | {target.unique_id}
-        return json_graph.node_link_data(G.subgraph(component_nodes))
-
-
-@router.get("/samples/{sample_mfid}/sample_graph_cte")
-def sample_graph_cte(sample_id: SampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    '''
-    CTE-based implementation (kept for reference). Prefer /sample_graph.
-    Returns a NetworkX node-link graph of all samples connected (via parent/child
-    relationships) to the given sample, i.e. its full lineage subgraph.
-    '''
-
-    with Session(engine) as session:
-        target = session.exec(
-            select(Sample).where(Sample.unique_id == sample_id)
-        ).one_or_none()
-
-        if target is None:
-            raise HTTPException(status_code=404, detail="Sample not found")
-
-        require_permission(session, auth_res, sample_id, Permission.READ)
-
-        # Two recursive CTEs — one walking up (ancestors), one walking down
-        # (descendants). PostgreSQL only allows a single UNION between the
-        # non-recursive and recursive terms, so bidirectional traversal in a
-        # single CTE is not permitted.
-        cte_sql = text("""
-            WITH RECURSIVE
-            ancestors(id, unique_id, sample_name) AS (
-                SELECT id, unique_id, sample_name
-                FROM sample WHERE unique_id = :sample_uid
-              UNION
-                SELECT s.id, s.unique_id, s.sample_name
-                FROM sample s
-                JOIN samplelink sl ON sl.parent_sample_id = s.id
-                JOIN ancestors a ON sl.sample_id = a.id
-            ),
-            descendants(id, unique_id, sample_name) AS (
-                SELECT id, unique_id, sample_name
-                FROM sample WHERE unique_id = :sample_uid
-              UNION
-                SELECT s.id, s.unique_id, s.sample_name
-                FROM sample s
-                JOIN samplelink sl ON sl.sample_id = s.id
-                JOIN descendants d ON sl.parent_sample_id = d.id
-            )
-            SELECT DISTINCT id, unique_id, sample_name
-            FROM (SELECT * FROM ancestors UNION ALL SELECT * FROM descendants) combined
-        """)
-        rows = session.execute(cte_sql, {"sample_uid": sample_id}).all()
-
-        reachable_ids = [row.unique_id for row in rows]
-        allowed_ids = set(session.exec(
-            select(Sample.unique_id)
-            .where(Sample.unique_id.in_(reachable_ids))
-            .where(permission_filter(auth_res, Sample, Permission.READ))
-            .where(deletion_filter_for(Sample))
-        ).all())
-        rows = [row for row in rows if row.unique_id in allowed_ids]
-
-        id_to_uid = {r.id: r.unique_id for r in rows}
-        node_ids = list(id_to_uid.keys())
-
-        # Fetch all edges whose both endpoints are within the component
-        edge_rows = session.exec(
-            select(SampleLink.parent_sample_id, SampleLink.sample_id, SampleLink.relationship_type)
-            .where(SampleLink.parent_sample_id.in_(node_ids))
-            .where(SampleLink.sample_id.in_(node_ids))
-        ).all()
-
-        G = nx.DiGraph((id_to_uid[r[0]], id_to_uid[r[1]], {"relationship_type": r[2]}) for r in edge_rows)
-        for r in rows:
-            G.add_node(r.unique_id, sample_name=r.sample_name)
-
-        return json_graph.node_link_data(G)

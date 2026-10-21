@@ -1,18 +1,22 @@
-from datetime import timedelta, datetime, timezone
+from datetime import date, timedelta, datetime, timezone
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import delete, exists, func, or_
+from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.general_utils import get_utc_datetime, if_match_satisfied, is_orcid
-from app.models.core_models import AccessGroupJoinRequest, ApiToken, Dataset, DeletionRequest, Instrument, Project, Resource, Sample, User, UserPreferences, UserRecentResource
+from app.models.core_models import ApiToken, Dataset, DeletionRequest, Instrument, Project, Resource, Sample, User, UserPreferences, UserRecentResource
 from app.models.preferences import MAX_DOCUMENT_BYTES, PREFERENCES_SCHEMA_VERSION, PreferencesDocument, PreferencesRead, RecentResourceRead, RecentResourceRecord, serialized_size
-from app.models.join_requests import JoinRequestRead
+from app.api.routes.join_requests import join_request_filters, list_join_requests_page
+from app.models.join_requests import JoinRequestRead, JoinRequestScope, JoinRequestSort, JoinRequestStatus
+from app.models.query_params import SortDirection
 from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import AccountInfo, ApiKeyRead, ApiKeyVerify, ProjectSyncResult
 from app.models.users import (
@@ -22,7 +26,7 @@ from app.models.users import (
     AccountProfileUpdate,
     UserRead,
 )
-from app.utils.auth_utils import API_KEY_READ_DEPRECATION, authorize_user, find_or_add_api_access, permission_filter, reject_hub_api_key_read, require_recent_authentication
+from app.utils.auth_utils import API_KEY_READ_DEPRECATION, authorize_user, find_or_add_api_access, security, permission_filter, reject_hub_api_key_read, require_recent_authentication
 from app.utils.permissions import (
     Permission,
     PlatformRole,
@@ -125,26 +129,19 @@ def sync_account_projects(auth_res: Annotated[Principal, Depends(authorize_user)
     return ProjectSyncResult(orcid=user_unique_id, **result)
 
 
-@router.get("/account/join_requests", response_model=PaginatedResponse[JoinRequestRead])
+@router.get("/account/join_requests", response_model=PaginatedResponse[JoinRequestRead], deprecated=True)
 def get_account_join_requests(
     auth_res: Annotated[Principal, Depends(authorize_user)],
-    status: Optional[str] = None,
+    status: Optional[JoinRequestStatus] = None,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ):
-    """Return the authenticated caller's own join request history across all groups.
-    Filter by ?status=pending|approved|rejected."""
-    user_unique_id = auth_res.user_id
+    """Deprecated: use GET /join_requests?scope=submitted."""
+    filters = join_request_filters(scope=JoinRequestScope.SUBMITTED, status=[status] if status else None, project_mfid=None,
+                                   group_name=None, requester_id=None, reviewer_id=None, requested_after=None,
+                                   requested_before=None, reviewed_after=None, reviewed_before=None, q=None)
     with Session(engine) as session:
-        query = select(AccessGroupJoinRequest).where(AccessGroupJoinRequest.requester_id == user_unique_id)
-        if status:
-            query = query.where(AccessGroupJoinRequest.status == status)
-
-        total = session.exec(select(func.count()).select_from(query.subquery())).one()
-        items = session.exec(
-            query.order_by(AccessGroupJoinRequest.id.desc()).offset(offset).limit(limit)
-        ).all()
-        return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+        return list_join_requests_page(session, auth_res, filters, JoinRequestSort.REQUEST_TIME, SortDirection.DESC, limit, None, offset)
 
 
 @router.get("/account/apikey", response_model=ApiKeyRead, deprecated=True, responses={403: {"description": "Hub sessions cannot read API keys (`api_key_read_not_allowed`)"}})
@@ -182,32 +179,33 @@ def regenerate_account_apikey(
     return ApiKeyRead(api_key=find_or_add_api_access(auth_res.user_id, engine, regenerate=True))
 
 
-@router.get("/account/verify", response_model=ApiKeyVerify)
-def verify_account_apikey(auth_res: Annotated[Principal, Depends(authorize_user)]):
+@router.get("/account/verify", response_model=ApiKeyVerify, responses={404: {"description": "A Hub session's account has no API key"}})
+def verify_account_apikey(
+    auth_res: Annotated[Principal, Depends(authorize_user)],
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+):
     """
-    Verify the caller's API key and return its validity and expiry date.
-    Returns 401 for invalid or expired keys (handled by authorize_user before this runs).
+    Report an API key's validity and expiry. With an API key, describes that key (expired keys
+    are rejected with 401 before this runs). With a Hub session, describes the account's newest key,
+    with valid false once it has expired.
     """
-    user_unique_id = auth_res.user_id
     with Session(engine) as session:
-        token = session.exec(
-            select(ApiToken).where(ApiToken.user_unique_id == user_unique_id)
-            .order_by(ApiToken.token_created.desc())
-        ).first()
+        if auth_res.credential == "hub":
+            token = session.exec(
+                select(ApiToken).where(ApiToken.user_unique_id == auth_res.user_id)
+                .order_by(ApiToken.token_created.desc())
+            ).first()
+        else:
+            token = session.get(ApiToken, credentials.credentials)
         if token is None:
             raise HTTPException(status_code=404, detail="No API key found")
 
-        created_at = token.token_created
-        if isinstance(created_at, str):
-            created_dt = datetime.strptime(created_at, "%Y-%m-%d")
-        else:
-            created_dt = created_at
-
-        expires_dt = created_dt + timedelta(days=365)
+        created = date.fromisoformat(str(token.token_created)[:10])
+        expires = created + timedelta(days=365)
         return ApiKeyVerify(
-            valid=True,
-            created_at=created_dt.date().isoformat(),
-            expires_at=expires_dt.date().isoformat(),
+            valid=date.today() < expires,
+            created_at=created.isoformat(),
+            expires_at=expires.isoformat(),
             last_used_at=token.last_used_at,
         )
 
@@ -341,7 +339,8 @@ def record_recent_resource(auth_res: Annotated[Principal, Depends(authorize_user
 def list_recent_resources(auth_res: Annotated[Principal, Depends(authorize_user)], limit: Annotated[int, Query(ge=1, le=RECENT_LIMIT)] = 10):
     """Return the caller's recently viewed resources, newest first, limited to resources the caller can still read and that are not pending deletion. Entries older than 90 days are omitted."""
     name = func.coalesce(Dataset.dataset_name, Sample.sample_name, Project.title, Project.project_id, Instrument.instrument_name)
-    project = func.coalesce(Dataset.project_id, Sample.project_id, Project.project_id)
+    record_project = aliased(Project)
+    project = func.coalesce(record_project.project_id, Project.project_id)
     with Session(engine) as session:
         user_id = _caller_id(session, auth_res)
         statement = (
@@ -349,6 +348,7 @@ def list_recent_resources(auth_res: Annotated[Principal, Depends(authorize_user)
             .join(Resource, Resource.mfid == UserRecentResource.resource_mfid)
             .outerjoin(Dataset, Dataset.unique_id == Resource.mfid)
             .outerjoin(Sample, Sample.unique_id == Resource.mfid)
+            .outerjoin(record_project, record_project.unique_id == func.coalesce(Dataset.project_mfid, Sample.project_mfid))
             .outerjoin(Project, Project.unique_id == Resource.mfid)
             .outerjoin(Instrument, Instrument.unique_id == Resource.mfid)
             .where(

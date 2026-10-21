@@ -1,16 +1,18 @@
 import base64
 import hashlib
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import google_crc32c
 import pytest
+from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
 import app.api.routes.gcs_storage as gcs_storage
 from app.api.routes import multipart as routes
-from app.models.core_models import AccessGroup, AssociatedFile, Dataset, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
+from app.models.core_models import AccessGroup, AssociatedFile, Dataset, DeletionRequest, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
 from app.models.datasets import file_etag
 from app.services import multipart as service
 from app.services.multipart_storage import StorageFailure, UploadMissing
@@ -164,7 +166,7 @@ def publish(flow, filename="data.bin"):
 
 
 def expire(engine, identifier):
-    change(engine, identifier, expires_at=(service.now() - timedelta(seconds=1)).isoformat())
+    change(engine, identifier, expires_at=service.now() - timedelta(seconds=1))
 
 
 def test_upload_resume_publish_retry_download_ingestion_and_delete(flow, monkeypatch):
@@ -361,11 +363,26 @@ def test_verified_hash_short_circuits_initiation(flow):
         file.sha256_verified_at = service.now()
         session.add(file)
         session.commit()
-    response = client.post(BASE + "/initiate", json={"filename": "another", "size": len(DATA), "sha256_hash": SHA})
+    response = client.post(BASE + "/initiate", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": SHA})
     assert response.status_code == 200, response.text
     assert response.json()["state"] == "completed"
     assert response.json()["upload_id"] is None
     assert response.json()["existing_file"]["mfid"] == file_id
+
+
+def test_same_content_under_another_name_is_a_new_upload(flow):
+    client, engine, _ = flow
+    identifier = publish(flow)
+    complete(flow, identifier)
+    with Session(engine) as session:
+        file = session.exec(select(AssociatedFile)).one()
+        file.sha256_verified_at = service.now()
+        session.add(file)
+        session.commit()
+    response = client.post(BASE + "/initiate", json={"filename": "another", "size": len(DATA), "sha256_hash": SHA})
+    assert response.status_code == 200, response.text
+    assert response.json()["existing_file"] is None
+    assert response.json()["upload_id"] is not None
 
 
 @pytest.mark.parametrize("body", [{"filename": "../x", "size": 1}, {"filename": "/x", "size": 1}, {"filename": "x", "size": True}, {"filename": "x", "size": 0}, {"filename": "x", "size": 1, "sha256_hash": "bad"}])
@@ -602,10 +619,67 @@ def test_unverified_multipart_hash_does_not_dedupe_legacy_paths(flow, monkeypatc
     assert response.status_code == 200, response.text
     assert response.json()["filename"] == "legacy.bin"
     monkeypatch.setattr("app.api.routes.gcs_storage.engine", engine)
-    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda: ("token", "2030-01-01T00:00:00+00:00"))
-    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "other.bin", "size": len(DATA), "sha256_hash": SHA})
+    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda dsid: ("token", "2030-01-01T00:00:00+00:00"))
+    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": SHA})
+    assert response.status_code == 200, response.text
+    assert response.json()["existing_file"] is None
+    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA), "sha256_hash": SHA})
     assert response.status_code == 200, response.text
     assert response.json()["existing_file"]["filename"] == "legacy.bin"
+    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "other.bin", "size": len(DATA), "sha256_hash": SHA})
+    assert response.json()["existing_file"] is None
+
+
+def test_dataset_hard_deleted_during_completion_returns_409_and_removes_the_object(flow):
+    client, engine, storage = flow
+    identifier = start(flow)
+    put(flow, identifier)
+
+    def delete_dataset():
+        from app.utils.deletion_utils import hard_delete_resource
+        with Session(engine) as session:
+            hard_delete_resource("ds", session)
+            session.commit()
+    storage.complete_hook = delete_dataset
+    response = complete(flow, identifier)
+    assert response.status_code == 409, response.text
+    assert "dataset_deleted" in response.text
+    assert storage.objects == {}
+    with Session(engine) as session:
+        assert session.exec(select(AssociatedFile)).all() == []
+
+
+def test_upload_does_not_publish_into_a_dataset_put_up_for_deletion(flow):
+    client, engine, _ = flow
+    identifier = start(flow)
+    put(flow, identifier)
+    with Session(engine) as session:
+        session.add(DeletionRequest(resource_id="ds", resource_type="dataset", requester_id="owner", status="pending"))
+        session.commit()
+    response = complete(flow, identifier)
+    assert response.status_code == 409, response.text
+    assert "dataset_pending_deletion" in response.text
+    assert row(engine, identifier).state != "completed"
+    with Session(engine) as session:
+        assert session.exec(select(AssociatedFile)).all() == []
+
+
+def test_file_record_filenames_are_unique_within_a_dataset(flow):
+    client, _, _ = flow
+    file_id = complete(flow, publish(flow)).json()["mfid"]
+    repeated = client.post("/datasets/ds/files", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": SHA})
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["mfid"] == file_id
+    changed = client.post("/datasets/ds/files", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": "2" * 64})
+    assert changed.status_code == 409
+    detail = changed.json()["detail"]
+    assert (detail["code"], detail["file_mfid"]) == ("filename_exists", file_id)
+    assert detail["etag"] == client.get(f"/files/{file_id}").json()["etag"]
+    renamed = client.post("/datasets/ds/files", json={"filename": "alias.bin", "size": len(DATA), "sha256_hash": SHA})
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["filename"] == "alias.bin"
+    assert renamed.json()["mfid"] != file_id
+    assert sorted(f["filename"] for f in client.get("/datasets/ds/files").json()) == ["alias.bin", "data.bin"]
 
 
 def test_legacy_paths_respect_multipart_filename_reservation(flow, monkeypatch):
@@ -1119,7 +1193,7 @@ def test_pending_legacy_upload_blocks_retirement(flow, retired, expires_in):
     client, engine, _ = flow
     mfid = legacy_file(engine, "old.bin")
     with Session(engine) as session:
-        session.add(UploadSession(dataset_mfid="ds", gcs_path="ds/old.bin", associated_file_name="old.bin", owner_user_id="owner", expires_at=(service.now() + (expires_in or -timedelta(hours=1))).isoformat(), size=3))
+        session.add(UploadSession(dataset_mfid="ds", gcs_path="ds/old.bin", associated_file_name="old.bin", owner_user_id="owner", expires_at=service.now() + (expires_in or -timedelta(hours=1)), size=3))
         session.commit()
     _, response = replace(flow, mfid)
     assert response.status_code == 200, response.text
@@ -1180,3 +1254,74 @@ def test_initiate_returns_adaptive_part_size(flow):
     assert response.status_code == 200, response.text
     assert response.json()["part_size"] == 9 * MIB
     assert response.json()["part_count"] == 8
+
+
+OLD = datetime(2020, 1, 1, tzinfo=timezone.utc)
+
+
+def dataset_touched(engine):
+    with Session(engine) as session:
+        value = session.get(Resource, "ds").modification_time
+        return value.replace(tzinfo=value.tzinfo or timezone.utc) > OLD
+
+
+def age_dataset(engine):
+    with Session(engine) as session:
+        resource = session.get(Resource, "ds")
+        resource.modification_time = OLD
+        session.add(resource)
+        session.commit()
+
+
+def test_new_files_touch_the_dataset(flow):
+    _, engine, _ = flow
+    age_dataset(engine)
+    publish(flow)
+    assert dataset_touched(engine)
+
+
+def test_legacy_completion_touches_the_dataset(flow, monkeypatch):
+    client, engine, _ = flow
+    monkeypatch.setattr("app.api.routes.gcs_storage.engine", engine)
+    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda dsid: ("token", "2030-01-01T00:00:00+00:00"))
+    upload_id = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA)}).json()["upload_id"]
+    age_dataset(engine)
+    blob = SimpleNamespace(size=len(DATA), reload=lambda: None)
+    gcs = MagicMock()
+    gcs.bucket.return_value.blob.return_value = blob
+    monkeypatch.setattr("app.api.routes.gcs_storage._get_gcs_storage_client", lambda: gcs)
+    response = client.post("/datasets/ds/upload/complete", json={"upload_id": upload_id, "sha256_hash": SHA})
+    assert response.status_code == 200, response.text
+    assert dataset_touched(engine)
+
+
+LEAKY = "https://storage.googleapis.com/mf-storage-prod/x signer@mf-crucible.iam.gserviceaccount.com"
+
+
+@pytest.mark.parametrize("failure, status", [(NotFound("gone"), 422), (RuntimeError(LEAKY), 503)])
+def test_legacy_completion_storage_errors_stay_server_side(flow, monkeypatch, failure, status):
+    client, engine, _ = flow
+    monkeypatch.setattr("app.api.routes.gcs_storage.engine", engine)
+    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda dsid: ("token", "2030-01-01T00:00:00+00:00"))
+    upload_id = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA)}).json()["upload_id"]
+
+    def reload():
+        raise failure
+    gcs = MagicMock()
+    gcs.bucket.return_value.blob.return_value = SimpleNamespace(size=len(DATA), reload=reload)
+    monkeypatch.setattr("app.api.routes.gcs_storage._get_gcs_storage_client", lambda: gcs)
+    response = client.post("/datasets/ds/upload/complete", json={"upload_id": upload_id, "sha256_hash": SHA})
+    assert response.status_code == status
+    assert "googleapis" not in response.text and "iam" not in response.text and "gone" not in response.text
+
+
+def test_legacy_initiate_token_errors_stay_server_side(flow, monkeypatch):
+    client, engine, _ = flow
+    monkeypatch.setattr("app.api.routes.gcs_storage.engine", engine)
+
+    def mint(dsid):
+        raise RuntimeError(LEAKY)
+    monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", mint)
+    response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA)})
+    assert response.status_code == 503
+    assert "googleapis" not in response.text and "iam" not in response.text

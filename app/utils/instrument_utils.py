@@ -122,25 +122,20 @@ def resolve_instrument_mfids_to_ids(mfids, session) -> dict:
 
 
 def dataset_instrument_fields(dataset, reference: "InstrumentReferenceRead | None") -> dict:
-    """Instrument fields for a dataset response, resolved from its instrument_mfid.
-    The stored instrument_name is a fallback for legacy datasets with no registered instrument."""
+    """Instrument fields for a dataset response, resolved from its instrument_mfid."""
     return {
         "instrument_id": reference.instrument_id if reference else None,
-        "instrument_name": reference.instrument_name if reference else dataset.instrument_name,
+        "instrument_name": reference.instrument_name if reference else None,
         "instrument": reference,
     }
 
 
 def dataset_instrument_name_filter(instrument_name: str):
-    """Match the instrument name a dataset response displays: the registered
-    instrument's current name, or the stored label for a legacy dataset."""
-    return or_(
-        exists().where(
-            Instrument.unique_id == Dataset.instrument_mfid,
-            Instrument.instrument_name == instrument_name,
-        ).correlate(Dataset),
-        and_(Dataset.instrument_mfid.is_(None), Dataset.instrument_name == instrument_name),
-    )
+    """Match datasets whose registered instrument has this name."""
+    return exists().where(
+        Instrument.unique_id == Dataset.instrument_mfid,
+        Instrument.instrument_name == instrument_name,
+    ).correlate(Dataset)
 
 
 def resolve_instrument_mfids_to_references(mfids, session) -> dict[str, InstrumentReferenceRead]:

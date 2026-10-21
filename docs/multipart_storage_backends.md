@@ -31,7 +31,7 @@ Status: proposed, not scheduled. The signed multipart upload flow ([contract and
 
 ## Outside the multipart flow
 
-Self-hosting Crucible also needs packaging beyond GKE (the current manifests rely on GKE workload identity, Cloud Build, and gcsfuse mounts), and the legacy upload routes, non-multipart downloads, deletion, and ingestion consumers all assume GCS. The multipart flow itself runs inside the API process and needs PostgreSQL row locks for reservations and idempotency.
+Self-hosting Crucible also needs packaging beyond GKE (the current manifests rely on GKE workload identity, Cloud Build, and gcsfuse mounts), and the legacy upload routes, non-multipart downloads, deletion, and ingestion consumers all assume GCS. Single-file deletion does not yet remove stored objects at all; see [stored objects left behind by file deletion](file_object_cleanup_followup.md). The multipart flow itself runs inside the API process and needs PostgreSQL row locks for reservations and idempotency.
 
 ## Open checks
 

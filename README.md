@@ -8,7 +8,7 @@ FastAPI service for Crucible scientific datasets, samples, projects, instruments
 - [Staging ReDoc](https://crucible.lbl.gov/testapi-staging/redoc)
 - [Staging OpenAPI JSON](https://crucible.lbl.gov/testapi-staging/openapi.json)
 - [Repository OpenAPI checkpoint](openapi/crucible-api.json)
-- [Client migration summary](docs/client_migration_summary.md)
+- [Client migration summary](docs/archive/client_migration_summary.md)
 - [Documentation index](docs/README.md)
 - [Changelog](CHANGELOG.md)
 

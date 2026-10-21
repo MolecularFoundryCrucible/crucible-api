@@ -48,6 +48,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 
 ## Deferred designs
 
+- [Batch lookup and the `unique_id` to `mfid` transition](mfid_naming_transition.md)
 - [`idtype` to `resource` rename](idtype_to_resource_rename.md)
 - [Project archiving](project_archiving.md)
 - [User deactivation](user_deactivation.md)

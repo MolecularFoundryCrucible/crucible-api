@@ -6434,6 +6434,12 @@
             "title": "Can Manage Access",
             "type": "boolean"
           },
+          "can_request_deletion": {
+            "default": false,
+            "description": "POST /resources/{mfid}/delete would be accepted: contributor for datasets and samples, the same as can_delete for projects and instruments, and no deletion request already active.",
+            "title": "Can Request Deletion",
+            "type": "boolean"
+          },
           "can_transfer": {
             "title": "Can Transfer",
             "type": "boolean"

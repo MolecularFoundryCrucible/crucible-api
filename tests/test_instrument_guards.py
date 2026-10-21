@@ -64,6 +64,7 @@ class TestEditingTheRecord:
             "can_change_status": False,
             "can_transfer": False,
             "can_delete": False,
+            "can_request_deletion": False,
             "max_grant_role": None,
         }
 

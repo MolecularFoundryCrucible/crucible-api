@@ -14,6 +14,7 @@ class ResourceCapabilities(SQLModel):
     can_change_status: bool
     can_transfer: bool
     can_delete: bool = False
+    can_request_deletion: bool = Field(default=False, description="POST /resources/{mfid}/delete would be accepted: contributor for datasets and samples, the same as can_delete for projects and instruments, and no deletion request already active.")
     max_grant_role: Optional[Literal["viewer", "contributor", "editor", "admin"]] = None
 
 

@@ -36,6 +36,7 @@ def test_canonical_get_uses_instrument_mfid(client, db_engine, auth_as):
         "can_change_status": False,
         "can_transfer": False,
         "can_delete": False,
+        "can_request_deletion": False,
         "max_grant_role": None,
     }
 

@@ -337,14 +337,15 @@ def record_recent_resource(auth_res: Annotated[Principal, Depends(authorize_user
 
 @router.get("/account/recent-resources", response_model=list[RecentResourceRead])
 def list_recent_resources(auth_res: Annotated[Principal, Depends(authorize_user)], limit: Annotated[int, Query(ge=1, le=RECENT_LIMIT)] = 10):
-    """Return the caller's recently viewed resources, newest first, limited to resources the caller can still read and that are not pending deletion. Entries older than 90 days are omitted."""
+    """Return the caller's recently viewed resources, newest first, with `identifier` set to the instrument or project slug (null for datasets and samples), limited to resources the caller can still read and that are not pending deletion. Entries older than 90 days are omitted."""
     name = func.coalesce(Dataset.dataset_name, Sample.sample_name, Project.title, Project.project_id, Instrument.instrument_name)
     record_project = aliased(Project)
     project = func.coalesce(record_project.project_id, Project.project_id)
+    identifier = func.coalesce(Instrument.instrument_id, Project.project_id)
     with Session(engine) as session:
         user_id = _caller_id(session, auth_res)
         statement = (
-            select(UserRecentResource.resource_mfid, Resource.resource_type, name, project, UserRecentResource.viewed_at)
+            select(UserRecentResource.resource_mfid, Resource.resource_type, name, project, identifier, UserRecentResource.viewed_at)
             .join(Resource, Resource.mfid == UserRecentResource.resource_mfid)
             .outerjoin(Dataset, Dataset.unique_id == Resource.mfid)
             .outerjoin(Sample, Sample.unique_id == Resource.mfid)
@@ -361,8 +362,8 @@ def list_recent_resources(auth_res: Annotated[Principal, Depends(authorize_user)
             .limit(limit)
         )
         return [
-            RecentResourceRead(resource_mfid=mfid, resource_type=kind, name=label, project_id=project_id, viewed_at=_aware(viewed_at))
-            for mfid, kind, label, project_id, viewed_at in session.exec(statement).all()
+            RecentResourceRead(resource_mfid=mfid, resource_type=kind, name=label, project_id=project_id, identifier=identifier, viewed_at=_aware(viewed_at))
+            for mfid, kind, label, project_id, identifier, viewed_at in session.exec(statement).all()
         ]
 
 

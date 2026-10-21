@@ -48,4 +48,5 @@ class RecentResourceRead(BaseModel):
     resource_type: Literal["dataset", "sample", "project", "instrument"]
     name: Optional[str] = None
     project_id: Optional[str] = None
+    identifier: Optional[str] = None
     viewed_at: UtcDatetime

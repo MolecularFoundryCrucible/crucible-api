@@ -49,7 +49,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 
 ## Self-hosting
 
-- [Self-hosted Crucible](self_hosting_design.md): deployment tiers, S3-style storage, OIDC sign-in, releases, and the phased plan for running Crucible without Google Cloud.
+- [Self-hosted Crucible](self_hosting_design.md): deployment tiers, S3-style storage, ORCID and local password sign-in, releases, and the phased plan for running Crucible without Google Cloud.
 
 ## Deferred designs
 

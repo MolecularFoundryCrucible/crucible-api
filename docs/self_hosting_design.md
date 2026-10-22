@@ -27,7 +27,7 @@ Larger institutions run the same software on a public address, as the Foundry do
 - The Foundry proposal database integration (`foundry-admin.lbl.gov` project auto-assignment) for self-hosters. It stays a Foundry-only option, off by default.
 - HPC cluster execution and Globus transfers in the first phases. The design must leave room for them; they are built later.
 - Moving the Foundry's data out of Google Cloud Storage.
-- Building password handling into Crucible. Passwords live in an identity provider (see Sign-in).
+- A general identity system: self-registration, email-based password reset, multi-factor authentication, or a bundled identity provider such as Keycloak. Local password login stays deliberately small (see Sign-in).
 
 ## Anti-goals
 
@@ -42,28 +42,39 @@ These make the effort a failure even if every piece works:
 
 The same images and settings serve both tiers; the tier decides networking, TLS, and sign-in.
 
-- **Lab tier.** One or two workstations, reachable on the local network. Compose includes everything, including an identity provider. TLS is optional; the install guide covers a local certificate or a reverse proxy.
-- **Institution tier.** A public address with HTTPS, as the Foundry runs today. Managed or institutional Postgres, object storage, and sign-in may replace the bundled services.
+- **Lab tier.** One or two workstations, reachable on the local network, a few users. Compose includes everything. Users sign in with local passwords. TLS is recommended; the install guide covers a local certificate or a reverse proxy.
+- **Institution tier.** A public address with HTTPS, as the Foundry runs today. Users sign in with ORCID. Managed or institutional Postgres and object storage may replace the bundled services.
 
-Every address a browser or client must reach (the API, the Hub, presigned storage URLs, the sign-in provider) is configurable as a public URL separate from the internal compose address, because presigned URL signatures cover the host.
+Every address a browser or client must reach (the API, the Hub, presigned storage URLs) is configurable as a public URL separate from the internal compose address, because presigned URL signatures cover the host.
 
 ## Decisions
 
 ### Core install
 
-- Services: Postgres (with the `vector` and `pg_trgm` extensions), the API, the Hub, and an S3-compatible object store; for the lab tier also an OIDC identity provider. Message brokers belong to the plug-ins, not the core.
+- Services: Postgres (with the `vector` and `pg_trgm` extensions), the API, the Hub, and an S3-compatible object store. Message brokers belong to the plug-ins, not the core.
 - The object store must be open source. MinIO removed features from its free edition and stopped community binary releases in 2025, so compare Garage, SeaweedFS, and MinIO before choosing (builder's call, recorded in the PR).
 - The installer becomes platform administrator. There is no admin bootstrap today; one is needed.
 - The Hub talks to the API by URL and stores sessions in plain Postgres or Redis. `HUB_SESSION_DATABASE_URL` and `HUB_SESSION_REDIS_URL` already exist in crucible-hub; its Cloud SQL connector is a Foundry option. Phase 1 can use the current Hub image.
 
 ### Sign-in
 
-- The API becomes a standard OpenID Connect (OIDC) relying party: it signs users in through a configured provider and stores the provider's subject identifier, never a password.
-- ORCID is an OIDC provider, so it becomes one configured provider instead of a special case. The Foundry keeps ORCID; registering your own ORCID client stays a documented step for installs on a public address.
-- Lab tier: compose bundles an open-source identity provider that handles registration, passwords, reset, two-factor, and brute-force protection, and can federate ORCID or an institution's login. Candidates with self-registration: Keycloak (Apache-2.0, heavy), Zitadel (AGPL-3.0), Authentik (MIT core, some paid enterprise features). Dex and Authelia are lighter but have no self-registration. Choose by footprint on a two-workstation install (builder's call, recorded in the PR).
-- Institution tier: point the API at ORCID or the institution's own OIDC/SAML-backed provider.
-- The Hub's sign-in flow with the API (`/auth/hub/*`) is unchanged; only what the API does behind its login changes.
-- A user who signs in without ORCID gets an MFID in the user identifier column, as service accounts already do. Separating identity from ORCID for everyone is the planned user-MFID work in `mfid_naming_transition.md`, not part of this project. Linking several providers to one account is out of scope at first (builder may add it).
+Two sign-in methods, chosen by setting; either or both can be enabled:
+
+- **ORCID** (recommended for any deployment beyond a few users or on a public address). The Foundry keeps it. Registering an ORCID public API client is free, open to any ORCID account holder, and a short documented step. ORCID accepts only HTTPS redirect URIs in production and requires them to match exactly, so ORCID sign-in needs an HTTPS address for the API. Whether ORCID accepts a lab-network HTTPS hostname is unverified; the install guide must not promise it.
+- **Local password login** (lab tier, a few users). Deliberately small, following NIST SP 800-63B revision 4 (August 2025) and the OWASP Password Storage and Authentication cheat sheets:
+  - Accounts are created by a platform administrator with a temporary password that must be changed at first sign-in. No self-registration and no email reset, so no mail server is needed; an administrator resets forgotten passwords, which again forces a change at next sign-in. (Design call; self-registration with admin approval can be added later.)
+  - Hashing: Argon2id through `pwdlib` (`pwdlib[argon2]`, the library FastAPI's documentation now uses; `passlib` is unmaintained and breaks on Python 3.13). Parameters at least OWASP's minimum, m=19 MiB, t=2, p=1, tuned so a hash takes well under a second on a workstation. Salts are generated by the library. Hashes are rehashed on sign-in when parameters are raised. No bcrypt (72-byte limit) and no custom schemes.
+  - Pepper: an optional secret key from settings, applied as an extra keyed step (NIST "SHOULD"), stored outside the database. If set, it must be backed up with the deployment's secrets; losing it invalidates every password.
+  - Password rules (NIST): passwords are the only factor, so the minimum is 15 characters; accept at least 64 characters, all printable ASCII, spaces, and Unicode (each code point counts as one character); no composition rules; no periodic expiry; reject passwords on a blocklist of common and breached passwords plus context words (the service name, the username). The blocklist ships with the image so it works offline; an online breached-password check (k-anonymity range queries) is optional.
+  - Allow password managers and paste; no password hints or security questions.
+  - Failed attempts: counted per account, not per IP, with exponential back-off between attempts and a hard lock after at most 100 consecutive failures (NIST ceiling) that only an administrator clears. A per-IP throttle may be added on top. Every failure, lock, and reset is logged.
+  - The same generic error for unknown user, wrong password, and locked account, and the same work done in every case (a dummy hash verification for unknown users) so response time does not reveal which accounts exist.
+  - Changing a password requires the current password, and revokes the user's other Hub sessions. API keys are separate credentials and are not affected.
+  - The API serves a minimal sign-in form at the point where it otherwise redirects to ORCID, so the Hub's sign-in flow with the API (`/auth/hub/*`) is unchanged. nano-crucible and the uploaders keep using API keys.
+  - Login must be served over HTTPS whenever it crosses a network; the install guide treats plain HTTP as acceptable only on a single machine.
+- How a user signs in is stored as its own record (method plus external identifier, such as an ORCID iD or a local username), not encoded in the user identifier. Moving a group from passwords to ORCID later, or adding another provider, then adds a record instead of migrating identities.
+- A user without an ORCID gets an MFID in the user identifier column, as service accounts already do. Separating identity from ORCID for everyone is the planned user-MFID work in `mfid_naming_transition.md`, not part of this project.
+- A bundled identity provider (Keycloak, Zitadel, Authentik) or generic OIDC support is not part of this project; the sign-in record above leaves room for it.
 
 ### Storage
 
@@ -113,7 +124,7 @@ Each phase ships on its own and is tested before the next. Phases 1 to 4 are the
    - An admin bootstrap.
    - A `docker compose` setup with Postgres, the API, and the Hub (built from source until releases exist), plus a short install guide.
 2. **One S3-style storage layer** as described above, the object store added to compose, and the legacy upload routes deprecated.
-3. **OIDC sign-in**, with ORCID as a configured provider and a bundled identity provider in the lab-tier compose.
+3. **Local password login** for the lab tier, and the sign-in record that both methods use.
 4. **Releases**: licenses, public repositories, published images, versioned compose bundle, upgrade path. The license review can start immediately and run alongside Phases 1 to 3.
 5. **Plug-ins**: ingestion and post-processing (RabbitMQ), then printing and telemetry (MQTT).
 6. **Later:** HPC execution, Globus.
@@ -123,7 +134,7 @@ Each phase ships on its own and is tested before the next. Phases 1 to 4 are the
 1. Pin first, then change defaults. Every value the code assumes today goes into the Foundry config (`k8s-conf` ConfigMaps) and is deployed before the code default changes.
 2. The baseline migration only runs on an empty database. A check builds a fresh database from migrations and compares its schema with a schema-only dump of staging; any difference fails.
 3. Storage switches by setting, one environment at a time. The current GCS adapter stays until the S3-style path is proven. Staging switches first and runs the `crucible-tests` end-to-end suite against the real staging bucket through the S3-compatible API; production switches only after that, and switching back is a config change.
-4. Sign-in switches the same way: the current ORCID flow stays until the OIDC path, configured with ORCID, passes on staging. Existing users keep their ORCID identifiers.
+4. Sign-in: the Foundry keeps ORCID with local passwords disabled. Moving ORCID identities into the new sign-in record is a data migration tested on staging first; existing users keep their ORCID identifiers and sessions.
 5. The HTTP contract changes only on purpose: the OpenAPI snapshot diff in each PR, deprecation headers and client coordination before removing routes, `crucible-tests` on staging before every merge to `main`, rolling staging-first deploys.
 6. A CI job starts the compose setup on every PR and runs a smoke test (create a project, upload a file, download it), so Foundry changes cannot silently break self-hosting and the other way round.
 
@@ -136,7 +147,8 @@ Each phase ships on its own and is tested before the next. Phases 1 to 4 are the
 
 ## Left to the builder
 
-- Choice of object store and identity provider for compose, and of Python S3 and OIDC client libraries.
+- Choice of object store for compose and of the Python S3 client library.
+- Exact back-off schedule, Argon2id parameters above the minimum, and which common-password list ships with the image.
 - How settings are structured (one settings object, env var names), as long as they are documented and fail loudly when required values are missing.
 - How the baseline migration is produced (squash, `create_all` plus stamp, or generated SQL), as long as the schema comparison passes.
 - How the admin bootstrap works (first sign-in, a CLI command, or an env var naming the administrator).

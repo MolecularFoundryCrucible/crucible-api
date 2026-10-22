@@ -11,6 +11,7 @@ from app.models.users import UserPublicRead
 class ResourceCapabilities(SQLModel):
     can_edit: bool
     can_manage_access: bool
+    can_view_access: bool = Field(default=False, description="GET /resources/{mfid}/access would be accepted: a role on the record other than through public access, or platform administrator authority.")
     can_change_status: bool
     can_transfer: bool
     can_delete: bool = False

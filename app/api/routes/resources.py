@@ -36,7 +36,7 @@ from app.models.search import ResourceSearchResult
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import RESOURCE_AFFILIATION_DESCRIPTION, ResourceAffiliation, ResourceDetailQuery, ResourceEmbeddingListQuery
 from app.models.response_schemas import DetailResponse
-from app.services.resource_access import access_grant_read, access_grant_reads, with_grant_capabilities
+from app.services.resource_access import access_grant_read, access_grant_reads, may_view_members, with_grant_capabilities
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
 from app.utils.auth_utils import (
     authorize_user,
@@ -825,12 +825,18 @@ def _resolve_grantee(session, kind: str, principal: str):
 
 @router.get("/resources/{mfid}/access", response_model=List[AccessGrantRead])
 def list_resource_access(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    """List the grants on a resource. Requires permission to manage its ACL."""
+    """List the grants on a resource.
+
+    Readable by anyone holding a role on the resource other than through public
+    access, and by platform administrators. Each entry's capabilities say what
+    the caller may change; they are all false for callers who cannot manage access.
+    """
     with Session(engine) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
-        require_permission(session, auth_res, mfid, Permission.MANAGE_ACL)
+        if not may_view_members(session, auth_res, mfid):
+            raise HTTPException(status_code=403, detail="Access denied")
 
         rows = session.exec(
             select(ResourceACL, AccessGroup)

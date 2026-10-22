@@ -132,6 +132,45 @@ class TestIncludeMembers:
         assert client.get("/instruments", params={"include_members": True}).status_code == 422
 
 
+class TestOperatorList:
+    def test_role_holders_see_operators_and_only_admins_may_remove(self, client, db_engine, auth_as):
+        mfid = _setup(client, db_engine, auth_as)
+        for user_id, can_remove in ((OWNER, True), (ADMIN, True), (EDITOR, False)):
+            _as(auth_as, db_engine, user_id)
+            resp = client.get(f"/instruments/{mfid}/service_accounts")
+            assert resp.status_code == 200, resp.text
+            operators = resp.json()
+            assert [o["unique_id"] for o in operators] == [SA]
+            assert operators[0]["capabilities"] == {"can_remove": can_remove, "can_change_role": False, "assignable_roles": []}
+
+    def test_stranger_and_public_only_callers_cannot_see_operators(self, client, db_engine, auth_as):
+        mfid = _setup(client, db_engine, auth_as)
+        _as(auth_as, db_engine, STRANGER)
+        assert client.get(f"/instruments/{mfid}/service_accounts").status_code == 403
+        with Session(db_engine) as session:
+            public = AccessGroup(group_name="public", group_type=AccessGroupType.SYSTEM.value)
+            session.add(public)
+            session.commit()
+            session.refresh(public)
+            session.add(ResourceACL(mfid=mfid, accessgroup_id=public.id, read=True, write=False, permission="viewer"))
+            session.commit()
+            public_id = public.id
+        auth_as(STRANGER, groups=[("public", public_id)])
+        assert client.get(f"/instruments/{mfid}/service_accounts").status_code == 403
+
+    def test_editor_still_cannot_bind_or_unbind(self, client, db_engine, auth_as):
+        mfid = _setup(client, db_engine, auth_as)
+        _as(auth_as, db_engine, EDITOR)
+        assert client.post(f"/instruments/{mfid}/service_accounts/{SA}").status_code == 403
+        assert client.delete(f"/instruments/{mfid}/service_accounts/{SA}").status_code == 403
+
+    def test_bind_response_carries_admin_capabilities(self, client, db_engine, auth_as):
+        mfid = _setup(client, db_engine, auth_as)
+        _as(auth_as, db_engine, OWNER)
+        operators = client.post(f"/instruments/{mfid}/service_accounts/{SA}").json()
+        assert operators[0]["capabilities"]["can_remove"] is True
+
+
 class TestMaintainerAffiliation:
     def _second_instrument(self, client):
         resp = client.post("/instruments", json={"instrument_id": "sem-1", "instrument_name": "SEM", "location": "b30"})

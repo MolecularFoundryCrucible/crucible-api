@@ -64,6 +64,7 @@ def test_canonical_get_uses_project_mfid(client, db_engine, auth_as):
     assert response.json()["capabilities"] == {
         "can_edit": False,
         "can_manage_access": False,
+        "can_view_access": False,
         "can_change_status": False,
         "can_transfer": False,
         "can_delete": False,
@@ -134,6 +135,7 @@ def test_project_update_accepts_canonical_mfid(client, db_engine, auth_as):
     assert response.json()["capabilities"] == {
         "can_edit": True,
         "can_manage_access": True,
+        "can_view_access": True,
         "can_change_status": True,
         "can_transfer": False,
         "can_delete": False,

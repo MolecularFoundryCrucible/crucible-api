@@ -385,10 +385,13 @@ def resource_capabilities(session, principal: Principal, mfid: str, *,
             deletion_requested = get_active_deletion_request(session, mfid) is not None
         may_request_deletion = not deletion_requested
 
+    from app.services.resource_access import record_role
+
     return ResourceCapabilities(
         can_edit=_has_resource_permission(
             principal, acl_rows, Permission.EDIT),
         can_manage_access=max_grant_role is not None,
+        can_view_access=principal.is_platform_admin or record_role(principal, acl_rows) is not None,
         can_change_status=(
             status_permission is not None
             and _has_resource_permission(

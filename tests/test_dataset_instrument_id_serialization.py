@@ -53,6 +53,7 @@ def test_get_resource_resolves_instrument_id_slug(client, db_engine, auth_as):
     assert body["capabilities"] == {
         "can_edit": True,
         "can_manage_access": True,
+        "can_view_access": True,
         "can_change_status": False,
         "can_transfer": True,
         "can_delete": False,
@@ -80,6 +81,7 @@ def test_get_sample_resolves_instrument_id_slug(client, db_engine, auth_as):
     assert body["capabilities"] == {
         "can_edit": True,
         "can_manage_access": True,
+        "can_view_access": True,
         "can_change_status": False,
         "can_transfer": True,
         "can_delete": False,

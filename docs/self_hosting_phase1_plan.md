@@ -4,7 +4,7 @@
 
 **Goal:** `docker compose up` on one workstation gives a working Crucible API backed by its own Postgres, with no Google Cloud or Foundry dependency, while the Foundry deployment keeps running unchanged.
 
-**Architecture:** First pin every value the code silently assumes into the Foundry's Kubernetes config, then remove those defaults from the code behind explicit settings and feature flags that fail loudly when required values are missing. A schema snapshot of staging becomes the starting point for empty databases, applied by a `db upgrade` command that also runs normal Alembic upgrades. A compose bundle (Postgres, migrate job, API, Caddy, later the Hub), an admin bootstrap command, an install guide, and a CI smoke test complete the phase.
+**Architecture:** First pin every value the code silently assumes into the Foundry's Kubernetes config, then remove those defaults from the code behind explicit settings and feature flags that fail loudly when required values are missing. A schema snapshot of staging becomes the starting point for empty databases, applied by a `db upgrade` command that also runs normal Alembic upgrades. A compose bundle (Postgres, migrate job, API, Caddy, later the Hub), an admin bootstrap command, an install guide, and a CI smoke test complete the phase. Caddy is the tested default; the guide documents what any reverse proxy must do and gives an nginx example, so institutions can use their own.
 
 **Tech Stack:** Python 3.11, FastAPI, SQLModel/SQLAlchemy, Alembic, Postgres 17 with `vector` and `pg_trgm`, Docker Compose v2, Caddy 2, GitHub Actions, uv.
 
@@ -191,7 +191,7 @@
   - `api`: same image, `PORT=8000`, `API_PUBLIC_URL`, `API_PATH=api/v3`, all feature flags off, `HUB_AUTH_ENABLED=false`, `depends_on: migrate: condition: service_completed_successfully`, healthcheck on `/health/ready` with Python's `urllib` (the image has no curl).
   - `proxy`: `caddy:2` publishing `${CRUCIBLE_HTTP_PORT:-8080}:80`. `handle_path /api/v3/*` to `api:8000` (strips the prefix, as `crucible-nginx` does today). HTTPS is documented, not default.
 - `.env.example` lists every variable with a one-line explanation; secrets are placeholders the guide tells you to generate (`openssl rand -hex 32`).
-- Install guide covers: prerequisites (Docker Engine with Compose v2), configuration, `docker compose up -d --build --wait`, creating the administrator, checking `/api/v3/health/ready`, pointing nano-crucible at `http://<host>:8080/api/v3` with the API key, what is not available yet (file storage arrives in Phase 2, Hub sign-in needs ORCID until Phase 3), backups with `pg_dump`, and upgrading (rebuild and `up`; `migrate` runs automatically).
+- Install guide covers: prerequisites (Docker Engine with Compose v2), configuration, `docker compose up -d --build --wait`, creating the administrator, checking `/api/v3/health/ready`, pointing nano-crucible at `http://<host>:8080/api/v3` with the API key, what is not available yet (file storage arrives in Phase 2, Hub sign-in needs ORCID until Phase 3), backups with `pg_dump`, and upgrading (rebuild and `up`; `migrate` runs automatically). A "Using your own reverse proxy" section lists the routing rules (`/api/v3/` to the API with the prefix stripped, `/hub` to the Hub with the prefix kept, client address headers passed, request body size and timeouts sufficient for uploads) and an nginx example derived from `crucible-nginx`.
 
 - [ ] **Step 1:** Write the files. **Step 2:** From a clean checkout: `cp .env.example .env`, fill secrets, `docker compose up -d --build --wait`; expected: all services healthy, `curl -s localhost:8080/api/v3/health/ready` shows `"status":"ok"` and `"schema_state":"current"`. **Step 3:** `docker compose run --rm api python -m app.cli.admin create-admin --first-name Ada --last-name Admin` prints a key; `curl -H "Authorization: Bearer <key>" localhost:8080/api/v3/account` returns the admin profile (use the auth header form the API documents). **Step 4:** `docker compose down -v`. Commit: `Add a docker compose bundle and install guide`.
 
@@ -199,17 +199,16 @@
 
 **Files:**
 - Create: `scripts/selfhost_smoke.py`
-- Create: `.github/workflows/ci.yml`
+- Modify: `.github/workflows/tests.yml` (added in #351: one `pytest` job with a `pgvector/pgvector:pg16` service; it does not set `CRUCIBLE_TEST_PG_URL`, so the Postgres-gated tests are skipped today)
 
 **Interfaces:**
 - Produces `python scripts/selfhost_smoke.py --api-url URL --api-key KEY`: checks health (`status == "ok"`, `schema_state == "current"`), creates a project, a sample and a dataset in it, links them, reads the dataset back by MFID and through `GET /datasets?mfid=`, and confirms an unauthenticated request is refused. Exits `0` on success, non-zero with the failing step named.
-- Produces workflow `ci.yml` on pull requests to `staging` and `main`, three jobs:
-  - `tests`: `astral-sh/setup-uv`, `uv sync --locked`, `uv run pytest -q` with no `.env`.
-  - `postgres`: service `pgvector/pgvector:pg17`, runs the gated tests (`CRUCIBLE_TEST_PG_URL`), including Task 5's.
-  - `compose-smoke`: generates `.env` from `.env.example` with random secrets, `docker compose up -d --build --wait`, `create-admin`, runs the smoke script against the proxy, prints `docker compose logs` on failure, `down -v` always.
+- Changes to `tests.yml`, keeping its pinned action versions and permissions:
+  - `pytest` job: service image `pgvector/pgvector:pg17` (production is Postgres 17); create one more database and set `CRUCIBLE_TEST_PG_URL` to it so the gated tests, including Task 5's, run.
+  - New `compose-smoke` job: generates `.env` from `.env.example` with random secrets, `docker compose up -d --build --wait`, `create-admin`, runs the smoke script against the proxy, prints `docker compose logs` on failure, `down -v` always.
 
 - [ ] **Step 1:** Write the smoke script; run it against Task 7's stack locally; expected exit `0`. Break one step on purpose (wrong key); expected non-zero and the step named.
-- [ ] **Step 2:** Write the workflow; push the branch and open the PR; all three jobs pass. Commit: `Add CI with a self-hosted smoke test`.
+- [ ] **Step 2:** Update the workflow; push the branch and open the PR; both jobs pass and the gated tests report as run, not skipped. Commit: `Run Postgres tests and a self-hosted smoke test in CI`.
 
 ### Task 9: Hub in the compose bundle (depends on crucible-hub)
 

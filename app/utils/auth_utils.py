@@ -10,7 +10,9 @@ import datetime
 from collections import namedtuple
 from dataclasses import replace
 from cachetools import TTLCache
-from jose import jwt, JWTError
+from joserfc import jwt
+from joserfc.errors import JoseError
+from joserfc.jwk import OctKey
 
 logger = logging.getLogger(__name__)
 
@@ -155,12 +157,17 @@ def code_for_token_exchange(code: str, client_id, client_secret, redirect_uri):
     return response_data['access_token']
 
 
+def encode_token(claims: dict, secret_key = SECRET_KEY, alg = ALGORITHM) -> str:
+    return jwt.encode({"alg": alg}, claims, OctKey.import_key(secret_key))
+
+
 def decode_token(token: str, secret_key = SECRET_KEY, alg = ALGORITHM):
     try:
-        payload = jwt.decode(token, secret_key, algorithms=[alg])
-        return payload
-    except JWTError:
+        decoded = jwt.decode(token, OctKey.import_key(secret_key), algorithms=[alg])
+        jwt.JWTClaimsRegistry(exp={"essential": True}).validate(decoded.claims)
+    except (JoseError, ValueError):
         return None
+    return decoded.claims
 
 
 def find_key(credentials, engine):

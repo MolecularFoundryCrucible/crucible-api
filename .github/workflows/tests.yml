@@ -1,0 +1,58 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      API_CONF_FILE: app/conf/api_conf_local.yaml
+      CRUCIBLE_SECRET_KEY: ci-only
+      PGDB_PW: ci-only
+      DB_USERNAME: ci
+      DB_SERVER: localhost
+      DB_DATABASE: ci
+      RABBITMQ_DEFAULT_PW: ci-only
+      HUB_AUTH_TEST_DATABASE_URL: postgresql+psycopg2://postgres:ci@localhost:5432/crucible_hub_auth_test
+      SLUG_INDEX_TEST_DATABASE_URL: postgresql+psycopg2://postgres:ci@localhost:5432/crucible_slug_index_test
+      EMAIL_INDEX_TEST_DATABASE_URL: postgresql+psycopg2://postgres:ci@localhost:5432/crucible_email_index_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.16"
+          enable-cache: true
+      - name: Create test databases
+        env:
+          PGPASSWORD: ci
+        run: |
+          for db in crucible_hub_auth_test crucible_slug_index_test crucible_email_index_test; do
+            psql -h localhost -U postgres -c "CREATE DATABASE $db"
+          done
+      - run: uv sync --locked
+      - run: uv run pytest -q

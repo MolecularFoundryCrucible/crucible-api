@@ -9,7 +9,6 @@ logger = logging.getLogger(__name__)
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from jose import jwt
 from sqlmodel import Session, select
 
 from app.api.dependencies import (
@@ -66,7 +65,7 @@ def redirect_exchange(request: Request, code: str, state: str = None):
         RedirectResponse to the appropriate page after successful authentication
     """
     import urllib.parse
-    from app.utils.auth_utils import ALGORITHM, ORCID_TIMEOUT, SECRET_KEY, code_for_token_exchange
+    from app.utils.auth_utils import ORCID_TIMEOUT, code_for_token_exchange, encode_token
 
     orcid_client_id = get_orcid_client_id()
     orcid_client_secret = get_orcid_client_secret()
@@ -84,8 +83,8 @@ def redirect_exchange(request: Request, code: str, state: str = None):
     except (requests.RequestException, ValueError, KeyError) as err:
         logger.warning("ORCID sign-in failed: %s", type(err).__name__)
         raise HTTPException(status_code=502, detail="ORCID sign-in failed; try again") from None
-    user_info_payload['exp'] = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=1)
-    user_info_jwt = jwt.encode(user_info_payload, SECRET_KEY, algorithm=ALGORITHM)
+    user_info_payload['exp'] = int((datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=1)).timestamp())
+    user_info_jwt = encode_token(user_info_payload)
 
     response = RedirectResponse(_local_path(request.cookies.get("after_login_return_to_page")))
     response.delete_cookie("after_login_return_to_page")

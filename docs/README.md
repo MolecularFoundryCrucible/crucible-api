@@ -47,6 +47,10 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Per-worker Prometheus counters](prometheus_multiprocess_followup.md) and [public `/metrics` endpoint](public_metrics_endpoint_followup.md)
 - [Unused Cloud SQL proxy sidecar](cloud_sql_proxy_sidecar_followup.md)
 
+## Self-hosting
+
+- [Self-hosted Crucible](self_hosting_design.md): deployment tiers, S3-style storage, OIDC sign-in, releases, and the phased plan for running Crucible without Google Cloud.
+
 ## Deferred designs
 
 - [Batch lookup and the `unique_id` to `mfid` transition](mfid_naming_transition.md)

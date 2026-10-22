@@ -61,6 +61,7 @@ class TestEditingTheRecord:
         assert capabilities.model_dump() == {
             "can_edit": False,
             "can_manage_access": False,
+            "can_view_access": True,
             "can_change_status": False,
             "can_transfer": False,
             "can_delete": False,

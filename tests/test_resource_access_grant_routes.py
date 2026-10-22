@@ -62,25 +62,110 @@ def test_list_resource_access_shows_canonical_grant(client, db_engine, auth_as):
     }
 
 
-def test_list_resource_access_requires_manage_acl(client, db_engine, auth_as):
-    _setup(db_engine)
-    with Session(db_engine) as session:
-        grantee_group = session.exec(
-            select(AccessGroup).where(AccessGroup.group_name == "0000-0002-3456-7890")
-        ).one()
-        session.add(ResourceACL(
-            mfid="ds_1",
-            accessgroup_id=grantee_group.id,
-            read=True,
-            write=False,
-            permission=Role.VIEWER.db_value,
-        ))
-        session.commit()
-        grantee_group_id = grantee_group.id
+READ_ONLY = {"can_remove": False, "can_change_role": False, "assignable_roles": []}
 
-    auth_as("0000-0002-3456-7890", groups=[("0000-0002-3456-7890", grantee_group_id, Role.OWNER)])
+
+def _grant(db_engine, group_name, group_type, role):
+    with Session(db_engine) as session:
+        ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
+        if ag is None:
+            ag = AccessGroup(group_name=group_name, group_type=group_type)
+            session.add(ag)
+            session.flush()
+        session.add(ResourceACL(mfid="ds_1", accessgroup_id=ag.id, read=True, write=False, permission=role.db_value))
+        session.commit()
+        return ag.id
+
+
+def _public_id(db_engine):
+    with Session(db_engine) as session:
+        return session.exec(select(AccessGroup.id).where(AccessGroup.group_name == PUBLIC_GROUP_NAME)).one()
+
+
+def test_direct_viewer_reads_the_access_list_read_only(client, db_engine, auth_as):
+    _setup(db_engine)
+    grantee_id = _grant(db_engine, "0000-0002-3456-7890", AccessGroupType.IDENTITY.value, Role.VIEWER)
+    auth_as("0000-0002-3456-7890", groups=[("0000-0002-3456-7890", grantee_id, Role.OWNER)])
+
     resp = client.get("/resources/ds_1/access")
-    assert resp.status_code == 403
+    assert resp.status_code == 200, resp.text
+    grants = {g["principal_id"]: g for g in resp.json()}
+    assert set(grants) == {"0000-0001-2345-6789", "0000-0002-3456-7890"}
+    assert all(g["capabilities"] == READ_ONLY for g in grants.values())
+
+
+def test_project_member_reads_the_access_list(client, db_engine, auth_as):
+    _setup(db_engine)
+    project_id = _grant(db_engine, "0proj00000000000000000000a", AccessGroupType.PROJECT.value, Role.VIEWER)
+    auth_as("0000-0002-3456-7890", groups=[("0proj00000000000000000000a", project_id, Role.VIEWER)])
+
+    resp = client.get("/resources/ds_1/access")
+    assert resp.status_code == 200, resp.text
+    assert all(g["capabilities"] == READ_ONLY for g in resp.json())
+
+
+def test_public_access_alone_does_not_reveal_the_access_list(client, db_engine, auth_as):
+    _setup(db_engine)
+    public_id = _grant(db_engine, PUBLIC_GROUP_NAME, AccessGroupType.SYSTEM.value, Role.VIEWER)
+    auth_as("0000-0002-3456-7890", groups=[(PUBLIC_GROUP_NAME, public_id, Role.VIEWER)])
+
+    assert client.get("/resources/ds_1/access").status_code == 403
+
+
+def test_public_grant_is_listed_for_granted_viewers(client, db_engine, auth_as):
+    _setup(db_engine)
+    public_id = _grant(db_engine, PUBLIC_GROUP_NAME, AccessGroupType.SYSTEM.value, Role.VIEWER)
+    grantee_id = _grant(db_engine, "0000-0002-3456-7890", AccessGroupType.IDENTITY.value, Role.VIEWER)
+    auth_as("0000-0002-3456-7890", groups=[("0000-0002-3456-7890", grantee_id, Role.OWNER), (PUBLIC_GROUP_NAME, public_id, Role.VIEWER)])
+
+    resp = client.get("/resources/ds_1/access")
+    assert resp.status_code == 200, resp.text
+    public = [g for g in resp.json() if g["principal_type"] == "public"]
+    assert public and public[0]["capabilities"] == READ_ONLY
+
+
+def test_stranger_and_platform_contributor_cannot_read_the_access_list(client, db_engine, auth_as):
+    _setup(db_engine)
+    auth_as("0000-0002-3456-7890", groups=[])
+    assert client.get("/resources/ds_1/access").status_code == 403
+    auth_as("0000-0002-3456-7890", groups=[], platform_role=PlatformRole.CONTRIBUTOR)
+    assert client.get("/resources/ds_1/access").status_code == 403
+
+
+def test_platform_admin_reads_the_access_list_only_when_elevated(client, db_engine, auth_as):
+    _setup(db_engine)
+    auth_as("0000-0002-3456-7890", groups=[], platform_role=PlatformRole.ADMIN)
+    assert client.get("/resources/ds_1/access", headers={"Crucible-Privilege-Mode": "normal"}).status_code == 403
+    resp = client.get("/resources/ds_1/access", headers={"Crucible-Privilege-Mode": "elevated"})
+    assert resp.status_code == 200, resp.text
+
+
+def test_can_view_access_capability_follows_the_same_rule(db_engine):
+    from app.utils.auth_utils import resource_capabilities
+    from app.utils.permissions import GroupMembership, Principal
+
+    _setup(db_engine)
+    public_id = _grant(db_engine, PUBLIC_GROUP_NAME, AccessGroupType.SYSTEM.value, Role.VIEWER)
+    grantee_id = _grant(db_engine, "0000-0002-3456-7890", AccessGroupType.IDENTITY.value, Role.VIEWER)
+    public = GroupMembership(id=public_id, group_name=PUBLIC_GROUP_NAME, role=Role.VIEWER)
+    own = GroupMembership(id=grantee_id, group_name="0000-0002-3456-7890", role=Role.OWNER)
+    with Session(db_engine) as session:
+        def view(principal):
+            return resource_capabilities(session, principal, "ds_1").can_view_access
+        assert view(Principal(user_id="x", groups=(public,))) is False
+        assert view(Principal(user_id="x", groups=(public, own))) is True
+        assert view(Principal(user_id="x", platform_role=PlatformRole.CONTRIBUTOR, groups=(public,))) is False
+        assert view(Principal(user_id="x", platform_role=PlatformRole.ADMIN, groups=(public,))) is True
+
+
+def test_viewer_still_cannot_change_access(client, db_engine, auth_as):
+    _setup(db_engine)
+    grantee_id = _grant(db_engine, "0000-0002-3456-7890", AccessGroupType.IDENTITY.value, Role.VIEWER)
+    auth_as("0000-0002-3456-7890", groups=[("0000-0002-3456-7890", grantee_id, Role.OWNER)])
+
+    assert client.put("/resources/ds_1/access/users/0000-0001-2345-6789", json={"permission": "viewer"}).status_code == 403
+    assert client.delete("/resources/ds_1/access/users/0000-0002-3456-7890").status_code == 403
+    assert client.put("/resources/ds_1/access/public").status_code == 403
 
 
 def test_set_resource_access_grants_and_returns_permission(client, db_engine, auth_as):

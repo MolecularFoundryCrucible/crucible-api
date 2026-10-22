@@ -105,13 +105,14 @@ Dataset, sample, project, and instrument detail responses now share an optional 
 {
   "can_edit": true,
   "can_manage_access": true,
+  "can_view_access": true,
   "can_change_status": true,
   "can_transfer": false,
   "max_grant_role": "editor"
 }
 ```
 
-`max_grant_role` is `viewer`, `contributor`, `editor`, `admin`, or null. Ownership is never grantable and continues to require the ownership-transfer route. Capabilities are populated by canonical singleton reads, generic `GET /resources/{resource_mfid}` detail reads, exact `instrument_id` and `project_id` collection lookups, supported create and update responses, and instrument-status responses. Dataset and sample detail responses set `can_change_status=false` because those resource types have no lifecycle-status operation. General collection, search, lineage, and embedded-resource responses leave the field null. Clients should use these values for presentation and preflight guidance while continuing to handle authorization failures from mutation routes.
+`can_view_access` says whether `GET /resources/{mfid}/access` would be accepted (see below). `max_grant_role` is `viewer`, `contributor`, `editor`, `admin`, or null. Ownership is never grantable and continues to require the ownership-transfer route. Capabilities are populated by canonical singleton reads, generic `GET /resources/{resource_mfid}` detail reads, exact `instrument_id` and `project_id` collection lookups, supported create and update responses, and instrument-status responses. Dataset and sample detail responses set `can_change_status=false` because those resource types have no lifecycle-status operation. General collection, search, lineage, and embedded-resource responses leave the field null. Clients should use these values for presentation and preflight guidance while continuing to handle authorization failures from mutation routes.
 
 ### `PATCH /projects/{project_ref}`
 
@@ -121,7 +122,7 @@ Body now rejects `project_lead_orcid`, `project_lead_email`, `project_lead_usern
 
 ### `GET /resources/{mfid}/access`, `PUT/DELETE /resources/{mfid}/access/{kind}/{principal}`, `PUT/DELETE /resources/{mfid}/access/public`
 
-**Breaking access-grant contract.** `GET /resources/{mfid}/access` now requires `manage_acl`, so viewers, contributors, and editors receive 403 instead of seeing every principal with access. Resource owners, effective admins, and platform administrators can list the grants.
+**Breaking access-grant contract.** `GET /resources/{mfid}/access` is readable by any caller holding a role on the resource other than through public access, including a role reached through a project grant, and by platform administrators in elevated mode. Callers who can read the resource only because it is public, and platform contributors without a grant, receive 403. Each entry's `capabilities` are all false for callers who cannot manage access. Changing grants still requires `manage_acl`.
 
 `AccessGrantRead` is now a public principal description rather than an access-group record:
 

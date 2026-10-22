@@ -33,6 +33,7 @@ def test_canonical_get_uses_instrument_mfid(client, db_engine, auth_as):
     assert response.json()["capabilities"] == {
         "can_edit": False,
         "can_manage_access": False,
+        "can_view_access": False,
         "can_change_status": False,
         "can_transfer": False,
         "can_delete": False,

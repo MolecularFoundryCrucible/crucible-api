@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import InstrumentRef, ServiceAccountRef
 from app.general_utils import get_utc_datetime
+from app.models.access import EntryCapabilities
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.core_models import (
     AccessGroup, Instrument, Resource, ResourceACL, ScientificMetadataBinary, User, UserAccessGroupLink)
@@ -19,13 +20,13 @@ from app.models.users import UserPublicRead
 from app.services.resource_access import load_member_grants, may_view_members, record_role, with_grant_capabilities
 from app.services.resource_details import ResourceDetailOptions, load_instrument_detail
 from app.utils.auth_utils import (
-    authorize_user, maintainer_affiliation_filter, owner_affiliation_filter,
+    authorize_user, fetch_acl_rows, maintainer_affiliation_filter, owner_affiliation_filter,
     require_permission, resource_capabilities)
 from app.services.resource_pagination import (
     ResourcePaginationSpec, execute_resource_page, prepare_resource_pagination)
 from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.instrument_utils import assert_instrument_id_available, get_instrument_or_404
-from app.utils.permissions import AccessGroupType, Permission, Principal, Role
+from app.utils.permissions import AccessGroupType, Permission, Principal, Role, has_permission
 from app.utils.search_utils import (
     apply_trigram_search,
     configure_trigram_search,
@@ -464,8 +465,13 @@ def set_instrument_status(
         )
 
 
-def _get_instrument_operators(instrument_mfid: str, session) -> List[AccessGroupMemberRead]:
-    '''Query the instrument's operator group members. No auth check, for internal use only.'''
+def _get_instrument_operators(instrument_mfid: str, session, principal: Principal) -> List[AccessGroupMemberRead]:
+    '''Query the instrument's operator group members, with what `principal` may do to each. No auth check.'''
+    capabilities = EntryCapabilities(
+        can_remove=has_permission(principal, fetch_acl_rows(session, instrument_mfid), Permission.MANAGE_ACL),
+        can_change_role=False,
+        assignable_roles=[],
+    )
     rows = session.exec(
         select(User, UserAccessGroupLink.role)
         .select_from(join(AccessGroup, UserAccessGroupLink, UserAccessGroupLink.accessgroup_id == AccessGroup.id))
@@ -477,7 +483,7 @@ def _get_instrument_operators(instrument_mfid: str, session) -> List[AccessGroup
         )
     ).all()
     return [
-        AccessGroupMemberRead.model_validate(user, update={"role": role or "unknown"})
+        AccessGroupMemberRead.model_validate(user, update={"role": role or "unknown", "capabilities": capabilities})
         for user, role in rows
     ]
 
@@ -487,12 +493,19 @@ def list_instrument_service_accounts(
     instrument_ref: InstrumentRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
+    '''
+    List the service accounts bound to the instrument's operator group.
+    Readable by anyone holding a role on the instrument other than through public
+    access, and by platform administrators; each entry's can_remove is true only
+    for callers who may unbind it (admin on the instrument).
+    '''
     with Session(engine) as session:
         instrument = get_instrument_or_404(session, instrument_ref)
         instrument_mfid = instrument.unique_id
 
-        require_permission(session, auth_res, instrument_mfid, Permission.MANAGE_ACL)
-        return _get_instrument_operators(instrument_mfid, session)
+        if not may_view_members(session, auth_res, instrument_mfid):
+            raise HTTPException(status_code=403, detail="Access denied")
+        return _get_instrument_operators(instrument_mfid, session, auth_res)
 
 
 @router.post("/instruments/{instrument_ref}/service_accounts/{service_account_ref}", response_model=List[AccessGroupMemberRead])
@@ -529,7 +542,7 @@ def add_instrument_service_account(
             session.add(link)
         session.commit()
 
-        return _get_instrument_operators(instrument_mfid, session)
+        return _get_instrument_operators(instrument_mfid, session, auth_res)
 
 
 @router.delete("/instruments/{instrument_ref}/service_accounts/{service_account_ref}", response_model=List[AccessGroupMemberRead])
@@ -562,4 +575,4 @@ def remove_instrument_service_account(
         session.delete(link)
         session.commit()
 
-        return _get_instrument_operators(instrument_mfid, session)
+        return _get_instrument_operators(instrument_mfid, session, auth_res)

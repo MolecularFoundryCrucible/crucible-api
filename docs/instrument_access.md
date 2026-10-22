@@ -33,7 +33,7 @@ No instrument role grants access to datasets assigned to the instrument. Maintai
 
 `members` is returned to any caller who holds a role on the instrument record and to platform administrators. Other callers, including bound service accounts and callers who can read the instrument only through public access, receive `members: null`. Using `include_members=true` on `GET /instruments` without `instrument_id` returns 422.
 
-`GET /resources/{instrument_mfid}/access` remains the full ACL listing and still requires `admin`.
+`GET /resources/{instrument_mfid}/access` is the full ACL listing, readable by the same callers as `members`; changing grants requires `admin`.
 
 Instrument collection and singleton responses include `role`, the caller's own effective role on the instrument record (`owner`, `admin`, `editor`, or another granted role), or `null`. Bound service accounts receive `null` because operator binding is not a record role.
 
@@ -56,7 +56,7 @@ POST   /instruments/{instrument_ref}/service_accounts/{service_account_ref}
 DELETE /instruments/{instrument_ref}/service_accounts/{service_account_ref}
 ```
 
-`instrument_ref` accepts the instrument MFID or `instrument_id` slug, and `service_account_ref` the service-account MFID or username. All three require `admin` on the instrument, so the instrument owner and admin maintainers can manage bindings. Only service accounts can be bound. The deprecated generic `POST /users/{user_ref}/access_groups/{group_name}` rejects human users for instrument groups with 409.
+`instrument_ref` accepts the instrument MFID or `instrument_id` slug, and `service_account_ref` the service-account MFID or username. Listing is open to the same callers as `members` (a role on the instrument other than through public access, or platform administrator), and each entry's `capabilities.can_remove` is true only for callers who may unbind it. Binding and unbinding require `admin` on the instrument, so the instrument owner and admin maintainers manage bindings. Only service accounts can be bound. The deprecated generic `POST /users/{user_ref}/access_groups/{group_name}` rejects human users for instrument groups with 409.
 
 A bound service account reaches every dataset assigned to the instrument at `contributor`. If a service account's key is exposed, rotate it through `POST /service_accounts/{service_account_ref}/rotate_key` (platform administrators only) or unbind it.
 

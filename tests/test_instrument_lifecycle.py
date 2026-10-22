@@ -52,6 +52,7 @@ class TestCreateInstrument:
         assert resp.json()["capabilities"] == {
             "can_edit": True,
             "can_manage_access": True,
+            "can_view_access": True,
             "can_change_status": True,
             "can_transfer": True,
             "can_delete": True,
@@ -171,6 +172,7 @@ class TestServiceAccountBinding:
         assert instrument.json()["capabilities"] == {
             "can_edit": False,
             "can_manage_access": False,
+            "can_view_access": False,
             "can_change_status": False,
             "can_transfer": False,
             "can_delete": False,

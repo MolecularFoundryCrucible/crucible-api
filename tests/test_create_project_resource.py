@@ -25,6 +25,7 @@ def test_create_project_creates_resource_and_owner_acl(client, db_engine, auth_a
     assert resp.json()["capabilities"] == {
         "can_edit": True,
         "can_manage_access": True,
+        "can_view_access": True,
         "can_change_status": True,
         "can_transfer": True,
         "can_delete": True,

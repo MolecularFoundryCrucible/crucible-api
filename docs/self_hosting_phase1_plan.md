@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - The Foundry deployment must not change behavior.
-- **Release order.** A release PR from `staging` to `main` carries everything on `staging`. Therefore no code task (Tasks 2 to 6) may merge into `staging` until Task 1 has been released to `main` and verified in production. Tasks 2 to 6 can be developed and reviewed on branches in the meantime.
+- **Release order (decided 2026-10-23).** Production changes only once, after the whole phase works on staging. Every task merges into `staging` in order and is verified there; Task 1 (merged as #358, verified on staging) therefore reaches production in the same release as the code that depends on it. This is safe because one Cloud Build run applies the ConfigMap, then the Deployment (new settings and new image together in each new pod), then pins the Deployment and CronJob to the new SHA tag. Between deploys the live Deployment and CronJob reference a fixed SHA tag (checked: production on `1559c56`), so a pod restarting while a build pushes `:latest` keeps its old image and old settings. Production checks (pinned keys, CronJob, `/health/ready`, `crucible-tests`) run right after that single release.
 - Every PR targets `staging`, passes the full test suite, and is verified on staging (and with `crucible-tests`) before the release PR to `main`.
 - Postgres major version 17 (Cloud SQL `crucible-db` runs `POSTGRES_17`), image `pgvector/pgvector:pg17`.
 - Empty environment values count as unset everywhere (`""` and whitespace-only).
@@ -36,7 +36,7 @@
 
 ---
 
-### Task 1: Pin the Foundry configuration (Kubernetes only, no code change)
+### Task 1: Pin the Foundry configuration (Kubernetes only, no code change). Done on staging: #358
 
 **Files:**
 - Modify: `k8s-conf/configmap-main.yaml`, `k8s-conf/configmap-staging.yaml`
@@ -61,10 +61,10 @@
 | `PRINTING_ENABLED`, `PROPOSAL_SYNC_ENABLED`, `INGESTION_ENABLED` | `true` | `true` | Deployment |
 | `PORT` | `7777` | `8889` | Deployment |
 
-- [ ] **Step 1:** Before editing, confirm with `kubectl exec deploy/crucible-api-staging -c crucible-api-container -- printenv` (and the same on `crucible-api-main`) that none of these keys is already set with a different value. Expected: none of them present.
-- [ ] **Step 2:** Add the keys and env entries. `kubectl apply --dry-run=client -f` on each edited file: no errors. A test, `tests/test_k8s_pinned_settings.py`, loads the YAML files and asserts, for both environments, that every key in the table is in the ConfigMap with exactly that value and is wired into the Deployment (and `PGDB_PW_VERSION` into the CronJob) through a `configMapKeyRef` to that ConfigMap.
-- [ ] **Step 3:** Commit, PR to `staging`, user merges. Cloud Build applies the ConfigMap and Deployment and re-applies the CronJob manifest through `scripts/deploy_hub_auth_cleanup.sh` (a merge patch of the rendered manifest that keeps the live `suspend` value). Verify on staging: `printenv` in the new pod shows every key; `kubectl get cronjob crucible-hub-auth-cleanup-staging -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].env[*].name}'` includes `PGDB_PW_VERSION`; `kubectl get cronjob ... -o jsonpath='{.spec.suspend}'` is unchanged; `/health/ready` is `ok`; `crucible-tests` passes.
-- [ ] **Step 4:** Release to `main` in a release PR containing only Task 1 (user approves and merges). Verify the same on production. Only after this may Tasks 2 to 6 merge into `staging`.
+- [x] **Step 1:** Before editing, confirm with `kubectl exec deploy/crucible-api-staging -c crucible-api-container -- printenv` (and the same on `crucible-api-main`) that none of these keys is already set with a different value. Expected: none of them present.
+- [x] **Step 2:** Add the keys and env entries. `kubectl apply --dry-run=client -f` on each edited file: no errors. A test, `tests/test_k8s_pinned_settings.py`, loads the YAML files and asserts, for both environments, that every key in the table is in the ConfigMap with exactly that value and is wired into the Deployment (and `PGDB_PW_VERSION` into the CronJob) through a `configMapKeyRef` to that ConfigMap.
+- [x] **Step 3:** Commit, PR to `staging`, user merges. Cloud Build applies the ConfigMap and Deployment and re-applies the CronJob manifest through `scripts/deploy_hub_auth_cleanup.sh` (a merge patch of the rendered manifest that keeps the live `suspend` value). Verify on staging: `printenv` in the new pod shows every key; `kubectl get cronjob crucible-hub-auth-cleanup-staging -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].env[*].name}'` includes `PGDB_PW_VERSION`; `kubectl get cronjob ... -o jsonpath='{.spec.suspend}'` is unchanged; `/health/ready` is `ok`; `crucible-tests` passes.
+- [x] **Step 4 (changed 2026-10-23):** No separate production release. Task 1 reaches production with the Phase 1 release, after all tasks work on staging.
 
 ### Task 2: Settings module and explicit secrets
 

@@ -106,7 +106,7 @@
 - Modify: `app/utils/constants.py` (RMQ settings removed; read at call time), `app/utils/rmq_utils.py` (`send_pika_message` resolves host, port default `5672`, user, and password itself)
 - Modify: `app/api/routes/files.py` (ingest route), `app/api/routes/pipelines.py` (flag; no literal `"admin"`)
 - Modify: `app/api/routes/print.py` (broker settings read per request, flag)
-- Modify: `app/utils/user_utils.py` (`PROPOSAL_DB_URL`, flag), `app/api/routes/account.py` and `app/api/routes/users.py` (explicit proposal-sync routes answer `503 feature_disabled` when the flag is off; user creation keeps working without proposals)
+- Modify: `app/utils/user_utils.py` (`PROPOSAL_DB_URL`, flag), `app/api/routes/account.py` (`POST /account/sync-projects` answers `503 feature_disabled` when the flag is off; user creation keeps working without proposals)
 - Modify: `app/services/storage_downloads.py` (`DEFAULT_UPLOAD_BUCKET` removed, `upload_bucket()` raises when unset, `allowed_buckets()` includes the upload bucket only when set), `app/services/multipart.py` (`retire_if_eligible` tolerates an unset upload bucket), `app/utils/multipart_config.py` (no `DEFAULT_UPLOAD_BUCKET`; `UPLOAD_BUCKET` required only when `MULTIPART_UPLOAD_ENABLED`)
 - Modify: `app/api/routes/gcs_storage.py` (no module-level `_DOWNLOAD_BUCKET`; `upload_bucket()` called where needed, before credentials, and `StorageNotConfigured` re-raised ahead of the generic `except Exception` blocks; `GCS_PROJECT` without default), `app/utils/deletion_utils.py` (stop importing `_DOWNLOAD_BUCKET`)
 - Modify: `app/api/main.py` (exception handlers)
@@ -130,7 +130,7 @@
   - `test_ingest_broker_failure_marks_request_failed`: with the flag on and `send_pika_message` raising `pika.exceptions.AMQPConnectionError`, the route returns `503` and the request has status `failed`.
   - `test_postprocess_disabled`: `POST /datasets/{mfid}/postprocess` returns `503` `feature_disabled` and creates no `PostprocessingRun`.
   - `test_rabbitmq_user_from_settings`: with `RMQ_USER=crucible`, both the ingest publish and the postprocess publish connect as `crucible`.
-  - `test_proposal_sync_disabled`: `find_mf_user_proposals("0000-0001-0000-0001") == []` without calling `requests.get`, and the explicit sync routes answer `503 feature_disabled`.
+  - `test_proposal_sync_disabled`: `find_mf_user_proposals("0000-0001-0000-0001") == []` without calling `requests.get`, and `POST /account/sync-projects` answers `503 feature_disabled`.
   - `test_download_without_bucket`: with `UPLOAD_BUCKET` unset, a download-link request returns `503 storage_not_configured`.
 - [ ] **Step 2:** Run them; expect failures.
 - [ ] **Step 3:** Implement as listed under Files and Interfaces.
@@ -286,7 +286,7 @@ Eight Gemini 4 Argon (High) reviewers read the plan against the code independent
 | 19 | Hub sign-in needs HTTPS off `localhost` and the API's `HUB_AUTH_*` settings; a default Hub service would break `up` without secrets | Task 9 (profile, settings, guide) |
 | 20 | Caddy must also route `/api/v3` without a trailing slash; port changes must keep URLs in step | Task 7 |
 
-Also adopted: `ConfigurationError` subclasses `RuntimeError`; proposal-sync routes answer `503` when disabled; the Dockerfile copies the whole `migrations/` directory; the smoke test uses `/account/profile` and sets `project_lead`.
+Also adopted: `ConfigurationError` subclasses `RuntimeError`; `POST /account/sync-projects` answers `503` when disabled; the Dockerfile copies the whole `migrations/` directory; the smoke test uses `/account/profile` and sets `project_lead`.
 
 ### Checked and rejected
 

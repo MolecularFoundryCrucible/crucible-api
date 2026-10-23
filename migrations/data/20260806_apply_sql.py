@@ -2,7 +2,7 @@
 Apply a .sql migration file using the API's own database configuration.
 
 Resolves the connection through get_engine(), so the password comes from the same
-place the API reads it (PGDB_PW, PGDB_PW_FILE, or PGDB_PW_VERSION in DB_CONF_FILE). Executes the file as one script rather than
+place the API reads it (PGDB_PW or PGDB_PW_VERSION in DB_CONF_FILE). Executes the file as one script rather than
 splitting on ';' — several migrations contain DO $$ ... $$ blocks with their
 own semicolons.
 

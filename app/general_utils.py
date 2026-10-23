@@ -35,41 +35,34 @@ def blank_to_none(val):
 
 
 _SECRET_VERSION = re.compile(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)")
+_fetched_secrets: dict[str, str] = {}
 
 
 def get_secret(name: str) -> str:
-    """Return a secret from, in order: the environment variable `name`, the file named by
-    `{name}_FILE` (Docker secrets), or the Secret Manager version named by `{name}_VERSION`
-    (a full projects/.../versions/... path). Secret Manager values are cached in the environment."""
-    from app.config import ConfigurationError, load_env_file, optional_env
+    """Return a secret from the environment variable `name`, then a file named `name` in the secrets
+    directory (surrounding whitespace removed), else from the Secret Manager version named by
+    `{name}_VERSION` (a full projects/.../versions/... path), fetched on first use and kept in memory."""
+    from app.config import ConfigurationError, is_secret_setting, load_env_file, optional_env, secret_file, setting_value
 
-    value = os.getenv(name)
-    if value is not None and value.strip():
-        return value
-    load_env_file()
-    value = os.getenv(name)
-    if value is not None and value.strip():
-        return value
-    file_path = optional_env(f"{name}_FILE")
-    if file_path is not None:
-        try:
-            with open(file_path, encoding="utf-8") as handle:
-                value = handle.read().removesuffix("\n").removesuffix("\r")
-        except (OSError, UnicodeDecodeError) as error:
-            raise ConfigurationError(f"{name}_FILE points to an unreadable file: {error}") from None
-        if not value.strip():
-            raise ConfigurationError(f"{name}_FILE points to an empty file")
+    if is_secret_setting(name):
+        value = setting_value(name)
+    else:
+        load_env_file()
+        raw = os.getenv(name)
+        value = raw if raw is not None and raw.strip() else secret_file(name)
+    if value:
         return value
     version = optional_env(f"{name}_VERSION")
-    if version is not None:
-        if not _SECRET_VERSION.fullmatch(version):
-            raise ConfigurationError(f"{name}_VERSION must be a full projects/<project>/secrets/<secret>/versions/<number or latest> path")
+    if version is None:
+        raise ConfigurationError(f"{name} is not set (set {name}, a {name} file in the secrets directory, or {name}_VERSION)")
+    if not _SECRET_VERSION.fullmatch(version):
+        raise ConfigurationError(f"{name}_VERSION must be a full projects/<project>/secrets/<secret>/versions/<number or latest> path")
+    if version not in _fetched_secrets:
         value = get_gcs_secret(version)
         if not value.strip():
             raise ConfigurationError(f"{name}_VERSION names an empty secret")
-        os.environ[name] = value
-        return value
-    raise ConfigurationError(f"{name} is not set (set {name}, {name}_FILE, or {name}_VERSION)")
+        _fetched_secrets[version] = value
+    return _fetched_secrets[version]
 
 
 def get_gcs_secret(secret_name: str) -> str:

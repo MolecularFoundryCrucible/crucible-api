@@ -39,7 +39,7 @@ def get_orcid_client_id():
 
 
 def get_orcid_client_secret():
-    return get_secret("ORCID_CLIENT_SECRET", os.getenv("ORCID_CLIENT_SECRET_VERSION"))
+    return get_secret("ORCID_CLIENT_SECRET")
 
 
 def get_redirect_uri():

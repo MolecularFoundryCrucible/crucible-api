@@ -277,7 +277,7 @@ def close_pending_join_requests(session, accessgroup_id, orcid, granted_role, ac
 def find_mf_user_proposals(orcid: str) -> List[str]:
     """Return MF proposal IDs for an ORCID without blocking on service failures."""
     try:
-        api_key = get_secret("PROPDB_APIKEY", "propdb-apikey/versions/1")
+        api_key = get_secret("PROPDB_APIKEY")
     except Exception as exc:
         logger.warning("Could not load proposal service credentials: %s", exc)
         return []

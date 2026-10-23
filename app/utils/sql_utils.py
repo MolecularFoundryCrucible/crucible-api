@@ -3,22 +3,22 @@ import logging
 import yaml
 import os
 import urllib.parse
+from app.config import load_env_file
 from app.general_utils import get_secret, get_utc_datetime, is_orcid
 
 logger = logging.getLogger(__name__)
 from fastapi import HTTPException
 from sqlalchemy import join
 from sqlmodel import create_engine, select
-from dotenv import load_dotenv
 # Need a .env file with the following variables
 #DB_PASSWORD
 #DB_USERNAME
 #DB_SERVER
 #DB_DATABASE
 
-def setup_engine(env_file = '.env'):
-    load_dotenv(env_file)
-    password = get_secret('PGDB_PW', 'pgcloud_pw/versions/2')
+def setup_engine(env_file=None):
+    load_env_file(env_file)
+    password = get_secret('PGDB_PW')
     if password is None:
         return
     encoded_pw = urllib.parse.quote_plus(password)

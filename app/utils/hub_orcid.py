@@ -4,10 +4,13 @@ from datetime import datetime, timedelta, timezone
 import requests
 from authlib.integrations.requests_client import OAuth2Session
 from authlib.oidc.core import CodeIDToken
+from google.api_core.exceptions import GoogleAPIError
+from google.auth.exceptions import GoogleAuthError
 from joserfc import jwt
 from joserfc.jwk import KeySet
 
 from app.api.dependencies import get_orcid_client_id, get_orcid_client_secret
+from app.config import ConfigurationError
 from app.utils.hub_login import HubLoginConfig, HubLoginUnavailable, InvalidHubLogin
 from app.utils.hub_secrets import HubSecretUnavailable, get_hub_secret
 
@@ -19,7 +22,7 @@ def _orcid_client_id() -> str:
 def _orcid_client_secret() -> str:
     try:
         return get_hub_secret("HUB_AUTH_ORCID_CLIENT_SECRET") or get_orcid_client_secret()
-    except HubSecretUnavailable:
+    except (HubSecretUnavailable, ConfigurationError, GoogleAPIError, GoogleAuthError):
         raise HubLoginUnavailable from None
 
 

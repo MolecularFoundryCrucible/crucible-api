@@ -50,7 +50,7 @@ def _publish(run: PostprocessingRun, routing_key: str):
         exchange="",
         routing_key=routing_key,
         user="admin",
-        rmq_pw=get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1"),
+        rmq_pw=get_secret("RABBITMQ_DEFAULT_PW"),
     )
 
 

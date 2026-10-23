@@ -107,7 +107,7 @@ def _publish_and_await_result(printer_id: str, mfid: str, name: str) -> tuple[di
     None means no such printer_id has ever published a status (or the
     broker couldn't be reached in time), not that it's merely offline.
     """
-    mqtt_password = get_secret("MQTT_PASSWORD", "mqtt-crucible-printers-passwd/versions/1")
+    mqtt_password = get_secret("MQTT_PASSWORD")
 
     job_id = str(uuid.uuid4())
     payload = {"job_id": job_id, "mfid": mfid, "name": name, "ts": time.time()}
@@ -203,7 +203,7 @@ def _list_printer_statuses() -> dict[str, dict]:
     discoverable this way and will not appear -- there is no separate
     registry of printer_ids to fall back on.
     """
-    mqtt_password = get_secret("MQTT_PASSWORD", "mqtt-crucible-printers-passwd/versions/1")
+    mqtt_password = get_secret("MQTT_PASSWORD")
 
     statuses: dict[str, dict] = {}
     subscribed = threading.Event()

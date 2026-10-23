@@ -12,9 +12,6 @@ def get_ingestion_tier(file_size: int) -> str:
         return "medium"
     return "large"
 from app.utils.constants import rmq_host, rmq_port, rmq_user
-from app.general_utils import get_secret
-
-rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
 
 def send_pika_message(message, exchange, routing_key, user = None, rmq_pw = ''):
     if user is None:

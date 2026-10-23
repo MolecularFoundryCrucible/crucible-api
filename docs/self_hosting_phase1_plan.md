@@ -66,7 +66,9 @@
 - [x] **Step 3:** Commit, PR to `staging`, user merges. Cloud Build applies the ConfigMap and Deployment and re-applies the CronJob manifest through `scripts/deploy_hub_auth_cleanup.sh` (a merge patch of the rendered manifest that keeps the live `suspend` value). Verify on staging: `printenv` in the new pod shows every key; `kubectl get cronjob crucible-hub-auth-cleanup-staging -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].env[*].name}'` includes `PGDB_PW_VERSION`; `kubectl get cronjob ... -o jsonpath='{.spec.suspend}'` is unchanged; `/health/ready` is `ok`; `crucible-tests` passes.
 - [x] **Step 4 (changed 2026-10-23):** No separate production release. Task 1 reaches production with the Phase 1 release, after all tasks work on staging.
 
-### Task 2: Settings module and explicit secrets
+### Task 2: Settings module and explicit secrets. Done on staging: #359, then #360
+
+**As built (2026-10-23):** #359 implemented the design below with a hand-written helper and `{NAME}_FILE`. #360 replaced the helper with `pydantic-settings` 2.15.0 (FastAPI's recommended settings library): a `Settings(BaseSettings)` class in `app/config.py` (environment, then a secrets directory `CRUCIBLE_SECRETS_DIR` defaulting to `/run/secrets`; blank values unset; cached by `get_settings()`), `get_secret(name)` with the same interface falling back to `{NAME}_VERSION` fetched once and kept in memory, and `{NAME}_FILE` replaced by the secrets directory. Later tasks add their settings as fields on `Settings` and read them through `get_settings()` or `setting_value()` rather than `os.getenv`.
 
 **Files:**
 - Create: `app/config.py`

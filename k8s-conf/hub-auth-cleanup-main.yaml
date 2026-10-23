@@ -58,6 +58,11 @@ spec:
                     configMapKeyRef:
                       name: crucible-api-config-main
                       key: db_database
+                - name: PGDB_PW_VERSION
+                  valueFrom:
+                    configMapKeyRef:
+                      name: crucible-api-config-main
+                      key: PGDB_PW_VERSION
                 - name: DB_POOL_SIZE
                   value: "1"
                 - name: DB_MAX_OVERFLOW

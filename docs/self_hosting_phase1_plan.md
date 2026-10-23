@@ -81,10 +81,10 @@
   - `class ConfigurationError(RuntimeError)` (subclass of `RuntimeError` so existing `except RuntimeError` callers keep working)
   - `optional_env(name: str) -> str | None`: stripped value, `None` when unset or blank.
   - `env_flag(name: str, default: bool = False) -> bool`: accepts `true/false/1/0/yes/no/on/off` case-insensitively; anything else raises `ConfigurationError` naming the variable.
-  - `missing_required_settings() -> list[str]`: names of required variables that are unset. Always required: `DB_SERVER`, `DB_USERNAME`, `DB_DATABASE`, `PGDB_PW`, `CRUCIBLE_SECRET_KEY`. When `INGESTION_ENABLED`: `RMQ_HOST`, `RMQ_USER`, `RMQ_ROUTING_SUFFIX`, `RABBITMQ_DEFAULT_PW`. When `PRINTING_ENABLED`: `MQTT_HOST`, `MQTT_USERNAME`, `MQTT_PASSWORD`. When `PROPOSAL_SYNC_ENABLED`: `PROPOSAL_DB_URL`, `PROPDB_APIKEY`. A secret counts as set when either `<NAME>` or `<NAME>_VERSION` is set.
+  - `missing_required_settings() -> list[str]`: names of required variables that are unset. Always required: `DB_SERVER`, `DB_USERNAME`, `DB_DATABASE`, `PGDB_PW`, `CRUCIBLE_SECRET_KEY`. When `INGESTION_ENABLED`: `RMQ_HOST`, `RMQ_USER`, `RMQ_ROUTING_SUFFIX`, `RABBITMQ_DEFAULT_PW`. When `PRINTING_ENABLED`: `MQTT_HOST`, `MQTT_USERNAME`, `MQTT_PASSWORD`. When `PROPOSAL_SYNC_ENABLED`: `PROPOSAL_DB_URL`, `PROPDB_APIKEY`. A secret counts as set when `<NAME>`, `<NAME>_FILE`, or `<NAME>_VERSION` is set.
   - `check_settings() -> None`: raises one `ConfigurationError` listing every missing name, sorted. Called from the FastAPI lifespan in Task 4, never at import.
 - Produces in `app/general_utils.py`:
-  - `get_secret(name: str) -> str`. Order: `<NAME>` env value if set; else `<NAME>_VERSION`, which must be a full `projects/.../secrets/.../versions/...` path, read through `get_gcs_secret` and cached in `os.environ[name]` as today; else `ConfigurationError(f"{name} is not set")`. No hard-coded Secret Manager paths remain. `load_dotenv()` is called only when `DB_CONF_FILE` names a file (no search up the directory tree).
+  - `get_secret(name: str) -> str`. Order: `<NAME>` env value if set; else the contents of the file named by `<NAME>_FILE` (Docker secrets convention; one trailing newline stripped); else `<NAME>_VERSION`, which must be a full `projects/.../secrets/.../versions/...` path, read through `get_gcs_secret` and cached in `os.environ[name]` as today; else `ConfigurationError(f"{name} is not set")`. No hard-coded Secret Manager paths remain. `load_dotenv()` is called only when `DB_CONF_FILE` names a file (no search up the directory tree).
   - `get_gcs_secret(secret_name: str) -> str`: Application Default Credentials only; the `HOME`-contains-`root` branch and the `temp_creds.json` file are removed (the design lists "the root-HOME credential assumption" for removal).
 
 - [ ] **Step 1: Write the failing tests** in `tests/test_config.py`:
@@ -94,6 +94,7 @@
   - `test_version_reference_satisfies_secret`: `PGDB_PW` unset and `PGDB_PW_VERSION` set means `PGDB_PW` is not missing.
   - `test_get_secret_prefers_env_then_version_then_errors`: env value returned without calling Secret Manager (monkeypatch `get_gcs_secret` to fail if called); with only `_VERSION`, the patched `get_gcs_secret` receives the exact path; with neither, `ConfigurationError`.
   - `test_get_secret_rejects_relative_version`: `PGDB_PW_VERSION="pgcloud_pw/versions/2"` raises `ConfigurationError`.
+  - `test_get_secret_reads_file`: `PGDB_PW_FILE` pointing at a file containing `s3cret\n` returns `"s3cret"`; a missing file raises `ConfigurationError` naming `PGDB_PW_FILE`.
   - `test_no_parent_dotenv_is_loaded`: with `DB_CONF_FILE` unset and a `.env` containing `CRUCIBLE_TEST_SENTINEL=1` in a parent of the working directory, `get_secret("CRUCIBLE_TEST_SENTINEL")` raises `ConfigurationError`.
 - [ ] **Step 2:** Run `pytest tests/test_config.py -v`; expect failures (module missing).
 - [ ] **Step 3:** Implement `app/config.py`, the new `get_secret` and `get_gcs_secret`; update every caller to `get_secret("<NAME>")`; remove the module-level `rmq_pw` in `rmq_utils.py`; delete `local_sql_utils.py`; update `test_get_secret.py` and `test_hub_secrets.py`.

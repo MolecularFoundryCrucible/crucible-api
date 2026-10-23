@@ -112,6 +112,13 @@ Not built now. The design should not block: a file existing in more than one loc
 - Public repositories: `crucible-api` (private today), `crucible-hub`, `nano-crucible`, `crucible-ingestion`, and the consumer, printing, and MQTT repositories. Private infrastructure repositories (`crucible-nginx`, `crucible-ecosystem`) stay private unless they are needed to run Crucible.
 - Releases follow standard practice: container images built by GitHub Actions on version tags and published to GitHub Container Registry (`ghcr.io/molecularfoundrycrucible/<name>`), with semantic version tags (`1.4.0`, `1.4`), for amd64 and arm64. A `compose.yaml`, `.env.example`, and install guide are published with each release. Database migrations run as a one-shot step on upgrade, with a documented upgrade path from each release to the next. nano-crucible stays on PyPI. A Helm chart for Kubernetes institutions can come later.
 - The Foundry deploys the same released images; its Cloud Build pipeline can remain for its own deploy step.
+- Before `crucible-api` is made public, the Foundry's own deployment configuration (`k8s-conf/`, `cloudbuild.yaml`, and anything naming Foundry hosts, addresses, project numbers, buckets, or the cluster) moves to a private repository, for example `crucible-foundry-deploy`. The public repository keeps only the software and generic ways to run it (the compose bundle, later perhaps a Kubernetes template).
+
+### Settings and secrets
+
+- Settings are plain environment variables: from Kubernetes ConfigMaps kept in git for the Foundry, from a `.env` file for compose.
+- Secrets never live in git. The application reads a secret from `<NAME>` or from the file named by `<NAME>_FILE` (the Docker secrets convention), and knows nothing about where it is stored.
+- Transition for the Foundry: Phase 1 keeps the application's own Secret Manager lookup, driven by explicit `<NAME>_VERSION` references in the ConfigMaps, so nothing changes for the running deployment. A later, separate change moves the Foundry to secrets injected by the platform (GKE's Secret Manager add-on or External Secrets), verified on staging first; after that the Secret Manager code and `_VERSION` support are removed from the application. Secret references stay pinned to explicit versions rather than `latest` where practical.
 
 ## Phases
 
@@ -125,7 +132,7 @@ Each phase ships on its own and is tested before the next. Phases 1 to 4 are the
    - A `docker compose` setup with Postgres, the API, and the Hub (built from source until releases exist), plus a short install guide.
 2. **One S3-style storage layer** as described above, the object store added to compose, and the legacy upload routes deprecated.
 3. **Local password login** for the lab tier, and the sign-in record that both methods use.
-4. **Releases**: licenses, public repositories, published images, versioned compose bundle, upgrade path. The license review can start immediately and run alongside Phases 1 to 3.
+4. **Releases**: licenses, public repositories, published images, versioned compose bundle, upgrade path, and the Foundry deployment configuration moved to a private repository. The license review can start immediately and run alongside Phases 1 to 3.
 5. **Plug-ins**: ingestion and post-processing (RabbitMQ), then printing and telemetry (MQTT).
 6. **Later:** HPC execution, Globus.
 

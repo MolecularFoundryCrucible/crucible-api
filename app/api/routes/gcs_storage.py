@@ -40,7 +40,7 @@ def _get_gcs_credentials():
     global _gcs_credentials
     if _gcs_credentials is None:
         from google.oauth2 import service_account
-        sa_creds = get_secret("GCS_SA", "service-account-cred/versions/latest")
+        sa_creds = get_secret("GCS_SA")
         service_account_info = json.loads(sa_creds)
         _gcs_credentials = service_account.Credentials.from_service_account_info(service_account_info)
     return _gcs_credentials

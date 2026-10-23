@@ -11,6 +11,8 @@ DB_CONF_FILE=.env.local .venv/bin/alembic revision --autogenerate -m "describe t
 DB_CONF_FILE=.env.local .venv/bin/alembic upgrade head
 ```
 
+The file named by `DB_CONF_FILE` must provide the database password as `PGDB_PW`, `PGDB_PW_FILE`, or `PGDB_PW_VERSION` (a full `projects/<project>/secrets/<secret>/versions/<n>` path read with your Application Default Credentials); there is no built-in Secret Manager default. Data scripts that import API route modules also need `CRUCIBLE_SECRET_KEY` the same way.
+
 Production commands require the explicit safety flag, including read-only Alembic commands:
 
 ```bash

@@ -36,7 +36,7 @@ from sqlalchemy import join
 from datetime import date, timedelta
 
 # ====== Constants
-SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "crucible_secret_key/versions/1")
+SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY")
 ALGORITHM = "HS256"
 security = HTTPBearer()
 PRIVILEGE_MODE_HEADER = "Crucible-Privilege-Mode"

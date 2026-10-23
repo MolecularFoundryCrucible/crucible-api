@@ -1,8 +1,6 @@
 import os
-import json
 import re
 from datetime import datetime, timezone
-from app.utils.constants import secret_store
 import hashlib
 
 def remove_file(filepath):
@@ -34,89 +32,52 @@ def blank_to_none(val):
     if isinstance(val, str) and not val.strip():
         return None
     return val
-    
-def get_secret(secret_env_var, gcs_secret_name = None, sa_creds: str = None, cred_file: bool = False): 
-    """Retrieve a secret from the environment or Google Cloud Secret Manager.
-
-    Resolution order:
-    1. Loads any local `.env` file via `dotenv.load_dotenv()`.
-    2. Checks `os.getenv(secret_env_var)`. If already present (from `.env`, the
-       container environment, or a prior lookup), returns it immediately without
-       calling Secret Manager.
-    3. Otherwise, fetches the secret from Google Cloud Secret Manager using
-       `gcs_secret_name`, caches the value in `os.environ[secret_env_var]` for
-       subsequent calls in the same worker process, and returns it.
-
-    Args:
-        secret_env_var (str): Environment variable name to check first and use
-            as the in-process cache key once fetched from Secret Manager.
-        gcs_secret_name (str | None): Secret Manager version reference used when
-            `secret_env_var` is not set. Accepts either a full resource name
-            (`"projects/<project>/secrets/<secret>/versions/<version>"`) or a
-            path relative to `secret_store` / `GCS_SECRET_STORE`
-            (`"<secret>/versions/<version>"`).
-        sa_creds (str | None): Path to a service-account JSON key file when
-            `cred_file=True`. Ignored when running as `root` in a container
-            (where Application Default Credentials / GKE Workload Identity are
-            used) or when `cred_file=False`.
-        cred_file (bool): Controls non-root Secret Manager authentication in
-            `get_gcs_secret()`:
-            - `False` (default): parses service-account JSON from `os.getenv("GCS_SA")`.
-            - `True`: loads service-account credentials from the file path in `sa_creds`.
-
-    Returns:
-        str: The resolved secret string.
-
-    Raises:
-        RuntimeError: If `secret_env_var` is not set in the environment and
-            `gcs_secret_name` is `None`.
-    """
-    from dotenv import load_dotenv
-    load_dotenv()
-    if gcs_secret_name is not None:
-        gcs_secret_path = (
-            gcs_secret_name
-            if gcs_secret_name.startswith("projects/")
-            else f"{secret_store}/{gcs_secret_name}"
-        )
-    secret = os.getenv(secret_env_var)
-    if secret is None:
-        if gcs_secret_name is None:
-            raise RuntimeError(
-                f"Neither {secret_env_var} nor a GCP secret path is configured"
-            )
-        secret = get_gcs_secret(gcs_secret_path, sa_creds, cred_file)
-        os.environ[secret_env_var] = secret
-    return(secret)
 
 
-def get_gcs_secret(secret_name, sa_creds, cred_file):
+_SECRET_VERSION = re.compile(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)")
+
+
+def get_secret(name: str) -> str:
+    """Return a secret from, in order: the environment variable `name`, the file named by
+    `{name}_FILE` (Docker secrets), or the Secret Manager version named by `{name}_VERSION`
+    (a full projects/.../versions/... path). Secret Manager values are cached in the environment."""
+    from app.config import ConfigurationError, load_env_file, optional_env
+
+    value = os.getenv(name)
+    if value is not None and value.strip():
+        return value
+    load_env_file()
+    value = os.getenv(name)
+    if value is not None and value.strip():
+        return value
+    file_path = optional_env(f"{name}_FILE")
+    if file_path is not None:
+        try:
+            with open(file_path, encoding="utf-8") as handle:
+                value = handle.read().removesuffix("\n").removesuffix("\r")
+        except (OSError, UnicodeDecodeError) as error:
+            raise ConfigurationError(f"{name}_FILE points to an unreadable file: {error}") from None
+        if not value.strip():
+            raise ConfigurationError(f"{name}_FILE points to an empty file")
+        return value
+    version = optional_env(f"{name}_VERSION")
+    if version is not None:
+        if not _SECRET_VERSION.fullmatch(version):
+            raise ConfigurationError(f"{name}_VERSION must be a full projects/<project>/secrets/<secret>/versions/<number or latest> path")
+        value = get_gcs_secret(version)
+        if not value.strip():
+            raise ConfigurationError(f"{name}_VERSION names an empty secret")
+        os.environ[name] = value
+        return value
+    raise ConfigurationError(f"{name} is not set (set {name}, {name}_FILE, or {name}_VERSION)")
+
+
+def get_gcs_secret(secret_name: str) -> str:
     from google.cloud import secretmanager
-    from google.oauth2 import service_account
-    import os
-    home = os.getenv("HOME")
-    
-    if 'root' in home:
-        # Assume you are running from a GCP service with SA that can auth itself 
-        client = secretmanager.SecretManagerServiceClient() 
 
-    elif cred_file is False:
-        # use the credentials to authorize yourself!!
-        J = json.loads(os.getenv("GCS_SA"))
-        with open("temp_creds.json", "w") as f:
-            json.dump(J, f)
-        credentials = service_account.Credentials.from_service_account_file("temp_creds.json")
-        client = secretmanager.SecretManagerServiceClient(credentials=credentials)
-
-    else:
-        # use the credentials file to authorize yourself!!
-        credentials = service_account.Credentials.from_service_account_file(sa_creds)
-        client = secretmanager.SecretManagerServiceClient(credentials=credentials)
-        
-    # get your secret
-    response = client.access_secret_version(name=secret_name)
-    secret_value = response.payload.data.decode("UTF-8")
-    return(secret_value)
+    with secretmanager.SecretManagerServiceClient() as client:
+        response = client.access_secret_version(name=secret_name)
+    return response.payload.data.decode("UTF-8")
 
 
 def get_utc_isoformat():

@@ -8,6 +8,8 @@ from fastapi.security import HTTPBasicCredentials
 from google.api_core.exceptions import PermissionDenied
 from google.auth.exceptions import DefaultCredentialsError
 import pytest
+
+from app.config import ConfigurationError
 import yaml
 
 from app.api.routes.hub_auth import require_hub_client
@@ -161,7 +163,7 @@ def test_deployment_references_only_and_enabled(environment):
         assert config["HUB_AUTH_CALLBACK_URI"] == "https://crucible.lbl.gov/hub/auth/callback"
 
 
-def test_direct_api_orcid_config_and_secret_version(monkeypatch):
+def test_direct_api_orcid_config_and_secret_version(monkeypatch, tmp_path):
     from app.api import dependencies
     import app.general_utils as general_utils
 
@@ -172,15 +174,17 @@ def test_direct_api_orcid_config_and_secret_version(monkeypatch):
     monkeypatch.setenv("ORCID_CLIENT_ID", "env-client-id")
     assert dependencies.get_orcid_client_id() == "env-client-id"
 
-    monkeypatch.setattr("dotenv.load_dotenv", lambda: None)
+    monkeypatch.delenv("DB_CONF_FILE", raising=False)
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("ORCID_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("ORCID_CLIENT_SECRET_FILE", raising=False)
     monkeypatch.delenv("ORCID_CLIENT_SECRET_VERSION", raising=False)
     with pytest.raises(RuntimeError):
         dependencies.get_orcid_client_secret()
 
     captured = {}
 
-    def fake_get_gcs_secret(secret_name, sa_creds, cred_file):
+    def fake_get_gcs_secret(secret_name):
         captured["secret_name"] = secret_name
         return "fetched-orcid-secret"
 
@@ -191,8 +195,21 @@ def test_direct_api_orcid_config_and_secret_version(monkeypatch):
     assert captured["secret_name"] == version_path
 
     monkeypatch.delenv("ORCID_CLIENT_SECRET", raising=False)
-    monkeypatch.setenv("ORCID_CLIENT_SECRET_VERSION", "projects/776258882599/secrets/orcid_client_secret_esb/versions/latest")
-    assert dependencies.get_orcid_client_secret() == "fetched-orcid-secret"
-    assert captured["secret_name"] == f"{general_utils.secret_store}/orcid_client_secret_esb/versions/latest"
+    monkeypatch.setenv("ORCID_CLIENT_SECRET_VERSION", "orcid_client_secret_esb/versions/latest")
+    with pytest.raises(ConfigurationError, match="ORCID_CLIENT_SECRET_VERSION"):
+        dependencies.get_orcid_client_secret()
+
+
+def test_hub_orcid_secret_missing_is_unavailable(monkeypatch, tmp_path):
+    from app.utils import hub_orcid
+    from app.utils.hub_login import HubLoginUnavailable
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DB_CONF_FILE", raising=False)
+    for name in ("HUB_AUTH_ORCID_CLIENT_SECRET", "ORCID_CLIENT_SECRET"):
+        for suffix in ("", "_FILE", "_VERSION"):
+            monkeypatch.delenv(f"{name}{suffix}", raising=False)
+    with pytest.raises(HubLoginUnavailable):
+        hub_orcid._orcid_client_secret()
 
 

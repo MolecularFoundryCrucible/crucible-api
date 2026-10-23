@@ -235,7 +235,7 @@ def create_file_ingestion_request(
     if status == 'requested':
         tier = get_ingestion_tier(af_size)
         routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
-        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
+        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW")
         send_pika_message(
             message=json.dumps({
                 "filename": af_storage_path,

@@ -1,3 +1,16 @@
+import os
+
+for _name, _value in {
+    "DB_SERVER": "localhost",
+    "DB_USERNAME": "test",
+    "DB_DATABASE": "test",
+    "PGDB_PW": "test-only",
+    "CRUCIBLE_SECRET_KEY": "test-only",
+    "RABBITMQ_DEFAULT_PW": "test-only",
+    "API_CONF_FILE": "app/conf/api_conf_local.yaml",
+}.items():
+    os.environ.setdefault(_name, _value)
+
 import pytest
 from sqlmodel import SQLModel, create_engine
 from sqlalchemy import text

@@ -50,6 +50,7 @@ uv run pytest -q
 Regenerate the repository OpenAPI checkpoint:
 
 ```bash
+DB_CONF_FILE=.env.local \
 API_CONF_FILE=app/conf/api_conf.yaml \
 .venv/bin/python -m scripts.export_openapi
 ```

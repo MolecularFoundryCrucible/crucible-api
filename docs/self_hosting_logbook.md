@@ -39,6 +39,10 @@ Today Crucible only runs in one place: the Molecular Foundry's setup on Google C
 - Agreed a strict order to protect the Foundry: the first task only writes down the Foundry's current settings in its configuration files, and nothing else is changed until that is live in production.
 - Agreed how settings and passwords should be handled long term, following common industry practice: the software should never go looking for its own settings or passwords; whoever runs it hands them over at startup. We get there in two steps: first make everything explicit (Phase 1), later switch the Foundry so its servers hand the passwords to the software (a separate, careful change).
 
-### 2026-10-23: Task 1 waiting for approval
+### 2026-10-23: Task 1 ready for staging
 
 - Task 1 writes the Foundry's current hidden settings (addresses, ports, which features are on, and where each password is kept in Google) into the Foundry's configuration files. The software itself does not change, so the Foundry behaves exactly as before.
+- Checked first that none of these settings already existed on the live servers. Added an automatic test that checks every value. Three independent AI reviewers found no problems.
+- Opened the change for staging (pull request #358). Production follows only after staging is verified, and only when the project lead releases it.
+- Decided where configuration lives: the Foundry's settings stay in git (reviewed and versioned), but move to a separate private repository before the code is made public.
+- Found that making a repository public also publishes its full history, which includes Foundry infrastructure details and some password files that were deleted long ago. Plan: scan the history for passwords and replace any that are found, then publish from a fresh, clean copy of the code while keeping the old repository private.

@@ -30,7 +30,10 @@ PGPASSWORD=... scripts/compare_schema.sh \
   postgresql://crucible-api-user@127.0.0.1:5433/crucible-staging
 ```
 
-`scripts/compare_schema.sh` dumps both schemas with the PostgreSQL 17 client in read-only sessions and exits 1 on any difference. On 2026-10-26 at `b8f2d6e41c07` the only differences were two that exist on staging only: an empty legacy `source` schema, and an empty comment on the `public` schema (the baseline leaves schema and extension comments out because they require ownership the application user may not have).
+`scripts/compare_schema.sh` dumps both schemas with the PostgreSQL 17 client in read-only sessions and exits 1 on any difference. On 2026-10-26 at `b8f2d6e41c07` (read-only comparisons):
+
+- Fresh installation vs staging: two differences that exist on staging only, an empty legacy `source` schema and an empty comment on the `public` schema (the baseline leaves schema and extension comments out because they require ownership the application user may not have).
+- Fresh installation vs production: one difference. `fk_project_project_lead_orcid_user` is `NOT VALID` on production, as revision `1bb842c39928` created it for legacy projects whose lead has no user row; a fresh installation enforces it fully. Staging was validated by hand at some point.
 
 To move the baseline to a newer revision (optional; the migrations after it keep working), dump staging at that revision and regenerate:
 

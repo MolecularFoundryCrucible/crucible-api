@@ -185,7 +185,7 @@
 - [ ] **Step 5 (needs the same approval):** Initialize a local `pgvector:pg17` database with `upgrade_database`, then `scripts/compare_schema.sh <local> <staging>`. Expected: no differences. Record the command in `migrations/README.md`.
 - [ ] **Step 6:** Full suite and gated tests pass. Commit: `Add a schema baseline and db upgrade command for fresh installs`.
 
-### Task 6: Admin bootstrap
+### Task 6: Admin bootstrap. Done on staging: #365
 
 **Files:**
 - Modify: `app/utils/user_utils.py` (extract user provisioning), `app/api/routes/users.py` (`POST /users` uses it)

@@ -74,8 +74,8 @@ def test_caller_activity_is_throttled(people):
     assert user_field(people, ALICE) > first_user - timedelta(minutes=61)
 
 
-def test_api_key_authentication_records_activity(people, monkeypatch):
-    monkeypatch.setattr(auth_utils, "engine", people)
+def test_api_key_authentication_records_activity(use_engine, people, monkeypatch):
+    use_engine(people)
     monkeypatch.setattr(auth_utils, "_PUBLIC_GROUP_ID", None)
     auth_utils._auth_cache.clear()
     auth_utils._authorize_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=KEY))

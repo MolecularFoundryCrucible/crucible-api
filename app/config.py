@@ -73,7 +73,12 @@ class Settings(BaseSettings):
     upload_bucket: str | None = None
     gcs_project: str | None = None
     gcs_sa: SecretStr | None = None
+    orcid_client_id: str | None = None
     orcid_client_secret: SecretStr | None = None
+
+    api_public_url: str | None = None
+    api_path: str | None = None
+    trgm_search_threshold: float | None = None
 
 
 def optional_env(name: str) -> str | None:

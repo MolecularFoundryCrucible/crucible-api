@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
+from app.build_info import api_version
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE, feature_disabled_response
 from app.general_utils import get_utc_datetime
@@ -97,7 +98,6 @@ from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 
 router = APIRouter(tags=["datasets"])
-engine = get_engine()
 RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
 DATASET_PAGINATION = ResourcePaginationSpec(
     kind="dataset",
@@ -112,14 +112,7 @@ LARGE_THUMBNAIL_LOOKUP_WARNING_SIZE = int(
     os.environ.get("THUMBNAIL_LARGE_LOOKUP_WARNING_SIZE", "1000")
 )
 
-# eventually could switch to pushing + using github tags
-with open('pyproject.toml', 'r') as f:
-    for line in f:
-        if line.startswith('version = '):
-            version_line = line
-            break
-    version = version_line.split('=')[1].strip().strip('"')
-    API_VERSION = f'v{version}'
+API_VERSION = f"v{api_version()}"
 
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
 
@@ -168,7 +161,7 @@ def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
     logger.info(f"Creating dataset: {dataset.unique_id}")
     dataset_details = dataset.model_dump(exclude_unset=True)
     user_unique_id = auth_res.user_id
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         if dataset_details.get('unique_id'):
             assert_mfid_available(session, dataset_details['unique_id'], "dataset")
 
@@ -317,7 +310,7 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
     '''
     user_unique_id = auth_res.user_id
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -414,7 +407,7 @@ def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_u
     '''
     user_unique_id = auth_res.user_id
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -490,7 +483,7 @@ def get_dataset_facets(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     params: Annotated[DatasetFacetQuery, Query()],
 ):
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return list_dataset_facets(session, auth_res, params)
 
 
@@ -567,7 +560,7 @@ def list_datasets(
         user_id=auth_res.user_id,
     )
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         filter_project_mfid = resolve_project_filter_mfid(
             session, project_id, project_mfid)
         instrument_mfid = resolve_instrument_filter_mfid(
@@ -788,7 +781,7 @@ def search_datasets(
     effective_project_scope: ProjectScope = project_scope or "assigned"
     normalized_q, tokens = normalize_search_query(q)
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         configure_trigram_search(session, get_trgm_search_threshold())
         filter_project_mfid = resolve_project_filter_mfid(
             session, project_id, project_mfid)
@@ -850,7 +843,7 @@ def read_dataset(
     The owner identity is resolved by default. Pass include_owner=false to omit it.
     '''
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return load_dataset_detail(
             session,
             auth_res,
@@ -879,7 +872,7 @@ def link_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_datase
     '''
 
     reject_self_link(parent_dataset_id, child_dataset_id)
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).first()
         if not parent:
             raise HTTPException(status_code=404, detail="Parent dataset not found")
@@ -921,7 +914,7 @@ def link_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_datase
 @router.delete("/datasets/{parent_dataset_mfid}/children/{child_dataset_mfid}", response_model=MessageResponse)
 def unlink_dataset_parent_child(parent_dataset_id: ParentDatasetMfid, child_dataset_id: ChildDatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         parent = session.exec(select(Dataset).where(Dataset.unique_id == parent_dataset_id)).one_or_none()
         if not parent:
             raise HTTPException(status_code=404, detail="Parent dataset not found")
@@ -966,7 +959,7 @@ def list_parent_datasets(child_dataset_id: ChildDatasetMfid, auth_res: Annotated
     relationship_type restricts the result to links of that kind. Links with no
     recorded type are excluded when the filter is set.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         child = session.exec(select_active(Dataset, child_dataset_id)).one_or_none()
         if child is None:
             raise HTTPException(status_code=404, detail="Child dataset not found")
@@ -1008,7 +1001,7 @@ def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotate
     relationship_type restricts the result to links of that kind. Links with no
     recorded type are excluded when the filter is set.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         parent = session.exec(select_active(Dataset, parent_dataset_id)).one_or_none()
         if parent is None:
             raise HTTPException(status_code=404, detail="Parent dataset not found")
@@ -1044,7 +1037,7 @@ def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotate
 @router.delete('/datasets/{dataset_mfid}/samples/{sample_mfid}', response_model=MessageResponse)
 def unlink_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, sample_id: SampleMfid):
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -1088,7 +1081,7 @@ def read_thumbnails(auth_res: Annotated[Principal, Depends(authorize_user)], dsi
     '''
     Returns a list of thumbnail objects associated with the dataset ID provided
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ds_cmd = (select(Dataset)
                   .where(Dataset.unique_id == dsid)
                   .where(permission_filter(auth_res, Dataset, Permission.READ)))
@@ -1132,7 +1125,7 @@ def get_first_thumbnails(
             LARGE_THUMBNAIL_LOOKUP_WARNING_SIZE,
         )
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         auth_filter = permission_filter(auth_res, Dataset, Permission.READ)
 
         authorized_ds = session.exec(
@@ -1205,14 +1198,14 @@ def add_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)],
               .where(Dataset.unique_id == dsid)
               .where(permission_filter(auth_res, Dataset, Permission.EDIT)))
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         if session.exec(ds_cmd).one_or_none() is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         assert_not_pending_deletion(session, dsid)
 
     thumbnail_b64str = _normalize_thumbnail_input(dsid, thumbnail.thumbnail_b64str)
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ds = session.exec(ds_cmd.with_for_update()).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -1258,7 +1251,7 @@ def update_thumbnail(
         )
     )
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         if session.exec(thumbnail_cmd).one_or_none() is None:
             raise HTTPException(status_code=404, detail="Thumbnail not found")
 
@@ -1266,7 +1259,7 @@ def update_thumbnail(
     if update.thumbnail_b64str is not None:
         normalized_b64str = _normalize_thumbnail_input(dsid, update.thumbnail_b64str)
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         thumbnail = session.exec(thumbnail_cmd).one_or_none()
         if thumbnail is None:
             raise HTTPException(status_code=404, detail="Thumbnail not found")
@@ -1289,7 +1282,7 @@ def update_thumbnail(
 def delete_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, thumbnail_id: int):
     '''Removes a thumbnail from a dataset and deletes it.'''
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ds = session.exec(
             select(Dataset)
             .where(Dataset.unique_id == dsid)
@@ -1324,7 +1317,7 @@ def generate_dataset_download_links(
     keyed by AssociatedFile mfid. Backfills missing storage_path records on the fly.
     '''
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -1366,7 +1359,7 @@ def read_associated_files(auth_res: Annotated[Principal, Depends(authorize_user)
     Returns a list of the files associated with the dataset ID provided.
     '''
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -1394,7 +1387,7 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
     Requires contributor access.
     '''
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -1467,7 +1460,7 @@ def create_ds_file_ingestion_request(
 def list_keywords_for_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid):
 
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ds_cmd = (select(Dataset)
                   .where(Dataset.unique_id == dsid)
                   .where(permission_filter(auth_res, Dataset, Permission.READ)))
@@ -1491,7 +1484,7 @@ def add_keyword(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: D
               .where(Dataset.unique_id == dsid)
               .where(permission_filter(auth_res, Dataset, Permission.CREATE)))
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         kw_obj = add_or_update(session, Keyword, where=(Keyword.keyword == keyword), keyword=keyword)
 
         ds = session.exec(ds_cmd).one_or_none()
@@ -1535,7 +1528,7 @@ def link_dataset_sample(auth_res: Annotated[Principal, Depends(authorize_user)],
     Cross-project links retain the editor requirement on both resources.
     '''
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -1576,7 +1569,7 @@ def read_samples_in_dataset(dsid: DatasetMfid, auth_res: Annotated[Principal, De
     Deprecated: use GET /samples?dataset_mfid={dataset_mfid}.
     '''
     response.headers["Deprecation"] = RELATIONSHIP_ROUTE_DEPRECATION
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ds = session.exec(
             select_active(Dataset, dsid, principal=auth_res)
         ).one_or_none()

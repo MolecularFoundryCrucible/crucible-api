@@ -71,7 +71,6 @@ from app.utils.cursor_utils import (
 
 
 router = APIRouter(tags=["resources"])
-engine = get_engine()
 
 
 @router.get(
@@ -138,7 +137,7 @@ def list_resource_embeddings(
         and params.offset == 0
     )
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         total = None
         if include_total:
             total = session.exec(
@@ -246,7 +245,7 @@ def search_resource_chunks(
     body: ChunkSearchRequest,
 ):
     """Search 768-dimensional resource text chunks visible to the caller."""
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return search_chunks(
             session=session,
             principal=auth_res,
@@ -289,7 +288,7 @@ def search_resource_metadata_v2(
         DeletionRequest.status.in_(["pending", "approved"])
     )
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         rows = session.exec(
             select(ScientificMetadataBinary, Resource, rank_expr.label("rank"))
             .join(Resource, Resource.mfid == ScientificMetadataBinary.unique_id)
@@ -363,7 +362,7 @@ def get_resource(
     The owner identity is resolved by default for datasets, samples, and instruments. Pass include_owner=false to omit it.
     """
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(
             select(Resource).where(Resource.mfid == resource_id)
         ).one_or_none()
@@ -389,7 +388,7 @@ def get_resource_links(resource_id: ResourceMfid, auth_res: Annotated[Principal,
     parent/child via lineage and associated resources.
     """
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(
             select(Resource).where(Resource.mfid == resource_id)
         ).one_or_none()
@@ -419,7 +418,7 @@ def get_resource_links(resource_id: ResourceMfid, auth_res: Annotated[Principal,
 
 @router.get("/resources/{mfid}/metadata", response_model=ScientificMetadataBinaryRead)
 def read_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_user)], unique_id: ResourceMfid):
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(
             select(Resource)
             .options(selectinload(Resource.scientific_metadata))
@@ -442,7 +441,7 @@ def create_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
     '''Creates initial metadata with contributor access. Replacing metadata requires editor access.'''
     user_unique_id = auth_res.user_id
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(
             select(Resource).where(Resource.mfid == unique_id).with_for_update()
         ).one_or_none()
@@ -484,7 +483,7 @@ def update_resource_metadata(auth_res: Annotated[Principal, Depends(authorize_us
                              background_tasks: BackgroundTasks):
     user_unique_id = auth_res.user_id
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(
             select(Resource).where(Resource.mfid == unique_id).with_for_update()
         ).one_or_none()
@@ -529,7 +528,7 @@ def create_deletion_request(
     or if a project or instrument still has assigned datasets or samples.
     '''
     requester_id = auth_res.user_id
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(
             select(Resource).where(Resource.mfid == resource_id).with_for_update()
         ).one_or_none()
@@ -713,7 +712,7 @@ def _set_resource_access_grant(
 )
 def read_resource_acl(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     require_platform_admin(auth_res)
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         # Verify resource exists
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
 
@@ -740,7 +739,7 @@ def create_resource_acl(group_name: str, mfid: str, read: bool, write: bool, aut
     if not read:
         raise HTTPException(status_code=422, detail="read must be true; use the revoke route to remove access")
     permission = Role.EDITOR if write else Role.VIEWER
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
@@ -831,7 +830,7 @@ def list_resource_access(mfid: str, auth_res: Annotated[Principal, Depends(autho
     access, and by platform administrators. Each entry's capabilities say what
     the caller may change; they are all false for callers who cannot manage access.
     """
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
@@ -866,7 +865,7 @@ def set_resource_access(mfid: str, kind: str, principal: str, body: AccessGrantW
     except KeyError:
         raise HTTPException(status_code=422,
                             detail=f"permission must be one of {[r.db_value for r in Role]}")
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
@@ -897,7 +896,7 @@ def revoke_resource_access(mfid: str, kind: str, principal: str,
     if kind not in ("users", "projects"):
         raise HTTPException(status_code=404, detail="kind must be 'users' or 'projects'")
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
@@ -935,7 +934,7 @@ def publish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize
     any grant there. A world-writable resource is unrepresentable, and offering
     a role would invent an error case the model does not have.
     """
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
@@ -955,7 +954,7 @@ def publish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize
 @router.delete("/resources/{mfid}/access/public", response_model=DetailResponse)
 def unpublish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Withdraw public access."""
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
@@ -1134,7 +1133,7 @@ def transfer_ownership(mfid: str, body: TransferOwnershipRequest,
     This is the only way to change who owns a resource. Project, dataset,
     sample, and instrument PATCH schemas reject ownership fields.
     """
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")
@@ -1183,7 +1182,7 @@ def reassign_resource_project(mfid: str, body: ReassignProjectRequest,
     if body.project_id is None and body.project_mfid is None:
         raise HTTPException(status_code=422, detail="project_id or project_mfid is required")
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
         if resource is None:
             raise HTTPException(status_code=404, detail="Resource not found")

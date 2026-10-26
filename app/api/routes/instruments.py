@@ -38,7 +38,6 @@ from app.utils.user_utils import resolve_create_owner, resolve_service_account_r
 from app.utils.gcs_record_utils import write_record, instrument_record
 
 router = APIRouter(tags=["instruments"])
-engine = get_engine()
 
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
@@ -189,7 +188,7 @@ def list_instruments(
         user_id=auth_res.user_id,
     )
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         if include_metadata:
             statement = (
                 select(Instrument, Resource, ScientificMetadataBinary)
@@ -249,7 +248,7 @@ def search_instruments(
     Use owner_id for an exact owner match.
     '''
     normalized_q, tokens = normalize_search_query(params.q)
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         configure_trigram_search(session, get_trgm_search_threshold())
         base = (
             select(Instrument, Resource)
@@ -297,7 +296,7 @@ def read_instrument(
     Returns the instrument with the provided unique ID, or 404 if not found.
     The owner identity is resolved by default. Pass include_owner=false to omit it.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         instrument_mfid = get_instrument_or_404(session, instrument_ref).unique_id
         if instrument_ref != instrument_mfid:
             response.headers["Content-Location"] = f"/instruments/{instrument_mfid}"
@@ -326,7 +325,7 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
         )
 
     user_unique_id = auth_res.user_id
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         assert_instrument_id_available(session, instrument.instrument_id)
 
         instrument_details = instrument.model_dump(exclude_unset=True)
@@ -394,7 +393,7 @@ def update_instrument(
     Partially update an instrument record. Only provided fields are modified.
     '''
     user_unique_id = auth_res.user_id
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         instrument = get_instrument_or_404(session, instrument_ref)
         instrument_mfid = instrument.unique_id
 
@@ -441,7 +440,7 @@ def set_instrument_status(
             status_code=422,
             detail=f"status must be one of {list(VALID_INSTRUMENT_STATUSES)}")
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         instrument = get_instrument_or_404(session, instrument_ref)
         instrument_mfid = instrument.unique_id
 
@@ -499,7 +498,7 @@ def list_instrument_service_accounts(
     access, and by platform administrators; each entry's can_remove is true only
     for callers who may unbind it (admin on the instrument).
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         instrument = get_instrument_or_404(session, instrument_ref)
         instrument_mfid = instrument.unique_id
 
@@ -518,7 +517,7 @@ def add_instrument_service_account(
     Bind a service account to an instrument's operator group, at admin standing.
     Requires admin on the instrument.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         instrument = get_instrument_or_404(session, instrument_ref)
         instrument_mfid = instrument.unique_id
 
@@ -555,7 +554,7 @@ def remove_instrument_service_account(
     Unbind a service account from an instrument's operator group.
     Requires admin on the instrument.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         instrument = get_instrument_or_404(session, instrument_ref)
         instrument_mfid = instrument.unique_id
 

@@ -18,7 +18,6 @@ data:
   ORCID_CLIENT_ID: "APP-E5VUS6XSJS5VFNEN"
   ORCID_CLIENT_SECRET_VERSION: "projects/776258882599/secrets/orcid_client_secret_esb/versions/latest"
   hostname: "crucible.lbl.gov"
-  api_path: "api/v1"
   gcs_config_name: "mf-cloud-storage"
 
   # rmq

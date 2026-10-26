@@ -23,7 +23,6 @@ from app.utils.permissions import Principal, Permission
 from app.utils.sql_utils import add_or_update, assert_not_pending_deletion, touch_resource_modification_time
 
 router = APIRouter(tags=["storage"])
-engine = get_engine()
 logger = logging.getLogger(__name__)
 
 _GCS_UPLOAD_API = "https://storage.googleapis.com/upload/storage/v1/b"
@@ -162,7 +161,7 @@ def _validate_and_prepare_upload(
             detail=f"File size {body.size} exceeds the maximum allowed upload size of {_MAX_UPLOAD_BYTES} bytes",
         )
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ds = session.exec(select(Dataset).where(Dataset.unique_id == dsid)).one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -209,7 +208,7 @@ def _create_upload_session(
         expires_at=expires_at,
         size=size,
     )
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         session.add(us)
         session.commit()
         session.refresh(us)
@@ -320,7 +319,7 @@ def complete_resumable_upload(
     user_unique_id = auth_res.user_id
     bucket = upload_bucket()
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         us = session.exec(
             select(UploadSession).where(UploadSession.upload_id == body.upload_id)
         ).one_or_none()

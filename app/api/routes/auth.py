@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
 
 from app.api.dependencies import (
-    get_engine, get_api_path, get_api_url,
+    get_engine, get_api_root_path,
     get_orcid_client_id, get_orcid_client_secret, get_redirect_uri,
 )
 from app.models.core_models import User
@@ -25,7 +25,6 @@ from app.utils.user_utils import sql_add_user_to_access_group
 # Note: /account/* routes live in account.py
 
 router = APIRouter(tags=["auth"])
-engine = get_engine()
 
 
 def _local_path(value) -> str:
@@ -103,15 +102,15 @@ def get_apikey(request: Request):
     """Exchange a valid ORCID browser session cookie for a Crucible API key."""
     from app.utils.auth_utils import decode_token, find_or_add_api_access
 
-    api_path = get_api_path()
+    root = get_api_root_path()
     user_info_jwt = request.cookies.get("crucible_user_token")
 
     user_info = decode_token(user_info_jwt) if user_info_jwt else None
     if user_info is None:
-        return _login_redirect(f"/{api_path}/login", f"/{api_path}/user_apikey")
+        return _login_redirect(f"{root}/login", f"{root}/user_apikey")
     orcid = user_info["orcid"]
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         # add the user
         key_map = {'orcid': 'unique_id', 'given_name': 'first_name', 'family_name': 'last_name'}
         user_updates = {key_map[k]: user_info[k] for k in key_map if user_info.get(k) is not None}
@@ -144,16 +143,16 @@ def get_apikey(request: Request):
         user_first_name = user.first_name
         user_last_name = user.last_name
 
-    crucible_token = find_or_add_api_access(orcid, engine, regenerate=False)
+    crucible_token = find_or_add_api_access(orcid, get_engine(), regenerate=False)
 
     if not user_email:
-        return HTMLResponse(content=_email_prompt_html(api_path, orcid, crucible_token, user_first_name, user_last_name))
+        return HTMLResponse(content=_email_prompt_html(root, orcid, crucible_token, user_first_name, user_last_name))
 
     return {'crucible_apikey': crucible_token}
 
 
-def _email_prompt_html(api_path: str, orcid: str, crucible_token: str, first_name: str = '', last_name: str = '') -> str:
-    update_url = escape(f"/{quote(api_path, safe='/')}/users/{quote(orcid, safe='')}", quote=True)
+def _email_prompt_html(root: str, orcid: str, crucible_token: str, first_name: str = '', last_name: str = '') -> str:
+    update_url = escape(f"{quote(root, safe='/')}/users/{quote(orcid, safe='')}", quote=True)
     first_name = escape(first_name, quote=True)
     last_name = escape(last_name, quote=True)
     orcid = escape(orcid, quote=True)
@@ -265,14 +264,14 @@ def regenerate_apikey(request: Request):
     """Regenerate the caller's API key via browser ORCID session. Requires cookie auth."""
     from app.utils.auth_utils import decode_token
 
-    api_path = get_api_path()
+    root = get_api_root_path()
     user_info_jwt = request.cookies.get("crucible_user_token")
 
     user_info = decode_token(user_info_jwt) if user_info_jwt else None
     if user_info is None:
-        return _login_redirect(f"/{api_path}/auth/login", f"/{api_path}/auth/apikey")
+        return _login_redirect(f"{root}/auth/login", f"{root}/auth/apikey")
     orcid = user_info["orcid"]
-    crucible_token = find_or_add_api_access(orcid, engine, regenerate=True)
+    crucible_token = find_or_add_api_access(orcid, get_engine(), regenerate=True)
     return {"api_key": crucible_token}
 
 

@@ -4,7 +4,7 @@ from functools import lru_cache
 
 import yaml
 
-from app.config import get_secret
+from app.config import ConfigurationError, get_secret, get_settings
 from app.utils.sql_utils import setup_engine as _setup_engine
 
 
@@ -16,17 +16,25 @@ def get_engine():
 @lru_cache
 def get_api_config():
     api_config_file = os.getenv("API_CONF_FILE")
+    if not api_config_file:
+        return {}
     with open(api_config_file) as f:
-        return yaml.safe_load(f)
+        return yaml.safe_load(f) or {}
 
 
 def get_api_url():
-    conf = get_api_config()
-    return f"https://{conf['hostname']}{get_api_root_path()}"
+    public_url = get_settings().api_public_url
+    if public_url:
+        return f"{public_url.rstrip('/')}{get_api_root_path()}"
+    hostname = get_api_config().get("hostname")
+    if not hostname:
+        raise ConfigurationError("API_PUBLIC_URL is not set (the address clients use to reach this server, for example http://localhost:8080)")
+    return f"https://{hostname}{get_api_root_path()}"
 
 
 def get_api_path():
-    return get_api_config()["api_path"]
+    configured = get_settings().api_path
+    return configured if configured is not None else get_api_config().get("api_path", "")
 
 
 def get_api_root_path():
@@ -35,7 +43,10 @@ def get_api_root_path():
 
 
 def get_orcid_client_id():
-    return os.getenv("ORCID_CLIENT_ID") or get_api_config()["orcid_client_id"]
+    client_id = get_settings().orcid_client_id or get_api_config().get("orcid_client_id")
+    if not client_id:
+        raise ConfigurationError("ORCID_CLIENT_ID is not set")
+    return client_id
 
 
 def get_orcid_client_secret():
@@ -47,4 +58,5 @@ def get_redirect_uri():
 
 
 def get_trgm_search_threshold() -> float:
-    return float(get_api_config().get("trgm_search_threshold", 0.3))
+    configured = get_settings().trgm_search_threshold
+    return configured if configured is not None else float(get_api_config().get("trgm_search_threshold", 0.3))

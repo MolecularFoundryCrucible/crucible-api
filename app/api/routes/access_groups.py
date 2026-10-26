@@ -12,7 +12,6 @@ from app.utils.auth_utils import authorize_user, require_platform_admin
 from app.utils.permissions import AccessGroupType, Principal
 
 router = APIRouter(tags=["access_groups"])
-engine = get_engine()
 
 
 @router.post("/access_groups", response_model=AccessGroupRead)
@@ -21,7 +20,7 @@ def create_access_group(auth_res: Annotated[Principal, Depends(authorize_user)],
     if not ag.group_name.strip():
         raise HTTPException(status_code=400, detail="group_name must not be empty.")
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         if ag.group_name in {"admin", "public", "read_only"}:
             raise HTTPException(status_code=409, detail="Reserved system group names cannot be created")
         if session.exec(select(AccessGroup.id).where(AccessGroup.group_name == ag.group_name)).first():
@@ -46,7 +45,7 @@ def create_access_group(auth_res: Annotated[Principal, Depends(authorize_user)],
 @router.get("/access_groups/{group_name}", response_model=Union[None, AccessGroupRead])
 def read_access_group(auth_res: Annotated[Principal, Depends(authorize_user)], group_name: str):
     require_platform_admin(auth_res)
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return session.exec(
             select(AccessGroup).where(AccessGroup.group_name == group_name)
         ).one_or_none()
@@ -57,7 +56,7 @@ def list_access_group_users(auth_res: Annotated[Principal, Depends(authorize_use
     '''List all users who are members of the given access group, with their role. Admin only.'''
     require_platform_admin(auth_res)
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ag = session.exec(select(AccessGroup).where(AccessGroup.group_name == group_name)).one_or_none()
         if ag is None:
             raise HTTPException(status_code=404, detail="Access group not found")
@@ -81,5 +80,5 @@ def request_to_join_access_group(
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
     '''Deprecated: use POST /projects/{project_ref}/join_requests. group_name takes a project slug or MFID.'''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return create_join_request(session, auth_res, group_name, body.reason)

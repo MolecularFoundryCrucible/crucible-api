@@ -47,6 +47,8 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Per-worker Prometheus counters](prometheus_multiprocess_followup.md) and [public `/metrics` endpoint](public_metrics_endpoint_followup.md)
 - [Unused Cloud SQL proxy sidecar](cloud_sql_proxy_sidecar_followup.md)
 - [Error responses](error_responses_followup.md): moving repeated route error documentation into `app/api/errors.py`.
+- [Database engine](database_engine_followup.md): moving routes to a FastAPI session dependency.
+- [Secret key separation](secret_key_separation_followup.md): deriving separate keys for the session cookie and cursors from `CRUCIBLE_SECRET_KEY`.
 
 ## Deferred designs
 

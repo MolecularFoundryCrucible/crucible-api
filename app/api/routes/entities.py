@@ -15,7 +15,6 @@ from app.utils.sql_utils import deletion_filter_for, select_active
 from app.utils.permissions import Permission, Principal
 
 router = APIRouter(tags=["entities"])
-engine = get_engine()
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +181,7 @@ def entity_graph_cte(
     Use /project_graph/{project_ref} to get all entities in a project.
     """
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         sample_target = session.exec(select_active(Sample, entity_id, principal=auth_res)).first()
 
         if sample_target is not None:
@@ -212,7 +211,7 @@ def project_graph(
     as a single node-link graph.
     """
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         project = resolve_project_reference(project_ref, session)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")

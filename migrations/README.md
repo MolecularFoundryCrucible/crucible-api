@@ -2,6 +2,46 @@
 
 Use Alembic revisions in `migrations/versions/` for schema changes and reviewed scripts in `migrations/data/` for audits, backfills, and one-time data cleanup.
 
+## New installations
+
+`python -m app.cli.db upgrade` brings the configured database to the latest schema:
+
+- An empty database (no tables in `public`) gets `migrations/schema/baseline_<revision>.sql` in one transaction, including the `vector` and `pg_trgm` extensions and the `public` access group, is stamped at that revision, and then gets the migrations after it. If the baseline fails, nothing is left behind; if a later migration fails, the database stays at the last completed revision and running the command again continues from there.
+- A database with `alembic_version` gets its pending migrations (`alembic upgrade head`).
+- A database with tables but no `alembic_version` is refused.
+- Concurrent runs wait for each other (PostgreSQL advisory lock).
+
+`vector` is not a trusted extension, so either the database user is a superuser or an administrator creates both extensions in the database first (`CREATE EXTENSION vector; CREATE EXTENSION pg_trgm;`); the application user then only needs to own the database.
+
+The database named by `ALEMBIC_PRODUCTION_DATABASE` (default `crucible`) is refused unless `--yes-this-is-production` is given, the same guard as `alembic -x yes-this-is-production=true`; set it to an empty value on installations without a separate production database.
+
+Readiness (`/health/ready`) expects the migration heads of the running code when `EXPECTED_DB_REVISIONS` is not set.
+
+### The schema baseline
+
+The old migration chain cannot build a database from nothing, so new installations start from a schema baseline: the schema of staging at a known revision (`BASELINE_REVISION` in `app/cli/db.py`). To check that a fresh installation matches staging:
+
+```bash
+DB_SERVER=127.0.0.1:55433 DB_USERNAME=postgres DB_DATABASE=crucible_fresh PGDB_PW=test \
+  .venv/bin/python -m app.cli.db upgrade
+
+PGPASSWORD=... scripts/compare_schema.sh \
+  postgresql://postgres:test@127.0.0.1:55433/crucible_fresh \
+  postgresql://crucible-api-user@127.0.0.1:5433/crucible-staging
+```
+
+`scripts/compare_schema.sh` dumps both schemas with the PostgreSQL 17 client in read-only sessions and exits 1 on any difference. On 2026-10-26 at `b8f2d6e41c07` the only differences were two that exist on staging only: an empty legacy `source` schema, and an empty comment on the `public` schema (the baseline leaves schema and extension comments out because they require ownership the application user may not have).
+
+To move the baseline to a newer revision (optional; the migrations after it keep working), dump staging at that revision and regenerate:
+
+```bash
+docker run --rm --network host -e PGPASSWORD postgres:17 pg_dump --schema-only --no-owner --no-privileges \
+  postgresql://crucible-api-user@127.0.0.1:5433/crucible-staging > staging_schema.sql
+.venv/bin/python scripts/make_schema_baseline.py staging_schema.sql <revision>
+```
+
+Then update `BASELINE_REVISION`, delete the old baseline file, and run the comparison above.
+
 ## Schema changes
 
 Generate and review a revision before applying it:

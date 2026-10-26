@@ -9,7 +9,7 @@ def _response_body(response):
 
 
 def test_readiness_reports_build_and_schema_provenance(monkeypatch):
-    monkeypatch.delenv("EXPECTED_DB_REVISIONS", raising=False)
+    monkeypatch.setenv("EXPECTED_DB_REVISIONS", "head_a,head_b")
     monkeypatch.setattr(misc, "_check_db", lambda: ("ok", 2.5, ["head_a", "head_b"]))
     monkeypatch.setattr(misc, "api_version", lambda: "3.0.0")
     monkeypatch.setattr(misc, "git_commit", lambda: "abc123")

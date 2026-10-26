@@ -5,7 +5,12 @@ script and the app itself use.
 
 Prod and staging share a Cloud SQL instance, differing only by database name
 (see migrations/data/apply_sql.py). The same guard applies here: refuse to
-run against production unless explicitly told to.
+run against production unless explicitly told to. ALEMBIC_PRODUCTION_DATABASE
+names the guarded database ("crucible" by default); an empty value turns the
+guard off for installations without a separate production database.
+
+`python -m app.cli.db upgrade` passes its own connection in
+config.attributes["connection"]; otherwise get_engine() is used.
 
 Usage:
     DB_CONF_FILE=.env alembic revision --autogenerate -m "add a column"
@@ -17,18 +22,17 @@ import sys
 from logging.config import fileConfig
 
 from sqlalchemy import text
-from sqlmodel import Session, SQLModel
+from sqlmodel import SQLModel
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.api.dependencies import get_engine
+from app.cli.db import guarded_database
 # The only module in app/models declaring table=True models. Importing it is
 # what populates SQLModel.metadata for autogenerate to diff against.
 import app.models.core_models  # noqa: F401
 
 from alembic import context
-
-PRODUCTION_DB = "crucible"
 
 config = context.config
 
@@ -38,10 +42,11 @@ if config.config_file_name is not None:
 target_metadata = SQLModel.metadata
 
 
-def _refuse_if_unguarded_production(engine):
-    with Session(engine) as session:
-        actual = session.execute(text("SELECT current_database()")).scalar()
-    if actual != PRODUCTION_DB:
+def _refuse_if_unguarded_production(connection):
+    actual = connection.execute(text("SELECT current_database()")).scalar()
+    connection.commit()
+    guarded = guarded_database()
+    if not guarded or actual != guarded:
         return
     if context.get_x_argument(as_dictionary=True).get("yes-this-is-production") == "true":
         return
@@ -62,14 +67,20 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def run_migrations_online() -> None:
-    engine = get_engine()
-    _refuse_if_unguarded_production(engine)
+def _run_migrations(connection) -> None:
+    _refuse_if_unguarded_production(connection)
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
 
-    with engine.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
-        with context.begin_transaction():
-            context.run_migrations()
+
+def run_migrations_online() -> None:
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        _run_migrations(connection)
+        return
+    with get_engine().connect() as connection:
+        _run_migrations(connection)
 
 
 if context.is_offline_mode():

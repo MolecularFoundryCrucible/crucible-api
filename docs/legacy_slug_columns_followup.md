@@ -16,7 +16,19 @@ The API reads and writes only `dataset.project_mfid`, `sample.project_mfid`, and
 
 The columns keep their last values: new rows leave them null, renames do not update them, and the API ignores them.
 
+## Other unused columns
+
+Comparing the schema baseline (`migrations/schema/baseline_b8f2d6e41c07.sql`, taken from staging on 2026-10-26) with the models found two more columns that no code reads or writes:
+
+| Column | Left the models |
+|---|---|
+| `dataset.sha256_hash_file_to_upload` | 2026-04-13 (`d0c1f5e`, old upload flow) |
+| `project.project_lead_name` | 2026-04-14 (`16f4b4d`, project lead moved from email to ORCID) |
+
+Their contents on production have not been checked; look before dropping them.
+
 ## Step 2
 
 1. Decide what to do with the 1,142 datasets whose only instrument information is `instrument_name` (link to an existing instrument, register a new one, or leave unassigned). The review list was generated on 2026-10-19.
-2. After those decisions are applied, a migration drops `dataset.project_id`, `sample.project_id`, `dataset.instrument_id`, `dataset.instrument_name`, and the `userprojectlink` table, with their indexes. It must run only after step 1 is live everywhere, because pods running older code still select these columns.
+2. After those decisions are applied, a migration drops `dataset.project_id`, `sample.project_id`, `dataset.instrument_id`, `dataset.instrument_name`, `dataset.sha256_hash_file_to_upload`, `project.project_lead_name`, and the `userprojectlink` table, with their indexes. It must run only after step 1 is live everywhere, because pods running older code still select these columns.
+3. Fresh installations get these columns from the schema baseline and lose them through the same migration. Afterwards the baseline can optionally be regenerated at the new revision (see `migrations/README.md`), so new installations start without them.

@@ -82,13 +82,46 @@ All replicas must hold the same secrets, or a cookie or cursor issued by one rep
 
 Phase 1 changes nothing for the Foundry: it keeps its `NAME_VERSION` references, and its ConfigMaps never give a secret two ways (checked 2026-10-26: only `_VERSION` entries for `ORCID_CLIENT_SECRET`, `HUB_AUTH_CLIENT_SECRET`, `HUB_AUTH_ORCID_CLIENT_SECRET`, and the others). After the Phase 1 release, a Foundry deploy repository step moves the deployment configuration to a private repository, tags images by version, and switches the Foundry to the GKE Secret Manager add-on (files); the in-app Secret Manager code and its dependency are then removed.
 
+## Settings structure
+
+Decided 2026-10-26: settings are grouped by area instead of one flat class. Today `Settings` has 30 flat fields, the per-feature requirements live in a side table (`_FEATURE_REQUIREMENTS`), and about 30 more values are read with `os.getenv` elsewhere (database pool, multipart limits, Hub sign-in, cursor keys, readiness, caches, thumbnails); by Phase 3 a flat class would pass 60 fields.
+
+### Shape
+
+- Each area is a small pydantic-settings class (`SettingsGroup` subclass) with its own environment prefix. Environment variable names do not change; names that do not follow the prefix (`PGDB_PW`, `RABBITMQ_DEFAULT_PW`, `PROPDB_APIKEY`, `INGESTION_ENABLED`, ...) are kept with `validation_alias`.
+- `Settings` is a plain container of groups, built and cached by `get_settings()`; code reads `get_settings().db.server`.
+- `SettingsGroup` holds the shared options (case-insensitive names, empty values ignored, values trimmed) and replaces the default sources with one custom source, `SecretSources`, built on pydantic-settings' documented extension point (`settings_customise_sources`, `PydanticBaseSettingsSource`). It looks up every field by its exact environment variable name in the ways listed above and enforces the "one way only" rule. The built-in secrets-directory source is not used, because it applies the group prefix to file names and does not reach nested groups (pydantic-settings issues #508 and #154).
+- Each group validates its own requirements (for example, printing on requires the MQTT host, username, and password). `check_settings()` collects every group's problems into one message.
+
+| Group | Contents (environment names unchanged) |
+|---|---|
+| `db` | `DB_SERVER`, `DB_USERNAME`, `DB_DATABASE`, `PGDB_PW`, `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT`, `DB_POOL_RECYCLE`, `EXPECTED_DB_REVISIONS` |
+| `security` | `CRUCIBLE_SECRET_KEY`, `CRUCIBLE_CURSOR_SIGNING_KEY`, `CRUCIBLE_CURSOR_SIGNING_KEYS`, `CRUCIBLE_CURSOR_ACTIVE_KEY_ID`, `AUTH_CACHE_TTL`, `AUTH_CACHE_MAXSIZE` |
+| `api` | `API_PUBLIC_URL`, `API_PATH`, `TRGM_SEARCH_THRESHOLD`, `ORCID_CLIENT_ID`, `ORCID_CLIENT_SECRET`, `API_CONF_FILE` |
+| `hub` | `HUB_AUTH_ENABLED`, `HUB_AUTH_CLIENT_ID`, `HUB_AUTH_CLIENT_SECRET`, `HUB_AUTH_ORCID_CLIENT_ID`, `HUB_AUTH_ORCID_CLIENT_SECRET`, `HUB_AUTH_ORCID_ISSUER`, `HUB_AUTH_CALLBACK_URI`, `HUB_AUTH_PUBLIC_API_URL` |
+| `storage` | `UPLOAD_BUCKET`, `GCS_PROJECT`, `GCS_SA`, `STORAGE_READ_BUCKETS`, `RECORD_BUCKET`, `MAX_UPLOAD_BYTES`, the `MULTIPART_*` settings, `LEGACY_UPLOAD_TOKEN_DOWNSCOPE`, the `THUMBNAIL_*` limits |
+| `ingestion` | `INGESTION_ENABLED`, `RMQ_HOST`, `RMQ_PORT`, `RMQ_USER`, `RMQ_ROUTING_SUFFIX`, `RABBITMQ_DEFAULT_PW` |
+| `printing` | `PRINTING_ENABLED`, `MQTT_HOST`, `MQTT_PORT`, `MQTT_USERNAME`, `MQTT_PASSWORD` |
+| `proposals` | `PROPOSAL_SYNC_ENABLED`, `PROPOSAL_DB_URL`, `PROPDB_APIKEY` |
+
+Phase 2 replaces or extends `storage`; Phase 3 adds an `auth` group for local passwords.
+
+Stay outside `Settings`, because they locate the settings or describe the build rather than configure the server: `DB_CONF_FILE`, `CRUCIBLE_SECRETS_DIR`, `ALEMBIC_PRODUCTION_DATABASE` (migration tooling, where an empty value means "off"), and the build metadata `API_VERSION`, `GITHASH`, `BRANCH_NAME`.
+
+### Alternatives considered
+
+- Nested models with a delimiter (`DB__SERVER`), the style the pydantic-settings documentation shows: renames every variable and changes the Foundry configuration. Rejected.
+- One flat class, organized with sections and a single validator: common and simple, but about 60 fields by Phase 3 with no visible grouping. Rejected.
+- The third-party `pydantic-settings-file-envar` package for `NAME_FILE`: young, single maintainer, and without the "one way only" rule. Our source is about 40 lines with tests.
+
 ## Task 6b
 
-- `app/config.py`: `NAME_FILE` support and the ambiguity check in `get_secret` and the startup check; the Hub and cursor secrets as `Settings` fields; Hub secrets in the startup check when Hub sign-in is on.
-- `app/utils/hub_secrets.py`: read through `get_secret`; no module-level vendor import. Its current checks (5 second timeout on Secret Manager, rejecting values with line breaks) are kept.
-- `app/utils/cursor_utils.py`: read the cursor keys through settings.
-- Tests: each way works; two ways for one secret is refused; `NAME_FILE` pointing to a missing or empty file is refused; Hub secrets from a file; importing the application does not import the Secret Manager client; the Foundry ConfigMaps pass the startup check (extend `tests/test_k8s_pinned_settings.py`).
-- Docs: the inventory and recipes in the install guide; CHANGELOG.
+Two commits, so the restructuring can be reviewed apart from the behavior change:
+
+1. Group the settings with no behavior change: `SettingsGroup`, the groups above, and `SecretSources` doing today's lookups (environment variable, then the secrets directory, then `NAME_VERSION`); move the scattered `os.getenv` reads in; update the 16 callers of `get_settings()`. Existing tests, including `tests/test_k8s_pinned_settings.py` for the Foundry ConfigMaps, pass unchanged in meaning.
+2. The secrets rules: `NAME_FILE`, the "one way only" check, Hub secrets from files and in the startup check, `hub_secrets.py` reading through `get_secret` with no module-level Secret Manager import (keeping its 5 second timeout and its rejection of values with line breaks), cursor keys through settings.
+
+Tests: each way works; two ways for one secret is refused; `NAME_FILE` pointing to a missing or empty file is refused; Hub secrets from a file; each group's requirements; importing the application does not import the Secret Manager client; the Foundry ConfigMaps pass the startup check (extend `tests/test_k8s_pinned_settings.py`). Docs: the inventory and recipes in the install guide; CHANGELOG.
 
 ## Sources
 

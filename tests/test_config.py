@@ -9,6 +9,7 @@ FEATURE_SETTINGS = (
     "INGESTION_ENABLED", "PRINTING_ENABLED", "PROPOSAL_SYNC_ENABLED",
     "RMQ_HOST", "RMQ_USER", "RMQ_ROUTING_SUFFIX", "RABBITMQ_DEFAULT_PW",
     "MQTT_HOST", "MQTT_USERNAME", "MQTT_PASSWORD", "PROPOSAL_DB_URL", "PROPDB_APIKEY",
+    "UPLOAD_BUCKET", "GCS_PROJECT", "GCS_SA", "STORAGE_READ_BUCKETS", "MULTIPART_UPLOAD_ENABLED",
 )
 
 
@@ -133,3 +134,76 @@ def test_malformed_version_counts_as_missing(empty):
         empty.setenv(name, "x")
     empty.setenv("PGDB_PW_VERSION", "pgcloud_pw/versions/2")
     assert missing_required_settings() == ["PGDB_PW"]
+
+
+def _required(empty):
+    for name in BASE:
+        empty.setenv(name, "x")
+
+
+def test_storage_is_off_when_not_configured(empty):
+    _required(empty)
+    assert missing_required_settings() == []
+
+
+@pytest.mark.parametrize("setting", [("MULTIPART_UPLOAD_ENABLED", "true"), ("STORAGE_READ_BUCKETS", "old-bucket")])
+def test_storage_requested_without_bucket_is_missing(empty, setting):
+    _required(empty)
+    empty.setenv(*setting)
+    assert missing_required_settings() == ["GCS_SA", "UPLOAD_BUCKET"]
+
+
+def test_storage_bucket_needs_credentials(empty):
+    _required(empty)
+    empty.setenv("UPLOAD_BUCKET", "bucket")
+    assert missing_required_settings() == ["GCS_SA"]
+    get_settings.cache_clear()
+    empty.setenv("GCS_SA_VERSION", "projects/1/secrets/sa/versions/latest")
+    assert missing_required_settings() == []
+
+
+def test_server_refuses_to_start_when_settings_are_missing(empty):
+    from fastapi.testclient import TestClient
+
+    from app.api.main import app
+
+    _required(empty)
+    empty.setenv("PRINTING_ENABLED", "true")
+    with pytest.raises(ConfigurationError, match="MQTT_HOST"):
+        with TestClient(app):
+            pass
+
+
+def test_invalid_multipart_settings_stop_the_check(empty):
+    _required(empty)
+    empty.setenv("MULTIPART_UPLOAD_ENABLED", "maybe")
+    with pytest.raises(ConfigurationError, match="MULTIPART_UPLOAD_ENABLED must be true or false"):
+        check_settings()
+
+
+def test_send_pika_message_uses_configured_broker(empty, monkeypatch):
+    from app.utils import rmq_utils
+
+    empty.setenv("RMQ_HOST", "broker.lab")
+    empty.setenv("RMQ_PORT", "5673")
+    empty.setenv("RMQ_USER", "crucible")
+    seen = {}
+
+    class Connection:
+        def __init__(self, parameters):
+            seen["host"], seen["port"] = parameters.host, parameters.port
+            seen["user"] = parameters.credentials.username
+
+        def channel(self):
+            return MagicMockChannel()
+
+        def close(self):
+            pass
+
+    class MagicMockChannel:
+        def basic_publish(self, **kwargs):
+            seen["routing_key"] = kwargs["routing_key"]
+
+    monkeypatch.setattr(rmq_utils.pika, "BlockingConnection", Connection)
+    rmq_utils.send_pika_message("{}", "", "ingestion-lab-small", "pw")
+    assert seen == {"host": "broker.lab", "port": 5673, "user": "crucible", "routing_key": "ingestion-lab-small"}

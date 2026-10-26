@@ -34,6 +34,8 @@ from app.utils.permissions import (
     has_global_permission,
     resolve_authorization_context,
 )
+from app.api.errors import feature_disabled_response
+from app.config import require_feature
 from app.utils.user_utils import assert_profile_fields_available, assign_projects_to_user, commit_user, find_mf_user_proposals
 
 router = APIRouter(tags=["account"])
@@ -118,9 +120,10 @@ def update_account_profile(auth_res: Annotated[Principal, Depends(authorize_user
         return _self_user_read(user)
 
 
-@router.post("/account/sync-projects", response_model=ProjectSyncResult)
+@router.post("/account/sync-projects", response_model=ProjectSyncResult, responses=feature_disabled_response("proposal_sync"))
 def sync_account_projects(auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Add project memberships discovered from the MF proposal database."""
+    require_feature("proposal_sync")
     user_unique_id = auth_res.user_id
     proposal_ids = find_mf_user_proposals(user_unique_id) if is_orcid(user_unique_id) else []
     with Session(engine) as session:

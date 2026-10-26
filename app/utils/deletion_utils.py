@@ -13,8 +13,8 @@ from app.models.core_models import (
 
 logger = logging.getLogger(__name__)
 
-from app.api.routes.gcs_storage import _DOWNLOAD_BUCKET
 from app.utils.permissions import AccessGroupType
+from app.services.storage_downloads import StorageNotConfigured, upload_bucket
 
 
 def _nonzero(counts: dict) -> dict:
@@ -163,9 +163,13 @@ def _deleted_group_grants(session: Session, group: AccessGroup) -> list[dict]:
 def _delete_gcs_blobs_for_dataset(dataset_unique_id: str, associated_files: list) -> None:
     """Delete GCS blobs for a dataset's associated files. Logs but never raises."""
     try:
+        bucket_name = upload_bucket()
+    except StorageNotConfigured:
+        return
+    try:
         from app.api.routes.gcs_storage import _get_gcs_storage_client
         client = _get_gcs_storage_client()
-        bucket = client.bucket(_DOWNLOAD_BUCKET)
+        bucket = client.bucket(bucket_name)
     except Exception:
         logger.exception(
             "GCS client init failed for dataset %s — DB deletion will still proceed",

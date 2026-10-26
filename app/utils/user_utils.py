@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
-from app.config import get_secret
+from app.config import get_secret, get_settings
 from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import AccessGroup, Project, User
 
@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 # urllib3 logs request URLs at DEBUG, and the proposal service takes its API key in the query string.
 logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
-MF_PROPOSAL_DB_URL = "https://foundry-admin.lbl.gov/api/JSON/sciCat-GetUser.aspx"
 MF_PROPOSAL_DB_TIMEOUT = 10
 
 # A separator (- or _) must always be followed by an alphanumeric run, which
@@ -276,7 +275,10 @@ def close_pending_join_requests(session, accessgroup_id, orcid, granted_role, ac
 
 
 def find_mf_user_proposals(orcid: str) -> List[str]:
-    """Return MF proposal IDs for an ORCID without blocking on service failures."""
+    """Return MF proposal IDs for an ORCID without blocking on service failures. Returns nothing
+    when proposal sync is disabled."""
+    if not get_settings().proposal_sync_enabled:
+        return []
     try:
         api_key = get_secret("PROPDB_APIKEY")
     except Exception as exc:
@@ -288,7 +290,7 @@ def find_mf_user_proposals(orcid: str) -> List[str]:
 
     try:
         response = requests.get(
-            MF_PROPOSAL_DB_URL,
+            get_settings().proposal_db_url,
             params={"key": api_key, "orcid": orcid},
             timeout=MF_PROPOSAL_DB_TIMEOUT,
         )

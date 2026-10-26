@@ -6,11 +6,11 @@ Also runs every GCS record through `resolve_storage_object`, the same rule the d
 
 Read-only: the transaction is opened READ ONLY and never committed.
 
-Must be run with the target environment's multipart bucket set in `MULTIPART_UPLOAD_BUCKET`, the same variable the rule reads; otherwise every multipart object is reported as `bucket_not_allowed`.
+Must be run with the target environment's buckets set in `UPLOAD_BUCKET` and `MULTIPART_UPLOAD_BUCKET`, the same variables the rule reads; otherwise records in an unset bucket are reported as `bucket_not_allowed`, and with neither set the audit stops.
 
 Usage:
-    MULTIPART_UPLOAD_BUCKET=mf-crucible-multipart-staging DB_CONF_FILE=.env .venv/bin/python migrations/data/20261013_audit_file_storage_paths.py
-    MULTIPART_UPLOAD_BUCKET=<production bucket> DB_CONF_FILE=.env.prod .venv/bin/python migrations/data/20261013_audit_file_storage_paths.py
+    UPLOAD_BUCKET=mf-storage-staging MULTIPART_UPLOAD_BUCKET=mf-crucible-multipart-staging DB_CONF_FILE=.env .venv/bin/python migrations/data/20261013_audit_file_storage_paths.py
+    UPLOAD_BUCKET=mf-storage-prod MULTIPART_UPLOAD_BUCKET=<production bucket> DB_CONF_FILE=.env.prod .venv/bin/python migrations/data/20261013_audit_file_storage_paths.py
 """
 import os
 import sys

@@ -11,11 +11,12 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import DatasetMfid
-from app.config import get_secret
+from app.config import get_secret, get_settings
 from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
 from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead, UploadMultipartInitiateRead
 from app.services import multipart
+from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE
 from app.services.storage_downloads import DOWNLOAD_LIFETIME, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, retire_object, signed_download_url, upload_bucket
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
@@ -25,11 +26,9 @@ router = APIRouter(tags=["storage"])
 engine = get_engine()
 logger = logging.getLogger(__name__)
 
-_DOWNLOAD_BUCKET = upload_bucket()
 _GCS_UPLOAD_API = "https://storage.googleapis.com/upload/storage/v1/b"
 _CHUNK_SIZE_HINT = 8 * 1024 * 1024  # 8 MiB — GCS recommended chunk multiple
 _MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 500 * 1024 ** 3))  # default 500 GiB
-_GCS_PROJECT = os.environ.get("GCS_PROJECT", "crucible-prod")
 
 _gcs_credentials = None
 _gcs_authed_session = None
@@ -70,18 +69,19 @@ def _determine_storage_path(dataset_mfid, filename):
     For a given dataset ID, list the gcs blobs in the corresponding
     folder and return the storage path for the file. 
     """
+    bucket = upload_bucket()
     basename = filename.split("/")[-1]
     exact = f"{dataset_mfid}/{filename}"
     names = [
         blob.name
-        for blob in _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
+        for blob in _get_gcs_storage_client().bucket(bucket).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
         if not blob.name.startswith(multipart_prefix(dataset_mfid))
     ]
     if exact in names:
-        return f"{_DOWNLOAD_BUCKET}/{exact}"
+        return f"{bucket}/{exact}"
     candidates = [name for name in names if name.endswith(f"/{basename}")]
     if len(candidates) == 1:
-        return f"{_DOWNLOAD_BUCKET}/{candidates[0]}"
+        return f"{bucket}/{candidates[0]}"
     if candidates:
         raise HTTPException(
             status_code=409,
@@ -122,6 +122,7 @@ def _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename
 
 def _mint_upload_token(dsid: str) -> tuple[str, str]:
     """Return (access_token, token_expiry_iso) limited to objects under {dsid}/ in the upload bucket."""
+    bucket = upload_bucket()
     from google.auth import downscoped
     from google.auth.transport.requests import Request
     scoped = _get_gcs_credentials().with_scopes(
@@ -130,9 +131,9 @@ def _mint_upload_token(dsid: str) -> tuple[str, str]:
     if os.getenv("LEGACY_UPLOAD_TOKEN_DOWNSCOPE", "true").lower() == "false":
         scoped.refresh(Request())
         return scoped.token, scoped.expiry.isoformat()
-    prefix = f"projects/_/buckets/{_DOWNLOAD_BUCKET}/objects/{dsid}/"
+    prefix = f"projects/_/buckets/{bucket}/objects/{dsid}/"
     boundary = downscoped.CredentialAccessBoundary(rules=[downscoped.AccessBoundaryRule(
-        available_resource=f"//storage.googleapis.com/projects/_/buckets/{_DOWNLOAD_BUCKET}",
+        available_resource=f"//storage.googleapis.com/projects/_/buckets/{bucket}",
         available_permissions=["inRole:roles/storage.objectAdmin"],
         availability_condition=downscoped.AvailabilityCondition(
             expression=f"resource.name.startsWith('{prefix}') && !resource.name.startsWith('{prefix}{MULTIPART_SEGMENT}/')",
@@ -216,7 +217,7 @@ def _create_upload_session(
 
 
 
-@router.post("/datasets/{dataset_mfid}/upload/initiate", response_model=UploadInitiateRead)
+@router.post("/datasets/{dataset_mfid}/upload/initiate", response_model=UploadInitiateRead, responses=STORAGE_NOT_CONFIGURED_RESPONSE)
 def initiate_resumable_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
@@ -230,6 +231,7 @@ def initiate_resumable_upload(
     Call POST /datasets/{dataset_mfid}/upload/complete when all chunks are uploaded.
     '''
     user_unique_id = auth_res.user_id
+    bucket = upload_bucket()
 
     result = _validate_and_prepare_upload(dsid, body, user_unique_id, auth_res)
     if not isinstance(result, tuple):
@@ -239,7 +241,7 @@ def initiate_resumable_upload(
     try:
         authed = _get_gcs_authed_session()
         resp = authed.post(
-            f"{_GCS_UPLOAD_API}/{_DOWNLOAD_BUCKET}/o?uploadType=resumable",
+            f"{_GCS_UPLOAD_API}/{bucket}/o?uploadType=resumable",
             headers={
                 "X-Upload-Content-Type": "application/octet-stream",
                 "X-Upload-Content-Length": str(body.size),
@@ -264,7 +266,7 @@ def initiate_resumable_upload(
     )
 
 
-@router.post("/datasets/{dataset_mfid}/upload/initiate/multipart", response_model=UploadMultipartInitiateRead)
+@router.post("/datasets/{dataset_mfid}/upload/initiate/multipart", response_model=UploadMultipartInitiateRead, responses=STORAGE_NOT_CONFIGURED_RESPONSE)
 def initiate_multipart_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
@@ -278,6 +280,7 @@ def initiate_multipart_upload(
     If existing_file is set, the file already exists; skip the upload entirely.
     '''
     user_unique_id = auth_res.user_id
+    bucket = upload_bucket()
 
     result = _validate_and_prepare_upload(dsid, body, user_unique_id, auth_res)
     if not isinstance(result, tuple):
@@ -296,13 +299,13 @@ def initiate_multipart_upload(
         upload_id=upload_id,
         access_token=access_token,
         token_expiry=token_expiry,
-        bucket=_DOWNLOAD_BUCKET,
+        bucket=bucket,
         object_prefix=f"{dsid}/",
-        project=_GCS_PROJECT,
+        project=get_settings().gcs_project,
     )
 
 
-@router.post("/datasets/{dataset_mfid}/upload/complete", response_model=AssociatedFileRead)
+@router.post("/datasets/{dataset_mfid}/upload/complete", response_model=AssociatedFileRead, responses=STORAGE_NOT_CONFIGURED_RESPONSE)
 def complete_resumable_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
@@ -315,6 +318,7 @@ def complete_resumable_upload(
     and deletes the upload session record.
     '''
     user_unique_id = auth_res.user_id
+    bucket = upload_bucket()
 
     with Session(engine) as session:
         us = session.exec(
@@ -342,7 +346,7 @@ def complete_resumable_upload(
             raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
 
         try:
-            blob = _get_gcs_storage_client().bucket(_DOWNLOAD_BUCKET).blob(us.gcs_path)
+            blob = _get_gcs_storage_client().bucket(bucket).blob(us.gcs_path)
             blob.reload()
         except NotFound:
             raise HTTPException(status_code=422, detail="Uploaded file not found in storage") from None
@@ -359,7 +363,7 @@ def complete_resumable_upload(
         assoc = AssociatedFile(
             dataset_id=ds.id,
             filename=us.associated_file_name,
-            storage_path=f"{_DOWNLOAD_BUCKET}/{us.gcs_path}",
+            storage_path=f"{bucket}/{us.gcs_path}",
             size=blob.size,
             sha256_hash=body.sha256_hash,
         )

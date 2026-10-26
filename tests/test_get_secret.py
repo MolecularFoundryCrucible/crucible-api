@@ -60,6 +60,7 @@ def test_only_secret_settings_can_be_read(clean, name):
     ("environment", "version"),
     ("pointer", "environment"),
     ("pointer", "directory"),
+    ("pointer", "version"),
 ])
 def test_a_secret_given_two_ways_is_refused(clean, monkeypatch, no_secret_manager, ways):
     if "directory" in ways:
@@ -121,8 +122,9 @@ def test_configured_secrets_directory_must_exist(clean, monkeypatch):
 
 def test_unreadable_secret_file_is_a_configuration_error(clean, monkeypatch):
     _secrets_dir(clean, monkeypatch, {SECRET: b"\xff\xfe"})
-    with pytest.raises(ConfigurationError, match="Unreadable file in the secrets directory"):
+    with pytest.raises(ConfigurationError, match=f"The {SECRET} file in the secrets directory cannot be read") as error:
         get_secret(SECRET)
+    assert "xff" not in str(error.value)
 
 
 @pytest.mark.parametrize("value", ["", "   "])

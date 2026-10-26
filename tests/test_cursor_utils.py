@@ -81,3 +81,16 @@ def test_cursor_signature_binds_request_context():
 
     with pytest.raises(CursorError, match="Invalid cursor or request context"):
         decode_cursor(cursor, **{**CURSOR_CONTEXT, "direction": "desc"})
+
+
+def test_cursor_signing_key_reference_is_used(monkeypatch):
+    from app import config
+
+    monkeypatch.delenv("CRUCIBLE_CURSOR_SIGNING_KEYS", raising=False)
+    monkeypatch.delenv("CRUCIBLE_CURSOR_SIGNING_KEY", raising=False)
+    monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEY_VERSION", "projects/1/secrets/cursor/versions/1")
+    monkeypatch.setattr(config, "get_gcs_secret", lambda name: "from-manager")
+    _restart()
+    from app.utils import cursor_utils
+
+    assert cursor_utils._signing_keys() == ("v1", {"v1": b"from-manager"})

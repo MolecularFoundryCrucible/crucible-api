@@ -25,7 +25,11 @@ class FeatureDisabled(Exception):
 
 
 def optional_env(name: str) -> str | None:
-    value = os.getenv(name)
+    """A trimmed environment variable, matched regardless of case like the settings; None when
+    unset or blank."""
+    value = os.environ.get(name)
+    if value is None:
+        value = next((found for key, found in os.environ.items() if key.upper() == name.upper()), None)
     if value is None or not value.strip():
         return None
     return value.strip()
@@ -45,10 +49,27 @@ def _read_pointed_file(name: str, path: str) -> str:
     return value
 
 
+def _by_upper_name(items) -> tuple[dict, set[str]]:
+    found, duplicated = {}, set()
+    for key, value in items:
+        if key.upper() in found:
+            duplicated.add(key.upper())
+        found[key.upper()] = value
+    return found, duplicated
+
+
+def _read_secrets_file(name: str, path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ConfigurationError(f"The {name} file in the secrets directory cannot be read ({path}): {error.__class__.__name__}") from None
+
+
 class SecretSources(PydanticBaseSettingsSource):
     """Reads each setting from exactly one of: a file named by NAME_FILE, a file NAME in the secrets
     directory, or the NAME environment variable. For secrets, NAME_VERSION (fetched later by
-    get_secret) also counts as a way. A setting given more than one way is an error."""
+    get_secret) also counts as a way. Names match regardless of case; a blank value (empty or only
+    spaces) counts as not given. A setting given more than one way is an error."""
 
     def __init__(self, settings_cls: type[BaseSettings], secrets_dir: str | None):
         super().__init__(settings_cls)
@@ -58,20 +79,27 @@ class SecretSources(PydanticBaseSettingsSource):
         raise NotImplementedError
 
     def __call__(self) -> dict[str, str]:
-        environment = {key.upper(): value for key, value in os.environ.items()}
-        files = {path.name.upper(): path for path in self.secrets_dir.iterdir() if path.is_file()} if self.secrets_dir else {}
+        environment, duplicated = _by_upper_name(os.environ.items())
+        paths = (path for path in self.secrets_dir.iterdir() if path.is_file()) if self.secrets_dir else ()
+        files, duplicated_files = _by_upper_name((path.name, path) for path in paths)
         values = {}
         for field, info in self.settings_cls.model_fields.items():
             name = self.settings_cls.env_name(field)
+            secret = _is_secret(self.settings_cls, field)
+            related = {name, f"{name}_FILE"} | ({f"{name}_VERSION"} if secret else set())
+            if related & duplicated or name in duplicated_files:
+                raise ConfigurationError(f"{name} is given more than once with names that differ only in case; give it one way only")
             ways: dict[str, str | None] = {}
-            if environment.get(name):
+            if environment.get(name, "").strip():
                 ways[name] = environment[name]
             pointer = environment.get(f"{name}_FILE", "").strip()
             if pointer:
                 ways[f"{name}_FILE"] = _read_pointed_file(name, pointer)
             if name in files:
-                ways[f"a {name} file in the secrets directory"] = files[name].read_text(encoding="utf-8")
-            if _is_secret(self.settings_cls, field) and environment.get(f"{name}_VERSION", "").strip():
+                content = _read_secrets_file(name, files[name])
+                if content.strip():
+                    ways[f"a {name} file in the secrets directory"] = content
+            if secret and environment.get(f"{name}_VERSION", "").strip():
                 ways[f"{name}_VERSION"] = None
             if len(ways) > 1:
                 raise ConfigurationError(f"{name} is given more than one way ({', '.join(ways)}); give it one way only")
@@ -84,8 +112,7 @@ class SecretSources(PydanticBaseSettingsSource):
 class SettingsGroup(BaseSettings):
     """One area of settings. Each setting is read from exactly one of NAME_FILE, a file NAME in the
     secrets directory (as Docker and Kubernetes mount secrets), or the NAME environment variable.
-    Values are trimmed. An empty value is ignored; a value of only spaces becomes empty, which
-    get_secret and the startup check treat as unset and which flags reject."""
+    Values are trimmed, and a blank value counts as not given."""
 
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore", env_ignore_empty=True, str_strip_whitespace=True)
 
@@ -177,7 +204,9 @@ class HubSettings(SettingsGroup):
         if not self.enabled:
             return []
         found = self.missing("client_secret", "callback_uri")
-        if self.missing("orcid_client_secret") and settings.api.missing("orcid_client_secret"):
+        if self.orcid_client_secret is not None or optional_env("HUB_AUTH_ORCID_CLIENT_SECRET_VERSION") is not None:
+            found += self.missing("orcid_client_secret")
+        elif settings.api.missing("orcid_client_secret"):
             found.append("HUB_AUTH_ORCID_CLIENT_SECRET or ORCID_CLIENT_SECRET")
         return found
 
@@ -326,6 +355,15 @@ def configured_secret(name: str) -> str | None:
     group, field = _SECRETS[name]
     value = getattr(getattr(get_settings(), group), field)
     return value.get_secret_value() if value is not None and value.get_secret_value() else None
+
+
+def optional_secret(name: str) -> str | None:
+    """A secret that may be left out: its value when given any way, including NAME_VERSION; None
+    when it is not given at all."""
+    value = configured_secret(name)
+    if value is not None:
+        return value
+    return get_secret(name) if optional_env(f"{name.upper()}_VERSION") is not None else None
 
 
 def get_secret(name: str) -> str:

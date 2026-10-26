@@ -9,7 +9,7 @@ from google.protobuf.message import DecodeError
 from google.protobuf.struct_pb2 import ListValue
 from pydantic import BaseModel, ConfigDict
 
-from app.config import get_settings
+from app.config import get_settings, optional_secret
 from app.utils.auth_utils import get_secret_key
 
 
@@ -36,11 +36,10 @@ class ResourceCursor(BaseModel):
 
 
 def _signing_keys() -> tuple[str, dict[str, bytes]]:
-    security = get_settings().security
-    configured = security.cursor_signing_keys
-    if configured is not None and configured.get_secret_value():
+    configured = optional_secret("CRUCIBLE_CURSOR_SIGNING_KEYS")
+    if configured:
         try:
-            values = json.loads(configured.get_secret_value())
+            values = json.loads(configured)
         except json.JSONDecodeError as exc:
             raise RuntimeError("CRUCIBLE_CURSOR_SIGNING_KEYS must be a JSON object") from exc
         if not isinstance(values, dict) or not values or not all(
@@ -50,9 +49,8 @@ def _signing_keys() -> tuple[str, dict[str, bytes]]:
             raise RuntimeError("CRUCIBLE_CURSOR_SIGNING_KEYS must map non-empty key IDs to non-empty secrets")
         keys = {key_id: secret.encode("utf-8") for key_id, secret in values.items()}
     else:
-        single = security.cursor_signing_key.get_secret_value() if security.cursor_signing_key is not None else ""
-        keys = {"v1": (single or get_secret_key()).encode("utf-8")}
-    active_key_id = security.cursor_active_key_id
+        keys = {"v1": (optional_secret("CRUCIBLE_CURSOR_SIGNING_KEY") or get_secret_key()).encode("utf-8")}
+    active_key_id = get_settings().security.cursor_active_key_id
     if active_key_id not in keys:
         raise RuntimeError("CRUCIBLE_CURSOR_ACTIVE_KEY_ID is not present in CRUCIBLE_CURSOR_SIGNING_KEYS")
     return active_key_id, keys

@@ -97,8 +97,7 @@ def test_foundry_settings_resolve_and_pass_the_startup_check(environment, monkey
         monkeypatch.setenv(name, value)
     config.get_settings.cache_clear()
 
-    hub_versions = {"HUB_AUTH_CLIENT_SECRET_VERSION", "HUB_AUTH_ORCID_CLIENT_SECRET_VERSION"}
-    assert set(values) - known - versions - OUTSIDE_SETTINGS - hub_versions == set()
+    assert set(values) - known - versions - OUTSIDE_SETTINGS == set()
     config.check_settings()
     settings = config.get_settings()
     assert (settings.db.server, settings.db.username, settings.db.database) == (data["db_server"], data["db_username"], data["db_database"])

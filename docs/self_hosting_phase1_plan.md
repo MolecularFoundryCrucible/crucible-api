@@ -159,7 +159,7 @@
 - [ ] **Step 4:** `docker build -t crucible-api:selfhost .`; `docker run --rm crucible-api:selfhost python -c "import app.api.main"` succeeds (the venv Python is on `PATH`); with `PORT=8123` and a reachable database, gunicorn logs `Listening at: http://0.0.0.0:8123`.
 - [ ] **Step 5:** Full suite passes. Commit: `Read API address and port from the environment and check settings at startup`.
 
-### Task 5: Baseline schema and the `db upgrade` command
+### Task 5: Baseline schema and the `db upgrade` command. Done on staging: #364
 
 **Files:**
 - Create: `migrations/schema/baseline_b8f2d6e41c07.sql`

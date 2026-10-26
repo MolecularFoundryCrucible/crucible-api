@@ -139,7 +139,7 @@
 - [ ] **Step 3:** Implement as listed under Files and Interfaces.
 - [ ] **Step 4:** Full suite passes; `grep -rn "mf-storage-prod\|10.128.0.31\|mqtt.mfdata.org\|foundry-admin.lbl.gov\|crucible-prod\|776258882599" app/` returns nothing; `openapi/` regenerated. CHANGELOG `Changed`: settings explicit, Foundry defaults removed, the two `503` codes. Commit: `Make printing, ingestion, proposal sync and storage explicit settings`.
 
-### Task 4: API address settings, startup check, container port and path
+### Task 4: API address settings, startup check, container port and path. Done on staging: #363
 
 **Files:**
 - Modify: `app/api/dependencies.py` (`get_api_config`, `get_api_url`, `get_api_path`, `get_api_root_path`, `get_trgm_search_threshold`, `get_orcid_client_id`)

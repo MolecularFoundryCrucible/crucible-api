@@ -15,9 +15,15 @@ Everything else is still documented inline on each route, and several descriptio
 
 Structured error bodies (`{"detail": {"code": ..., ...}}`) are built by hand at about 17 call sites in routes, utilities, and services.
 
+## Rule
+
+A documented response lives in `app/api/errors.py` when the error is raised by shared code rather than by the route itself (`upload_bucket()`, `require_feature()`), or when the same description appears on more than one route. Routes reference it, and merge route-specific entries with `responses={**SHARED_RESPONSE, 409: {...}}`; this is the pattern in the FastAPI documentation ("Additional Responses in OpenAPI", section "Combining predefined responses and custom ones"). A response that only one route has stays inline on that route.
+
+`STORAGE_NOT_CONFIGURED_RESPONSE` and `feature_disabled_response(...)` already follow this rule. The repeated responses listed above do not yet, which is why some shared responses are imported and others are still copied.
+
 ## Proposal
 
-1. Move each repeated response description into `app/api/errors.py` as a named constant (or a small function when the text depends on an argument), and reference it from the routes. The OpenAPI document must not change; check with the snapshot in `openapi/`.
+1. Following the rule above, move each repeated response description into `app/api/errors.py` as a named constant (or a small function when the text depends on an argument), and reference it from the routes. The OpenAPI document must not change; check with the snapshot in `openapi/`.
 2. Consider one helper for structured error bodies, for example `error_detail(code, message, **fields)`, used by the existing call sites, so every coded error has the same shape.
 3. Leave the Hub sign-in validation handler in `app/api/main.py`; it depends on the Hub authentication headers defined there.
 

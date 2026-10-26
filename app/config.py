@@ -6,6 +6,8 @@ from pathlib import Path
 from pydantic import SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict, SettingsError
 
+from app.utils.multipart_config import MultipartStorageConfig
+
 DEFAULT_SECRETS_DIR = "/run/secrets"
 _SECRET_VERSION = re.compile(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)")
 _REQUIRED = ("db_server", "db_username", "db_database")
@@ -192,3 +194,7 @@ def check_settings() -> None:
     found = missing_required_settings()
     if found:
         raise ConfigurationError(f"Missing required settings: {', '.join(found)}")
+    try:
+        MultipartStorageConfig.from_env()
+    except ValueError as error:
+        raise ConfigurationError(f"Invalid multipart upload settings: {error}") from error

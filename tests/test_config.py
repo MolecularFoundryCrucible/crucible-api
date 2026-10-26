@@ -174,6 +174,13 @@ def test_server_refuses_to_start_when_settings_are_missing(empty):
             pass
 
 
+def test_invalid_multipart_settings_stop_the_check(empty):
+    _required(empty)
+    empty.setenv("MULTIPART_UPLOAD_ENABLED", "maybe")
+    with pytest.raises(ConfigurationError, match="MULTIPART_UPLOAD_ENABLED must be true or false"):
+        check_settings()
+
+
 def test_send_pika_message_uses_configured_broker(empty, monkeypatch):
     from app.utils import rmq_utils
 

@@ -295,3 +295,67 @@ def test_catalog_only_record_lifecycle_is_unchanged(client, db_engine, admin):
     assert client.get(f"/files/{file_mfid}/download_link").json() == {"url": None, "expires_in": None}
     assert client.get(f"/datasets/{DS}/download_links").json()[file_mfid] is None
     assert client.post(f"/files/{file_mfid}/ingest").status_code == 400
+
+
+def _switch(monkeypatch, name, value):
+    from app.config import get_settings
+
+    if value is None:
+        monkeypatch.delenv(name, raising=False)
+    else:
+        monkeypatch.setenv(name, value)
+    get_settings.cache_clear()
+
+
+def test_ingest_disabled_creates_no_request(client, db_engine, admin, monkeypatch):
+    file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
+    _switch(monkeypatch, "INGESTION_ENABLED", None)
+    _switch(monkeypatch, "UPLOAD_BUCKET", None)
+    with patch("app.api.routes.files.send_pika_message") as send:
+        response = client.post(f"/files/{file_mfid}/ingest")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "feature_disabled"
+    assert response.json()["detail"]["feature"] == "ingestion"
+    send.assert_not_called()
+    assert _ingestion_requests(db_engine) == []
+
+
+def test_ingest_not_requested_records_without_ingestion(client, db_engine, admin, monkeypatch):
+    file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
+    _switch(monkeypatch, "INGESTION_ENABLED", "false")
+    with patch("app.api.routes.files.send_pika_message") as send:
+        response = client.post(f"/files/{file_mfid}/ingest", params={"status": "not_requested"})
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "not_requested"
+    send.assert_not_called()
+
+
+def test_ingest_broker_failure_marks_request_failed(client, db_engine, admin):
+    import pika
+
+    file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
+    with patch("app.api.routes.files.send_pika_message", side_effect=pika.exceptions.AMQPConnectionError("down")):
+        response = client.post(f"/files/{file_mfid}/ingest")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "ingestion_unavailable"
+    with Session(db_engine) as session:
+        assert [request.status for request in session.exec(select(IngestionRequest)).all()] == ["failed"]
+
+
+def test_ingest_publishes_with_configured_routing(client, db_engine, admin, monkeypatch):
+    file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
+    _switch(monkeypatch, "RMQ_ROUTING_SUFFIX", "lab")
+    with patch("app.api.routes.files.send_pika_message") as send:
+        response = client.post(f"/files/{file_mfid}/ingest")
+    assert response.status_code == 200, response.text
+    assert send.call_args.kwargs["routing_key"] == "ingestion-lab-small"
+    assert "user" not in send.call_args.kwargs
+
+
+def test_download_without_storage_is_not_configured(client, db_engine, signer, admin, monkeypatch):
+    file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
+    _switch(monkeypatch, "UPLOAD_BUCKET", None)
+    response = client.get(f"/files/{file_mfid}/download_link")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "storage_not_configured"
+    signer.bucket.assert_not_called()

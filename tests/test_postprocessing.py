@@ -214,3 +214,16 @@ def test_a_retry_does_not_bypass_access_checks(client, datasets, auth_as, queue)
     postprocess(client, "flow-1")
     as_member(auth_as, Role.VIEWER)
     assert postprocess(client, "flow-1").status_code == 403
+
+
+def test_postprocess_disabled_creates_no_run(client, datasets, auth_as, queue, db_engine, monkeypatch):
+    from app.config import get_settings
+
+    as_member(auth_as, Role.CONTRIBUTOR)
+    monkeypatch.setenv("INGESTION_ENABLED", "false")
+    get_settings.cache_clear()
+    response = client.post("/datasets/ds1/postprocess", json={"pipeline": "carrier_segmentation"})
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "feature_disabled"
+    queue.assert_not_called()
+    assert runs(db_engine) == []

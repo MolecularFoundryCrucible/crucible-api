@@ -1,4 +1,3 @@
-import os
 import json
 import logging
 from datetime import timedelta
@@ -17,7 +16,7 @@ from app.models.core_models import (
     Dataset,
     IngestionRequest,
 )
-from app.config import get_secret
+from app.config import get_secret, get_settings, require_feature
 from app.general_utils import get_utc_isoformat
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_readable_file, touch_resource_modification_time
@@ -25,7 +24,7 @@ from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import DownloadLinkRead, MessageResponse
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
-from app.services.storage_downloads import StorageLocationError, resolve_storage_object
+from app.services.storage_downloads import STORAGE_NOT_CONFIGURED_RESPONSE, StorageLocationError, resolve_storage_object
 
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
@@ -81,7 +80,7 @@ def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: s
         return read
 
 
-@router.get("/files/{file_id}/download_link", response_model=DownloadLinkRead, responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
+@router.get("/files/{file_id}/download_link", response_model=DownloadLinkRead, responses={**STORAGE_NOT_CONFIGURED_RESPONSE, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def get_file_download_link(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
@@ -179,7 +178,7 @@ def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id
 
 
 # ingestion
-@router.post("/files/{file_id}/ingest", response_model=IngestionRequest, responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
+@router.post("/files/{file_id}/ingest", response_model=IngestionRequest, responses={503: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`), file storage is not configured (`storage_not_configured`), or the request could not be queued (`ingestion_unavailable`, recorded as failed)"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def create_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,
@@ -195,6 +194,9 @@ def create_file_ingestion_request(
     the file without dispatching) may be set here. Terminal states are written
     afterwards via PATCH /ingestion_requests/{request_id}.
     '''
+
+    if status == "requested":
+        require_feature("ingestion")
 
     with Session(engine) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
@@ -213,7 +215,6 @@ def create_file_ingestion_request(
         except StorageLocationError as error:
             logger.warning("file_location_rejected file=%s dataset=%s reason=%s", af.mfid, ds.unique_id, error.reason)
             raise HTTPException(status_code=409, detail=error.detail()) from None
-        RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
         ingestion_request = IngestionRequest(
             dataset_mfid=ds.unique_id,
             file_mfid=af.mfid,
@@ -235,22 +236,29 @@ def create_file_ingestion_request(
 
     if status == 'requested':
         tier = get_ingestion_tier(af_size)
-        routing_key = f'ingestion-{RMQ_ROUTING_SUFFIX}-{tier}'
-        rmq_pw = get_secret("RABBITMQ_DEFAULT_PW")
-        send_pika_message(
-            message=json.dumps({
-                "filename": af_storage_path,
-                **({"storage_generation": af_generation} if af_generation else {}),
-                "file_name": af_filename,
-                "reqid": ir_id,
-                "dsid": ds_unique_id,
-                "ingestion_class": ingestion_class,
-            }),
-            exchange="",
-            routing_key=routing_key,
-            user="admin",
-            rmq_pw=rmq_pw,
-        )
+        routing_key = f'ingestion-{get_settings().rmq_routing_suffix}-{tier}'
+        try:
+            send_pika_message(
+                message=json.dumps({
+                    "filename": af_storage_path,
+                    **({"storage_generation": af_generation} if af_generation else {}),
+                    "file_name": af_filename,
+                    "reqid": ir_id,
+                    "dsid": ds_unique_id,
+                    "ingestion_class": ingestion_class,
+                }),
+                exchange="",
+                routing_key=routing_key,
+                rmq_pw=get_secret("RABBITMQ_DEFAULT_PW"),
+            )
+        except Exception:
+            logger.exception("ingestion_publish_failed request=%s file=%s", ir_id, file_id)
+            with Session(engine) as session:
+                failed = session.get(IngestionRequest, ir_id)
+                failed.status = "failed"
+                session.add(failed)
+                session.commit()
+            raise HTTPException(status_code=503, detail={"code": "ingestion_unavailable", "message": "Could not queue the ingestion request; try again later", "request_id": ir_id}) from None
 
     with Session(engine) as session:
         return session.exec(select(IngestionRequest).where(IngestionRequest.id == ir_id)).one()

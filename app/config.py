@@ -23,6 +23,24 @@ class ConfigurationError(RuntimeError):
     pass
 
 
+class FeatureDisabled(Exception):
+    def __init__(self, feature: str):
+        super().__init__(f"{feature} is not enabled on this server")
+        self.feature = feature
+
+
+_FEATURE_FLAGS = {"ingestion": "ingestion_enabled", "printing": "printing_enabled", "proposal_sync": "proposal_sync_enabled"}
+
+
+def feature_disabled_response(feature: str) -> dict:
+    return {503: {"description": f"{feature.replace('_', ' ').capitalize()} is not enabled on this server: `{{\"detail\": {{\"code\": \"feature_disabled\", \"feature\": \"{feature}\", \"message\": ...}}}}`"}}
+
+
+def require_feature(feature: str) -> None:
+    if not getattr(get_settings(), _FEATURE_FLAGS[feature]):
+        raise FeatureDisabled(feature)
+
+
 class Settings(BaseSettings):
     """Settings read from environment variables, then from files in the secrets directory
     (one file per setting, named after it, as Docker and Kubernetes mount secrets).
@@ -39,12 +57,14 @@ class Settings(BaseSettings):
 
     ingestion_enabled: bool = False
     rmq_host: str | None = None
+    rmq_port: int = 5672
     rmq_user: str | None = None
     rmq_routing_suffix: str | None = None
     rabbitmq_default_pw: SecretStr | None = None
 
     printing_enabled: bool = False
     mqtt_host: str | None = None
+    mqtt_port: int = 8883
     mqtt_username: str | None = None
     mqtt_password: SecretStr | None = None
 
@@ -52,6 +72,8 @@ class Settings(BaseSettings):
     proposal_db_url: str | None = None
     propdb_apikey: SecretStr | None = None
 
+    upload_bucket: str | None = None
+    gcs_project: str | None = None
     gcs_sa: SecretStr | None = None
     orcid_client_secret: SecretStr | None = None
 
@@ -164,6 +186,9 @@ def missing_required_settings() -> list[str]:
     for flag, (plain, secrets) in _FEATURE_REQUIREMENTS.items():
         if getattr(settings, flag):
             found += missing(plain) + missing(secrets, secrets=True)
+    storage_requested = optional_env("STORAGE_READ_BUCKETS") or (optional_env("MULTIPART_UPLOAD_ENABLED") or "").lower() == "true"
+    if storage_requested or settings.upload_bucket:
+        found += missing(("upload_bucket",)) + missing(("gcs_sa",), secrets=True)
     return sorted(field.upper() for field in set(found))
 
 

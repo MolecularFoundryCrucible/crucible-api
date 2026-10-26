@@ -2,6 +2,7 @@ import json
 import logging
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
@@ -13,6 +14,8 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.routes import multipart
 from app.build_info import api_version
+from app.config import FeatureDisabled, check_settings
+from app.services.storage_downloads import StorageNotConfigured
 from app.utils.multipart_config import MultipartStorageConfig
 from app.api.dependencies import get_api_root_path
 from app.utils.auth_utils import PRIVILEGE_MODE_HEADER
@@ -31,14 +34,33 @@ logger = logging.getLogger(__name__)
 # Uvicorn's raw query strings include OAuth callback codes; log_requests records safe request metadata.
 logging.getLogger("uvicorn.access").disabled = True
 
-multipart_storage_config = MultipartStorageConfig.from_env()
 api_root_path = get_api_root_path()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    check_settings()
+    MultipartStorageConfig.from_env()
+    yield
+
+
 app = FastAPI(
     root_path=api_root_path,
     root_path_in_servers=False,
     servers=[{"url": api_root_path}],
     version=api_version(),
+    lifespan=lifespan,
 )
+
+
+@app.exception_handler(FeatureDisabled)
+async def handle_feature_disabled(request: Request, error: FeatureDisabled):
+    return JSONResponse(status_code=503, content={"detail": {"code": "feature_disabled", "feature": error.feature, "message": str(error)}})
+
+
+@app.exception_handler(StorageNotConfigured)
+async def handle_storage_not_configured(request: Request, error: StorageNotConfigured):
+    return JSONResponse(status_code=503, content={"detail": {"code": "storage_not_configured", "message": str(error)}})
 
 
 HUB_AUTH_HEADERS = {

@@ -14,6 +14,8 @@ from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
+from app.config import feature_disabled_response
+from app.services.storage_downloads import STORAGE_NOT_CONFIGURED_RESPONSE
 from app.general_utils import get_utc_datetime
 from app.models.core_models import (
     AccessGroup,
@@ -121,7 +123,6 @@ with open('pyproject.toml', 'r') as f:
     API_VERSION = f'v{version}'
 
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
-RMQ_ROUTING_SUFFIX = os.getenv("RMQ_ROUTING_SUFFIX", None)
 
 
 def _normalize_thumbnail_input(dsid: str, thumbnail_b64str: str) -> str:
@@ -136,25 +137,25 @@ def _normalize_thumbnail_input(dsid: str, thumbnail_b64str: str) -> str:
         raise HTTPException(status_code=500, detail="Unable to process thumbnail image") from exc
 
 
-@router.post("/datasets/{dataset_mfid}/carrier_segmentation", response_model=PostprocessingRunRead, deprecated=True)
+@router.post("/datasets/{dataset_mfid}/carrier_segmentation", response_model=PostprocessingRunRead, deprecated=True, responses=feature_disabled_response("ingestion"))
 def request_carrier_segmentation(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "carrier_segmentation".'''
     return start_postprocessing_run(auth_res, dsid, "carrier_segmentation", {})
 
 
-@router.post("/datasets/{dataset_mfid}/insitu_spec_aggregation", response_model=PostprocessingRunRead, deprecated=True)
+@router.post("/datasets/{dataset_mfid}/insitu_spec_aggregation", response_model=PostprocessingRunRead, deprecated=True, responses=feature_disabled_response("ingestion"))
 def request_insitu_aggregation(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "insitu_aggregation".'''
     return start_postprocessing_run(auth_res, dsid, "insitu_aggregation", {})
 
 
-@router.post("/datasets/{dataset_mfid}/rga_analysis", response_model=PostprocessingRunRead, deprecated=True)
+@router.post("/datasets/{dataset_mfid}/rga_analysis", response_model=PostprocessingRunRead, deprecated=True, responses=feature_disabled_response("ingestion"))
 def request_rga_analysis(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "rga_analysis".'''
     return start_postprocessing_run(auth_res, dsid, "rga_analysis", {})
 
 
-@router.post("/datasets/{dataset_mfid}/mosaic_stitch", response_model=PostprocessingRunRead, deprecated=True)
+@router.post("/datasets/{dataset_mfid}/mosaic_stitch", response_model=PostprocessingRunRead, deprecated=True, responses=feature_disabled_response("ingestion"))
 def request_mosaic_stitch(dsid: DatasetMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Deprecated: use POST /datasets/{dataset_mfid}/postprocess with pipeline "mosaic_stitch".'''
     return start_postprocessing_run(auth_res, dsid, "mosaic_stitch", {})
@@ -1310,7 +1311,7 @@ def delete_thumbnail(auth_res: Annotated[Principal, Depends(authorize_user)], ds
         return {"message": f"Thumbnail {thumbnail_id} deleted from dataset {dsid}"}
 
 
-@router.get("/datasets/{dataset_mfid}/download_links", response_model=Dict[str, Optional[str]])
+@router.get("/datasets/{dataset_mfid}/download_links", response_model=Dict[str, Optional[str]], responses=STORAGE_NOT_CONFIGURED_RESPONSE)
 def generate_dataset_download_links(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
@@ -1446,7 +1447,7 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
         return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": dsid})
 
 
-@router.post("/datasets/{dataset_mfid}/files/{file_id}/ingest", response_model=IngestionRequest, deprecated = True, responses={409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
+@router.post("/datasets/{dataset_mfid}/files/{file_id}/ingest", response_model=IngestionRequest, deprecated = True, responses={503: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`), file storage is not configured (`storage_not_configured`), or the request could not be queued (`ingestion_unavailable`, recorded as failed)"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def create_ds_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,

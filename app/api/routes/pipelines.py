@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import DatasetMfid
-from app.config import get_secret
+from app.config import get_secret, require_feature
 from app.general_utils import get_utc_datetime
 from app.models.core_models import Dataset, PostprocessingRun
 from app.models.pagination import PaginatedResponse
@@ -50,7 +50,6 @@ def _publish(run: PostprocessingRun, routing_key: str):
         }),
         exchange="",
         routing_key=routing_key,
-        user="admin",
         rmq_pw=get_secret("RABBITMQ_DEFAULT_PW"),
     )
 
@@ -86,6 +85,7 @@ def _replay(session, run: PostprocessingRun, fingerprint: str, routing_key: str)
 
 
 def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_name: str, parameters: dict, idempotency_key: Optional[str] = None) -> PostprocessingRun:
+    require_feature("ingestion")
     pipeline = PIPELINES.get(pipeline_name)
     if pipeline is None:
         raise HTTPException(status_code=422, detail={"code": "unknown_pipeline", "message": f"Unknown pipeline '{pipeline_name}'", "pipelines": sorted(PIPELINES)})
@@ -131,7 +131,7 @@ def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_n
                         403: {"description": "Caller is below contributor on the dataset"},
                         409: {"description": "The dataset has an active deletion request (`pending_deletion`), or the Idempotency-Key was already used for a different pipeline or parameters (`idempotency_key_reused`)"},
                         422: {"description": "Unknown pipeline (`unknown_pipeline`) or invalid parameters (`invalid_parameters`)"},
-                        503: {"description": "The run could not be queued (`pipeline_unavailable`); it is recorded as failed"}})
+                        503: {"description": "Postprocessing is not enabled on this server (`feature_disabled`), or the run could not be queued (`pipeline_unavailable`); a run that could not be queued is recorded as failed"}})
 def postprocess_dataset(dataset_mfid: DatasetMfid, body: PostprocessRequest, auth_res: Annotated[Principal, Depends(authorize_user)],
                         idempotency_key: Annotated[Optional[str], Header(min_length=1, max_length=128, description="Retries with the same key return the original run instead of starting another.")] = None):
     '''Queue a postprocessing run on a dataset. Requires contributor access. Each request starts a new run unless it repeats an Idempotency-Key.'''

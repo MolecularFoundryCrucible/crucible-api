@@ -11,13 +11,14 @@ def get_ingestion_tier(file_size: int) -> str:
     elif file_size < _INGESTION_MEDIUM_MAX:
         return "medium"
     return "large"
-from app.utils.constants import rmq_host, rmq_port, rmq_user
 
-def send_pika_message(message, exchange, routing_key, user = None, rmq_pw = ''):
-    if user is None:
-        user = rmq_user
-    credentials = pika.PlainCredentials(user, rmq_pw)
-    parameters = pika.ConnectionParameters(rmq_host, rmq_port, '/', credentials)
+
+def send_pika_message(message, exchange, routing_key, rmq_pw):
+    from app.config import get_settings
+
+    settings = get_settings()
+    credentials = pika.PlainCredentials(settings.rmq_user, rmq_pw)
+    parameters = pika.ConnectionParameters(settings.rmq_host, settings.rmq_port, '/', credentials)
     connection = pika.BlockingConnection(parameters)
     channel = connection.channel()
     # send the messsage based on input from CLI args

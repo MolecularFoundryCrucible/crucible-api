@@ -8,6 +8,20 @@ for _name, _value in {
     "CRUCIBLE_SECRET_KEY": "test-only",
     "RABBITMQ_DEFAULT_PW": "test-only",
     "API_CONF_FILE": "app/conf/api_conf_local.yaml",
+    "UPLOAD_BUCKET": "mf-storage-prod",
+    "GCS_PROJECT": "crucible-prod",
+    "GCS_SA": "test-only",
+    "INGESTION_ENABLED": "true",
+    "RMQ_HOST": "localhost",
+    "RMQ_USER": "test",
+    "RMQ_ROUTING_SUFFIX": "test",
+    "PRINTING_ENABLED": "true",
+    "MQTT_HOST": "localhost",
+    "MQTT_USERNAME": "test",
+    "MQTT_PASSWORD": "test-only",
+    "PROPOSAL_SYNC_ENABLED": "true",
+    "PROPOSAL_DB_URL": "https://proposals.example.org/lookup",
+    "PROPDB_APIKEY": "test-only",
 }.items():
     os.environ.setdefault(_name, _value)
 

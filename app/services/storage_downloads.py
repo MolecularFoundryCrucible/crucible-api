@@ -8,7 +8,6 @@ from urllib.parse import quote
 from google.api_core.exceptions import NotFound
 from google.cloud.storage.retry import DEFAULT_RETRY
 
-DEFAULT_UPLOAD_BUCKET = "mf-storage-prod"
 MULTIPART_SEGMENT = "_files"
 DOWNLOAD_LIFETIME = timedelta(hours=1)
 SCRIPT_CAPABLE_TYPES = frozenset({"text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml", "text/xsl"})
@@ -34,20 +33,37 @@ def multipart_prefix(dataset_mfid):
     return f"{dataset_mfid}/{MULTIPART_SEGMENT}/"
 
 
+class StorageNotConfigured(Exception):
+    pass
+
+
+STORAGE_NOT_CONFIGURED_RESPONSE = {503: {"description": "File storage is not configured on this server (`{\"detail\": {\"code\": \"storage_not_configured\", \"message\": ...}}`), or the storage provider is temporarily unavailable"}}
+
+
 def upload_bucket():
-    return os.environ.get("UPLOAD_BUCKET", "").strip() or DEFAULT_UPLOAD_BUCKET
+    from app.config import get_settings
+
+    bucket = get_settings().upload_bucket
+    if not bucket:
+        raise StorageNotConfigured("File storage is not configured on this server (UPLOAD_BUCKET is not set)")
+    return bucket
 
 
 def allowed_buckets():
+    from app.config import get_settings
+
     extra = {name.strip() for name in os.environ.get("STORAGE_READ_BUCKETS", "").split(",")}
-    return ({upload_bucket(), os.environ.get("MULTIPART_UPLOAD_BUCKET", "").strip()} | extra) - {""}
+    return ({get_settings().upload_bucket or "", os.environ.get("MULTIPART_UPLOAD_BUCKET", "").strip()} | extra) - {""}
 
 
 def resolve_storage_object(storage_path, generation, dataset_mfid):
+    allowed = allowed_buckets()
+    if not allowed:
+        raise StorageNotConfigured("File storage is not configured on this server (UPLOAD_BUCKET is not set)")
     bucket, separator, key = (storage_path or "").partition("/")
     if not separator or not bucket or not key:
         raise StorageLocationError("unparseable")
-    if bucket not in allowed_buckets():
+    if bucket not in allowed:
         raise StorageLocationError("bucket_not_allowed")
     segments = key.split("/")
     if key.startswith("/") or any(segment in (".", "..") for segment in segments):

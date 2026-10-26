@@ -187,7 +187,7 @@ def test_kubernetes_service_account_mount_is_harmless(clean, monkeypatch):
     monkeypatch.setattr(config, "get_gcs_secret", lambda name: "from-manager")
     monkeypatch.setenv(f"{SECRET}_VERSION", VERSION)
     assert config.get_settings().propdb_apikey is None
-    assert config.get_settings().printing_enabled is False
+    assert config.get_settings().mqtt_port == 8883
     assert get_secret(SECRET) == "from-manager"
 
 

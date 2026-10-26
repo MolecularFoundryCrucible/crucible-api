@@ -16,7 +16,7 @@ from app.models.core_models import AssociatedFile, Dataset, UploadSession, User
 from app.models.datasets import AssociatedFileRead, file_etag
 from app.models.multipart import MultipartStatus
 from app.services.multipart_storage import StorageFailure, UploadMissing
-from app.services.storage_downloads import StorageLocationError, multipart_prefix, resolve_storage_object, upload_bucket
+from app.services.storage_downloads import StorageLocationError, StorageNotConfigured, multipart_prefix, resolve_storage_object, upload_bucket
 from app.utils.auth_utils import load_principal, require_permission
 from app.utils.permissions import Permission, PlatformRole
 from app.utils.sql_utils import assert_not_pending_deletion, get_active_deletion_request, touch_resource_modification_time
@@ -444,7 +444,11 @@ def retire_previous(engine, retire, result, dsid, previous):
 
 def retire_if_eligible(engine, retire, dsid, path, generation, filename, dataset_id):
     bucket, _, key = path.partition("/")
-    own_buckets = {upload_bucket(), os.environ.get("MULTIPART_UPLOAD_BUCKET", "").strip()} - {""}
+    try:
+        current = upload_bucket()
+    except StorageNotConfigured:
+        current = ""
+    own_buckets = {current, os.environ.get("MULTIPART_UPLOAD_BUCKET", "").strip()} - {""}
     if retire is None or bucket not in own_buckets:
         return False
     try:

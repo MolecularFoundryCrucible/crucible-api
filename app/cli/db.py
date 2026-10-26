@@ -73,17 +73,15 @@ def _apply_baseline(engine) -> None:
         connection.close()
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="python -m app.cli.db", description="Manage the Crucible database schema.")
-    commands = parser.add_subparsers(dest="command", required=True)
+def register(groups: argparse._SubParsersAction) -> None:
+    commands = groups.add_parser("db", help="Manage the database schema").add_subparsers(dest="command", required=True)
     upgrade = commands.add_parser("upgrade", help="Create the schema in an empty database, or apply pending migrations")
     upgrade.add_argument("--yes-this-is-production", action="store_true", help="Allow running against the production database (ALEMBIC_PRODUCTION_DATABASE)")
-    args = parser.parse_args(argv)
+    upgrade.set_defaults(handler=_run_upgrade)
 
+
+def _run_upgrade(args: argparse.Namespace) -> int:
     from app.api.dependencies import get_engine
 
     print(upgrade_database(get_engine(), production_confirmed=args.yes_this_is_production))
-
-
-if __name__ == "__main__":
-    main()
+    return 0

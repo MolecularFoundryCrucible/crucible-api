@@ -4,7 +4,7 @@ Use Alembic revisions in `migrations/versions/` for schema changes and reviewed 
 
 ## New installations
 
-`python -m app.cli.db upgrade` brings the configured database to the latest schema:
+`python -m app.cli db upgrade` brings the configured database to the latest schema:
 
 - An empty database (no tables in `public`) gets `migrations/schema/baseline_<revision>.sql` in one transaction, including the `vector` and `pg_trgm` extensions and the `public` access group, is stamped at that revision, and then gets the migrations after it. If the baseline fails, nothing is left behind; if a later migration fails, the database stays at the last completed revision and running the command again continues from there.
 - A database with `alembic_version` gets its pending migrations (`alembic upgrade head`).
@@ -23,7 +23,7 @@ The old migration chain cannot build a database from nothing, so new installatio
 
 ```bash
 DB_SERVER=127.0.0.1:55433 DB_USERNAME=postgres DB_DATABASE=crucible_fresh PGDB_PW=test \
-  .venv/bin/python -m app.cli.db upgrade
+  .venv/bin/python -m app.cli db upgrade
 
 PGPASSWORD=... scripts/compare_schema.sh \
   postgresql://postgres:test@127.0.0.1:55433/crucible_fresh \

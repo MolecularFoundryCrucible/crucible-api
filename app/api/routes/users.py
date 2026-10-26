@@ -29,8 +29,8 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, get_active_deletion_request, select_active, table_obj_to_dict
-from app.utils.user_utils import assert_profile_fields_available, commit_user, find_mf_user_proposals, resolve_user_by_identifier, sql_add_user_to_access_group
+from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, get_active_deletion_request, select_active
+from app.utils.user_utils import assert_profile_fields_available, commit_user, find_mf_user_proposals, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import resolve_project_reference, sql_get_projects_for_user
 from app.models.pagination import PaginatedResponse
 from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
@@ -604,32 +604,12 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
                 detail=f"Projects have no access group: {', '.join(missing_project_groups)}",
             )
 
-        user_dict = table_obj_to_dict(user_info)
-        user_dict["unique_id"] = unique_id
-        user_dict["is_service_account"] = False
-        if user_dict.get('email', None) is not None:
-            user_dict['email'] = user_dict['email'].lower().strip()
-        user = User(**user_dict)
-        session.add(user)
-        identity_group = AccessGroup(
-            group_name=unique_id,
-            group_type=AccessGroupType.IDENTITY.value,
+        email = user_info.email.lower().strip() if user_info.email is not None else None
+        user = provision_user(
+            session, unique_id=unique_id, first_name=user_info.first_name, last_name=user_info.last_name,
+            email=email, username=user_info.username,
+            project_groups=[groups_by_name[project.unique_id] for project in projects],
         )
-        session.add(identity_group)
-        session.flush()
-        session.add(UserAccessGroupLink(
-            user_id=user.id,
-            accessgroup_id=identity_group.id,
-            role=Role.OWNER.db_value,
-        ))
-        session.add_all([
-            UserAccessGroupLink(
-                user_id=user.id,
-                accessgroup_id=groups_by_name[project.unique_id].id,
-                role=Role.CONTRIBUTOR.db_value,
-            )
-            for project in projects
-        ])
         session.commit()
         session.refresh(user)
 

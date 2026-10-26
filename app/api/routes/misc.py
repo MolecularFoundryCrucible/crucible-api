@@ -79,7 +79,11 @@ def _schema_state(current, expected):
 
 def _expected_schema_revisions():
     configured = os.getenv("EXPECTED_DB_REVISIONS", "")
-    return sorted(revision.strip() for revision in configured.split(",") if revision.strip())
+    revisions = sorted(revision.strip() for revision in configured.split(",") if revision.strip())
+    if revisions:
+        return revisions
+    scripts = _migration_scripts()
+    return sorted(scripts.get_heads()) if scripts is not None else []
 
 
 @router.get("/health/live", response_model=LivenessResponse)

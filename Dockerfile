@@ -25,7 +25,8 @@ ENV BRANCH_NAME=$BRANCH_NAME
 
 # files
 COPY app/ /root/app/
-COPY migrations/versions/ /root/migrations/versions/
+COPY alembic.ini /root/alembic.ini
+COPY migrations/ /root/migrations/
 COPY scripts/cleanup_hub_auth.py /root/scripts/cleanup_hub_auth.py
 RUN mkdir uploads
 RUN mkdir download-zips

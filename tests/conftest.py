@@ -96,6 +96,19 @@ def db_engine():
 
 
 @pytest.fixture(autouse=True)
+def fresh_settings(monkeypatch):
+    """Settings are read once per process in production; tests change the environment, so each
+    test starts from an empty settings cache and no secrets already fetched."""
+    from app import config
+
+    monkeypatch.setattr(config, "_fetched_secrets", {})
+    monkeypatch.setattr(config, "_loaded_env_files", set())
+    config.get_settings.cache_clear()
+    yield
+    config.get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 def block_record_bucket(monkeypatch):
     def _refuse():
         raise RuntimeError("tests must not write to the record bucket")

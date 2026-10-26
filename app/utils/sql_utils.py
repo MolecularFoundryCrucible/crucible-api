@@ -3,8 +3,8 @@ import logging
 import yaml
 import os
 import urllib.parse
-from app.config import load_env_file
-from app.general_utils import get_secret, get_utc_datetime, is_orcid
+from app.config import get_secret, load_env_file
+from app.general_utils import get_utc_datetime, is_orcid
 
 logger = logging.getLogger(__name__)
 from fastapi import HTTPException

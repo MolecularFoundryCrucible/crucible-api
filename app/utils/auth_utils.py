@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 from fastapi import Depends, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.general_utils import  get_secret
+from app.config import get_secret
 from app.api.dependencies import get_engine, get_api_path, get_api_url
 from app.models.core_models import ApiToken
 from app.models.resource import ResourceCapabilities

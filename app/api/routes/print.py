@@ -9,7 +9,8 @@ import paho.mqtt.client as mqtt
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
-from app.general_utils import get_secret, is_valid_mfid
+from app.config import get_secret
+from app.general_utils import is_valid_mfid
 from app.utils.auth_utils import authorize_user
 from app.utils.permissions import Principal
 

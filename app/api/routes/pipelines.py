@@ -11,7 +11,8 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import DatasetMfid
-from app.general_utils import get_secret, get_utc_datetime
+from app.config import get_secret
+from app.general_utils import get_utc_datetime
 from app.models.core_models import Dataset, PostprocessingRun
 from app.models.pagination import PaginatedResponse
 from app.models.pipelines import PipelineRead, PostprocessingRunRead, PostprocessingRunStatus, PostprocessingRunUpdate, PostprocessRequest

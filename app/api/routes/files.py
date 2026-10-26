@@ -17,7 +17,8 @@ from app.models.core_models import (
     Dataset,
     IngestionRequest,
 )
-from app.general_utils import get_secret, get_utc_isoformat
+from app.config import get_secret
+from app.general_utils import get_utc_isoformat
 from app.utils.rmq_utils import send_pika_message, get_ingestion_tier
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_readable_file, touch_resource_modification_time
 from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate

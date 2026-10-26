@@ -103,7 +103,7 @@
 - [ ] **Step 4:** At the very top of `tests/conftest.py`, before any `app` import, `os.environ.setdefault` dummy values for `DB_SERVER`, `DB_USERNAME`, `DB_DATABASE`, `PGDB_PW`, `CRUCIBLE_SECRET_KEY`. Verify the suite passes with no `.env` reachable: run it with the main checkout's `.env` hidden from the worktree (the worktree lives under the main checkout, so `DB_CONF_FILE` unset and no upward search is what makes this hermetic).
 - [ ] **Step 5:** Full suite passes. Commit: `Add explicit settings and secret references`.
 
-### Task 3: Feature flags, storage settings, and import-time reads
+### Task 3: Feature flags, storage settings, and import-time reads. Done on staging: #362
 
 **Files:**
 - Modify: `app/utils/constants.py` (RMQ settings removed; read at call time), `app/utils/rmq_utils.py` (`send_pika_message` resolves host, port default `5672`, user, and password itself)

@@ -51,4 +51,9 @@ Today Crucible only runs in one place: the Molecular Foundry's setup on Google C
 - Task 2 written and reviewed: the software now only takes passwords from where it is explicitly told (a setting, a file, or a named entry in Google's password store), and stops at startup with a clear message if one is missing. It no longer guesses the Foundry's Google addresses. The Foundry's servers read the same passwords from the same places as before. Three AI reviewers found only small edge cases (for example an empty password file being accepted), all fixed. Opened for staging as pull request #359.
 - Task 2 went live on staging and was checked: the servers start, all seven passwords are found where the configuration says, and the service is healthy.
 - Switched the way settings and passwords are read to the standard library recommended for this kind of software (pydantic-settings), replacing our own small helper. Passwords can now also be given as files in a standard folder, which is how Docker hands them over, and they are hidden from logs. Three AI reviewers found only small edge cases, all fixed. Opened for staging as pull request #360.
+- Simplified the configuration code further: everything about settings and passwords now lives in one file, using the library's own features instead of extra custom code.
+
+### 2026-10-26: Settings change live on staging
+
+- The new way of reading settings went live on staging and was checked: the server starts, all seven passwords are found, the service is healthy, and the hourly clean-up task ran successfully on the new version.
 - Decided how the Foundry will deploy in future (Phase 4): the software gets numbered versions, and the Foundry's private configuration says which version each server runs. Updating, promoting to production, or going back is then a one-line, reviewed change, instead of every code merge going straight to the servers as today.

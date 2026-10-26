@@ -132,6 +132,7 @@ Each phase ships on its own and is tested before the next. Phases 1 to 4 are the
    - Optional features can be switched off: printing, the proposal integration, ingestion publishing, record archiving.
    - An admin bootstrap.
    - A `docker compose` setup with Postgres, the API, and the Hub (built from source until releases exist), plus a short install guide.
+   - After the Phase 1 release, before Phase 2: **the Foundry deploy repository**. Tag images by version as well as commit; move `k8s-conf` and the deploy script to a private repository; staging follows new versions automatically and production changes by a reviewed version bump (the deploy tool is its own short design); then switch the Foundry to the GKE Secret Manager add-on and remove in-app Secret Manager fetching (`docs/self_hosting_secrets.md`). This moves the deployment part of Phase 4 forward; publishing images and public repositories stay in Phase 4.
 2. **One S3-style storage layer** as described above, the object store added to compose, and the legacy upload routes deprecated.
 3. **Local password login** for the lab tier, and the sign-in record that both methods use.
 4. **Releases**: licenses, public repositories, published images, versioned compose bundle, upgrade path, the Foundry deployment configuration moved to a private repository, and the Foundry deploying by version from it. The license review can start immediately and run alongside Phases 1 to 3.

@@ -204,6 +204,10 @@
 - [ ] **Step 1: Write the failing tests** (SQLite `db_engine` fixture, call the CLI entry function directly): `test_create_admin_creates_user_group_and_key` (admin role, identity group owned by the user, one `ApiToken`, stdout parses as JSON with those three keys); `test_second_admin_refused` (exit `1`, still one admin); `test_allow_additional`; `test_orcid_validated` (`--orcid not-an-orcid` exits non-zero, nothing created); `test_invalid_username_rejected`.
 - [ ] **Step 2:** Run; expect failures. **Step 3:** Implement. **Step 4:** Full suite passes (existing `POST /users` tests unchanged). Commit: `Add an admin bootstrap command`.
 
+### Task 6b: One way to read secrets
+
+Design in `docs/self_hosting_secrets.md` (proposed 2026-10-26): every secret through `get_secret` as `NAME_FILE`, a file in `CRUCIBLE_SECRETS_DIR`, or an environment variable (plus the transitional `NAME_VERSION` for the Foundry); a secret given two ways stops startup; Hub and cursor secrets moved into `Settings` and the startup check; no Secret Manager import at module load. The compose bundle relies on it.
+
 ### Task 7: Compose bundle and install guide
 
 **Files:**

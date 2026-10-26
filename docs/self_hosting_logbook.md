@@ -57,3 +57,5 @@ Today Crucible only runs in one place: the Molecular Foundry's setup on Google C
 ### 2026-10-26: Settings change live on staging
 
 - The new way of reading settings went live on staging and was checked: the server starts, all seven passwords are found, the service is healthy, and the hourly clean-up task ran successfully on the new version.
+- The automated test suite passed against staging with the new settings code.
+- Task 3 written and reviewed: printing, automatic file processing, and the Foundry proposal lookup can now be switched on or off (off for new installations, on for the Foundry). When a feature is off, the software says so clearly instead of trying to reach a server that is not there. All remaining Foundry addresses were removed from the code. If file storage is not set up, the software says so instead of crashing. The server now checks its settings when it starts and refuses to start with a clear list if something required is missing. Three AI reviewers found only small issues in old helper scripts and edge cases, all fixed. Opened for staging as pull request #362.

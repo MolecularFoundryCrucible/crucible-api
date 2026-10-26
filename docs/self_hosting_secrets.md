@@ -108,6 +108,8 @@ Phase 2 replaces or extends `storage`; Phase 3 adds an `auth` group for local pa
 
 Stay outside `Settings`, because they locate the settings or describe the build rather than configure the server: `DB_CONF_FILE`, `CRUCIBLE_SECRETS_DIR`, `ALEMBIC_PRODUCTION_DATABASE` (migration tooling, where an empty value means "off"), and the build metadata `API_VERSION`, `GITHASH`, `BRANCH_NAME`.
 
+Also left where they are by Task 6b (2026-10-26), each for a reason: the `MULTIPART_*` settings and `MAX_UPLOAD_BYTES` belong to the storage layer that Phase 2 replaces, and `MultipartStorageConfig` already validates them strictly; the thumbnail limits (`THUMBNAIL_*`) and the authentication cache sizes (`AUTH_CACHE_TTL`, `AUTH_CACHE_MAXSIZE`) are read when their modules load, and moving them into `Settings` would bring back settings reads at import time. They move with the Phase 2 storage work, or when those modules stop reading them at import.
+
 ### Alternatives considered
 
 - Nested models with a delimiter (`DB__SERVER`), the style the pydantic-settings documentation shows: renames every variable and changes the Foundry configuration. Rejected.

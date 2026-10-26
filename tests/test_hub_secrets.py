@@ -172,6 +172,7 @@ def test_direct_api_orcid_config_and_secret_version(monkeypatch, tmp_path):
     assert dependencies.get_orcid_client_id() == "fallback-client-id"
 
     monkeypatch.setenv("ORCID_CLIENT_ID", "env-client-id")
+    config.get_settings.cache_clear()
     assert dependencies.get_orcid_client_id() == "env-client-id"
 
     monkeypatch.delenv("DB_CONF_FILE", raising=False)

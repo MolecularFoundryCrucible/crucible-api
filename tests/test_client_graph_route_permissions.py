@@ -175,7 +175,6 @@ def test_entity_graph_does_not_traverse_private_sample_bridge(
     monkeypatch,
 ):
     group_id = _setup(db_engine)
-    monkeypatch.setattr(entities_routes, "engine", db_engine)
 
     graph = entities_routes.entity_graph_cte(
         "sample-visible-root",
@@ -192,7 +191,6 @@ def test_entity_graph_does_not_traverse_private_dataset_bridge(
     monkeypatch,
 ):
     group_id = _setup(db_engine)
-    monkeypatch.setattr(entities_routes, "engine", db_engine)
 
     graph = entities_routes.entity_graph_cte(
         "dataset-visible-root",
@@ -209,7 +207,6 @@ def test_project_graph_returns_only_visible_active_resources(
     monkeypatch,
 ):
     group_id = _setup(db_engine)
-    monkeypatch.setattr(entities_routes, "engine", db_engine)
 
     graph = entities_routes.project_graph(
         "project-graph-slug",
@@ -227,7 +224,6 @@ def test_project_graph_returns_only_visible_active_resources(
 
 def test_entity_graph_hides_inaccessible_root(db_engine, monkeypatch):
     group_id = _setup(db_engine)
-    monkeypatch.setattr(entities_routes, "engine", db_engine)
 
     with pytest.raises(HTTPException) as exc:
         entities_routes.entity_graph_cte(
@@ -244,7 +240,6 @@ def test_recursive_entity_graph_handles_visible_lineage_cycle(
     monkeypatch,
 ):
     group_id = _setup(db_engine)
-    monkeypatch.setattr(entities_routes, "engine", db_engine)
     with Session(db_engine) as session:
         root = session.exec(
             select(Sample).where(Sample.unique_id == "sample-visible-root")
@@ -278,7 +273,6 @@ def test_platform_admin_graph_still_excludes_pending_deletions(
     monkeypatch,
 ):
     _setup(db_engine)
-    monkeypatch.setattr(entities_routes, "engine", db_engine)
     principal = Principal(
         user_id="platform-admin",
         platform_role=PlatformRole.ADMIN,
@@ -319,7 +313,6 @@ def _visible_chain(db_engine, group_id):
 def test_recursive_graph_spans_samples_and_datasets(db_engine, monkeypatch, root):
     group_id = _setup(db_engine)
     _visible_chain(db_engine, group_id)
-    monkeypatch.setattr(entities_routes, "engine", db_engine)
 
     graph = entities_routes.entity_graph_cte(root, _reader(group_id), recursive=True)
 
@@ -335,7 +328,6 @@ def test_recursive_graph_spans_samples_and_datasets(db_engine, monkeypatch, root
 def test_one_hop_graph_returns_direct_neighbours(db_engine, monkeypatch):
     group_id = _setup(db_engine)
     _visible_chain(db_engine, group_id)
-    monkeypatch.setattr(entities_routes, "engine", db_engine)
 
     graph = entities_routes.entity_graph_cte("d-b", _reader(group_id), recursive=False)
 
@@ -346,7 +338,6 @@ def test_one_hop_graph_returns_direct_neighbours(db_engine, monkeypatch):
 @pytest.mark.parametrize("root", ["sample-visible-root", "dataset-visible-root"])
 def test_one_hop_graph_hides_private_and_deleted_neighbours(db_engine, monkeypatch, root):
     group_id = _setup(db_engine)
-    monkeypatch.setattr(entities_routes, "engine", db_engine)
 
     graph = entities_routes.entity_graph_cte(root, _reader(group_id), recursive=False)
 

@@ -29,7 +29,6 @@ from app.utils.project_utils import is_project_member, resolve_project_reference
 from app.models.timestamps import UtcDatetime
 
 router = APIRouter(tags=["join_requests"])
-engine = get_engine()
 
 MAX_PENDING_PER_REQUESTER = 20
 PENDING = JoinRequestStatus.PENDING.value
@@ -338,7 +337,7 @@ def create_join_request(session, principal: Principal, project_ref: str, reason:
                         409: {"description": "`already_member`, `join_request_pending`, `too_many_pending_requests`, or `project_not_accepting_requests`"}})
 def request_to_join_project(project_ref: ProjectRef, body: JoinRequestCreate, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Ask to join a project. One pending request per project, at most 20 pending in total.'''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return create_join_request(session, auth_res, project_ref, body.reason)
 
 
@@ -353,7 +352,7 @@ def list_join_requests(
     offset: int = Query(default=0, ge=0, description="Compatibility offset. A supplied cursor takes precedence."),
 ):
     '''List join requests you made or may review. Platform administrators see all of them.'''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return list_join_requests_page(session, auth_res, filters, sort, direction, limit, cursor, offset)
 
 
@@ -365,7 +364,7 @@ def join_request_facets(
     limit: int = Query(default=50, ge=1, le=200),
 ):
     '''Count join requests by status, project, or requester, with the same scope and filters as GET /join_requests. Buckets are ordered by count, largest first, then by label.'''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         authority = _review_authority(auth_res)
         conditions = _conditions(session, auth_res, filters, authority)
         column = {
@@ -410,7 +409,7 @@ def join_request_facets(
 @router.get("/join_requests/{request_id}", response_model=JoinRequestRead)
 def get_join_request(request_id: int, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Read one join request. Visible to its requester, to those who may review it, and to platform administrators; 404 otherwise.'''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return _read(auth_res, *_visible_row(session, auth_res, request_id))
 
 
@@ -419,7 +418,7 @@ def get_join_request(request_id: int, auth_res: Annotated[Principal, Depends(aut
                          409: {"description": "`join_request_closed`, or the project is gone or pending deletion"}})
 def review_join_request(request_id: int, body: JoinRequestReview, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Approve or reject a pending request. Requires editor or above in the project (or platform administrator). Approval adds the requester at `role` (default contributor), at most your own role.'''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         session.exec(select(AccessGroupJoinRequest.id).where(AccessGroupJoinRequest.id == request_id).with_for_update()).first()
         req, project_mfid, project, requester, _, may_review = _visible_row(session, auth_res, request_id)
         if not (auth_res.is_platform_admin or may_review):
@@ -451,7 +450,7 @@ def review_join_request(request_id: int, body: JoinRequestReview, auth_res: Anno
              responses={403: {"description": "Only the requester can withdraw"}, 409: {"description": "`join_request_closed`"}})
 def withdraw_join_request(request_id: int, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Withdraw your own pending join request.'''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         session.exec(select(AccessGroupJoinRequest.id).where(AccessGroupJoinRequest.id == request_id).with_for_update()).first()
         req = _visible_row(session, auth_res, request_id)[0]
         if req.requester_id != auth_res.user_id:

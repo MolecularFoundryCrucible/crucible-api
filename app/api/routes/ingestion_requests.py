@@ -15,7 +15,6 @@ from app.utils.permissions import Permission, Principal
 from app.utils.sql_utils import deletion_filter_for, only_update, select_active, select_readable, select_readable_file
 
 router = APIRouter(tags=["ingestion_requests"])
-engine = get_engine()
 
 
 def _get_ir_with_access(session: Session, request_id: int, principal: Principal,
@@ -50,7 +49,7 @@ def list_ingestion_requests(
     file_id and dataset_id remain as deprecated aliases accepting the same
     values. Passing a file filter together with a dataset filter selects by file.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         query = (
             select(IngestionRequest)
             .join(Dataset, Dataset.unique_id == IngestionRequest.dataset_mfid)
@@ -85,7 +84,7 @@ def get_ingestion_request(
     request_id: int,
 ):
     '''Returns a specific ingestion request. Requires read access to the parent dataset.'''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return _get_ir_with_access(session, request_id, auth_res, Permission.READ)
 
 
@@ -99,7 +98,7 @@ def patch_ingestion_request(
     if ing_req.id and ing_req.id != request_id:
         raise HTTPException(status_code=400, detail="Request body ID does not match URL")
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         ir = _get_ir_with_access(session, request_id, auth_res, Permission.EDIT)
 
         fields = ing_req.model_dump(exclude_unset=True)

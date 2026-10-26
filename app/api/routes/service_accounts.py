@@ -22,7 +22,6 @@ from app.utils.permissions import AccessGroupType, PlatformRole, Principal, Role
 from app.utils.user_utils import assert_username_available, resolve_service_account_reference, sql_add_user_to_access_group
 
 router = APIRouter(tags=["service_accounts"])
-engine = get_engine()
 
 
 def _service_account_admin_read(user: User) -> ServiceAccountAdminRead:
@@ -86,7 +85,7 @@ def list_service_accounts(
                 User.last_name.icontains(token, autoescape=True),
             ))
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         users = session.exec(
             query.order_by(func.lower(User.username), User.unique_id)
@@ -108,7 +107,7 @@ def get_service_account(
 ):
     """Return administrator-visible service-account details without a secret."""
     require_platform_admin(auth_res)
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         user = resolve_service_account_reference(session, service_account_ref)
         return _service_account_admin_detail(session, user)
 
@@ -127,7 +126,7 @@ def update_service_account_platform_role(
             detail="Service accounts cannot manage platform roles",
         )
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         user = resolve_service_account_reference(session, service_account_ref)
 
         user.platform_role = body.platform_role
@@ -152,7 +151,7 @@ def create_service_account(
     require_platform_admin(auth_res)
     require_recent_authentication(auth_res)
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         # Username must be unique across all users
         assert_username_available(session, body.username)
 
@@ -193,7 +192,7 @@ def create_service_account(
         session.commit()
 
     # Generate API key (outside session — find_or_add_api_access opens its own)
-    api_key = find_or_add_api_access(unique_id, engine, regenerate=False)
+    api_key = find_or_add_api_access(unique_id, get_engine(), regenerate=False)
     response.headers["Cache-Control"] = "no-store"
 
     return ServiceAccountRead(
@@ -217,12 +216,12 @@ def rotate_service_account_key(
     require_platform_admin(auth_res)
     require_recent_authentication(auth_res)
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         user = resolve_service_account_reference(session, service_account_ref)
         unique_id = user.unique_id
         username = user.username
 
-    api_key = find_or_add_api_access(unique_id, engine, regenerate=True)
+    api_key = find_or_add_api_access(unique_id, get_engine(), regenerate=True)
     response.headers["Cache-Control"] = "no-store"
 
     return ServiceAccountRead(

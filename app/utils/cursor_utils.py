@@ -10,7 +10,7 @@ from google.protobuf.message import DecodeError
 from google.protobuf.struct_pb2 import ListValue
 from pydantic import BaseModel, ConfigDict
 
-from app.utils.auth_utils import SECRET_KEY
+from app.utils.auth_utils import get_secret_key
 
 
 CURSOR_PREFIX = "c1."
@@ -49,7 +49,7 @@ def _signing_keys() -> tuple[str, dict[str, bytes]]:
             raise RuntimeError("CRUCIBLE_CURSOR_SIGNING_KEYS must map non-empty key IDs to non-empty secrets")
         keys = {key_id: secret.encode("utf-8") for key_id, secret in values.items()}
     else:
-        keys = {"v1": os.getenv("CRUCIBLE_CURSOR_SIGNING_KEY", SECRET_KEY).encode("utf-8")}
+        keys = {"v1": (os.getenv("CRUCIBLE_CURSOR_SIGNING_KEY") or get_secret_key()).encode("utf-8")}
     active_key_id = os.getenv("CRUCIBLE_CURSOR_ACTIVE_KEY_ID", "v1")
     if active_key_id not in keys:
         raise RuntimeError("CRUCIBLE_CURSOR_ACTIVE_KEY_ID is not present in CRUCIBLE_CURSOR_SIGNING_KEYS")
@@ -78,7 +78,7 @@ def _normalize_filter_value(value: Any) -> Any:
 
 
 def _digest(label: str, value: bytes) -> str:
-    return hmac.new(SECRET_KEY.encode("utf-8"), label.encode("utf-8") + b":" + value, hashlib.sha256).hexdigest()
+    return hmac.new(get_secret_key().encode("utf-8"), label.encode("utf-8") + b":" + value, hashlib.sha256).hexdigest()
 
 
 def principal_fingerprint(user_id: str) -> str:

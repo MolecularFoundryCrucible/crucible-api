@@ -40,22 +40,6 @@ from app.models.core_models import (
 )
 from app.utils.auth_utils import authenticate_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
-import app.api.routes.access_groups as access_groups_routes
-import app.api.routes.account as account_routes
-import app.api.routes.files as files_routes
-import app.api.routes.datasets as datasets_routes
-import app.api.routes.deletion as deletion_routes
-import app.api.routes.entities as entities_routes
-import app.api.routes.instruments as instruments_routes
-import app.api.routes.ingestion_requests as ingestion_requests_routes
-import app.api.routes.pipelines as pipelines_routes
-import app.api.routes.join_requests as join_requests_routes
-import app.api.routes.projects as projects_routes
-import app.api.routes.resources as resources_routes
-import app.api.routes.resource_graph as resource_graph_routes
-import app.api.routes.samples as samples_routes
-import app.api.routes.service_accounts as service_accounts_routes
-import app.api.routes.users as users_routes
 import app.utils.gcs_record_utils as gcs_record_utils
 from fastapi.testclient import TestClient
 
@@ -73,8 +57,21 @@ TEST_TABLES = [
 
 
 @pytest.fixture
-def db_engine():
-    """Fresh in-memory SQLite DB per test, wired into the route modules under test."""
+def use_engine(monkeypatch):
+    """Point get_engine() at a test engine for this test."""
+    from app.api import dependencies
+
+    def use(engine):
+        monkeypatch.setattr(dependencies, "_setup_engine", lambda env_file=None: engine)
+        dependencies.get_engine.cache_clear()
+
+    yield use
+    dependencies.get_engine.cache_clear()
+
+
+@pytest.fixture
+def db_engine(use_engine):
+    """Fresh in-memory SQLite DB per test, returned by get_engine()."""
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
@@ -90,36 +87,24 @@ def db_engine():
             "(id INTEGER PRIMARY KEY, unique_id VARCHAR, scientific_metadata TEXT)"
         ))
         conn.commit()
-    access_groups_routes.engine = engine
-    account_routes.engine = engine
-    files_routes.engine = engine
-    datasets_routes.engine = engine
-    deletion_routes.engine = engine
-    entities_routes.engine = engine
-    instruments_routes.engine = engine
-    ingestion_requests_routes.engine = engine
-    pipelines_routes.engine = engine
-    join_requests_routes.engine = engine
-    projects_routes.engine = engine
-    resources_routes.engine = engine
-    resource_graph_routes.engine = engine
-    samples_routes.engine = engine
-    service_accounts_routes.engine = engine
-    users_routes.engine = engine
+    use_engine(engine)
     yield engine
 
 
 @pytest.fixture(autouse=True)
 def fresh_settings(monkeypatch):
     """Settings are read once per process in production; tests change the environment, so each
-    test starts from an empty settings cache and no secrets already fetched."""
+    test starts from an empty settings cache, no secrets already fetched, and no engine."""
     from app import config
+    from app.api import dependencies
 
     monkeypatch.setattr(config, "_fetched_secrets", {})
     monkeypatch.setattr(config, "_loaded_env_files", set())
     config.get_settings.cache_clear()
+    dependencies.get_engine.cache_clear()
     yield
     config.get_settings.cache_clear()
+    dependencies.get_engine.cache_clear()
 
 
 @pytest.fixture(autouse=True)

@@ -9,17 +9,19 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(scope="module")
 def app():
-    # Import normally and neutralise the module-level engine afterwards, rather
-    # than purging sys.modules to re-import under patches. The purge re-registered
-    # every SQLModel table against a MetaData that survives it, so this file could
-    # not coexist with any other test that imports the app first.
+    # Import normally rather than purging sys.modules to re-import under patches.
+    # The purge re-registered every SQLModel table against a MetaData that survives
+    # it, so this file could not coexist with any other test that imports the app first.
     from app.api.routes import gcs_storage
-
-    gcs_storage.engine = MagicMock()
 
     test_app = FastAPI()
     test_app.include_router(gcs_storage.router, prefix="/api")
     return test_app
+
+
+@pytest.fixture(autouse=True)
+def mock_engine(use_engine):
+    use_engine(MagicMock())
 
 
 @pytest.fixture

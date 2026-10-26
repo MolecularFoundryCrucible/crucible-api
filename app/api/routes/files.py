@@ -31,7 +31,6 @@ from app.utils.auth_utils import authorize_user, permission_filter, require_perm
 from app.utils.permissions import Principal, Permission
 
 router = APIRouter(tags=["files"])
-engine = get_engine()
 
 
 def _get_af_with_read_access(session: Session, file_id: str, principal) -> tuple[AssociatedFile, Dataset]:
@@ -51,7 +50,7 @@ def list_files(
 ):
     '''Returns a paginated list of files the requesting user is authorized to view.'''
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         auth_filter = permission_filter(auth_res, Dataset, Permission.READ)
         base_query = (
             select(AssociatedFile)
@@ -74,7 +73,7 @@ def list_files(
 def get_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str, response: Response):
     '''Returns a single file by its MFID, with its content ETag in the ETag header.'''
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
         read = AssociatedFileRead.model_validate(af, update={"dataset_mfid": ds.unique_id})
         response.headers["ETag"] = read.etag
@@ -93,7 +92,7 @@ def get_file_download_link(
     '''Returns a signed GCS download URL (1-hour expiry) for a single file.
     Returns url=None for files whose storage_backend is not "gcs" (catalog-only).'''
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
 
         if af.storage_backend != "gcs":
@@ -118,7 +117,7 @@ def update_file(
 ):
     '''Partially updates a file record. Requires write access to the parent dataset.'''
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
         require_permission(session, auth_res, ds.unique_id, Permission.EDIT)
         assert_not_pending_deletion(session, ds.unique_id)
@@ -162,7 +161,7 @@ def update_file(
 def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id: str):
     '''Deletes a file and its ingestion requests. Requires admin on the parent dataset.'''
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
         require_permission(session, auth_res, ds.unique_id, Permission.DELETE)
         assert_not_pending_deletion(session, ds.unique_id)
@@ -199,7 +198,7 @@ def create_file_ingestion_request(
     if status == "requested":
         require_feature("ingestion")
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         af, ds = _get_af_with_read_access(session, file_id, auth_res)
         require_permission(session, auth_res, ds.unique_id, Permission.CREATE)
         assert_not_pending_deletion(session, ds.unique_id)
@@ -254,12 +253,12 @@ def create_file_ingestion_request(
             )
         except Exception:
             logger.exception("ingestion_publish_failed request=%s file=%s", ir_id, file_id)
-            with Session(engine) as session:
+            with Session(get_engine()) as session:
                 failed = session.get(IngestionRequest, ir_id)
                 failed.status = "failed"
                 session.add(failed)
                 session.commit()
             raise HTTPException(status_code=503, detail={"code": "ingestion_unavailable", "message": "Could not queue the ingestion request; try again later", "request_id": ir_id}) from None
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return session.exec(select(IngestionRequest).where(IngestionRequest.id == ir_id)).one()

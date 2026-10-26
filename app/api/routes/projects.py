@@ -48,7 +48,6 @@ from app.services.resource_details import (
 )
 
 router = APIRouter(tags=["projects"])
-engine = get_engine()
 
 API_VERSION = os.getenv('API_VERSION', None)
 API_VERSION_GITHASH = os.getenv("GITHASH", None)
@@ -91,7 +90,7 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
     if P.project_lead and any(named_lead_fields[1:]):
         raise HTTPException(status_code=400, detail="Provide project_lead or one of project_lead_orcid/_email/_username, not both.")
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         existing = session.exec(select(Project).where(project_id_matches(P.project_id))).one_or_none()
         if existing is not None:
             raise HTTPException(status_code=409, detail=f"Project '{P.project_id}' already exists. Use PATCH to update it.")
@@ -186,7 +185,7 @@ def list_projects(
         user_id=auth_res.user_id,
     )
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         if params.accessible_to_user or params.accessible_to_project:
             visibility = access_selector_filter(
                 session,
@@ -291,7 +290,7 @@ def search_projects(
     that stay member-only.
     '''
     normalized_q, tokens = normalize_search_query(params.q)
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         configure_trigram_search(session, get_trgm_search_threshold())
         fields = (Project.project_id, Project.title)
         query = apply_trigram_search(
@@ -328,7 +327,7 @@ def read_project(
     The lead and member profiles are always public-safe and never include email.
     Non-members never get the member list, regardless of ?include_members=.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         prop = resolve_project_reference(project_ref, session)
         if prop is None:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -360,7 +359,7 @@ def update_project(project_ref: ProjectRef, auth_res: Annotated[Principal, Depen
     project_id may be changed (renamed) here. Datasets, samples, and memberships
     link to the project by MFID, so a rename changes only the project row.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         project = resolve_project_reference(project_ref, session)
 
         if project is None:
@@ -410,7 +409,7 @@ def read_users_on_project(project_ref: ProjectRef, auth_res: Annotated[Principal
     Returns a paginated list of users associated with the project ID.
     Accessible by admins and members of the project.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         project = resolve_project_reference(project_ref, session)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -449,7 +448,7 @@ def add_users_to_project(
             status_code=409,
             detail="Cannot appoint an owner this way; use POST /resources/{mfid}/transfer_ownership")
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         proj = resolve_project_reference(project_ref, session)
         if proj is None:
             raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')
@@ -518,7 +517,7 @@ def set_project_user_role(
             status_code=409,
             detail="Cannot appoint an owner this way; use POST /resources/{mfid}/transfer_ownership")
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         proj = resolve_project_reference(project_ref, session)
         if proj is None:
             raise HTTPException(status_code=404, detail=f'Project {project_ref} not found')
@@ -575,7 +574,7 @@ def remove_user_from_project(
     requires editor or above in the project and a member whose role is at most
     your own. The owner cannot be removed; transfer ownership first.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         proj = resolve_project_reference(project_ref, session)
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project {project_ref} not found")

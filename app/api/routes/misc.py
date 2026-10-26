@@ -20,13 +20,12 @@ from app.utils.auth_utils import authorize_user
 router = APIRouter(tags=["misc"])
 logger = logging.getLogger(__name__)
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "migrations"
-engine = get_engine()
 
 
 def _check_db():
     t0 = time.monotonic()
     try:
-        with Session(engine) as session:
+        with Session(get_engine()) as session:
             revisions = session.execute(
                 text("SELECT version_num FROM alembic_version ORDER BY version_num")
             ).scalars().all()
@@ -135,7 +134,7 @@ def list_all_keywords():
     Returns a list of all keywords in the database.
     Each keyword includes the num_datasets field showing how many datasets use that keyword.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         keywords = session.exec(select(Keyword)).all()
     return keywords
 
@@ -152,7 +151,7 @@ def read_keyword(keyword: str, permissive: bool = True):
     else:
         cmd = select(Keyword).where(Keyword.keyword == keyword)
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         K = session.exec(cmd).all()
     return(K)
 

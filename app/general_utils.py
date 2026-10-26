@@ -34,45 +34,6 @@ def blank_to_none(val):
     return val
 
 
-_SECRET_VERSION = re.compile(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)")
-_fetched_secrets: dict[str, str] = {}
-
-
-def get_secret(name: str) -> str:
-    """Return a secret from the environment variable `name`, then a file named `name` in the secrets
-    directory (surrounding whitespace removed), else from the Secret Manager version named by
-    `{name}_VERSION` (a full projects/.../versions/... path), fetched on first use and kept in memory."""
-    from app.config import ConfigurationError, is_secret_setting, load_env_file, optional_env, secret_file, setting_value
-
-    if is_secret_setting(name):
-        value = setting_value(name)
-    else:
-        load_env_file()
-        raw = os.getenv(name)
-        value = raw if raw is not None and raw.strip() else secret_file(name)
-    if value:
-        return value
-    version = optional_env(f"{name}_VERSION")
-    if version is None:
-        raise ConfigurationError(f"{name} is not set (set {name}, a {name} file in the secrets directory, or {name}_VERSION)")
-    if not _SECRET_VERSION.fullmatch(version):
-        raise ConfigurationError(f"{name}_VERSION must be a full projects/<project>/secrets/<secret>/versions/<number or latest> path")
-    if version not in _fetched_secrets:
-        value = get_gcs_secret(version)
-        if not value.strip():
-            raise ConfigurationError(f"{name}_VERSION names an empty secret")
-        _fetched_secrets[version] = value
-    return _fetched_secrets[version]
-
-
-def get_gcs_secret(secret_name: str) -> str:
-    from google.cloud import secretmanager
-
-    with secretmanager.SecretManagerServiceClient() as client:
-        response = client.access_secret_version(name=secret_name)
-    return response.payload.data.decode("UTF-8")
-
-
 def get_utc_isoformat():
     return datetime.now(timezone.utc).isoformat()
 

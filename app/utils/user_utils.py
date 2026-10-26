@@ -7,7 +7,8 @@ from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
-from app.general_utils import get_secret, is_orcid, is_valid_mfid
+from app.config import get_secret
+from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import AccessGroup, Project, User
 
 logger = logging.getLogger(__name__)

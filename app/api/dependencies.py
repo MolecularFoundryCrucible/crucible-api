@@ -4,7 +4,7 @@ from functools import lru_cache
 
 import yaml
 
-from app.general_utils import get_secret
+from app.config import get_secret
 from app.utils.sql_utils import setup_engine as _setup_engine
 
 

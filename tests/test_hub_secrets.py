@@ -165,7 +165,7 @@ def test_deployment_references_only_and_enabled(environment):
 
 def test_direct_api_orcid_config_and_secret_version(monkeypatch, tmp_path):
     from app.api import dependencies
-    import app.general_utils as general_utils
+    import app.config as config
 
     monkeypatch.setattr(dependencies, "get_api_config", lambda: {"orcid_client_id": "fallback-client-id"})
     monkeypatch.delenv("ORCID_CLIENT_ID", raising=False)
@@ -177,7 +177,6 @@ def test_direct_api_orcid_config_and_secret_version(monkeypatch, tmp_path):
     monkeypatch.delenv("DB_CONF_FILE", raising=False)
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("ORCID_CLIENT_SECRET", raising=False)
-    monkeypatch.delenv("ORCID_CLIENT_SECRET_FILE", raising=False)
     monkeypatch.delenv("ORCID_CLIENT_SECRET_VERSION", raising=False)
     with pytest.raises(RuntimeError):
         dependencies.get_orcid_client_secret()
@@ -188,7 +187,7 @@ def test_direct_api_orcid_config_and_secret_version(monkeypatch, tmp_path):
         captured["secret_name"] = secret_name
         return "fetched-orcid-secret"
 
-    monkeypatch.setattr(general_utils, "get_gcs_secret", fake_get_gcs_secret)
+    monkeypatch.setattr(config, "get_gcs_secret", fake_get_gcs_secret)
     version_path = "projects/776258882599/secrets/orcid_client_secret/versions/2"
     monkeypatch.setenv("ORCID_CLIENT_SECRET_VERSION", version_path)
     assert dependencies.get_orcid_client_secret() == "fetched-orcid-secret"
@@ -201,13 +200,17 @@ def test_direct_api_orcid_config_and_secret_version(monkeypatch, tmp_path):
 
 
 def test_hub_orcid_secret_missing_is_unavailable(monkeypatch, tmp_path):
+    from app import config
     from app.utils import hub_orcid
+
+    monkeypatch.delenv("CRUCIBLE_SECRETS_DIR", raising=False)
+    monkeypatch.setattr(config, "DEFAULT_SECRETS_DIR", str(tmp_path / "no-secrets"))
     from app.utils.hub_login import HubLoginUnavailable
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("DB_CONF_FILE", raising=False)
     for name in ("HUB_AUTH_ORCID_CLIENT_SECRET", "ORCID_CLIENT_SECRET"):
-        for suffix in ("", "_FILE", "_VERSION"):
+        for suffix in ("", "_VERSION"):
             monkeypatch.delenv(f"{name}{suffix}", raising=False)
     with pytest.raises(HubLoginUnavailable):
         hub_orcid._orcid_client_secret()

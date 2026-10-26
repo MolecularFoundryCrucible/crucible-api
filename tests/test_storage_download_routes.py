@@ -313,7 +313,7 @@ def test_ingest_disabled_creates_no_request(client, db_engine, admin, monkeypatc
     _switch(monkeypatch, "UPLOAD_BUCKET", None)
     with patch("app.api.routes.files.send_pika_message") as send:
         response = client.post(f"/files/{file_mfid}/ingest")
-    assert response.status_code == 503
+    assert response.status_code == 501
     assert response.json()["detail"]["code"] == "feature_disabled"
     assert response.json()["detail"]["feature"] == "ingestion"
     send.assert_not_called()
@@ -356,6 +356,6 @@ def test_download_without_storage_is_not_configured(client, db_engine, signer, a
     file_mfid = _file(db_engine, f"mf-storage-prod/{DS}/scan.pdf")
     _switch(monkeypatch, "UPLOAD_BUCKET", None)
     response = client.get(f"/files/{file_mfid}/download_link")
-    assert response.status_code == 503
+    assert response.status_code == 501
     assert response.json()["detail"]["code"] == "storage_not_configured"
     signer.bucket.assert_not_called()

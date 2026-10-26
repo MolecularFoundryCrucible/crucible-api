@@ -32,10 +32,6 @@ class FeatureDisabled(Exception):
 _FEATURE_FLAGS = {"ingestion": "ingestion_enabled", "printing": "printing_enabled", "proposal_sync": "proposal_sync_enabled"}
 
 
-def feature_disabled_response(feature: str) -> dict:
-    return {503: {"description": f"{feature.replace('_', ' ').capitalize()} is not enabled on this server: `{{\"detail\": {{\"code\": \"feature_disabled\", \"feature\": \"{feature}\", \"message\": ...}}}}`"}}
-
-
 def require_feature(feature: str) -> None:
     if not getattr(get_settings(), _FEATURE_FLAGS[feature]):
         raise FeatureDisabled(feature)

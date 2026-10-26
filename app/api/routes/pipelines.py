@@ -131,7 +131,8 @@ def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_n
                         403: {"description": "Caller is below contributor on the dataset"},
                         409: {"description": "The dataset has an active deletion request (`pending_deletion`), or the Idempotency-Key was already used for a different pipeline or parameters (`idempotency_key_reused`)"},
                         422: {"description": "Unknown pipeline (`unknown_pipeline`) or invalid parameters (`invalid_parameters`)"},
-                        503: {"description": "Postprocessing is not enabled on this server (`feature_disabled`), or the run could not be queued (`pipeline_unavailable`); a run that could not be queued is recorded as failed"}})
+                        501: {"description": "Postprocessing is not enabled on this server (`feature_disabled`)"},
+                        503: {"description": "The run could not be queued (`pipeline_unavailable`); it is recorded as failed"}})
 def postprocess_dataset(dataset_mfid: DatasetMfid, body: PostprocessRequest, auth_res: Annotated[Principal, Depends(authorize_user)],
                         idempotency_key: Annotated[Optional[str], Header(min_length=1, max_length=128, description="Retries with the same key return the original run instead of starting another.")] = None):
     '''Queue a postprocessing run on a dataset. Requires contributor access. Each request starts a new run unless it repeats an Idempotency-Key.'''

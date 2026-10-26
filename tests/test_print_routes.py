@@ -221,6 +221,6 @@ def test_print_routes_disabled(client, auth_as, monkeypatch):
     listing = client.get("/print/printers")
     printing = client.post("/print/barcode", json={"printer_id": "lab3-zebra", "mfid": "01hzzzzzzzzzzzzzzzzzzzzzzz", "name": "Sample A"})
     for response in (listing, printing):
-        assert response.status_code == 503
+        assert response.status_code == 501
         assert response.json()["detail"]["code"] == "feature_disabled"
         assert response.json()["detail"]["feature"] == "printing"

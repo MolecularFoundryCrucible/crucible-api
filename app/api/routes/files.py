@@ -24,7 +24,8 @@ from app.models.datasets import AssociatedFileRead, AssociatedFileUpdate
 from app.models.pagination import PaginatedResponse
 from app.models.response_schemas import DownloadLinkRead, MessageResponse
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
-from app.services.storage_downloads import STORAGE_NOT_CONFIGURED_RESPONSE, StorageLocationError, resolve_storage_object
+from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE
+from app.services.storage_downloads import StorageLocationError, resolve_storage_object
 
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
@@ -178,7 +179,7 @@ def delete_file(auth_res: Annotated[Principal, Depends(authorize_user)], file_id
 
 
 # ingestion
-@router.post("/files/{file_id}/ingest", response_model=IngestionRequest, responses={503: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`), file storage is not configured (`storage_not_configured`), or the request could not be queued (`ingestion_unavailable`, recorded as failed)"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
+@router.post("/files/{file_id}/ingest", response_model=IngestionRequest, responses={501: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`) or file storage is not configured (`storage_not_configured`)"}, 503: {"description": "The request could not be queued (`ingestion_unavailable`); it is recorded as failed"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def create_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     file_id: str,

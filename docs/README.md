@@ -46,6 +46,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [`/project_graph` performance](project_graph_performance_followup.md)
 - [Per-worker Prometheus counters](prometheus_multiprocess_followup.md) and [public `/metrics` endpoint](public_metrics_endpoint_followup.md)
 - [Unused Cloud SQL proxy sidecar](cloud_sql_proxy_sidecar_followup.md)
+- [Error responses](error_responses_followup.md): moving repeated route error documentation into `app/api/errors.py`.
 
 ## Deferred designs
 

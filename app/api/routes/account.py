@@ -34,7 +34,8 @@ from app.utils.permissions import (
     has_global_permission,
     resolve_authorization_context,
 )
-from app.config import feature_disabled_response, require_feature
+from app.api.errors import feature_disabled_response
+from app.config import require_feature
 from app.utils.user_utils import assert_profile_fields_available, assign_projects_to_user, commit_user, find_mf_user_proposals
 
 router = APIRouter(tags=["account"])

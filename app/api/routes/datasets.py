@@ -14,8 +14,7 @@ from sqlmodel import and_, or_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ChildDatasetMfid, DatasetMfid, ParentDatasetMfid, SampleMfid
-from app.config import feature_disabled_response
-from app.services.storage_downloads import STORAGE_NOT_CONFIGURED_RESPONSE
+from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE, feature_disabled_response
 from app.general_utils import get_utc_datetime
 from app.models.core_models import (
     AccessGroup,
@@ -1447,7 +1446,7 @@ def add_associated_file(auth_res: Annotated[Principal, Depends(authorize_user)],
         return AssociatedFileRead.model_validate(af_obj, update={"dataset_mfid": dsid})
 
 
-@router.post("/datasets/{dataset_mfid}/files/{file_id}/ingest", response_model=IngestionRequest, deprecated = True, responses={503: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`), file storage is not configured (`storage_not_configured`), or the request could not be queued (`ingestion_unavailable`, recorded as failed)"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
+@router.post("/datasets/{dataset_mfid}/files/{file_id}/ingest", response_model=IngestionRequest, deprecated = True, responses={501: {"description": "Ingestion is not enabled on this server (`feature_disabled`, only for `status=requested`) or file storage is not configured (`storage_not_configured`)"}, 503: {"description": "The request could not be queued (`ingestion_unavailable`); it is recorded as failed"}, 409: {"description": "Stored file location is outside the file's own dataset or an allowed bucket: `{\"detail\": {\"code\": \"storage_location_invalid\", \"reason\": ..., \"message\": ...}}`"}})
 def create_ds_file_ingestion_request(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,

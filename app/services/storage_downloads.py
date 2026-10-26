@@ -37,8 +37,6 @@ class StorageNotConfigured(Exception):
     pass
 
 
-STORAGE_NOT_CONFIGURED_RESPONSE = {503: {"description": "File storage is not configured on this server (`{\"detail\": {\"code\": \"storage_not_configured\", \"message\": ...}}`), or the storage provider is temporarily unavailable"}}
-
 
 def upload_bucket():
     from app.config import get_settings

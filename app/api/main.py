@@ -14,8 +14,8 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.routes import multipart
 from app.build_info import api_version
-from app.config import FeatureDisabled, check_settings
-from app.services.storage_downloads import StorageNotConfigured
+from app.api.errors import register_error_handlers
+from app.config import check_settings
 from app.utils.multipart_config import MultipartStorageConfig
 from app.api.dependencies import get_api_root_path
 from app.utils.auth_utils import PRIVILEGE_MODE_HEADER
@@ -52,15 +52,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-
-@app.exception_handler(FeatureDisabled)
-async def handle_feature_disabled(request: Request, error: FeatureDisabled):
-    return JSONResponse(status_code=503, content={"detail": {"code": "feature_disabled", "feature": error.feature, "message": str(error)}})
-
-
-@app.exception_handler(StorageNotConfigured)
-async def handle_storage_not_configured(request: Request, error: StorageNotConfigured):
-    return JSONResponse(status_code=503, content={"detail": {"code": "storage_not_configured", "message": str(error)}})
+register_error_handlers(app)
 
 
 HUB_AUTH_HEADERS = {

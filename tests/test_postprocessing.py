@@ -223,7 +223,7 @@ def test_postprocess_disabled_creates_no_run(client, datasets, auth_as, queue, d
     monkeypatch.setenv("INGESTION_ENABLED", "false")
     get_settings.cache_clear()
     response = client.post("/datasets/ds1/postprocess", json={"pipeline": "carrier_segmentation"})
-    assert response.status_code == 503
+    assert response.status_code == 501
     assert response.json()["detail"]["code"] == "feature_disabled"
     queue.assert_not_called()
     assert runs(db_engine) == []

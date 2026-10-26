@@ -61,5 +61,5 @@ def test_sync_route_disabled(client, auth_as, monkeypatch):
     monkeypatch.setenv("PROPOSAL_SYNC_ENABLED", "false")
     get_settings.cache_clear()
     response = client.post("/account/sync-projects")
-    assert response.status_code == 503
+    assert response.status_code == 501
     assert response.json()["detail"]["feature"] == "proposal_sync"

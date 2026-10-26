@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from pydantic import BaseModel, Field, SecretStr, ValidationError
-from pydantic_settings import BaseSettings, SettingsConfigDict, SettingsError
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, SettingsError
 
 from app.utils.multipart_config import MultipartStorageConfig
 
@@ -31,13 +31,67 @@ def optional_env(name: str) -> str | None:
     return value.strip()
 
 
+def _is_secret(group: type[BaseSettings], field: str) -> bool:
+    return group.model_fields[field].annotation == SecretStr | None
+
+
+def _read_pointed_file(name: str, path: str) -> str:
+    try:
+        value = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ConfigurationError(f"{name}_FILE names a file that cannot be read ({path}): {error.__class__.__name__}") from None
+    if not value.strip():
+        raise ConfigurationError(f"{name}_FILE names an empty file ({path})")
+    return value
+
+
+class SecretSources(PydanticBaseSettingsSource):
+    """Reads each setting from exactly one of: a file named by NAME_FILE, a file NAME in the secrets
+    directory, or the NAME environment variable. For secrets, NAME_VERSION (fetched later by
+    get_secret) also counts as a way. A setting given more than one way is an error."""
+
+    def __init__(self, settings_cls: type[BaseSettings], secrets_dir: str | None):
+        super().__init__(settings_cls)
+        self.secrets_dir = Path(secrets_dir) if secrets_dir else None
+
+    def get_field_value(self, field, field_name):
+        raise NotImplementedError
+
+    def __call__(self) -> dict[str, str]:
+        environment = {key.upper(): value for key, value in os.environ.items()}
+        files = {path.name.upper(): path for path in self.secrets_dir.iterdir() if path.is_file()} if self.secrets_dir else {}
+        values = {}
+        for field, info in self.settings_cls.model_fields.items():
+            name = self.settings_cls.env_name(field)
+            ways: dict[str, str | None] = {}
+            if environment.get(name):
+                ways[name] = environment[name]
+            pointer = environment.get(f"{name}_FILE", "").strip()
+            if pointer:
+                ways[f"{name}_FILE"] = _read_pointed_file(name, pointer)
+            if name in files:
+                ways[f"a {name} file in the secrets directory"] = files[name].read_text(encoding="utf-8")
+            if _is_secret(self.settings_cls, field) and environment.get(f"{name}_VERSION", "").strip():
+                ways[f"{name}_VERSION"] = None
+            if len(ways) > 1:
+                raise ConfigurationError(f"{name} is given more than one way ({', '.join(ways)}); give it one way only")
+            for value in ways.values():
+                if value is not None:
+                    values[info.validation_alias if isinstance(info.validation_alias, str) else field] = value.strip()
+        return values
+
+
 class SettingsGroup(BaseSettings):
-    """One area of settings, read from environment variables, then from files in the secrets
-    directory (one file per setting, named after its environment variable, as Docker and Kubernetes
-    mount secrets). Values are trimmed. An empty value is ignored; a value of only spaces becomes
-    empty, which get_secret and the startup check treat as unset and which flags reject."""
+    """One area of settings. Each setting is read from exactly one of NAME_FILE, a file NAME in the
+    secrets directory (as Docker and Kubernetes mount secrets), or the NAME environment variable.
+    Values are trimmed. An empty value is ignored; a value of only spaces becomes empty, which
+    get_secret and the startup check treat as unset and which flags reject."""
 
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore", env_ignore_empty=True, str_strip_whitespace=True)
+
+    @classmethod
+    def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
+        return (init_settings, SecretSources(settings_cls, file_secret_settings.secrets_dir))
 
     @classmethod
     def env_name(cls, field: str) -> str:
@@ -58,12 +112,12 @@ class SettingsGroup(BaseSettings):
                 continue
             name = self.env_name(field)
             version = optional_env(f"{name}_VERSION")
-            if type(self).model_fields[field].annotation == SecretStr | None and version is not None and _SECRET_VERSION.fullmatch(version):
+            if _is_secret(type(self), field) and version is not None and _SECRET_VERSION.fullmatch(version):
                 continue
             found.append(name)
         return found
 
-    def problems(self) -> list[str]:
+    def problems(self, settings: "Settings") -> list[str]:
         return []
 
 
@@ -80,7 +134,7 @@ class DatabaseSettings(SettingsGroup):
     pool_recycle: int = 1800
     expected_revisions: str | None = Field(None, validation_alias="EXPECTED_DB_REVISIONS")
 
-    def problems(self) -> list[str]:
+    def problems(self, settings: "Settings") -> list[str]:
         return self.missing("server", "username", "database", "password")
 
 
@@ -92,7 +146,7 @@ class SecuritySettings(SettingsGroup):
     cursor_signing_keys: SecretStr | None = None
     cursor_active_key_id: str = "v1"
 
-    def problems(self) -> list[str]:
+    def problems(self, settings: "Settings") -> list[str]:
         return self.missing("secret_key")
 
 
@@ -116,6 +170,16 @@ class HubSettings(SettingsGroup):
     orcid_issuer: str = "https://orcid.org"
     callback_uri: str = ""
     public_api_url: str | None = None
+    client_secret: SecretStr | None = None
+    orcid_client_secret: SecretStr | None = None
+
+    def problems(self, settings: "Settings") -> list[str]:
+        if not self.enabled:
+            return []
+        found = self.missing("client_secret", "callback_uri")
+        if self.missing("orcid_client_secret") and settings.api.missing("orcid_client_secret"):
+            found.append("HUB_AUTH_ORCID_CLIENT_SECRET or ORCID_CLIENT_SECRET")
+        return found
 
 
 class StorageSettings(SettingsGroup):
@@ -130,7 +194,7 @@ class StorageSettings(SettingsGroup):
     def read_bucket_names(self) -> set[str]:
         return {name.strip() for name in (self.read_buckets or "").split(",")} - {""}
 
-    def problems(self) -> list[str]:
+    def problems(self, settings: "Settings") -> list[str]:
         multipart = (optional_env("MULTIPART_UPLOAD_ENABLED") or "").lower() == "true"
         if self.read_buckets or multipart or self.upload_bucket:
             return self.missing("upload_bucket", "gcs_sa")
@@ -147,7 +211,7 @@ class IngestionSettings(SettingsGroup):
     routing_suffix: str | None = None
     password: SecretStr | None = Field(None, validation_alias="RABBITMQ_DEFAULT_PW")
 
-    def problems(self) -> list[str]:
+    def problems(self, settings: "Settings") -> list[str]:
         return self.missing("host", "user", "routing_suffix", "password") if self.enabled else []
 
 
@@ -160,7 +224,7 @@ class PrintingSettings(SettingsGroup):
     username: str | None = None
     password: SecretStr | None = None
 
-    def problems(self) -> list[str]:
+    def problems(self, settings: "Settings") -> list[str]:
         return self.missing("host", "username", "password") if self.enabled else []
 
 
@@ -169,7 +233,7 @@ class ProposalSettings(SettingsGroup):
     url: str | None = Field(None, validation_alias="PROPOSAL_DB_URL")
     api_key: SecretStr | None = Field(None, validation_alias="PROPDB_APIKEY")
 
-    def problems(self) -> list[str]:
+    def problems(self, settings: "Settings") -> list[str]:
         return self.missing("url", "api_key") if self.enabled else []
 
 
@@ -247,27 +311,35 @@ def get_settings() -> Settings:
                 label = group.env_name(location) if location in group.model_fields else location.upper()
                 problems.append(f"{label} ({issue['msg']})")
         except (SettingsError, OSError, UnicodeDecodeError) as error:
-            raise ConfigurationError(f"Unreadable file in the secrets directory: {error}") from None
+            raise ConfigurationError(f"Unreadable file in the secrets directory: {error.__class__.__name__}") from None
     if problems:
         raise ConfigurationError(f"Invalid settings: {', '.join(problems)}")
     return Settings(**groups)
 
 
-def get_secret(name: str) -> str:
-    """Return a secret setting by its environment variable name. When the environment and the
-    secrets directory do not provide it, fall back to the Secret Manager version in `{name}_VERSION`
-    (a full projects/.../versions/... path), fetched once and kept in memory. The fallback serves
-    deployments that still let the application fetch its own secrets."""
+def configured_secret(name: str) -> str | None:
+    """A secret setting given as NAME_FILE, a file in the secrets directory, or NAME, without
+    Secret Manager; None when it is not given that way."""
     name = name.upper()
     if name not in _SECRETS:
         raise KeyError(f"{name} is not a secret setting")
     group, field = _SECRETS[name]
     value = getattr(getattr(get_settings(), group), field)
-    if value is not None and value.get_secret_value():
-        return value.get_secret_value()
+    return value.get_secret_value() if value is not None and value.get_secret_value() else None
+
+
+def get_secret(name: str) -> str:
+    """Return a secret setting by its environment variable name. When it is not given as NAME_FILE,
+    a file in the secrets directory, or NAME, fall back to the Secret Manager version in
+    `{name}_VERSION` (a full projects/.../versions/... path), fetched once and kept in memory. The
+    fallback serves the Foundry until its platform delivers the secrets."""
+    name = name.upper()
+    value = configured_secret(name)
+    if value is not None:
+        return value
     version = optional_env(f"{name}_VERSION")
     if version is None:
-        raise ConfigurationError(f"{name} is not set (set {name}, a {name} file in the secrets directory, or {name}_VERSION)")
+        raise ConfigurationError(f"{name} is not set (set {name}_FILE, a {name} file in the secrets directory, {name}, or {name}_VERSION)")
     if not _SECRET_VERSION.fullmatch(version):
         raise ConfigurationError(f"{name}_VERSION must be a full projects/<project>/secrets/<secret>/versions/<number or latest> path")
     if version not in _fetched_secrets:
@@ -288,7 +360,7 @@ def get_gcs_secret(secret_name: str) -> str:
 
 def missing_required_settings() -> list[str]:
     settings = get_settings()
-    return sorted({name for group in GROUPS for name in getattr(settings, group).problems()})
+    return sorted({name for group in GROUPS for name in getattr(settings, group).problems(settings)})
 
 
 def check_settings() -> None:

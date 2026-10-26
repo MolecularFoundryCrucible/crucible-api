@@ -109,3 +109,24 @@ def test_foundry_settings_resolve_and_pass_the_startup_check(environment, monkey
     assert (settings.ingestion.enabled, settings.ingestion.host, settings.ingestion.port) == (True, data["RMQ_HOST"], int(data["RMQ_PORT"]))
     assert (settings.printing.enabled, settings.printing.port) == (True, int(data["MQTT_PORT"]))
     assert (settings.proposals.enabled, settings.proposals.url) == (True, data["PROPOSAL_DB_URL"])
+
+
+@pytest.mark.parametrize("environment", ["main", "staging"])
+def test_cleanup_job_settings_resolve(environment, monkeypatch, tmp_path):
+    from app import config
+
+    data = _load(f"configmap-{environment}.yaml")["data"]
+    job = _load(f"hub-auth-cleanup-{environment}.yaml")
+    container = job["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
+    known = {group.env_name(field) for group in config.GROUPS.values() for field in group.model_fields}
+    for name in known | {f"{name}_VERSION" for name in config._SECRETS} | {"DB_CONF_FILE"}:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("CRUCIBLE_SECRETS_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    for entry in container["env"]:
+        value = entry["value"] if "value" in entry else data[entry["valueFrom"]["configMapKeyRef"]["key"]]
+        monkeypatch.setenv(entry["name"], str(value))
+    config.get_settings.cache_clear()
+    db = config.get_settings().db
+    assert (db.server, db.pool_size, db.max_overflow) == (data["db_server"], 1, 0)
+    assert config.get_settings().db.missing("server", "username", "database", "password") == []

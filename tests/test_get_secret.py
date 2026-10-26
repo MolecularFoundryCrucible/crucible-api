@@ -54,16 +54,49 @@ def test_only_secret_settings_can_be_read(clean, name):
         get_secret(name)
 
 
-def test_environment_value_wins(clean, monkeypatch, no_secret_manager):
-    _secrets_dir(clean, monkeypatch, {SECRET: "from-file"})
-    monkeypatch.setenv(SECRET, "from-env")
-    monkeypatch.setenv(f"{SECRET}_VERSION", VERSION)
-    assert get_secret(SECRET) == "from-env"
+@pytest.mark.parametrize("ways", [
+    ("environment", "directory"),
+    ("directory", "version"),
+    ("environment", "version"),
+    ("pointer", "environment"),
+    ("pointer", "directory"),
+])
+def test_a_secret_given_two_ways_is_refused(clean, monkeypatch, no_secret_manager, ways):
+    if "directory" in ways:
+        _secrets_dir(clean, monkeypatch, {SECRET: "from-directory"})
+    if "environment" in ways:
+        monkeypatch.setenv(SECRET, "from-environment")
+    if "version" in ways:
+        monkeypatch.setenv(f"{SECRET}_VERSION", VERSION)
+    if "pointer" in ways:
+        pointed = clean / "pointed"
+        pointed.write_text("from-pointer")
+        monkeypatch.setenv(f"{SECRET}_FILE", str(pointed))
+    with pytest.raises(ConfigurationError, match=f"{SECRET} is given more than one way") as error:
+        get_secret(SECRET)
+    assert "from-" not in str(error.value)
 
 
-def test_secrets_directory_wins_over_version(clean, monkeypatch, no_secret_manager):
+def test_secret_file_named_by_file_variable(clean, monkeypatch, no_secret_manager):
+    pointed = clean / "elsewhere" / "apikey"
+    pointed.parent.mkdir()
+    pointed.write_text("from-pointer\n")
+    monkeypatch.setenv(f"{SECRET}_FILE", str(pointed))
+    assert get_secret(SECRET) == "from-pointer"
+
+
+@pytest.mark.parametrize("content", [None, "", " \n"])
+def test_missing_or_empty_pointed_file_is_refused(clean, monkeypatch, content):
+    pointed = clean / "apikey"
+    if content is not None:
+        pointed.write_text(content)
+    monkeypatch.setenv(f"{SECRET}_FILE", str(pointed))
+    with pytest.raises(ConfigurationError, match=f"{SECRET}_FILE names"):
+        get_secret(SECRET)
+
+
+def test_secrets_directory_value_is_trimmed(clean, monkeypatch, no_secret_manager):
     _secrets_dir(clean, monkeypatch, {SECRET: "from-file\n"})
-    monkeypatch.setenv(f"{SECRET}_VERSION", VERSION)
     assert get_secret(SECRET) == "from-file"
 
 
@@ -228,8 +261,7 @@ def test_loading_an_explicit_file_refreshes_settings(clean):
     assert get_secret(SECRET) == "from-explicit"
 
 
-def test_whitespace_only_environment_value_hides_the_secrets_directory(clean, monkeypatch):
-    _secrets_dir(clean, monkeypatch, {SECRET: "from-file"})
+def test_whitespace_only_environment_value_counts_as_unset(clean, monkeypatch):
     monkeypatch.setenv(SECRET, "   ")
     with pytest.raises(ConfigurationError, match="is not set"):
         get_secret(SECRET)

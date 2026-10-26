@@ -1,10 +1,10 @@
-import os
 import re
 from functools import lru_cache
 
 from google.api_core.exceptions import GoogleAPIError
 from google.auth.exceptions import GoogleAuthError
-from google.cloud import secretmanager
+
+from app.config import configured_secret, get_settings, optional_env
 
 
 class HubSecretUnavailable(Exception):
@@ -12,8 +12,6 @@ class HubSecretUnavailable(Exception):
 
 
 def hub_auth_enabled() -> bool:
-    from app.config import get_settings
-
     return get_settings().hub.enabled
 
 
@@ -21,6 +19,8 @@ def hub_auth_enabled() -> bool:
 def _read_secret_version(name: str) -> str:
     if not re.fullmatch(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)", name):
         raise HubSecretUnavailable
+    from google.cloud import secretmanager
+
     try:
         with secretmanager.SecretManagerServiceClient() as client:
             response = client.access_secret_version(request={"name": name}, timeout=5, retry=None)
@@ -33,7 +33,8 @@ def _read_secret_version(name: str) -> str:
 
 
 def get_hub_secret(environment_name: str) -> str | None:
-    version = os.getenv(environment_name + "_VERSION")
-    if version:
-        return _read_secret_version(version)
-    return os.getenv(environment_name) or None
+    value = configured_secret(environment_name)
+    if value is not None:
+        return value
+    version = optional_env(environment_name + "_VERSION")
+    return _read_secret_version(version) if version else None

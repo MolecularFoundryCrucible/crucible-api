@@ -112,15 +112,15 @@ def find_or_add_api_access(orcid: str, engine, regenerate = False):
             return(new_token)
 
 
-def generate_apikey(orcid: str, session):
-    # create token
+def add_apikey(orcid: str, session) -> str:
+    """Add a new API key to the session without committing."""
     new_token = secrets.token_hex(32)
-    # add to database
-    new_api_acct = ApiToken(user_unique_id = orcid,
-                            access_group_id = orcid,
-                            token = new_token,
-                            token_created = date.today().isoformat())
-    session.add(new_api_acct)
+    session.add(ApiToken(user_unique_id=orcid, access_group_id=orcid, token=new_token, token_created=date.today().isoformat()))
+    return new_token
+
+
+def generate_apikey(orcid: str, session):
+    new_token = add_apikey(orcid, session)
     session.commit()
     return(new_token)
 

@@ -127,7 +127,8 @@ def test_application_user_with_extensions_created_by_an_administrator(empty_db):
 @needs_pg
 def test_command_line_upgrades_the_configured_database(empty_db, use_engine, capsys):
     use_engine(empty_db)
-    db.main(["upgrade"])
+    from app.cli.__main__ import main
+    assert main(["db", "upgrade"]) == 0
     assert capsys.readouterr().out.strip() == "initialized"
 
 

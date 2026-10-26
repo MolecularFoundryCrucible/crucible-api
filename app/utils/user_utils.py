@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 import requests
 from fastapi import HTTPException
@@ -9,7 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from app.config import get_secret, get_settings
 from app.general_utils import is_orcid, is_valid_mfid
-from app.models.core_models import AccessGroup, Project, User
+from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
+from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 logger = logging.getLogger(__name__)
 # urllib3 logs request URLs at DEBUG, and the proposal service takes its API key in the query string.
@@ -119,6 +120,25 @@ def commit_user(session) -> None:
         if "ux_user_email_lower" in str(error.orig):
             raise fields_in_use(["email"]) from None
         raise
+
+
+def provision_user(session, *, unique_id: str, first_name: str, last_name: str, email: Optional[str], username: Optional[str],
+                   project_groups: Sequence[AccessGroup] = (), platform_role: Optional[PlatformRole] = None) -> User:
+    """Add a person with their identity group (as owner) and contributor membership of the given
+    project groups. The caller checks availability and commits."""
+    user = User(unique_id=unique_id, first_name=first_name, last_name=last_name, email=email, username=username, is_service_account=False)
+    if platform_role is not None:
+        user.platform_role = platform_role.value
+    session.add(user)
+    identity_group = AccessGroup(group_name=unique_id, group_type=AccessGroupType.IDENTITY.value)
+    session.add(identity_group)
+    session.flush()
+    session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=identity_group.id, role=Role.OWNER.db_value))
+    session.add_all([
+        UserAccessGroupLink(user_id=user.id, accessgroup_id=group.id, role=Role.CONTRIBUTOR.db_value)
+        for group in project_groups
+    ])
+    return user
 
 
 def is_username_available(session, username: str) -> bool:

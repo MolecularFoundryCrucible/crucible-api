@@ -9,7 +9,7 @@ run against production unless explicitly told to. ALEMBIC_PRODUCTION_DATABASE
 names the guarded database ("crucible" by default); an empty value turns the
 guard off for installations without a separate production database.
 
-`python -m app.cli.db upgrade` passes its own connection in
+`python -m app.cli db upgrade` passes its own connection in
 config.attributes["connection"]; otherwise get_engine() is used.
 
 Usage:

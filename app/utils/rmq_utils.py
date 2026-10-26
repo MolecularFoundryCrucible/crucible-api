@@ -16,9 +16,9 @@ def get_ingestion_tier(file_size: int) -> str:
 def send_pika_message(message, exchange, routing_key, rmq_pw):
     from app.config import get_settings
 
-    settings = get_settings()
-    credentials = pika.PlainCredentials(settings.rmq_user, rmq_pw)
-    parameters = pika.ConnectionParameters(settings.rmq_host, settings.rmq_port, '/', credentials)
+    settings = get_settings().ingestion
+    credentials = pika.PlainCredentials(settings.user, rmq_pw)
+    parameters = pika.ConnectionParameters(settings.host, settings.port, '/', credentials)
     connection = pika.BlockingConnection(parameters)
     channel = connection.channel()
     # send the messsage based on input from CLI args

@@ -3,20 +3,13 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr, ValidationError
+from pydantic import BaseModel, Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict, SettingsError
 
 from app.utils.multipart_config import MultipartStorageConfig
 
 DEFAULT_SECRETS_DIR = "/run/secrets"
 _SECRET_VERSION = re.compile(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)")
-_REQUIRED = ("db_server", "db_username", "db_database")
-_REQUIRED_SECRETS = ("pgdb_pw", "crucible_secret_key")
-_FEATURE_REQUIREMENTS = {
-    "ingestion_enabled": (("rmq_host", "rmq_user", "rmq_routing_suffix"), ("rabbitmq_default_pw",)),
-    "printing_enabled": (("mqtt_host", "mqtt_username"), ("mqtt_password",)),
-    "proposal_sync_enabled": (("proposal_db_url",), ("propdb_apikey",)),
-}
 _loaded_env_files: set[str] = set()
 _fetched_secrets: dict[str, str] = {}
 
@@ -31,61 +24,179 @@ class FeatureDisabled(Exception):
         self.feature = feature
 
 
-_FEATURE_FLAGS = {"ingestion": "ingestion_enabled", "printing": "printing_enabled", "proposal_sync": "proposal_sync_enabled"}
-
-
-def require_feature(feature: str) -> None:
-    if not getattr(get_settings(), _FEATURE_FLAGS[feature]):
-        raise FeatureDisabled(feature)
-
-
-class Settings(BaseSettings):
-    """Settings read from environment variables, then from files in the secrets directory
-    (one file per setting, named after it, as Docker and Kubernetes mount secrets).
-    Values are trimmed. An empty value is ignored; a value of only spaces becomes empty, which
-    get_secret and the startup check treat as unset and which flags reject."""
-
-    model_config = SettingsConfigDict(case_sensitive=False, extra="ignore", env_ignore_empty=True, str_strip_whitespace=True)
-
-    db_server: str | None = None
-    db_username: str | None = None
-    db_database: str | None = None
-    pgdb_pw: SecretStr | None = None
-    crucible_secret_key: SecretStr | None = None
-
-    ingestion_enabled: bool = False
-    rmq_host: str | None = None
-    rmq_port: int = 5672
-    rmq_user: str | None = None
-    rmq_routing_suffix: str | None = None
-    rabbitmq_default_pw: SecretStr | None = None
-
-    printing_enabled: bool = False
-    mqtt_host: str | None = None
-    mqtt_port: int = 8883
-    mqtt_username: str | None = None
-    mqtt_password: SecretStr | None = None
-
-    proposal_sync_enabled: bool = False
-    proposal_db_url: str | None = None
-    propdb_apikey: SecretStr | None = None
-
-    upload_bucket: str | None = None
-    gcs_project: str | None = None
-    gcs_sa: SecretStr | None = None
-    orcid_client_id: str | None = None
-    orcid_client_secret: SecretStr | None = None
-
-    api_public_url: str | None = None
-    api_path: str | None = None
-    trgm_search_threshold: float | None = None
-
-
 def optional_env(name: str) -> str | None:
     value = os.getenv(name)
     if value is None or not value.strip():
         return None
     return value.strip()
+
+
+class SettingsGroup(BaseSettings):
+    """One area of settings, read from environment variables, then from files in the secrets
+    directory (one file per setting, named after its environment variable, as Docker and Kubernetes
+    mount secrets). Values are trimmed. An empty value is ignored; a value of only spaces becomes
+    empty, which get_secret and the startup check treat as unset and which flags reject."""
+
+    model_config = SettingsConfigDict(case_sensitive=False, extra="ignore", env_ignore_empty=True, str_strip_whitespace=True)
+
+    @classmethod
+    def env_name(cls, field: str) -> str:
+        alias = cls.model_fields[field].validation_alias
+        if isinstance(alias, str):
+            return alias.upper()
+        return (cls.model_config.get("env_prefix", "") + field).upper()
+
+    def missing(self, *fields: str) -> list[str]:
+        """Environment names of the given fields that have no value (secrets may also be given as a
+        Secret Manager version)."""
+        found = []
+        for field in fields:
+            value = getattr(self, field)
+            if isinstance(value, SecretStr):
+                value = value.get_secret_value()
+            if value:
+                continue
+            name = self.env_name(field)
+            version = optional_env(f"{name}_VERSION")
+            if type(self).model_fields[field].annotation == SecretStr | None and version is not None and _SECRET_VERSION.fullmatch(version):
+                continue
+            found.append(name)
+        return found
+
+    def problems(self) -> list[str]:
+        return []
+
+
+class DatabaseSettings(SettingsGroup):
+    model_config = SettingsConfigDict(env_prefix="DB_")
+
+    server: str | None = None
+    username: str | None = None
+    database: str | None = None
+    password: SecretStr | None = Field(None, validation_alias="PGDB_PW")
+    pool_size: int = 15
+    max_overflow: int = 15
+    pool_timeout: int = 30
+    pool_recycle: int = 1800
+    expected_revisions: str | None = Field(None, validation_alias="EXPECTED_DB_REVISIONS")
+
+    def problems(self) -> list[str]:
+        return self.missing("server", "username", "database", "password")
+
+
+class SecuritySettings(SettingsGroup):
+    model_config = SettingsConfigDict(env_prefix="CRUCIBLE_")
+
+    secret_key: SecretStr | None = None
+    cursor_signing_key: SecretStr | None = None
+    cursor_signing_keys: SecretStr | None = None
+    cursor_active_key_id: str = "v1"
+
+    def problems(self) -> list[str]:
+        return self.missing("secret_key")
+
+
+class ApiSettings(SettingsGroup):
+    model_config = SettingsConfigDict(env_prefix="API_")
+
+    public_url: str | None = None
+    path: str | None = None
+    conf_file: str | None = None
+    trgm_search_threshold: float | None = Field(None, validation_alias="TRGM_SEARCH_THRESHOLD")
+    orcid_client_id: str | None = Field(None, validation_alias="ORCID_CLIENT_ID")
+    orcid_client_secret: SecretStr | None = Field(None, validation_alias="ORCID_CLIENT_SECRET")
+
+
+class HubSettings(SettingsGroup):
+    model_config = SettingsConfigDict(env_prefix="HUB_AUTH_")
+
+    enabled: bool = False
+    client_id: str = "crucible-hub"
+    orcid_client_id: str | None = None
+    orcid_issuer: str = "https://orcid.org"
+    callback_uri: str = ""
+    public_api_url: str | None = None
+
+
+class StorageSettings(SettingsGroup):
+    upload_bucket: str | None = Field(None, validation_alias="UPLOAD_BUCKET")
+    gcs_project: str | None = Field(None, validation_alias="GCS_PROJECT")
+    gcs_sa: SecretStr | None = Field(None, validation_alias="GCS_SA")
+    record_bucket: str | None = Field(None, validation_alias="RECORD_BUCKET")
+    read_buckets: str | None = Field(None, validation_alias="STORAGE_READ_BUCKETS")
+    legacy_upload_token_downscope: bool = Field(True, validation_alias="LEGACY_UPLOAD_TOKEN_DOWNSCOPE")
+
+    @property
+    def read_bucket_names(self) -> set[str]:
+        return {name.strip() for name in (self.read_buckets or "").split(",")} - {""}
+
+    def problems(self) -> list[str]:
+        multipart = (optional_env("MULTIPART_UPLOAD_ENABLED") or "").lower() == "true"
+        if self.read_buckets or multipart or self.upload_bucket:
+            return self.missing("upload_bucket", "gcs_sa")
+        return []
+
+
+class IngestionSettings(SettingsGroup):
+    model_config = SettingsConfigDict(env_prefix="RMQ_")
+
+    enabled: bool = Field(False, validation_alias="INGESTION_ENABLED")
+    host: str | None = None
+    port: int = 5672
+    user: str | None = None
+    routing_suffix: str | None = None
+    password: SecretStr | None = Field(None, validation_alias="RABBITMQ_DEFAULT_PW")
+
+    def problems(self) -> list[str]:
+        return self.missing("host", "user", "routing_suffix", "password") if self.enabled else []
+
+
+class PrintingSettings(SettingsGroup):
+    model_config = SettingsConfigDict(env_prefix="MQTT_")
+
+    enabled: bool = Field(False, validation_alias="PRINTING_ENABLED")
+    host: str | None = None
+    port: int = 8883
+    username: str | None = None
+    password: SecretStr | None = None
+
+    def problems(self) -> list[str]:
+        return self.missing("host", "username", "password") if self.enabled else []
+
+
+class ProposalSettings(SettingsGroup):
+    enabled: bool = Field(False, validation_alias="PROPOSAL_SYNC_ENABLED")
+    url: str | None = Field(None, validation_alias="PROPOSAL_DB_URL")
+    api_key: SecretStr | None = Field(None, validation_alias="PROPDB_APIKEY")
+
+    def problems(self) -> list[str]:
+        return self.missing("url", "api_key") if self.enabled else []
+
+
+class Settings(BaseModel):
+    db: DatabaseSettings
+    security: SecuritySettings
+    api: ApiSettings
+    hub: HubSettings
+    storage: StorageSettings
+    ingestion: IngestionSettings
+    printing: PrintingSettings
+    proposals: ProposalSettings
+
+
+GROUPS: dict[str, type[SettingsGroup]] = {name: field.annotation for name, field in Settings.model_fields.items()}
+_SECRETS: dict[str, tuple[str, str]] = {
+    group.env_name(field): (name, field)
+    for name, group in GROUPS.items()
+    for field, info in group.model_fields.items()
+    if info.annotation == SecretStr | None
+}
+_FEATURES = {"ingestion": "ingestion", "printing": "printing", "proposal_sync": "proposals"}
+
+
+def require_feature(feature: str) -> None:
+    if not getattr(get_settings(), _FEATURES[feature]).enabled:
+        raise FeatureDisabled(feature)
 
 
 def load_env_file(path: str | None = None) -> None:
@@ -125,20 +236,21 @@ def _secrets_dir() -> str | None:
 @lru_cache
 def get_settings() -> Settings:
     load_env_file()
-    try:
-        return Settings(_secrets_dir=_secrets_dir())
-    except ValidationError as error:
-        problems = ", ".join(f"{str(issue['loc'][0]).upper()} ({issue['msg']})" for issue in error.errors())
-        raise ConfigurationError(f"Invalid settings: {problems}") from None
-    except (SettingsError, OSError, UnicodeDecodeError) as error:
-        raise ConfigurationError(f"Unreadable file in the secrets directory: {error}") from None
-
-
-def _secret_value(field: str) -> str | None:
-    value = getattr(get_settings(), field)
-    if value is None or not value.get_secret_value():
-        return None
-    return value.get_secret_value()
+    secrets_dir = _secrets_dir()
+    groups, problems = {}, []
+    for name, group in GROUPS.items():
+        try:
+            groups[name] = group(_secrets_dir=secrets_dir)
+        except ValidationError as error:
+            for issue in error.errors():
+                location = str(issue["loc"][0])
+                label = group.env_name(location) if location in group.model_fields else location.upper()
+                problems.append(f"{label} ({issue['msg']})")
+        except (SettingsError, OSError, UnicodeDecodeError) as error:
+            raise ConfigurationError(f"Unreadable file in the secrets directory: {error}") from None
+    if problems:
+        raise ConfigurationError(f"Invalid settings: {', '.join(problems)}")
+    return Settings(**groups)
 
 
 def get_secret(name: str) -> str:
@@ -146,12 +258,13 @@ def get_secret(name: str) -> str:
     secrets directory do not provide it, fall back to the Secret Manager version in `{name}_VERSION`
     (a full projects/.../versions/... path), fetched once and kept in memory. The fallback serves
     deployments that still let the application fetch its own secrets."""
-    field, name = name.lower(), name.upper()
-    if Settings.model_fields.get(field) is None or Settings.model_fields[field].annotation != SecretStr | None:
+    name = name.upper()
+    if name not in _SECRETS:
         raise KeyError(f"{name} is not a secret setting")
-    value = _secret_value(field)
-    if value is not None:
-        return value
+    group, field = _SECRETS[name]
+    value = getattr(getattr(get_settings(), group), field)
+    if value is not None and value.get_secret_value():
+        return value.get_secret_value()
     version = optional_env(f"{name}_VERSION")
     if version is None:
         raise ConfigurationError(f"{name} is not set (set {name}, a {name} file in the secrets directory, or {name}_VERSION)")
@@ -175,24 +288,7 @@ def get_gcs_secret(secret_name: str) -> str:
 
 def missing_required_settings() -> list[str]:
     settings = get_settings()
-
-    def has_version(field: str) -> bool:
-        version = optional_env(f"{field.upper()}_VERSION")
-        return version is not None and _SECRET_VERSION.fullmatch(version) is not None
-
-    def missing(fields, secrets=False):
-        if secrets:
-            return [field for field in fields if _secret_value(field) is None and not has_version(field)]
-        return [field for field in fields if not getattr(settings, field)]
-
-    found = missing(_REQUIRED) + missing(_REQUIRED_SECRETS, secrets=True)
-    for flag, (plain, secrets) in _FEATURE_REQUIREMENTS.items():
-        if getattr(settings, flag):
-            found += missing(plain) + missing(secrets, secrets=True)
-    storage_requested = optional_env("STORAGE_READ_BUCKETS") or (optional_env("MULTIPART_UPLOAD_ENABLED") or "").lower() == "true"
-    if storage_requested or settings.upload_bucket:
-        found += missing(("upload_bucket",)) + missing(("gcs_sa",), secrets=True)
-    return sorted(field.upper() for field in set(found))
+    return sorted({name for group in GROUPS for name in getattr(settings, group).problems()})
 
 
 def check_settings() -> None:

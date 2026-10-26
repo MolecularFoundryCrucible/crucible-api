@@ -61,3 +61,51 @@ def test_cleanup_job_receives_database_password_reference(environment):
     container = job["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
     refs = _configmap_refs(container)
     assert refs.get("PGDB_PW_VERSION") == {"key": "PGDB_PW_VERSION", "name": f"crucible-api-config-{environment}"}
+
+
+OUTSIDE_SETTINGS = {
+    "ANTHROPIC_BASE_URL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "DB_AUTH", "DB_TYPE", "PORT", "PYTHONUNBUFFERED",
+    "MULTIPART_UPLOAD_BUCKET", "MULTIPART_UPLOAD_ENABLED", "MULTIPART_UPLOAD_PROJECT", "MULTIPART_UPLOAD_SIGNER",
+}
+
+
+def _api_environment(environment):
+    data = _load(f"configmap-{environment}.yaml")["data"]
+    spec = _load(f"deployment-k8s-conf-{environment}.yaml")["spec"]["template"]["spec"]
+    container = next(c for c in spec["containers"] if c["name"] == "crucible-api-container")
+    values = {}
+    for entry in container.get("env", []):
+        if "value" in entry:
+            values[entry["name"]] = str(entry["value"])
+        elif "configMapKeyRef" in entry.get("valueFrom", {}):
+            values[entry["name"]] = str(data[entry["valueFrom"]["configMapKeyRef"]["key"]])
+    return data, values
+
+
+@pytest.mark.parametrize("environment", ["main", "staging"])
+def test_foundry_settings_resolve_and_pass_the_startup_check(environment, monkeypatch, tmp_path):
+    from app import config
+
+    known = {group.env_name(field) for group in config.GROUPS.values() for field in group.model_fields}
+    versions = {f"{name}_VERSION" for name in config._SECRETS}
+    for name in known | versions | OUTSIDE_SETTINGS | {"DB_CONF_FILE"}:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("CRUCIBLE_SECRETS_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    data, values = _api_environment(environment)
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    config.get_settings.cache_clear()
+
+    hub_versions = {"HUB_AUTH_CLIENT_SECRET_VERSION", "HUB_AUTH_ORCID_CLIENT_SECRET_VERSION"}
+    assert set(values) - known - versions - OUTSIDE_SETTINGS - hub_versions == set()
+    config.check_settings()
+    settings = config.get_settings()
+    assert (settings.db.server, settings.db.username, settings.db.database) == (data["db_server"], data["db_username"], data["db_database"])
+    assert settings.db.expected_revisions == data["EXPECTED_DB_REVISIONS"]
+    assert settings.hub.enabled is (data["HUB_AUTH_ENABLED"] == "true")
+    assert (settings.hub.client_id, settings.hub.callback_uri) == (data["HUB_AUTH_CLIENT_ID"], data["HUB_AUTH_CALLBACK_URI"])
+    assert settings.storage.upload_bucket == data["UPLOAD_BUCKET"]
+    assert (settings.ingestion.enabled, settings.ingestion.host, settings.ingestion.port) == (True, data["RMQ_HOST"], int(data["RMQ_PORT"]))
+    assert (settings.printing.enabled, settings.printing.port) == (True, int(data["MQTT_PORT"]))
+    assert (settings.proposals.enabled, settings.proposals.url) == (True, data["PROPOSAL_DB_URL"])

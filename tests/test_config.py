@@ -37,28 +37,28 @@ def test_settings_trim_values_and_ignore_empty_ones(empty):
     empty.setenv("RMQ_HOST", "")
     empty.setenv("PGDB_PW", " pw ")
     settings = get_settings()
-    assert settings.db_server == "db"
-    assert settings.rmq_host is None
-    assert settings.pgdb_pw.get_secret_value() == "pw"
+    assert settings.db.server == "db"
+    assert settings.ingestion.host is None
+    assert settings.db.password.get_secret_value() == "pw"
 
 
 def test_secrets_are_hidden_when_printed(empty):
     empty.setenv("PGDB_PW", "hunter2")
     settings = get_settings()
-    assert isinstance(settings.pgdb_pw, SecretStr)
+    assert isinstance(settings.db.password, SecretStr)
     assert "hunter2" not in repr(settings) and "hunter2" not in str(settings.model_dump())
 
 
 @pytest.mark.parametrize("value", ["TRUE", "1", "on", "yes"])
 def test_flag_true(empty, value):
     empty.setenv("PRINTING_ENABLED", value)
-    assert get_settings().printing_enabled is True
+    assert get_settings().printing.enabled is True
 
 
 @pytest.mark.parametrize("value", ["false", "0", "Off", "no", ""])
 def test_flag_false(empty, value):
     empty.setenv("PRINTING_ENABLED", value)
-    assert get_settings().printing_enabled is False
+    assert get_settings().printing.enabled is False
 
 
 def test_flag_typo_is_a_configuration_error(empty):
@@ -110,9 +110,9 @@ def test_feature_requirements(empty):
 
 def test_settings_are_read_once(empty):
     empty.setenv("DB_SERVER", "first")
-    assert get_settings().db_server == "first"
+    assert get_settings().db.server == "first"
     empty.setenv("DB_SERVER", "second")
-    assert get_settings().db_server == "first"
+    assert get_settings().db.server == "first"
 
 
 def test_whitespace_only_flag_is_rejected(empty):
@@ -125,7 +125,7 @@ def test_whitespace_only_setting_counts_as_missing(empty):
     for name in ("DB_USERNAME", "DB_DATABASE", "PGDB_PW", "CRUCIBLE_SECRET_KEY"):
         empty.setenv(name, "x")
     empty.setenv("DB_SERVER", "   ")
-    assert get_settings().db_server == ""
+    assert get_settings().db.server == ""
     assert missing_required_settings() == ["DB_SERVER"]
 
 

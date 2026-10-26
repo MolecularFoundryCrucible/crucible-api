@@ -12,7 +12,9 @@ class HubSecretUnavailable(Exception):
 
 
 def hub_auth_enabled() -> bool:
-    return os.getenv("HUB_AUTH_ENABLED", "false").lower() == "true"
+    from app.config import get_settings
+
+    return get_settings().hub.enabled
 
 
 @lru_cache(maxsize=8)

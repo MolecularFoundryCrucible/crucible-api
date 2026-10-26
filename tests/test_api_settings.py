@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.api import dependencies
-from app.config import ConfigurationError
+from app.config import ConfigurationError, get_settings
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -80,6 +80,7 @@ def test_cursor_signing_key_setting_is_used(monkeypatch):
     monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEY", "cursor-secret")
     assert cursor_utils._signing_keys() == ("v1", {"v1": b"cursor-secret"})
     monkeypatch.delenv("CRUCIBLE_CURSOR_SIGNING_KEY")
+    get_settings.cache_clear()
     assert cursor_utils._signing_keys() == ("v1", {"v1": b"main-secret"})
 
 

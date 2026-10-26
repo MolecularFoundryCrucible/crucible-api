@@ -133,10 +133,10 @@ def _publish_and_await_result(printer_id: str, mfid: str, name: str) -> tuple[di
             status_received.set()
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"crucible-api-{job_id}")
-    client.username_pw_set(get_settings().mqtt_username, mqtt_password)
+    client.username_pw_set(get_settings().printing.username, mqtt_password)
     client.tls_set()
     client.on_message = on_message
-    client.connect(get_settings().mqtt_host, get_settings().mqtt_port, keepalive=60)
+    client.connect(get_settings().printing.host, get_settings().printing.port, keepalive=60)
     # Subscribe before publishing so a fast result can't arrive before we're
     # listening for it. Status is retained, so it's delivered immediately
     # on subscribe, well before the result (if any) arrives.
@@ -221,11 +221,11 @@ def _list_printer_statuses() -> dict[str, dict]:
         subscribed.set()
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"crucible-api-list-{uuid.uuid4()}")
-    client.username_pw_set(get_settings().mqtt_username, mqtt_password)
+    client.username_pw_set(get_settings().printing.username, mqtt_password)
     client.tls_set()
     client.on_message = on_message
     client.on_subscribe = on_subscribe
-    client.connect(get_settings().mqtt_host, get_settings().mqtt_port, keepalive=60)
+    client.connect(get_settings().printing.host, get_settings().printing.port, keepalive=60)
     client.subscribe("crucible-printer/+/status", qos=1)
     client.loop_start()
     try:

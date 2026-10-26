@@ -15,7 +15,7 @@ def get_engine():
 
 @lru_cache
 def get_api_config():
-    api_config_file = os.getenv("API_CONF_FILE")
+    api_config_file = get_settings().api.conf_file
     if not api_config_file:
         return {}
     with open(api_config_file) as f:
@@ -23,7 +23,7 @@ def get_api_config():
 
 
 def get_api_url():
-    public_url = get_settings().api_public_url
+    public_url = get_settings().api.public_url
     if public_url:
         return f"{public_url.rstrip('/')}{get_api_root_path()}"
     hostname = get_api_config().get("hostname")
@@ -33,7 +33,7 @@ def get_api_url():
 
 
 def get_api_path():
-    configured = get_settings().api_path
+    configured = get_settings().api.path
     return configured if configured is not None else get_api_config().get("api_path", "")
 
 
@@ -43,7 +43,7 @@ def get_api_root_path():
 
 
 def get_orcid_client_id():
-    client_id = get_settings().orcid_client_id or get_api_config().get("orcid_client_id")
+    client_id = get_settings().api.orcid_client_id or get_api_config().get("orcid_client_id")
     if not client_id:
         raise ConfigurationError("ORCID_CLIENT_ID is not set")
     return client_id
@@ -58,5 +58,5 @@ def get_redirect_uri():
 
 
 def get_trgm_search_threshold() -> float:
-    configured = get_settings().trgm_search_threshold
+    configured = get_settings().api.trgm_search_threshold
     return configured if configured is not None else float(get_api_config().get("trgm_search_threshold", 0.3))

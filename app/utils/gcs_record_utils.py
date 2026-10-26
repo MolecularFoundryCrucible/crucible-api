@@ -1,8 +1,8 @@
 import hashlib
 import json
 import logging
-import os
 
+from app.config import get_settings
 from app.general_utils import get_utc_isoformat
 
 logger = logging.getLogger(__name__)
@@ -11,7 +11,7 @@ _SCHEMA_VERSION = 1
 
 
 def _record_bucket():
-    bucket = os.environ.get("RECORD_BUCKET", "").strip()
+    bucket = get_settings().storage.record_bucket or ""
     if not bucket:
         logger.warning("RECORD_BUCKET is not set; record files are not written")
     return bucket

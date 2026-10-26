@@ -76,10 +76,11 @@ def test_cursor_signing_key_setting_is_used(monkeypatch):
     from app.utils import cursor_utils
 
     monkeypatch.delenv("CRUCIBLE_CURSOR_SIGNING_KEYS", raising=False)
+    monkeypatch.setenv("CRUCIBLE_SECRET_KEY", "main-secret")
     monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEY", "cursor-secret")
     assert cursor_utils._signing_keys() == ("v1", {"v1": b"cursor-secret"})
     monkeypatch.delenv("CRUCIBLE_CURSOR_SIGNING_KEY")
-    assert cursor_utils._signing_keys() == ("v1", {"v1": b"test-only"})
+    assert cursor_utils._signing_keys() == ("v1", {"v1": b"main-secret"})
 
 
 def test_import_needs_no_settings(tmp_path):

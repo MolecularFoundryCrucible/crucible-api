@@ -135,6 +135,7 @@ Each phase ships on its own and is tested before the next. Phases 1 to 4 are the
 2. **One S3-style storage layer** as described above, the object store added to compose, and the legacy upload routes deprecated.
 3. **Local password login** for the lab tier, and the sign-in record that both methods use.
 4. **Releases**: licenses, public repositories, published images, versioned compose bundle, upgrade path, the Foundry deployment configuration moved to a private repository, and the Foundry deploying by version from it. The license review can start immediately and run alongside Phases 1 to 3.
+   - A named operator command: package the server (`[project.scripts]`, which also means renaming the generic top-level `app` package) so `python -m app.cli ...` becomes one command. Not `crucible`, which nano-crucible already ships as its client command. Proposed: `crucible-server` (`crucible-server db upgrade`, `crucible-server admin create`); alternatives in the logbook entry of 2026-10-26. Check the name is free on PyPI before deciding.
 5. **Plug-ins**: ingestion and post-processing (RabbitMQ), then printing and telemetry (MQTT).
 6. **Later:** HPC execution, Globus.
 

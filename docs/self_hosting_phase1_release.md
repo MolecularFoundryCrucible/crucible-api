@@ -66,3 +66,18 @@ Follow-ups from the #369 reviews, not needed for the release:
 - Add a Kubernetes `startupProbe`, or read secrets once before gunicorn starts its workers, so one slow worker cannot let a pod pass readiness before a sibling fails.
 - Worker start time: on staging after #369, one pod's workers took 25 seconds from boot to ready (another pod with the same image took 8; before #369, 6 to 12) because two pods were starting on one node. Gunicorn kills a worker that has not finished starting within 30 seconds (`--timeout`, default 30). Reading the secrets adds about 1 second per worker (0.1 second per secret), and loading the code about 3. Consider raising `--timeout` or the pod's CPU request, together with the `startupProbe`.
 - Pin the `versions/latest` secrets (`GCS_SA`, the Hub and ORCID secrets) to numbered versions, and document rotation: add a version, point the ConfigMap at it, restart, then revoke the old value.
+
+## Final review (after #369 and #370)
+
+Three reviewers re-read `main..staging` (twelve pull requests), focused on what #369 and #370 added. All three: safe to release as is; no high findings. Old and new pods remain compatible, the production ConfigMap and Deployment pass `check_settings()` and `read_secrets()`, and rollback to `1559c56` needs only the image.
+
+| Finding | Verdict | Disposition |
+|---|---|---|
+| (medium, all three) Every worker now reads all nine secrets at startup, so an unreadable or malformed secret, or a transient Secret Manager error (no retry), stops the new pod; check every version is readable and the Hub secrets have no trailing newline before deploying | Real, already checked | Production and staging reference the same nine secret versions (`k8s-conf/configmap-*.yaml`), in the same cluster and namespace, with the same service account (`default`). Staging started twice on the new code and read all nine, and both Hub secrets passed the one-line rule (lengths 64 and 36). With `maxUnavailable: 0`, a new pod that fails to start leaves the old pods serving; a transient error costs one container restart. |
+| (medium) Nine sequential reads per worker, 10 second timeout each, could exceed the start limit if Secret Manager is slow | Real, unlikely | Measured on staging: 0.97 seconds for all nine. The first failing read stops the worker, so only slow successful reads add up. Follow-up: one Secret Manager client per startup and a short retry on transient errors. |
+| (low) `versions/latest` secrets are cached per worker; rotation needs a restart | Intended | Already a follow-up: pin numbered versions and document rotation. |
+| (low) Secret Manager values are not stripped | Unchanged | Deliberate in #369, so no existing secret changes value. |
+| (low) `/auth/login` and `/auth/callback` (direct ORCID sign-in) answer 500, not 503, on a configuration error; `load_login_config` reads settings outside its `try` | Unreachable in production | Settings load once at startup, and production sets the ORCID client id and secret. Follow-up for consistency. |
+| (low) Ingest answers 503 instead of 500 when the broker is down; Cloud Build rolls the Deployment twice | Known | Same dispositions as in the first review. |
+
+After the deploy, in addition to the checks above: every pod's workers log `Application startup complete` with no `ConfigurationError`, and `GET /api/v3/auth/login` redirects to ORCID.

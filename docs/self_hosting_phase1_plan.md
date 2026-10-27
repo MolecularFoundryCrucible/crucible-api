@@ -208,7 +208,7 @@
 
 Design in `docs/self_hosting_secrets.md` (proposed 2026-10-26): every secret through `get_secret` as `NAME_FILE`, a file in `CRUCIBLE_SECRETS_DIR`, or an environment variable (plus the transitional `NAME_VERSION` for the Foundry); a secret given two ways stops startup; Hub and cursor secrets moved into `Settings` and the startup check; no Secret Manager import at module load. The compose bundle relies on it.
 
-### Task 7: Compose bundle and install guide
+### Task 7: Compose bundle and install guide. Done on staging: #367
 
 **Files:**
 - Create: `deploy/compose/compose.yaml`, `deploy/compose/.env.example`, `deploy/compose/Caddyfile`, `deploy/compose/README.md` (install guide)

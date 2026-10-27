@@ -25,7 +25,8 @@ def pg_engine():
         connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     engine = create_engine(url, connect_args={"options": f"-csearch_path={schema},public"})
     try:
-        SQLModel.metadata.create_all(engine, tables=[table for table in TEST_TABLES if table is not ResourceEmbedding.__table__] + [Keyword.__table__, ScientificMetadataBinary.__table__])
+        # checkfirst=False: tables other tests left in public must not stand in for this schema's own.
+        SQLModel.metadata.create_all(engine, tables=[table for table in TEST_TABLES if table is not ResourceEmbedding.__table__] + [Keyword.__table__, ScientificMetadataBinary.__table__], checkfirst=False)
         with Session(engine) as session:
             session.add(Resource(mfid="r1", resource_type="dataset"))
             session.commit()

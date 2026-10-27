@@ -50,6 +50,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Error responses](error_responses_followup.md): moving repeated route error documentation into `app/api/errors.py`.
 - [Database engine](database_engine_followup.md): moving routes to a FastAPI session dependency.
 - [Secret key separation](secret_key_separation_followup.md): deriving separate keys for the session cookie and cursors from `CRUCIBLE_SECRET_KEY`.
+- [Enum columns declared as strings](enum_columns_followup.md): multi-row inserts that PostgreSQL refuses for some enum columns.
 
 ## Deferred designs
 

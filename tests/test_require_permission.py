@@ -20,14 +20,20 @@ from app.utils.auth_utils import fetch_acl_rows, permission_filter, require_perm
 from app.utils.permissions import (
     GroupMembership, Permission, PlatformRole, Principal, Role,
 )
-from tests.pg_fixture import LEAD, MEMBER, PG_URL, SA, STAFF, build_migrated_engine, principal_for
+from tests.pg_fixture import LEAD, MEMBER, PG_URL, SA, STAFF, principal_for, seed_permissions, throwaway_database
 
 pytestmark = pytest.mark.skipif(not PG_URL, reason="CRUCIBLE_TEST_PG_URL not set")
 
 
 @pytest.fixture(scope="module")
 def migrated():
-    return build_migrated_engine()
+    """The current schema, built by `db upgrade`, with the permission seed."""
+    from app.cli.db import upgrade_database
+
+    with throwaway_database() as engine:
+        upgrade_database(engine)
+        seed_permissions(engine)
+        yield engine
 
 
 def visible(engine, principal, permission=Permission.READ):

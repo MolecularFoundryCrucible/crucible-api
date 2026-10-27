@@ -243,16 +243,7 @@ Design in `docs/self_hosting_secrets.md` (proposed 2026-10-26): every secret thr
 
 ### Task 9: Hub in the compose bundle (depends on crucible-hub)
 
-**Files:**
-- Modify: `deploy/compose/compose.yaml`, `deploy/compose/.env.example`, `deploy/compose/Caddyfile`, `deploy/compose/README.md`
-
-**Interfaces:**
-- Consumes from the crucible-hub session (request by message, do not edit the hub repository): (a) accepting a plain-HTTP internal API URL such as `http://api:8000` when explicitly configured (today `CRUCIBLE_API_BASE_URL` must be HTTPS or localhost); (b) how its session-store migrations run in a container; (c) the image to use (a release tag to build from `https://github.com/MolecularFoundryCrucible/crucible-hub.git#<tag>`, or a published image); (d) which URLs it uses for browser redirects versus server-to-server token calls.
-- Produces: a `hub` service behind a compose profile (`profiles: ["hub"]`) so the default `up` and the CI smoke job do not need Hub secrets or images. With the profile: `HUB_DATA_SOURCE=hub-auth`, sessions in a `hub` database on the same Postgres, Caddy `handle /hub*` to `hub:3000` without stripping, and the API's `HUB_AUTH_*` settings (`HUB_AUTH_ENABLED`, `HUB_AUTH_CLIENT_ID`, `HUB_AUTH_CLIENT_SECRET`, `HUB_AUTH_CALLBACK_URI`, `HUB_AUTH_PUBLIC_API_URL`, `HUB_AUTH_ORCID_CLIENT_ID`, `HUB_AUTH_ORCID_CLIENT_SECRET`, `HUB_AUTH_ORCID_ISSUER`) passed to `api`. The guide states that Hub sign-in requires an HTTPS public address unless everything runs on `localhost` (`_trusted_public_url` in `app/utils/hub_login.py`), and registering the callback with ORCID.
-
-- [ ] **Step 1:** Message `crucible-hub` with (a) to (d). Wait for answers; record them here.
-- [ ] **Step 2:** Add the profile; `docker compose --profile hub up -d --build --wait`; `curl -s localhost:8080/hub/health` returns `200`. With ORCID configured (manual check by the user), sign-in reaches the Hub home page.
-- [ ] **Step 3:** Commit: `Add the Hub to the compose bundle as an optional profile`.
+Plan in `docs/self_hosting_hub_plan.md` (proposed 2026-10-27): the Hub as an optional unit behind the same front door, on the same machine (9a, a Compose profile) or a second machine (9b), after crucible-hub changes H1 to H6.
 
 ### Task 10: Close out Phase 1
 

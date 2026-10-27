@@ -226,7 +226,7 @@ Design in `docs/self_hosting_secrets.md` (proposed 2026-10-26): every secret thr
 
 - [ ] **Step 1:** Write the files. **Step 2:** From a clean checkout: `cp .env.example .env`, fill secrets, `docker compose up -d --build --wait`; all services healthy; `curl -s localhost:8080/api/v3/health/ready` shows `"status":"ok"` and `"schema_state":"current"`; `curl -s localhost:8080/api/v3` reaches the API. **Step 3:** `docker compose run --rm api python -m app.cli.admin create-admin --first-name Ada --last-name Admin` prints the JSON; `GET /api/v3/account/profile` with the key returns the admin. **Step 4:** Change `CRUCIBLE_HTTP_PORT` to `18080`, `up` again, repeat the health check on the new port. **Step 5:** `docker compose down -v`. Commit: `Add a docker compose bundle and install guide`.
 
-### Task 8: Smoke test and CI
+### Task 8: Smoke test and CI. Done on staging: #368
 
 **Files:**
 - Create: `scripts/selfhost_smoke.py`

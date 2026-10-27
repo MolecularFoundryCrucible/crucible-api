@@ -198,8 +198,8 @@ def test_get_gcs_secret_uses_default_credentials(monkeypatch):
         def __exit__(self, *exc):
             seen["closed"] = True
 
-        def access_secret_version(self, name):
-            seen["name"] = name
+        def access_secret_version(self, request, timeout, retry):
+            seen["call"] = (request, timeout, retry)
 
             class Payload:
                 data = "s3cret".encode()
@@ -211,7 +211,7 @@ def test_get_gcs_secret_uses_default_credentials(monkeypatch):
 
     monkeypatch.setattr(secretmanager, "SecretManagerServiceClient", FakeClient)
     assert config.get_gcs_secret(VERSION) == "s3cret"
-    assert seen == {"args": ((), {}), "name": VERSION, "closed": True}
+    assert seen == {"args": ((), {}), "call": ({"name": VERSION}, 10, None), "closed": True}
 
 
 def test_kubernetes_service_account_mount_is_harmless(clean, monkeypatch):

@@ -9,7 +9,7 @@ FEATURE_SETTINGS = (
     "INGESTION_ENABLED", "PRINTING_ENABLED", "PROPOSAL_SYNC_ENABLED",
     "RMQ_HOST", "RMQ_USER", "RMQ_ROUTING_SUFFIX", "RABBITMQ_DEFAULT_PW",
     "MQTT_HOST", "MQTT_USERNAME", "MQTT_PASSWORD", "PROPOSAL_DB_URL", "PROPDB_APIKEY",
-    "UPLOAD_BUCKET", "GCS_PROJECT", "GCS_SA", "STORAGE_READ_BUCKETS", "MULTIPART_UPLOAD_ENABLED",
+    "UPLOAD_BUCKET", "GCS_PROJECT", "GCS_SA", "STORAGE_READ_BUCKETS", "MULTIPART_UPLOAD_ENABLED", "RECORD_BUCKET",
 )
 
 
@@ -184,6 +184,12 @@ def test_storage_requested_without_bucket_is_missing(empty, setting):
     assert missing_required_settings() == ["GCS_SA", "UPLOAD_BUCKET"]
 
 
+def test_record_bucket_needs_credentials_but_no_upload_bucket(empty):
+    _required(empty)
+    empty.setenv("RECORD_BUCKET", "records")
+    assert missing_required_settings() == ["GCS_SA"]
+
+
 def test_storage_bucket_needs_credentials(empty):
     _required(empty)
     empty.setenv("UPLOAD_BUCKET", "bucket")
@@ -238,3 +244,120 @@ def test_send_pika_message_uses_configured_broker(empty, monkeypatch):
     monkeypatch.setattr(rmq_utils.pika, "BlockingConnection", Connection)
     rmq_utils.send_pika_message("{}", "", "ingestion-lab-small", "pw")
     assert seen == {"host": "broker.lab", "port": 5673, "user": "crucible", "routing_key": "ingestion-lab-small"}
+
+
+KEY_VERSION = "projects/1/secrets/crucible-key/versions/1"
+HUB_VERSION = "projects/1/secrets/hub-client/versions/1"
+
+
+@pytest.fixture
+def startup(empty):
+    for name in ("HUB_AUTH_ENABLED", "HUB_AUTH_CALLBACK_URI", "HUB_AUTH_CLIENT_SECRET", "ORCID_CLIENT_SECRET",
+                 "HUB_AUTH_ORCID_CLIENT_SECRET", "CRUCIBLE_CURSOR_SIGNING_KEY", "CRUCIBLE_CURSOR_SIGNING_KEYS"):
+        for suffix in ("", "_VERSION", "_FILE"):
+            empty.delenv(f"{name}{suffix}", raising=False)
+    for name in BASE:
+        empty.setenv(name, "x")
+    empty.delenv("CRUCIBLE_SECRET_KEY")
+    empty.setenv("CRUCIBLE_SECRET_KEY_VERSION", KEY_VERSION)
+    fetched = []
+
+    def secret_manager(version):
+        fetched.append(version)
+        return f"value of {version}"
+
+    empty.setattr(config, "get_gcs_secret", secret_manager)
+    return fetched
+
+
+def test_read_secrets_fills_the_cache_requests_read_from(startup):
+    config.read_secrets()
+    assert startup == [KEY_VERSION]
+    assert config.get_secret("CRUCIBLE_SECRET_KEY") == f"value of {KEY_VERSION}"
+    assert startup == [KEY_VERSION]
+
+
+def test_read_secrets_skips_features_that_are_off(startup, empty):
+    empty.setenv("RABBITMQ_DEFAULT_PW_VERSION", "projects/1/secrets/rmq/versions/1")
+    config.read_secrets()
+    assert startup == [KEY_VERSION]
+    for name, value in (("INGESTION_ENABLED", "true"), ("RMQ_HOST", "h"), ("RMQ_USER", "u"), ("RMQ_ROUTING_SUFFIX", "s")):
+        empty.setenv(name, value)
+    get_settings.cache_clear()
+    config.read_secrets()
+    assert "projects/1/secrets/rmq/versions/1" in startup
+
+
+def test_read_secrets_skips_storage_when_it_is_not_configured(startup, empty):
+    empty.setenv("GCS_SA_VERSION", "projects/1/secrets/sa/versions/1")
+    config.read_secrets()
+    assert startup == [KEY_VERSION]
+    empty.setenv("RECORD_BUCKET", "records")
+    get_settings.cache_clear()
+    config.read_secrets()
+    assert "projects/1/secrets/sa/versions/1" in startup
+
+
+def test_read_secrets_names_the_secret_it_cannot_read(startup, empty):
+    from google.api_core.exceptions import PermissionDenied
+
+    def denied(version):
+        raise PermissionDenied("no access")
+
+    empty.setattr(config, "get_gcs_secret", denied)
+    with pytest.raises(ConfigurationError, match="CRUCIBLE_SECRET_KEY_VERSION could not be read: PermissionDenied"):
+        config.read_secrets()
+
+
+def test_read_secrets_does_not_echo_undecodable_secret_bytes(startup, empty):
+    def undecodable(version):
+        return b"\xffsecret".decode("utf-8")
+
+    empty.setattr(config, "get_gcs_secret", undecodable)
+    with pytest.raises(ConfigurationError) as error:
+        config.read_secrets()
+    assert str(error.value) == "CRUCIBLE_SECRET_KEY_VERSION could not be read: UnicodeDecodeError"
+    assert error.value.__cause__ is None and error.value.__suppress_context__
+
+
+def test_read_secrets_refuses_an_empty_secret(startup, empty):
+    empty.setattr(config, "get_gcs_secret", lambda version: "\n")
+    with pytest.raises(ConfigurationError, match="CRUCIBLE_SECRET_KEY_VERSION names an empty secret"):
+        config.read_secrets()
+
+
+def test_read_secrets_checks_hub_secrets_with_the_same_reader(startup, empty):
+    for name, value in (("HUB_AUTH_ENABLED", "true"), ("HUB_AUTH_CALLBACK_URI", "https://lab/cb"),
+                        ("HUB_AUTH_CLIENT_SECRET_VERSION", HUB_VERSION), ("ORCID_CLIENT_SECRET", "orcid")):
+        empty.setenv(name, value)
+    config.read_secrets()
+    assert sorted(startup) == sorted([HUB_VERSION, KEY_VERSION])
+    empty.setattr(config, "get_gcs_secret", lambda version: "two\nlines")
+    config._fetched_secrets.pop(HUB_VERSION)
+    with pytest.raises(ConfigurationError, match="HUB_AUTH_CLIENT_SECRET must be one line of printable ASCII"):
+        config.read_secrets()
+
+
+def test_a_worker_that_cannot_read_a_secret_does_not_start(startup, empty):
+    from fastapi.testclient import TestClient
+
+    from app.api import main
+
+    def denied(version):
+        raise RuntimeError("secret manager down")
+
+    empty.setattr(config, "get_gcs_secret", denied)
+    with pytest.raises(ConfigurationError, match="CRUCIBLE_SECRET_KEY_VERSION could not be read: RuntimeError"):
+        with TestClient(main.app):
+            pass
+
+
+def test_a_worker_starts_with_its_secrets_already_read(startup):
+    from fastapi.testclient import TestClient
+
+    from app.api import main
+
+    with TestClient(main.app):
+        assert startup == [KEY_VERSION]
+        assert config.get_secret("CRUCIBLE_SECRET_KEY") == f"value of {KEY_VERSION}"
+        assert startup == [KEY_VERSION]

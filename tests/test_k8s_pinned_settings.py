@@ -82,8 +82,7 @@ def _api_environment(environment):
     return data, values
 
 
-@pytest.mark.parametrize("environment", ["main", "staging"])
-def test_foundry_settings_resolve_and_pass_the_startup_check(environment, monkeypatch, tmp_path):
+def _use_api_environment(environment, monkeypatch, tmp_path):
     from app import config
 
     known = {group.env_name(field) for group in config.GROUPS.values() for field in group.model_fields}
@@ -96,8 +95,15 @@ def test_foundry_settings_resolve_and_pass_the_startup_check(environment, monkey
     for name, value in values.items():
         monkeypatch.setenv(name, value)
     config.get_settings.cache_clear()
-
     assert set(values) - known - versions - OUTSIDE_SETTINGS == set()
+    return data, values
+
+
+@pytest.mark.parametrize("environment", ["main", "staging"])
+def test_foundry_settings_resolve_and_pass_the_startup_check(environment, monkeypatch, tmp_path):
+    from app import config
+
+    data, _ = _use_api_environment(environment, monkeypatch, tmp_path)
     config.check_settings()
     settings = config.get_settings()
     assert (settings.db.server, settings.db.username, settings.db.database) == (data["db_server"], data["db_username"], data["db_database"])
@@ -108,6 +114,21 @@ def test_foundry_settings_resolve_and_pass_the_startup_check(environment, monkey
     assert (settings.ingestion.enabled, settings.ingestion.host, settings.ingestion.port) == (True, data["RMQ_HOST"], int(data["RMQ_PORT"]))
     assert (settings.printing.enabled, settings.printing.port) == (True, int(data["MQTT_PORT"]))
     assert (settings.proposals.enabled, settings.proposals.url) == (True, data["PROPOSAL_DB_URL"])
+
+
+@pytest.mark.parametrize("environment", ["main", "staging"])
+def test_foundry_workers_read_every_secret_version_at_startup(environment, monkeypatch, tmp_path):
+    from app import config
+
+    _, values = _use_api_environment(environment, monkeypatch, tmp_path)
+    read = []
+    monkeypatch.setattr(config, "get_gcs_secret", lambda version: read.append(version) or "value")
+    config.check_settings()
+    config.read_secrets()
+    assert sorted(read) == sorted(value for name, value in values.items() if name.endswith("_VERSION"))
+    for name in config._SECRETS:
+        config.optional_secret(name)
+    assert len(read) == len(set(read))
 
 
 @pytest.mark.parametrize("environment", ["main", "staging"])

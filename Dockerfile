@@ -33,8 +33,10 @@ RUN mkdir download-zips
 
 RUN /bin/uv sync --locked
 
-# Run app
+# Run app. A worker still loading the code and reading its secrets counts as silent, and on a busy
+# node that has taken 25 of the default 30 seconds; the timeout does not limit request length here.
 CMD exec gunicorn app.api.main:app \
   --worker-class uvicorn.workers.UvicornWorker \
   --workers "${WEB_CONCURRENCY:-4}" \
+  --timeout 60 \
   --bind "0.0.0.0:${PORT:-8000}"

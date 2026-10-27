@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: pgvector/pgvector:0.8.1-pg17
         env:
           POSTGRES_PASSWORD: ci
         ports:
@@ -36,6 +36,7 @@ jobs:
       DB_SERVER: localhost
       DB_DATABASE: ci
       RABBITMQ_DEFAULT_PW: ci-only
+      CRUCIBLE_TEST_PG_URL: postgresql+psycopg2://postgres:ci@localhost:5432/crucible_pg_test
       HUB_AUTH_TEST_DATABASE_URL: postgresql+psycopg2://postgres:ci@localhost:5432/crucible_hub_auth_test
       SLUG_INDEX_TEST_DATABASE_URL: postgresql+psycopg2://postgres:ci@localhost:5432/crucible_slug_index_test
       EMAIL_INDEX_TEST_DATABASE_URL: postgresql+psycopg2://postgres:ci@localhost:5432/crucible_email_index_test
@@ -51,8 +52,49 @@ jobs:
         env:
           PGPASSWORD: ci
         run: |
-          for db in crucible_hub_auth_test crucible_slug_index_test crucible_email_index_test; do
+          for db in crucible_pg_test crucible_hub_auth_test crucible_slug_index_test crucible_email_index_test; do
             psql -h localhost -U postgres -c "CREATE DATABASE $db"
           done
+          psql -h localhost -U postgres -d crucible_pg_test -c "CREATE EXTENSION vector" -c "CREATE EXTENSION pg_trgm"
       - run: uv sync --locked
       - run: uv run pytest -q
+
+  compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: deploy/compose
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create secrets and settings as in the install guide
+        run: |
+          mkdir -p secrets && chmod 700 secrets
+          for name in POSTGRES_PASSWORD PGDB_PW CRUCIBLE_SECRET_KEY; do
+            openssl rand -hex 32 > "secrets/$name"
+          done
+          chmod 644 secrets/*
+          cp .env.example .env
+      - name: Start
+        run: docker compose up -d --build --wait
+      - name: Create the first administrator
+        run: |
+          docker compose run --rm -T api python -m app.cli admin create --no-input --first-name Smoke --last-name Admin > "$RUNNER_TEMP/admin.json"
+          python3 -c "import json, sys; print('created', json.load(open(sys.argv[1]))['username'])" "$RUNNER_TEMP/admin.json"
+      - name: Smoke test through the proxy
+        env:
+          CRUCIBLE_API_URL: http://localhost:8080/api/v3
+        run: |
+          CRUCIBLE_API_KEY=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1]))['api_key'])" "$RUNNER_TEMP/admin.json")
+          export CRUCIBLE_API_KEY
+          python3 ../../scripts/selfhost_smoke.py
+      - name: Service logs
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Remove
+        if: always()
+        run: |
+          docker compose down -v
+          rm -f "$RUNNER_TEMP/admin.json"

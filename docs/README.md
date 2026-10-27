@@ -22,6 +22,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 
 ## Authentication and operations
 
+- [Installing with Docker Compose](../deploy/compose/README.md): running Crucible on one machine, secrets, the first administrator, backups, upgrades, and reverse proxies.
 - [Hub authentication overview](hub_auth_overview.md): sign-in, the API tables, refresh, logout, and cleanup.
 - [Hub login integration](hub_login_design.md): the implemented contract and integration requirements.
 - [Hub authentication operations](hub_auth_operations.md): secrets, logging, cleanup, and activation gates.

@@ -243,7 +243,7 @@ Design in `docs/self_hosting_secrets.md` (proposed 2026-10-26): every secret thr
 
 ### Task 9: Hub in the compose bundle (depends on crucible-hub)
 
-Plan in `docs/self_hosting_hub_plan.md` (proposed 2026-10-27): the Hub as an optional unit behind the same front door, on the same machine (9a, a Compose profile) or a second machine (9b), after crucible-hub changes H1 to H6.
+Plan in `docs/self_hosting_hub_plan.md` (agreed 2026-10-27): the Hub as its own Compose project with its own PostgreSQL, behind the API bundle's front door, on the same workstation or a second machine, after crucible-hub changes H1 to H7.
 
 ### Task 10: Close out Phase 1
 

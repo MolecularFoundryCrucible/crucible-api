@@ -5,3 +5,4 @@
 migrations/data
 **/.env
 deploy/compose/secrets
+**/*.dump

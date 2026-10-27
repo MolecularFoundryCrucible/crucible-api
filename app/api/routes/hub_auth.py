@@ -10,14 +10,13 @@ from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_engine
 from app.api.dependencies import get_api_root_path
-from app.config import get_settings
+from app.config import ConfigurationError, get_settings, optional_secret
 from app.utils.hub_login import (
     HubLoginUnavailable, InvalidHubLogin, consume_login, create_handoff_code,
-    create_login, exchange_handoff_code, load_login_config,
+    create_login, exchange_handoff_code, hub_auth_enabled, load_login_config,
 )
 from app.utils.hub_orcid import exchange_orcid_code, orcid_authorization_url
 from app.utils.hub_tokens import InvalidHubGrant, HubTokenPair, refresh_hub_tokens, revoke_hub_tokens
-from app.utils.hub_secrets import HubSecretUnavailable, get_hub_secret, hub_auth_enabled
 from app.models.timestamps import UtcDatetime
 
 
@@ -54,8 +53,8 @@ def require_hub_client(credentials: HTTPBasicCredentials | None = Depends(client
         raise HTTPException(status_code=503, detail="Hub authentication is unavailable")
     configured_id = get_settings().hub.client_id
     try:
-        configured_secret = get_hub_secret("HUB_AUTH_CLIENT_SECRET")
-    except HubSecretUnavailable:
+        configured_secret = optional_secret("HUB_AUTH_CLIENT_SECRET")
+    except ConfigurationError:
         raise HTTPException(status_code=503, detail="Hub authentication is unavailable") from None
     if not configured_secret:
         raise HTTPException(status_code=503, detail="Hub authentication is unavailable")

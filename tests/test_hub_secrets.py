@@ -12,8 +12,8 @@ from app.config import ConfigurationError
 import yaml
 
 from app.api.routes.hub_auth import require_hub_client
-from app.utils import hub_secrets
-from app.utils.hub_login import HubLoginUnavailable, load_login_config
+from app.config import optional_secret
+from app.utils.hub_login import HubLoginUnavailable, hub_auth_enabled, load_login_config
 from app.utils.hub_orcid import _orcid_client_secret
 
 
@@ -26,9 +26,6 @@ def isolated_config(monkeypatch):
     for name in ("HUB_AUTH_ENABLED", "HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_CLIENT_SECRET_VERSION",
                  "HUB_AUTH_ORCID_CLIENT_SECRET", "HUB_AUTH_ORCID_CLIENT_SECRET_VERSION"):
         monkeypatch.delenv(name, raising=False)
-    hub_secrets._read_secret_version.cache_clear()
-    yield
-    hub_secrets._read_secret_version.cache_clear()
 
 
 @pytest.fixture
@@ -45,29 +42,29 @@ def manager(monkeypatch):
 
 def test_local_env_needs_no_cloud_access(monkeypatch, manager):
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "local-secret")
-    assert hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET") == "local-secret"
+    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "local-secret"
     manager.assert_not_called()
 
 
 def test_version_cache_and_rotation(monkeypatch, manager):
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
     for _ in range(2):
-        assert hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value"
+        assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value"
     client = manager.return_value.__enter__.return_value
-    client.access_secret_version.assert_called_once_with(request={"name": VERSION}, timeout=5, retry=None)
+    client.access_secret_version.assert_called_once_with(request={"name": VERSION}, timeout=10, retry=None)
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION[:-1] + "2")
-    hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET")
+    optional_secret("HUB_AUTH_CLIENT_SECRET")
     assert client.access_secret_version.call_count == 2
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION.replace("/1", "/latest"))
-    assert hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value"
+    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value"
     assert client.access_secret_version.call_count == 3
 
 
 @pytest.mark.parametrize("version", ["bad", VERSION.replace("/1", "/0"), VERSION.replace("/1", "/latest2")])
 def test_references_reject_invalid_versions(monkeypatch, manager, version):
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", version)
-    with pytest.raises(hub_secrets.HubSecretUnavailable):
-        hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET")
+    with pytest.raises(ConfigurationError, match="HUB_AUTH_CLIENT_SECRET_VERSION must be a full"):
+        optional_secret("HUB_AUTH_CLIENT_SECRET")
     manager.assert_not_called()
 
 
@@ -76,24 +73,39 @@ def test_cloud_failure_is_not_cached(monkeypatch, manager, error):
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
     client = manager.return_value.__enter__.return_value
     client.access_secret_version.side_effect = error
-    with pytest.raises(hub_secrets.HubSecretUnavailable) as result:
-        hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET")
-    assert "sensitive-error" not in str(result.value)
+    with pytest.raises(ConfigurationError) as result:
+        optional_secret("HUB_AUTH_CLIENT_SECRET")
+    assert str(result.value) == f"HUB_AUTH_CLIENT_SECRET_VERSION could not be read: {error.__class__.__name__}"
+    assert result.value.__cause__ is None and result.value.__suppress_context__
     client.access_secret_version.side_effect = None
-    assert hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value"
+    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value"
     assert client.access_secret_version.call_count == 2
 
 
-@pytest.mark.parametrize("payload", [b"", b" ", b"secret\n", b"secret\r", b"\xff"])
+@pytest.mark.parametrize("payload", [b"", b" ", b"secret\n", b"secret\r", b"sec\tret", b"\xff", "s\u00e9cret".encode()])
 def test_invalid_payloads_are_rejected(monkeypatch, manager, payload):
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
     manager.return_value.__enter__.return_value.access_secret_version.return_value.payload.data = payload
-    with pytest.raises(hub_secrets.HubSecretUnavailable):
-        hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET")
+    with pytest.raises(ConfigurationError):
+        optional_secret("HUB_AUTH_CLIENT_SECRET")
+
+
+def test_hub_secrets_from_files_follow_the_same_rule(monkeypatch, manager, tmp_path):
+    (tmp_path / "HUB_AUTH_CLIENT_SECRET").write_text("first line\nsecond line\n")
+    monkeypatch.setenv("CRUCIBLE_SECRETS_DIR", str(tmp_path))
+    with pytest.raises(ConfigurationError, match="HUB_AUTH_CLIENT_SECRET must be one line of printable ASCII"):
+        optional_secret("HUB_AUTH_CLIENT_SECRET")
+
+
+def test_other_secrets_keep_their_value_as_given(monkeypatch, manager):
+    monkeypatch.delenv("ORCID_CLIENT_SECRET", raising=False)
+    monkeypatch.setenv("ORCID_CLIENT_SECRET_VERSION", VERSION)
+    manager.return_value.__enter__.return_value.access_secret_version.return_value.payload.data = b"value\n"
+    assert optional_secret("ORCID_CLIENT_SECRET") == "value\n"
 
 
 def test_hub_auth_is_disabled_when_unset():
-    assert hub_secrets.hub_auth_enabled() is False
+    assert hub_auth_enabled() is False
 
 
 def test_managed_secret_authenticates_client(monkeypatch, manager):
@@ -115,6 +127,7 @@ def test_disabled_auth_never_fetches_secrets(monkeypatch, manager):
 
 
 def test_unavailable_reference_becomes_safe_auth_failure(monkeypatch, manager):
+    monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://example.test/hub/auth/callback")
     monkeypatch.setenv("HUB_AUTH_PUBLIC_API_URL", "https://example.test/api/v3")
@@ -125,6 +138,7 @@ def test_unavailable_reference_becomes_safe_auth_failure(monkeypatch, manager):
     assert "sensitive-error" not in str(result.value)
     with pytest.raises(HubLoginUnavailable):
         load_login_config()
+    assert manager.call_count == 2
 
 
 def test_orcid_reference_failure_does_not_use_legacy_secret(monkeypatch, manager):
@@ -133,12 +147,13 @@ def test_orcid_reference_failure_does_not_use_legacy_secret(monkeypatch, manager
     manager.side_effect = DefaultCredentialsError("sensitive-error")
     with pytest.raises(HubLoginUnavailable):
         _orcid_client_secret()
+    manager.assert_called_once()
 
 
 def test_hub_secret_from_the_secrets_directory(monkeypatch, manager, tmp_path):
     (tmp_path / "HUB_AUTH_CLIENT_SECRET").write_text("file-secret\n")
     monkeypatch.setenv("CRUCIBLE_SECRETS_DIR", str(tmp_path))
-    assert hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET") == "file-secret"
+    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "file-secret"
     manager.assert_not_called()
 
 
@@ -146,7 +161,7 @@ def test_hub_secret_given_two_ways_is_refused(monkeypatch, manager):
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "inline")
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
     with pytest.raises(ConfigurationError, match="HUB_AUTH_CLIENT_SECRET is given more than one way"):
-        hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET")
+        optional_secret("HUB_AUTH_CLIENT_SECRET")
     manager.assert_not_called()
 
 

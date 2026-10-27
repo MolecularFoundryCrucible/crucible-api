@@ -147,6 +147,9 @@ class SettingsGroup(BaseSettings):
     def problems(self, settings: "Settings") -> list[str]:
         return []
 
+    def in_use(self) -> bool:
+        return getattr(self, "enabled", True)
+
 
 class DatabaseSettings(SettingsGroup):
     model_config = SettingsConfigDict(env_prefix="DB_")
@@ -223,11 +226,17 @@ class StorageSettings(SettingsGroup):
     def read_bucket_names(self) -> set[str]:
         return {name.strip() for name in (self.read_buckets or "").split(",")} - {""}
 
-    def problems(self, settings: "Settings") -> list[str]:
+    def serves_files(self) -> bool:
         multipart = (optional_env("MULTIPART_UPLOAD_ENABLED") or "").lower() == "true"
-        if self.read_buckets or multipart or self.upload_bucket:
-            return self.missing("upload_bucket", "gcs_sa")
-        return []
+        return bool(self.read_buckets or multipart or self.upload_bucket)
+
+    def in_use(self) -> bool:
+        return self.serves_files() or bool(self.record_bucket)
+
+    def problems(self, settings: "Settings") -> list[str]:
+        if not self.in_use():
+            return []
+        return self.missing("upload_bucket", "gcs_sa") if self.serves_files() else self.missing("gcs_sa")
 
 
 class IngestionSettings(SettingsGroup):
@@ -284,6 +293,8 @@ _SECRETS: dict[str, tuple[str, str]] = {
     for field, info in group.model_fields.items()
     if info.annotation == SecretStr | None
 }
+# Sent verbatim in HTTP Basic credentials and ORCID token requests, where a stray newline breaks every sign-in.
+_SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_ORCID_CLIENT_SECRET"})
 _FEATURES = {"ingestion": "ingestion", "printing": "printing", "proposal_sync": "proposals"}
 
 
@@ -360,39 +371,45 @@ def configured_secret(name: str) -> str | None:
 def optional_secret(name: str) -> str | None:
     """A secret that may be left out: its value when given any way, including NAME_VERSION; None
     when it is not given at all."""
-    value = configured_secret(name)
-    if value is not None:
-        return value
-    return get_secret(name) if optional_env(f"{name.upper()}_VERSION") is not None else None
+    name = name.upper()
+    if configured_secret(name) is None and optional_env(f"{name}_VERSION") is None:
+        return None
+    return get_secret(name)
 
 
 def get_secret(name: str) -> str:
     """Return a secret setting by its environment variable name. When it is not given as NAME_FILE,
     a file in the secrets directory, or NAME, fall back to the Secret Manager version in
     `{name}_VERSION` (a full projects/.../versions/... path), fetched once and kept in memory. The
-    fallback serves the Foundry until its platform delivers the secrets."""
+    fallback serves the Foundry until its platform delivers the secrets. Every failure is a
+    ConfigurationError that names the setting and never includes the value."""
     name = name.upper()
     value = configured_secret(name)
-    if value is not None:
-        return value
-    version = optional_env(f"{name}_VERSION")
-    if version is None:
-        raise ConfigurationError(f"{name} is not set (set {name}_FILE, a {name} file in the secrets directory, {name}, or {name}_VERSION)")
-    if not _SECRET_VERSION.fullmatch(version):
-        raise ConfigurationError(f"{name}_VERSION must be a full projects/<project>/secrets/<secret>/versions/<number or latest> path")
-    if version not in _fetched_secrets:
-        fetched = get_gcs_secret(version)
-        if not fetched.strip():
-            raise ConfigurationError(f"{name}_VERSION names an empty secret")
-        _fetched_secrets[version] = fetched
-    return _fetched_secrets[version]
+    if value is None:
+        version = optional_env(f"{name}_VERSION")
+        if version is None:
+            raise ConfigurationError(f"{name} is not set (set {name}_FILE, a {name} file in the secrets directory, {name}, or {name}_VERSION)")
+        if not _SECRET_VERSION.fullmatch(version):
+            raise ConfigurationError(f"{name}_VERSION must be a full projects/<project>/secrets/<secret>/versions/<number or latest> path")
+        if version not in _fetched_secrets:
+            try:
+                fetched = get_gcs_secret(version)
+            except Exception as error:
+                raise ConfigurationError(f"{name}_VERSION could not be read: {error.__class__.__name__}") from None
+            if not fetched.strip():
+                raise ConfigurationError(f"{name}_VERSION names an empty secret")
+            _fetched_secrets[version] = fetched
+        value = _fetched_secrets[version]
+    if name in _SINGLE_LINE_SECRETS and not (value.isascii() and value.isprintable()):
+        raise ConfigurationError(f"{name} must be one line of printable ASCII")
+    return value
 
 
 def get_gcs_secret(secret_name: str) -> str:
     from google.cloud import secretmanager
 
     with secretmanager.SecretManagerServiceClient() as client:
-        response = client.access_secret_version(name=secret_name)
+        response = client.access_secret_version(request={"name": secret_name}, timeout=10, retry=None)
     return response.payload.data.decode("UTF-8")
 
 
@@ -409,3 +426,12 @@ def check_settings() -> None:
         MultipartStorageConfig.from_env()
     except ValueError as error:
         raise ConfigurationError(f"Invalid multipart upload settings: {error}") from error
+
+
+def read_secrets() -> None:
+    """Read every secret given for a feature in use, into the cache requests read from, so a worker
+    that cannot read one fails to start instead of failing on live traffic."""
+    settings = get_settings()
+    for name, (group, _field) in _SECRETS.items():
+        if getattr(settings, group).in_use():
+            optional_secret(name)

@@ -15,7 +15,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.api.routes import multipart
 from app.build_info import api_version
 from app.api.errors import register_error_handlers
-from app.config import check_settings
+from app.config import check_settings, read_secrets
 from app.api.dependencies import get_api_root_path
 from app.utils.auth_utils import PRIVILEGE_MODE_HEADER
 from app.utils.permissions import PrivilegeMode, PrivilegeModeSource
@@ -39,6 +39,7 @@ api_root_path = get_api_root_path()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     check_settings()
+    read_secrets()
     yield
 
 

@@ -448,6 +448,7 @@ def test_auth_time_flows_from_handoff_code_to_hub_principal(use_engine, engine, 
 
 
 def test_login_accepts_only_an_exact_configured_callback(engine, monkeypatch):
+    from app.config import get_settings
     from app.utils.hub_login import HubLoginUnavailable, load_login_config
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret")
@@ -462,5 +463,6 @@ def test_login_accepts_only_an_exact_configured_callback(engine, monkeypatch):
             create_login(engine, config, "crucible-hub", callback, "hub-state-123456789", "a" * 43)
     for configured in ("", " , ", "http://localhost:3000/cb,http://evil.example/cb"):
         monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", configured)
+        get_settings.cache_clear()
         with pytest.raises(HubLoginUnavailable):
             load_login_config()

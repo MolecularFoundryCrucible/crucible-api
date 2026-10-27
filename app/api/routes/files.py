@@ -236,7 +236,7 @@ def create_file_ingestion_request(
 
     if status == 'requested':
         tier = get_ingestion_tier(af_size)
-        routing_key = f'ingestion-{get_settings().rmq_routing_suffix}-{tier}'
+        routing_key = f'ingestion-{get_settings().ingestion.routing_suffix}-{tier}'
         try:
             send_pika_message(
                 message=json.dumps({

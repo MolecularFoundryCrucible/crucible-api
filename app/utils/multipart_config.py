@@ -23,7 +23,7 @@ class MultipartStorageConfig:
             from app.config import get_settings
 
             env = os.environ
-            upload_bucket = get_settings().upload_bucket
+            upload_bucket = get_settings().storage.upload_bucket
         else:
             upload_bucket = env.get("UPLOAD_BUCKET", "").strip() or None
         flag = env.get("MULTIPART_UPLOAD_ENABLED", "false").strip().lower()

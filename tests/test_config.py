@@ -37,28 +37,28 @@ def test_settings_trim_values_and_ignore_empty_ones(empty):
     empty.setenv("RMQ_HOST", "")
     empty.setenv("PGDB_PW", " pw ")
     settings = get_settings()
-    assert settings.db_server == "db"
-    assert settings.rmq_host is None
-    assert settings.pgdb_pw.get_secret_value() == "pw"
+    assert settings.db.server == "db"
+    assert settings.ingestion.host is None
+    assert settings.db.password.get_secret_value() == "pw"
 
 
 def test_secrets_are_hidden_when_printed(empty):
     empty.setenv("PGDB_PW", "hunter2")
     settings = get_settings()
-    assert isinstance(settings.pgdb_pw, SecretStr)
+    assert isinstance(settings.db.password, SecretStr)
     assert "hunter2" not in repr(settings) and "hunter2" not in str(settings.model_dump())
 
 
 @pytest.mark.parametrize("value", ["TRUE", "1", "on", "yes"])
 def test_flag_true(empty, value):
     empty.setenv("PRINTING_ENABLED", value)
-    assert get_settings().printing_enabled is True
+    assert get_settings().printing.enabled is True
 
 
 @pytest.mark.parametrize("value", ["false", "0", "Off", "no", ""])
 def test_flag_false(empty, value):
     empty.setenv("PRINTING_ENABLED", value)
-    assert get_settings().printing_enabled is False
+    assert get_settings().printing.enabled is False
 
 
 def test_flag_typo_is_a_configuration_error(empty):
@@ -110,23 +110,54 @@ def test_feature_requirements(empty):
 
 def test_settings_are_read_once(empty):
     empty.setenv("DB_SERVER", "first")
-    assert get_settings().db_server == "first"
+    assert get_settings().db.server == "first"
     empty.setenv("DB_SERVER", "second")
-    assert get_settings().db_server == "first"
+    assert get_settings().db.server == "first"
 
 
-def test_whitespace_only_flag_is_rejected(empty):
+def test_whitespace_only_flag_counts_as_not_given(empty):
     empty.setenv("PRINTING_ENABLED", "   ")
-    with pytest.raises(ConfigurationError, match="PRINTING_ENABLED"):
-        get_settings()
+    assert get_settings().printing.enabled is False
 
 
 def test_whitespace_only_setting_counts_as_missing(empty):
     for name in ("DB_USERNAME", "DB_DATABASE", "PGDB_PW", "CRUCIBLE_SECRET_KEY"):
         empty.setenv(name, "x")
     empty.setenv("DB_SERVER", "   ")
-    assert get_settings().db_server == ""
+    assert get_settings().db.server is None
     assert missing_required_settings() == ["DB_SERVER"]
+
+
+def test_blank_secrets_file_keeps_the_default(empty, tmp_path):
+    (tmp_path / "HUB_AUTH_CLIENT_ID").write_text("  \n")
+    empty.setenv("CRUCIBLE_SECRETS_DIR", str(tmp_path))
+    assert get_settings().hub.client_id == "crucible-hub"
+
+
+def test_names_differing_only_in_case_are_refused(empty):
+    empty.setenv("DB_SERVER", "one")
+    empty.setenv("db_server", "two")
+    with pytest.raises(ConfigurationError, match="differ only in case"):
+        get_settings()
+
+
+def test_lowercase_version_reference_is_found(empty, monkeypatch):
+    from app import config
+
+    monkeypatch.setattr(config, "get_gcs_secret", lambda name: "from-manager")
+    empty.setenv("pgdb_pw_version", "projects/1/secrets/pw/versions/2")
+    assert config.get_secret("PGDB_PW") == "from-manager"
+
+
+def test_hub_orcid_reference_must_be_valid_when_given(empty):
+    for name in ("DB_SERVER", "DB_USERNAME", "DB_DATABASE", "PGDB_PW", "CRUCIBLE_SECRET_KEY", "HUB_AUTH_CLIENT_SECRET", "ORCID_CLIENT_SECRET"):
+        empty.setenv(name, "x")
+    empty.setenv("HUB_AUTH_ENABLED", "true")
+    empty.setenv("HUB_AUTH_CALLBACK_URI", "https://example.test/hub/auth/callback")
+    assert missing_required_settings() == []
+    empty.setenv("HUB_AUTH_ORCID_CLIENT_SECRET_VERSION", "not-a-version")
+    get_settings.cache_clear()
+    assert missing_required_settings() == ["HUB_AUTH_ORCID_CLIENT_SECRET"]
 
 
 def test_malformed_version_counts_as_missing(empty):

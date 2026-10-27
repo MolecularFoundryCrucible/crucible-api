@@ -41,7 +41,7 @@ class StorageNotConfigured(Exception):
 def upload_bucket():
     from app.config import get_settings
 
-    bucket = get_settings().upload_bucket
+    bucket = get_settings().storage.upload_bucket
     if not bucket:
         raise StorageNotConfigured("File storage is not configured on this server (UPLOAD_BUCKET is not set)")
     return bucket
@@ -50,8 +50,8 @@ def upload_bucket():
 def allowed_buckets():
     from app.config import get_settings
 
-    extra = {name.strip() for name in os.environ.get("STORAGE_READ_BUCKETS", "").split(",")}
-    return ({get_settings().upload_bucket or "", os.environ.get("MULTIPART_UPLOAD_BUCKET", "").strip()} | extra) - {""}
+    storage = get_settings().storage
+    return ({storage.upload_bucket or "", os.environ.get("MULTIPART_UPLOAD_BUCKET", "").strip()} | storage.read_bucket_names) - {""}
 
 
 def resolve_storage_object(storage_path, generation, dataset_mfid):

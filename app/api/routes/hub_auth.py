@@ -1,4 +1,3 @@
-import os
 import secrets
 
 import requests
@@ -11,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_engine
 from app.api.dependencies import get_api_root_path
+from app.config import get_settings
 from app.utils.hub_login import (
     HubLoginUnavailable, InvalidHubLogin, consume_login, create_handoff_code,
     create_login, exchange_handoff_code, load_login_config,
@@ -52,7 +52,7 @@ class HubTokenResponse(BaseModel):
 def require_hub_client(credentials: HTTPBasicCredentials | None = Depends(client_security)) -> str:
     if not hub_auth_enabled():
         raise HTTPException(status_code=503, detail="Hub authentication is unavailable")
-    configured_id = os.getenv("HUB_AUTH_CLIENT_ID", "crucible-hub")
+    configured_id = get_settings().hub.client_id
     try:
         configured_secret = get_hub_secret("HUB_AUTH_CLIENT_SECRET")
     except HubSecretUnavailable:

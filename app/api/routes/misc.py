@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -13,6 +12,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.build_info import api_version, branch_name, git_commit
+from app.config import get_settings
 from app.models.core_models import Keyword
 from app.models.health import LivenessResponse, ReadinessResponse
 from app.utils.auth_utils import authorize_user
@@ -78,7 +78,7 @@ def _schema_state(current, expected):
 
 
 def _expected_schema_revisions():
-    configured = os.getenv("EXPECTED_DB_REVISIONS", "")
+    configured = get_settings().db.expected_revisions or ""
     revisions = sorted(revision.strip() for revision in configured.split(",") if revision.strip())
     if revisions:
         return revisions

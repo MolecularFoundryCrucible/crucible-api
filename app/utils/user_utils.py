@@ -297,7 +297,7 @@ def close_pending_join_requests(session, accessgroup_id, orcid, granted_role, ac
 def find_mf_user_proposals(orcid: str) -> List[str]:
     """Return MF proposal IDs for an ORCID without blocking on service failures. Returns nothing
     when proposal sync is disabled."""
-    if not get_settings().proposal_sync_enabled:
+    if not get_settings().proposals.enabled:
         return []
     try:
         api_key = get_secret("PROPDB_APIKEY")
@@ -310,7 +310,7 @@ def find_mf_user_proposals(orcid: str) -> List[str]:
 
     try:
         response = requests.get(
-            get_settings().proposal_db_url,
+            get_settings().proposals.url,
             params={"key": api_key, "orcid": orcid},
             timeout=MF_PROPOSAL_DB_TIMEOUT,
         )

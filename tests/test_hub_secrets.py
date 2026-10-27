@@ -1,5 +1,4 @@
 from pathlib import Path
-import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -38,7 +37,9 @@ def manager(monkeypatch):
     factory.return_value.__enter__.return_value.access_secret_version.return_value = SimpleNamespace(
         payload=SimpleNamespace(data=b"test-secret-value"),
     )
-    monkeypatch.setattr(hub_secrets.secretmanager, "SecretManagerServiceClient", factory)
+    from google.cloud import secretmanager
+
+    monkeypatch.setattr(secretmanager, "SecretManagerServiceClient", factory)
     return factory
 
 
@@ -48,14 +49,12 @@ def test_local_env_needs_no_cloud_access(monkeypatch, manager):
     manager.assert_not_called()
 
 
-def test_version_precedence_cache_and_rotation(monkeypatch, manager):
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "ignored-local-value")
+def test_version_cache_and_rotation(monkeypatch, manager):
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
     for _ in range(2):
         assert hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value"
     client = manager.return_value.__enter__.return_value
     client.access_secret_version.assert_called_once_with(request={"name": VERSION}, timeout=5, retry=None)
-    assert os.environ["HUB_AUTH_CLIENT_SECRET"] == "ignored-local-value"
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION[:-1] + "2")
     hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET")
     assert client.access_secret_version.call_count == 2
@@ -73,8 +72,7 @@ def test_references_reject_invalid_versions(monkeypatch, manager, version):
 
 
 @pytest.mark.parametrize("error", [PermissionDenied("sensitive-error"), DefaultCredentialsError("sensitive-error")])
-def test_cloud_failure_is_not_cached_and_never_falls_back(monkeypatch, manager, error):
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "must-not-fallback")
+def test_cloud_failure_is_not_cached(monkeypatch, manager, error):
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
     client = manager.return_value.__enter__.return_value
     client.access_secret_version.side_effect = error
@@ -131,10 +129,55 @@ def test_unavailable_reference_becomes_safe_auth_failure(monkeypatch, manager):
 
 def test_orcid_reference_failure_does_not_use_legacy_secret(monkeypatch, manager):
     monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_SECRET_VERSION", VERSION)
-    monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_SECRET", "ignored-inline-secret")
+    monkeypatch.setenv("ORCID_CLIENT_SECRET", "legacy-secret")
     manager.side_effect = DefaultCredentialsError("sensitive-error")
     with pytest.raises(HubLoginUnavailable):
         _orcid_client_secret()
+
+
+def test_hub_secret_from_the_secrets_directory(monkeypatch, manager, tmp_path):
+    (tmp_path / "HUB_AUTH_CLIENT_SECRET").write_text("file-secret\n")
+    monkeypatch.setenv("CRUCIBLE_SECRETS_DIR", str(tmp_path))
+    assert hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET") == "file-secret"
+    manager.assert_not_called()
+
+
+def test_hub_secret_given_two_ways_is_refused(monkeypatch, manager):
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "inline")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
+    with pytest.raises(ConfigurationError, match="HUB_AUTH_CLIENT_SECRET is given more than one way"):
+        hub_secrets.get_hub_secret("HUB_AUTH_CLIENT_SECRET")
+    manager.assert_not_called()
+
+
+def test_startup_check_requires_hub_secrets_when_enabled(monkeypatch):
+    from app.config import missing_required_settings
+
+    for name in ("HUB_AUTH_CALLBACK_URI", "ORCID_CLIENT_SECRET", "ORCID_CLIENT_SECRET_VERSION"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
+    missing = missing_required_settings()
+    assert {"HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_CALLBACK_URI", "HUB_AUTH_ORCID_CLIENT_SECRET or ORCID_CLIENT_SECRET"} <= set(missing)
+
+
+def test_startup_check_accepts_hub_secret_references(monkeypatch):
+    from app.config import get_settings, missing_required_settings
+
+    monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
+    monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://example.test/hub/auth/callback")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
+    monkeypatch.setenv("ORCID_CLIENT_SECRET", "api-orcid-secret")
+    get_settings.cache_clear()
+    assert not [name for name in missing_required_settings() if name.startswith("HUB_AUTH")]
+
+
+def test_importing_the_application_does_not_load_secret_manager():
+    import subprocess
+    import sys
+
+    code = "import sys, app.api.main; print('google.cloud.secretmanager' in sys.modules)"
+    result = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == "False"
 
 
 @pytest.mark.parametrize("environment", ["main", "staging"])

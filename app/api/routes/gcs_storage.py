@@ -127,7 +127,7 @@ def _mint_upload_token(dsid: str) -> tuple[str, str]:
     scoped = _get_gcs_credentials().with_scopes(
         ["https://www.googleapis.com/auth/devstorage.read_write"]
     )
-    if os.getenv("LEGACY_UPLOAD_TOKEN_DOWNSCOPE", "true").lower() == "false":
+    if not get_settings().storage.legacy_upload_token_downscope:
         scoped.refresh(Request())
         return scoped.token, scoped.expiry.isoformat()
     prefix = f"projects/_/buckets/{bucket}/objects/{dsid}/"
@@ -300,7 +300,7 @@ def initiate_multipart_upload(
         token_expiry=token_expiry,
         bucket=bucket,
         object_prefix=f"{dsid}/",
-        project=get_settings().gcs_project,
+        project=get_settings().storage.gcs_project,
     )
 
 

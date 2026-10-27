@@ -2,7 +2,6 @@ import base64
 import hashlib
 import hmac
 import json
-import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -10,6 +9,7 @@ from google.protobuf.message import DecodeError
 from google.protobuf.struct_pb2 import ListValue
 from pydantic import BaseModel, ConfigDict
 
+from app.config import get_settings, optional_secret
 from app.utils.auth_utils import get_secret_key
 
 
@@ -36,7 +36,7 @@ class ResourceCursor(BaseModel):
 
 
 def _signing_keys() -> tuple[str, dict[str, bytes]]:
-    configured = os.getenv("CRUCIBLE_CURSOR_SIGNING_KEYS")
+    configured = optional_secret("CRUCIBLE_CURSOR_SIGNING_KEYS")
     if configured:
         try:
             values = json.loads(configured)
@@ -49,8 +49,8 @@ def _signing_keys() -> tuple[str, dict[str, bytes]]:
             raise RuntimeError("CRUCIBLE_CURSOR_SIGNING_KEYS must map non-empty key IDs to non-empty secrets")
         keys = {key_id: secret.encode("utf-8") for key_id, secret in values.items()}
     else:
-        keys = {"v1": (os.getenv("CRUCIBLE_CURSOR_SIGNING_KEY") or get_secret_key()).encode("utf-8")}
-    active_key_id = os.getenv("CRUCIBLE_CURSOR_ACTIVE_KEY_ID", "v1")
+        keys = {"v1": (optional_secret("CRUCIBLE_CURSOR_SIGNING_KEY") or get_secret_key()).encode("utf-8")}
+    active_key_id = get_settings().security.cursor_active_key_id
     if active_key_id not in keys:
         raise RuntimeError("CRUCIBLE_CURSOR_ACTIVE_KEY_ID is not present in CRUCIBLE_CURSOR_SIGNING_KEYS")
     return active_key_id, keys

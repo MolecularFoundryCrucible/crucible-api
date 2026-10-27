@@ -84,9 +84,12 @@ jobs:
           docker compose run --rm -T api python -m app.cli admin create --no-input --first-name Smoke --last-name Admin > "$RUNNER_TEMP/admin.json"
           python3 -c "import json, sys; print('created', json.load(open(sys.argv[1]))['username'])" "$RUNNER_TEMP/admin.json"
       - name: Smoke test through the proxy
+        env:
+          CRUCIBLE_API_URL: http://localhost:8080/api/v3
         run: |
-          key=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1]))['api_key'])" "$RUNNER_TEMP/admin.json")
-          python3 ../../scripts/selfhost_smoke.py --api-url http://localhost:8080/api/v3 --api-key "$key"
+          CRUCIBLE_API_KEY=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1]))['api_key'])" "$RUNNER_TEMP/admin.json")
+          export CRUCIBLE_API_KEY
+          python3 ../../scripts/selfhost_smoke.py
       - name: Service logs
         if: failure()
         run: docker compose logs --no-color

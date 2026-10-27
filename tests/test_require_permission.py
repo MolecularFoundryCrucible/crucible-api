@@ -20,7 +20,7 @@ from app.utils.auth_utils import fetch_acl_rows, permission_filter, require_perm
 from app.utils.permissions import (
     GroupMembership, Permission, PlatformRole, Principal, Role,
 )
-from tests.pg_fixture import LEAD, MEMBER, PG_URL, SA, STAFF, principal_for, seed_permissions, throwaway_database
+from tests.pg_fixture import LEAD, MEMBER, PG_URL, PLATFORM_ADMIN, SA, STAFF, principal_for, seed_permissions, throwaway_database
 
 pytestmark = pytest.mark.skipif(not PG_URL, reason="CRUCIBLE_TEST_PG_URL not set")
 
@@ -150,3 +150,36 @@ class TestFilterEdgeCases:
                            groups=(GroupMembership(gid, "proj_x", Role.VIEWER),))
         assert visible(migrated, viewer, Permission.READ) != []
         assert visible(migrated, viewer, Permission.EDIT) == []
+
+
+def test_one_owner_per_group_is_enforced(migrated):
+    """A second owner in a group is refused by the database, not only by application code."""
+    from sqlalchemy.exc import IntegrityError
+
+    with Session(migrated) as session:
+        gid = session.execute(text("SELECT id FROM accessgroup WHERE group_name = 'proj_x'")).scalar()
+        uid = session.execute(text('SELECT id FROM "user" WHERE orcid = :o'), {"o": STAFF}).scalar()
+        with pytest.raises(IntegrityError):
+            session.execute(text("INSERT INTO useraccessgrouplink (user_id, accessgroup_id, role) VALUES (:u, :g, 'owner')"), {"u": uid, "g": gid})
+            session.flush()
+
+
+class TestLoadPrincipal:
+    """The real authentication query against PostgreSQL; route tests override authorize_user."""
+
+    def test_reads_standings_from_the_link_table(self, migrated):
+        assert principal_for(migrated, LEAD).role_in("proj_x") is Role.OWNER
+        assert principal_for(migrated, LEAD).role_in(LEAD) is Role.OWNER
+        assert principal_for(migrated, MEMBER).role_in("proj_x") is Role.EDITOR
+
+    def test_every_principal_is_in_the_public_group_as_viewer(self, migrated):
+        assert principal_for(migrated, STAFF).role_in("public") is Role.VIEWER
+
+    def test_platform_role_and_service_account_flag_are_carried(self, migrated):
+        assert principal_for(migrated, PLATFORM_ADMIN).platform_role is PlatformRole.ADMIN
+        assert principal_for(migrated, MEMBER).platform_role is PlatformRole.NONE
+        assert principal_for(migrated, SA).is_service_account is True
+        assert principal_for(migrated, LEAD).is_service_account is False
+
+    def test_principal_is_hashable_so_it_can_be_cached(self, migrated):
+        assert hash(principal_for(migrated, LEAD)) == hash(principal_for(migrated, LEAD))

@@ -42,3 +42,19 @@ Redeploy the previous image: `kubectl set image deployment/crucible-api-main cru
 ## Final review
 
 A whole-release review (three independent reviewers, production risk only) of `main..staging` ran before the release; findings and dispositions are recorded below.
+
+The reviewers reported one high, one medium and seven low items; one reviewer found nothing. Each was checked against `main`, `staging` and `k8s-conf`:
+
+| Finding | Verdict | Disposition |
+|---|---|---|
+| (high) `RECORD_BUCKET` lost its `crucible-records` default, so production would stop writing record files | Wrong | `main` already reads `RECORD_BUCKET` with no default, and `RECORD_BUCKET: "mf-record-prod"` is in `configmap-main.yaml` and wired in `deployment-k8s-conf-main.yaml` on both branches. Nothing to do. |
+| (medium) Secrets are no longer fetched when a worker starts, so a bad secret passes readiness and fails on live requests | Real, narrow | On `main`, importing the app fetched `PGDB_PW`, `CRUCIBLE_SECRET_KEY` and `RABBITMQ_DEFAULT_PW`; the others were already fetched on first use. Now only `PGDB_PW` is exercised before traffic (by `/health/ready`). The release keeps the exact secret versions production reads today, so this matters only if a secret changes later. Covered by step 2 above (every secret resolves in a pod). Follow-up: resolve the secrets every request needs at startup. |
+| (low) `GCS_SA_VERSION` and the Hub and ORCID secrets use `versions/latest` while values are cached per worker | Real, unchanged | `main` used the same `latest` versions. Pinning numeric versions is a ConfigMap change for later. |
+| (low) `POST /files/{file_id}/ingest` answers 503 with a structured `detail` and marks the request failed when the broker is down | Intended | In the CHANGELOG. nano-crucible retries 503 (`client.py`, `status_forcelist` 429/502/503/504) and did not retry the old 500, so a broker outage is now retried and the failed attempts are recorded. |
+| (low) `require_hub_client` catches `HubSecretUnavailable` but not `ConfigurationError` (500 instead of 503) | Unreachable in production | `ConfigurationError` there comes only from a secret given two ways, which the startup check refuses. Consistency fix for later. |
+| (low) Secret Manager values are not stripped of a trailing newline | Unchanged | Same as `main`; the Hub secrets reject a newline explicitly. |
+| (low) Cloud Build rolls the Deployment twice (apply with `latest`, then pin the commit tag) | Unchanged | `cloudbuild.yaml` is not in the release. Both rollouts run the new image. Fix with the Foundry deploy repository step. |
+| (low) Multipart upload settings are read from the environment on each call while the rest are read once | Real, harmless | Production does not change these at runtime. Fold into `StorageSettings` later. |
+| (low) Disabled features answer 501 while disabled multipart upload and Hub sign-in answer 503 | Intended | Documented in `docs/error_responses_followup.md`; every production feature is on. |
+
+Verdict: nothing blocks the release. Rollout, side-by-side pods, the Dockerfile (port 7777 from `PORT`, 4 workers, gunicorn as PID 1), the CronJob and rollback were confirmed by all three reviewers.

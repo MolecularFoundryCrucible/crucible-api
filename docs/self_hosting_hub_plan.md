@@ -48,6 +48,18 @@ Why this shape:
 | H8 (Phase 4) | versioned public images (multi-arch) with `org.opencontainers.image.version` and `revision`, and a minimum-API-version label in reverse-domain form | pinning by version or digest; compatibility checks |
 | H9 (crucible-hub's call) | retire `single-instance` session mode | one session path; restarts keep people signed in |
 
+## Hub release 1.7.0 (crucible-hub, in progress since 2026-10-27)
+
+H1 to H7 were approved by the user in the crucible-hub session; the bundle pins `v1.7.0` once tagged. Names:
+
+- H3: `HUB_API_ALLOW_HTTP=true` permits an `http://` `CRUCIBLE_API_BASE_URL`; `HUB_AUTH_PUBLIC_API_URL` and the callback stay HTTPS-only.
+- H5: `HUB_TRUSTED_PROXY_HOPS=N`, the client address is the Nth `X-Forwarded-For` entry from the right; `0` uses the socket address; default `1`, which matches Caddy (it replaces the header). An institutional proxy in front of Caddy means 2, and Caddy's `trusted_proxies` must then name that proxy.
+- H9: `single-instance` is deprecated in 1.7.0 and removed in the next major release; the bundle uses `postgres` only.
+- H4: a one-shot setup entry point creates the owner and app roles and schema `hub`, then migrates, from an admin URL; the running Hub uses the app role only. Exact command and settings in the Hub's `deploy/compose` README.
+- H6: `/hub/health` answers 503 when the session database is unreachable.
+- H7: the Hub's Compose project is in the Hub repository (`deploy/compose`), joining an external network (default `crucible`) for the same workstation, with a standalone variant for a second machine.
+- `HUB_AUTH_PUBLIC_API_URL` is needed in both placements: the browser follows it for sign-in and cannot resolve `api:8000`.
+
 ## API repository changes (Task 9)
 
 1. Caddy (`deploy/compose/Caddyfile`): `handle /hub/*` (no prefix strip) to `{$CRUCIBLE_HUB_UPSTREAM}`, empty by default; `redir /hub /hub/`; when no Hub is configured, `/hub/` answers 404 "The Hub is not installed on this server". For `/api/v3/auth/hub/*`: a request body limit and shorter timeouts, as the Foundry's nginx sets. Caddy ignores incoming `X-Forwarded-For` by default and sets its own.

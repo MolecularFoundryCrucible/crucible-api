@@ -70,6 +70,8 @@ Point an untracked environment file at that local port. Confirm the database nam
 
 ## Deployment
 
-Container and Kubernetes configuration lives in `Dockerfile`, `cloudbuild.yaml`, and `k8s-conf/`. Monitoring notes are in [k8s-conf/README.md](k8s-conf/README.md).
+To run your own Crucible on one machine with Docker Compose, follow [deploy/compose/README.md](deploy/compose/README.md).
+
+The Foundry's container and Kubernetes configuration lives in `Dockerfile`, `cloudbuild.yaml`, and `k8s-conf/`. Monitoring notes are in [k8s-conf/README.md](k8s-conf/README.md).
 
 Changes reach `main` through a pull request from `staging` or another reviewed branch. Do not push or force-push directly to `main`.

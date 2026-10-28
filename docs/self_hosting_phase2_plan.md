@@ -15,7 +15,14 @@ One storage interface in the code for every byte operation (signed upload, signe
 - HMAC keys are long-lived secrets, where the current upload signer needs none, and a common organization policy blocks creating them.
 - Projects with many GCS users keep a native GCS adapter beside S3 (GitLab, Sentry, Label Studio, DVC); projects relying on the compatibility layer reported breakages.
 
-Proposed instead: one interface, two adapters. A Google adapter for the Foundry, built from what runs in production today (keyless signing by impersonation, generations, CRC32C enforced per part), and an S3 adapter (boto3) for self-hosted labs and institutional S3 stores. A setting chooses the adapter. Open decision 1.
+Decided 2026-10-28: one S3 path for everyone, the Foundry included, reached through a smooth transition that proves it first. Most of the gaps above stop mattering once the S3 path needs neither preconditions nor version pinning (every upload goes to a new unique key, the database decides what is current, and the API does its own cleanup); what remains is the HMAC key and the unverified behaviors, which a test answers.
+
+1. The storage interface comes first, with today's Google code behind it as the Google adapter, so the Foundry runs exactly as now while the S3 path is built.
+2. Once the S3 adapter and `storage check` exist, the check runs against a disposable GCS bucket with an HMAC key for a dedicated service account (the user creates both, after checking that the LBL organization does not block service account keys or restrict storage authentication types).
+3. If it passes, staging switches to the S3 adapter by setting and runs the crucible-tests suite, then production; afterwards the Google adapter and the `google-cloud-storage` dependency are removed.
+4. If it fails, or policy forbids HMAC keys, the Google adapter stays permanently behind the same interface.
+
+The trade-off accepted: one code path that the Foundry's production traffic also exercises, at the cost of a long-lived HMAC key pair (kept as a secret and rotated) and of boto3 upgrades that could break GCS, which the staging check catches.
 
 ## Design points
 
@@ -62,6 +69,6 @@ Until the cut-over, any `k8s-conf/` change in this repository is mirrored into `
 
 ## Open decisions
 
-1. Two adapters (recommended) or S3 everywhere through GCS's compatibility layer; the latter needs a short test on a disposable GCS bucket with an HMAC key first.
+1. Decided 2026-10-28: one S3 path, proven on a test bucket and on staging, with the Google adapter as the fallback (see above).
 2. SeaweedFS as the bundled store.
 3. Whether deleting stored objects on file and dataset deletion is part of Phase 2.

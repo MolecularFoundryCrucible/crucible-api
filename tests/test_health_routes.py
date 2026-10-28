@@ -123,7 +123,7 @@ def test_liveness_remains_minimal():
 
 def test_api_version_uses_project_metadata(monkeypatch):
     monkeypatch.delenv("API_VERSION", raising=False)
-    assert api_version() == "3.1.0"
+    assert api_version() == "3.2.0"
 
 
 HEAD = misc._migration_scripts().get_current_head()

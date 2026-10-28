@@ -1,0 +1,62 @@
+# Self-hosting Phase 2: proposed plan
+
+Status: proposal, written 2026-10-28, not approved. It records the plan as proposed after the research in `docs/self_hosting_phase2_research.md`, so the discussion can continue from here. Decisions still open are marked.
+
+## Goal
+
+One storage interface in the code for every byte operation (signed upload, signed download, replace, delete, record files), with the vendor-specific parts inside adapters. A small lab runs an object store in the Compose bundle; the Foundry keeps its data in Google Cloud Storage and keeps running unchanged.
+
+## Proposed change to the design
+
+`docs/self_hosting_design.md` (Decisions, Storage) says the Foundry reaches GCS through its S3-compatible XML API with HMAC keys, so a single S3 code path serves everyone. The research found gaps on that path:
+
+- S3 write preconditions (`If-Match`, `If-None-Match`) are silently ignored by GCS, and multipart uploads accept no preconditions; Crucible's replace and delete safety relies on preconditions (GCS generations today).
+- Pinning a presigned download to one object version is unverified through the S3 API; downloads, file ETags, and replace depend on it.
+- HMAC keys are long-lived secrets, where the current upload signer needs none, and a common organization policy blocks creating them.
+- Projects with many GCS users keep a native GCS adapter beside S3 (GitLab, Sentry, Label Studio, DVC); projects relying on the compatibility layer reported breakages.
+
+Proposed instead: one interface, two adapters. A Google adapter for the Foundry, built from what runs in production today (keyless signing by impersonation, generations, CRC32C enforced per part), and an S3 adapter (boto3) for self-hosted labs and institutional S3 stores. A setting chooses the adapter. Open decision 1.
+
+## Design points
+
+- Signed multipart uploads already write every file to a new key, `{dataset_mfid}/_files/{id}`, and never overwrite one, so the S3 adapter needs neither object versioning nor conditional writes: the key identifies the content. The legacy in-place keys (`{dataset_mfid}/{filename}`) exist only on GCS.
+- Retiring a replaced object becomes a database-tracked deletion after a grace period, done through the adapter, instead of the GCS-only `customTime` lifecycle rule. The Google adapter can keep using `customTime` until the new path is proven.
+- The adapter exposes what the routes need: start, sign parts, list parts, complete and abort a multipart upload; object metadata (size, checksum, version token); a signed download with a filename and disposition; delete pinned to a version where the store has one; and record file writes.
+- Presigned URLs sign the host name, so the S3 adapter signs with the address clients reach (for the bundle, the public address of the store), not the internal service name.
+- boto3 is configured with `request_checksum_calculation` and `response_checksum_validation` set to `when_required`, path-style addressing, and an explicit endpoint, which many S3-compatible stores need.
+- Per-part CRC32C: GCS enforces it through the signed `x-goog-hash` header; the S3 adapter uses `x-amz-checksum-crc32c` where the store supports it, and the server checks the combined checksum at completion either way.
+
+## Bundled object store
+
+SeaweedFS (Apache-2.0, very active, one container configured from the environment), with Versity S3 Gateway as the runner-up (plain files on the host filesystem, easiest to back up). MinIO's community edition is no longer maintained; Garage lacks versioning and has a fragile metadata store on one node. Open decision 2.
+
+## Pull requests, in order
+
+1. The storage interface with the Google adapter behind it: downloads, retiring, record files, and object metadata move into the adapter, and the three Google credential paths are consolidated. No behavior change for the Foundry; the existing tests and the staging checks prove it.
+2. The S3 adapter and the setting that chooses the adapter, tested in CI against a real SeaweedFS container (multipart, signed download, delete), not only against fakes.
+3. The Compose bundle gains SeaweedFS: a bucket created on first start, an address clients reach for presigned URLs, CORS for browser uploads, the install guide, and an upload and download step in the smoke test.
+4. Deleting a file or a dataset also deletes its stored objects, through the adapter and after a grace period, behind a setting, staging first. Today both remove database rows only. Open decision 3: part of Phase 2, or its own project.
+5. The legacy upload routes (`/upload/initiate`, `/upload/complete`, the downscoped upload token) are deprecated, after checking with the nano-crucible session which client versions still use them.
+
+Each pull request goes to staging, is checked in the staging pod and by the crucible-tests suite, and the Foundry switches nothing until the S3 path is proven.
+
+## Also found, to fix along the way
+
+- SHA-256 is client-claimed and never verified by the server; decide whether the server verifies it (reading the object once after upload) or the field is documented as a client claim.
+- Stale docs: `docs/file_object_cleanup_followup.md` and `docs/codebase_review_2026-10.md` say hard delete removes objects; `docs/multipart_upload_api.md` names an old staging bucket and a default `UPLOAD_BUCKET`.
+- `MULTIPART_UPLOAD_BUCKET` and other multipart settings are still read from the environment directly instead of through the settings.
+
+## Requests from mf-crucible-deploy (independent of the storage decisions)
+
+Received 2026-10-28; not started, waiting for the user's go.
+
+1. One image per version, built on `vX.Y.Z` tags into one Artifact Registry repository by a dedicated service account with writer access to that repository only; nothing environment-specific in the image (`BRANCH_NAME` read at run time from the ConfigMap), so staging tests the exact digest production gets. The per-branch builds stay until the cut-over. API side: a tag-triggered build configuration and moving `BRANCH_NAME` to run time. The user creates the service account, repository, and trigger.
+2. `python -m app.cli settings check`: takes the rendered Kubernetes YAML (Deployment and ConfigMap), resolves `configMapKeyRef` mappings, runs the startup settings check, checks the form of Secret Manager paths and, given credentials, that each version exists without reading the value, and exits non-zero on failure. It replaces `tests/test_k8s_pinned_settings.py` once the manifests leave this repository.
+
+Until the cut-over, any `k8s-conf/` change in this repository is mirrored into `foundry/` in mf-crucible-deploy.
+
+## Open decisions
+
+1. Two adapters (recommended) or S3 everywhere through GCS's compatibility layer; the latter needs a short test on a disposable GCS bucket with an HMAC key first.
+2. SeaweedFS as the bundled store.
+3. Whether deleting stored objects on file and dataset deletion is part of Phase 2.

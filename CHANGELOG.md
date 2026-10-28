@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-10-28
+
+Dependency upgrades, a settings check for deployments, and versioned release images. No database migration and no change for clients: responses keep the same fields.
+
+### Added
+
+- `python -m app.cli settings check` (operator-facing) checks a deployment's settings before it goes out. It reads rendered Kubernetes YAML (files or standard input, for example from `kubectl kustomize`), resolves each named container's environment from its ConfigMaps, Kubernetes Secret references, and secret files mounted into the secrets directory (Secret volumes and the GKE Secret Manager add-on's SecretProviderClass), and runs the startup checks: `--server CONTAINER` for the API server, `--database CONTAINER` for database-only tools such as the Hub sign-in cleanup job. It reports settings given more than one way, missing or invalid settings, malformed Secret Manager paths, `NAME_FILE` paths no volume provides, and, as warnings, variables Crucible does not read. With `--verify-secrets` it also confirms that each Secret Manager version exists and is enabled, reading metadata only (`secretmanager.versions.get`). It exits 1 when a check fails.
+- Release images (operator-facing): a `vX.Y.Z` tag builds one image for every environment with `cloudbuild.release.yaml`, tagged with the version and the commit and labelled with OCI `version`, `revision`, and `source`, in the `crucible-api-releases` Artifact Registry repository. The build refuses a tag that does not match the version in `pyproject.toml`, bakes in nothing environment-specific (`BRANCH_NAME` comes from each deployment's configuration), deploys nothing, and prints the image digest for mf-crucible-deploy. The branch builds in `cloudbuild.yaml` keep deploying as before until the Foundry moves to mf-crucible-deploy.
+
+### Changed
+
+- Dependency upgrades: FastAPI 0.142.4 to 0.162.0, uvicorn 0.32.1 to 0.54.0, gunicorn 25.3.0 to 26.2.0 (the image's server), SQLModel 0.0.22 to 0.0.48, Alembic 1.20.1, Authlib 1.9.1, google-auth 2.62.0, pika 1.4.4, pydantic-settings 2.16.1, NumPy 2.4.6, and others. SQLModel 0.0.48 applies a field's `alias`, which would have renamed `dataset_mfid` to `dataset_id` in ingestion request responses; the unused aliases on four table models are removed, so every response keeps its field names.
+
 ## [3.2.0] - 2026-10-28
 
 Groundwork for running Crucible outside the Molecular Foundry (explicit settings, startup checks, database setup, and a Docker Compose bundle with the optional Hub), plus join requests, postprocessing pipelines, activity tracking, preferences, and many fixes. Exact request and response shapes are in the OpenAPI document; this section lists what changed.

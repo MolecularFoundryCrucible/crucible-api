@@ -39,7 +39,7 @@ The trade-off accepted: one code path that the Foundry's production traffic also
 
 ## Bundled object store
 
-SeaweedFS (Apache-2.0, very active, one container configured from the environment), with Versity S3 Gateway as the runner-up (plain files on the host filesystem, easiest to back up). MinIO's community edition is no longer maintained; Garage lacks versioning and has a fragile metadata store on one node. Open decision 2.
+Decided 2026-10-28: SeaweedFS (Apache-2.0, very active, one container configured from the environment) is the default; deployers may use any S3-compatible store instead. Versity S3 Gateway was the runner-up (plain files on the host filesystem, easiest to back up). MinIO's community edition is no longer maintained; Garage lacks versioning and has a fragile metadata store on one node.
 
 ## Pull requests, in order
 
@@ -47,10 +47,13 @@ SeaweedFS (Apache-2.0, very active, one container configured from the environmen
 2. The S3 adapter, the setting that chooses the adapter, and `python -m app.cli storage check`, tested in CI against real SeaweedFS and Garage or Versity containers, not only against fakes.
 3. The cleanup job: aborting abandoned multipart uploads and deleting retired objects after their grace period, through the adapter, replacing the GCS lifecycle rules for the S3 path.
 4. The Compose bundle gains SeaweedFS: a bucket created on first start, an address clients reach for presigned URLs, CORS for browser uploads, the install guide, and an upload and download step in the smoke test.
-5. Deleting a file or a dataset also deletes its stored objects, through the adapter and after a grace period, behind a setting, staging first. Today both remove database rows only. Open decision 3: part of Phase 2, or its own project.
-6. The legacy upload routes (`/upload/initiate`, `/upload/complete`, the downscoped upload token) are deprecated, after checking with the nano-crucible session which client versions still use them.
+5. The legacy upload routes (`/upload/initiate`, `/upload/complete`, the downscoped upload token) are deprecated, after checking with the nano-crucible session which client versions still use them.
 
 Each pull request goes to staging, is checked in the staging pod and by the crucible-tests suite, and the Foundry switches nothing until the S3 path is proven.
+
+## Deferred: deleting stored data
+
+Decided 2026-10-28: not part of Phase 2; reported now and introduced later. Today `DELETE /files/{file_id}` and dataset hard delete (and so project deletion) remove database rows only: the objects stay in the bucket, unreferenced, and data a user deleted is still held. `_delete_gcs_blobs_for_dataset` in `app/utils/deletion_utils.py` exists but nothing calls it. Only a file replacement retires the old object (GCS `customTime` and a seven-day lifecycle rule). When it is introduced it goes through the storage adapter and the cleanup job, after a grace period, behind a setting, staging first, with a reviewed dry-run script for the objects already orphaned. `docs/file_object_cleanup_followup.md` in the API repository describes the fix and needs correcting: it says hard delete already removes objects.
 
 ## Also found, to fix along the way
 
@@ -70,5 +73,5 @@ Until the cut-over, any `k8s-conf/` change in this repository is mirrored into `
 ## Open decisions
 
 1. Decided 2026-10-28: one S3 path, proven on a test bucket and on staging, with the Google adapter as the fallback (see above).
-2. SeaweedFS as the bundled store.
-3. Whether deleting stored objects on file and dataset deletion is part of Phase 2.
+2. Decided 2026-10-28: SeaweedFS is the bundled default; any S3-compatible store can replace it.
+3. Decided 2026-10-28: deleting stored data is deferred (see above).

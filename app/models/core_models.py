@@ -595,7 +595,7 @@ class UploadSession(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     upload_id: str = Field(default_factory=get_mfid_value, index=True, unique=True)
     dataset_mfid: str
-    gcs_path: str           # full blob path in prod bucket: "{dsid}/{filename}"
+    object_key: str = Field(sa_column=Column("gcs_path", Text, nullable=False))
     associated_file_name: str   # relative filename within the dataset: "{safe_filename}"
     owner_user_id: str
     expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))

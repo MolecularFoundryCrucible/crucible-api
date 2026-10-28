@@ -202,7 +202,7 @@ def _create_upload_session(
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
     us = UploadSession(
         dataset_mfid=dsid,
-        gcs_path=gcs_path,
+        object_key=gcs_path,
         associated_file_name=safe_filename,
         owner_user_id=user_unique_id,
         expires_at=expires_at,
@@ -345,7 +345,7 @@ def complete_resumable_upload(
             raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
 
         try:
-            blob = _get_gcs_storage_client().bucket(bucket).blob(us.gcs_path)
+            blob = _get_gcs_storage_client().bucket(bucket).blob(us.object_key)
             blob.reload()
         except NotFound:
             raise HTTPException(status_code=422, detail="Uploaded file not found in storage") from None
@@ -362,7 +362,7 @@ def complete_resumable_upload(
         assoc = AssociatedFile(
             dataset_id=ds.id,
             filename=us.associated_file_name,
-            storage_path=f"{bucket}/{us.gcs_path}",
+            storage_path=f"{bucket}/{us.object_key}",
             size=blob.size,
             sha256_hash=body.sha256_hash,
         )

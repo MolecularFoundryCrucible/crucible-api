@@ -66,7 +66,7 @@ def sign_parts(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
 
     def sign(part):
         size = service.part_size(upload, part.part_number)
-        url, headers = storage.sign_part(upload.bucket, upload.gcs_path, upload.provider_upload_id, part.part_number, part.crc32c, size, expires_at)
+        url, headers = storage.sign_part(upload.bucket, upload.object_key, upload.provider_upload_id, part.part_number, part.crc32c, size, expires_at)
         return SignedPart(part_number=part.part_number, url=url, headers=headers, offset=(part.part_number - 1) * upload.part_size, size=size, expires_at=expires_at)
 
     try:
@@ -85,7 +85,7 @@ def get_status(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
         session.expunge(upload)
     if upload.state == "uploading" and not service.expired(upload):
         try:
-            parts, marker = get_store().list_parts(upload.bucket, upload.gcs_path, upload.provider_upload_id, part_number_marker, limit)
+            parts, marker = get_store().list_parts(upload.bucket, upload.object_key, upload.provider_upload_id, part_number_marker, limit)
             result.parts = [UploadedPart(part_number=part.part_number, size=part.size, etag=part.etag) for part in parts]
             result.next_part_number_marker = marker
         except UploadMissing:

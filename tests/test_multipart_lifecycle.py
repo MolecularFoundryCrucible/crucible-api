@@ -471,7 +471,7 @@ def test_completion_aborts_duplicate_provider_uploads(flow):
     identifier = start(flow)
     put(flow, identifier)
     upload = row(engine, identifier)
-    storage.start_upload(upload.bucket, upload.gcs_path)
+    storage.start_upload(upload.bucket, upload.object_key)
     assert complete(flow, identifier).status_code == 200
     assert not storage.pending
     assert storage.objects
@@ -608,7 +608,7 @@ def test_cleanup_protection_requires_server_recorded_generation(flow, generation
     upload = row(engine, identifier)
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        session.add(AssociatedFile(dataset_id=dataset.id, filename="reference", storage_path=f"{upload.bucket}/{upload.gcs_path}", size=len(DATA), sha256_hash=SHA, storage_generation=generation))
+        session.add(AssociatedFile(dataset_id=dataset.id, filename="reference", storage_path=f"{upload.bucket}/{upload.object_key}", size=len(DATA), sha256_hash=SHA, storage_generation=generation))
         session.commit()
     assert client.delete(BASE + f"/{identifier}").status_code == 204
     assert bool(storage.objects) == (generation is not None)
@@ -732,7 +732,7 @@ def test_replace_initiation_creates_a_session_for_the_file(flow):
     assert session.replace_file_mfid == file["mfid"]
     assert session.replace_base_etag == file["etag"]
     assert session.associated_file_name == "data.bin"
-    assert session.gcs_path == f"ds/_files/{session.upload_id}"
+    assert session.object_key == f"ds/_files/{session.upload_id}"
 
 
 def test_replace_accepts_a_weakened_if_match(flow):
@@ -1196,7 +1196,7 @@ def test_pending_legacy_upload_blocks_retirement(flow, retired, expires_in):
     client, engine, _ = flow
     mfid = legacy_file(engine, "old.bin")
     with Session(engine) as session:
-        session.add(UploadSession(dataset_mfid="ds", gcs_path="ds/old.bin", associated_file_name="old.bin", owner_user_id="owner", expires_at=service.now() + (expires_in or -timedelta(hours=1)), size=3))
+        session.add(UploadSession(dataset_mfid="ds", object_key="ds/old.bin", associated_file_name="old.bin", owner_user_id="owner", expires_at=service.now() + (expires_in or -timedelta(hours=1)), size=3))
         session.commit()
     _, response = replace(flow, mfid)
     assert response.status_code == 200, response.text

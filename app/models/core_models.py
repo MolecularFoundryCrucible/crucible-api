@@ -117,7 +117,7 @@ class Sample(SQLModel, table = True):
     sample_type: Optional[str] = Field(index = True, default = None)
     owner_orcid: Optional[str] = Field(default=None, index=True)
     owner_user_id: Optional[int] = Field(default=None, index=True, foreign_key="user.id")
-    timestamp: Optional[str] = Field(default_factory=get_utc_isoformat, alias="date_created")
+    timestamp: Optional[str] = Field(default_factory=get_utc_isoformat)
     project_mfid: Optional[str] = Field(default=None, index=True, foreign_key="project.unique_id")
     description: Optional[str]
     datasets: List["Dataset"] = Relationship(back_populates="samples", link_model=DatasetSampleLink)
@@ -399,8 +399,8 @@ class ScientificMetadataBinary(SQLModel, table = True):
 
 class Resource(SQLModel, table=True):
     __tablename__ = "idtype"
-    mfid: str = Field(default=None, primary_key=True, index=True, alias="unique_id")
-    resource_type: str = Field(default=None, alias="object_type")
+    mfid: str = Field(default=None, primary_key=True, index=True)
+    resource_type: str = Field(default=None)
     creation_time: Optional[datetime] = Field(
         default_factory=get_utc_datetime,
         sa_column=Column(DateTime(timezone=True), nullable=True, server_default=func.now()),
@@ -549,7 +549,7 @@ class Instrument(SQLModel, table=True):
 # --- Task tracking ---
 class IngestionRequest(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    dataset_mfid: Optional[str] = Field(default=None, foreign_key="dataset.unique_id", index=True, alias="dataset_id")
+    dataset_mfid: Optional[str] = Field(default=None, foreign_key="dataset.unique_id", index=True)
     file_mfid: Optional[str] = Field(default=None, foreign_key="associatedfile.mfid", index=True)
     file_to_upload: Optional[str] = None
     ingestion_githash: Optional[str] = None

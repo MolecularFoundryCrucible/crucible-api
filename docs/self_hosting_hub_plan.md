@@ -115,3 +115,5 @@ H1 to H7 were approved by the user in the crucible-hub session; the bundle pins 
 - microservices.io, database per service: https://microservices.io/patterns/data/database-per-service.html
 - OCI image spec, annotations: https://github.com/opencontainers/image-spec/blob/main/annotations.md
 - PostgreSQL, schemas: https://www.postgresql.org/docs/current/ddl-schemas.html
+
+Follow-up (2026-10-28): Hub 1.7.1 will publish `ghcr.io/molecularfoundrycrucible/crucible-hub` (amd64 and arm64) labelled `gov.lbl.crucible.api.min-version=3.2.0`. When crucible-hub sends the tag, switch the install guide and the `compose-hub` CI job from building the Hub at `v1.7.0` to pulling that image.

@@ -108,11 +108,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check out the Hub at its pinned release
+      - name: Check out the Hub's compose files at its pinned release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: MolecularFoundryCrucible/crucible-hub
-          ref: 7b17c2eb3db5d8925cc2f827c232305c4b09399f # v1.7.0
+          ref: f41e0cfb2b9d981f33acd82899576ac2e5b6e631 # v1.7.1
           path: hub
           persist-credentials: false
       - name: Start the API with Hub sign-in, over HTTPS with Caddy's local CA
@@ -140,7 +140,7 @@ jobs:
             sleep 1
           done
           docker compose exec -T proxy cat /data/caddy/pki/authorities/local/root.crt > "$CA"
-      - name: Start the Hub on the same machine, as in its README
+      - name: Start the Hub from its published image on the same machine, as in its README
         working-directory: hub/deploy/compose
         run: |
           mkdir -p secrets && chmod 700 secrets
@@ -151,7 +151,10 @@ jobs:
           chmod 444 secrets/hub_*
           cp example.env .env
           sed -i "s#^HUB_PUBLIC_ORIGIN=.*#HUB_PUBLIC_ORIGIN=$SITE#; s#^HUB_AUTH_PUBLIC_API_URL=.*#HUB_AUTH_PUBLIC_API_URL=$SITE/api/v3#" .env
-          docker compose up -d --build --wait
+          echo "HUB_IMAGE=ghcr.io/molecularfoundrycrucible/crucible-hub:1.7.1@sha256:4694703a29a978d84253b24550bc329fb249f67b0ceaa56daf48ac06b495b0d8" >> .env
+          docker compose pull hub hub-setup
+          docker compose up -d --wait
+          test "$(docker inspect "$(docker compose ps -q hub)" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "1.7.1"
       - name: The Hub answers through the front door and starts sign-in through the API
         run: |
           curl -fsS --cacert "$CA" "$SITE/hub/health" | grep -q '"sessions":"ok"'

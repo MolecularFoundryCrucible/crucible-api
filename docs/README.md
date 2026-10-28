@@ -22,6 +22,7 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 
 ## Authentication and operations
 
+- [Installing with Docker Compose](../deploy/compose/README.md): running Crucible on one machine, secrets, the first administrator, backups, upgrades, and reverse proxies.
 - [Hub authentication overview](hub_auth_overview.md): sign-in, the API tables, refresh, logout, and cleanup.
 - [Hub login integration](hub_login_design.md): the implemented contract and integration requirements.
 - [Hub authentication operations](hub_auth_operations.md): secrets, logging, cleanup, and activation gates.
@@ -46,6 +47,10 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [`/project_graph` performance](project_graph_performance_followup.md)
 - [Per-worker Prometheus counters](prometheus_multiprocess_followup.md) and [public `/metrics` endpoint](public_metrics_endpoint_followup.md)
 - [Unused Cloud SQL proxy sidecar](cloud_sql_proxy_sidecar_followup.md)
+- [Error responses](error_responses_followup.md): moving repeated route error documentation into `app/api/errors.py`.
+- [Database engine](database_engine_followup.md): moving routes to a FastAPI session dependency.
+- [Secret key separation](secret_key_separation_followup.md): deriving separate keys for the session cookie and cursors from `CRUCIBLE_SECRET_KEY`.
+- [Enum columns declared as strings](enum_columns_followup.md): multi-row inserts that PostgreSQL refuses for some enum columns.
 
 ## Deferred designs
 

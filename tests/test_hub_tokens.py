@@ -238,8 +238,8 @@ def test_refresh_and_revoke_routes(engine, monkeypatch):
         assert failed.status_code == 401
 
 
-def test_hub_and_legacy_credentials_both_authorize(engine, monkeypatch):
-    monkeypatch.setattr(auth_utils, "engine", engine)
+def test_hub_and_legacy_credentials_both_authorize(use_engine, engine, monkeypatch):
+    use_engine(engine)
     monkeypatch.setattr(auth_utils, "_PUBLIC_GROUP_ID", None)
     pair = issue_hub_tokens(engine, "0000-0000-0000-0001", "crucible-hub")
     legacy_key = "a" * 64
@@ -425,10 +425,10 @@ def test_orcid_reauthentication_request_forwards_max_age(monkeypatch):
     assert "max_age" not in plain and "prompt" not in plain
 
 
-def test_auth_time_flows_from_handoff_code_to_hub_principal(engine, monkeypatch):
+def test_auth_time_flows_from_handoff_code_to_hub_principal(use_engine, engine, monkeypatch):
     import base64
     import hashlib
-    monkeypatch.setattr(auth_utils, "engine", engine)
+    use_engine(engine)
     monkeypatch.setattr(auth_utils, "_PUBLIC_GROUP_ID", None)
     config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", "https://orcid.org")
     verifier = "v" * 43
@@ -448,6 +448,7 @@ def test_auth_time_flows_from_handoff_code_to_hub_principal(engine, monkeypatch)
 
 
 def test_login_accepts_only_an_exact_configured_callback(engine, monkeypatch):
+    from app.config import get_settings
     from app.utils.hub_login import HubLoginUnavailable, load_login_config
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret")
@@ -462,5 +463,6 @@ def test_login_accepts_only_an_exact_configured_callback(engine, monkeypatch):
             create_login(engine, config, "crucible-hub", callback, "hub-state-123456789", "a" * 43)
     for configured in ("", " , ", "http://localhost:3000/cb,http://evil.example/cb"):
         monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", configured)
+        get_settings.cache_clear()
         with pytest.raises(HubLoginUnavailable):
             load_login_config()

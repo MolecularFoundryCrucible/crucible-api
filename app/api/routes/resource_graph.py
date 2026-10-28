@@ -12,7 +12,6 @@ from app.utils.permissions import Principal
 
 
 router = APIRouter(tags=["resources"])
-engine = get_engine()
 
 
 @router.get(
@@ -32,7 +31,7 @@ def read_resource_graph(
     params: Annotated[ResourceGraphQuery, Query()],
 ):
     """Return a bounded, authorization-filtered sample and dataset graph."""
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         graph = build_resource_graph(session, auth_res, resource_mfid, params)
         if graph is None:
             raise HTTPException(status_code=404, detail="Resource not found")

@@ -1,4 +1,3 @@
-import os
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -8,18 +7,18 @@ from joserfc import jwt
 from joserfc.jwk import KeySet
 
 from app.api.dependencies import get_orcid_client_id, get_orcid_client_secret
+from app.config import ConfigurationError, get_settings, optional_secret
 from app.utils.hub_login import HubLoginConfig, HubLoginUnavailable, InvalidHubLogin
-from app.utils.hub_secrets import HubSecretUnavailable, get_hub_secret
 
 
 def _orcid_client_id() -> str:
-    return os.getenv("HUB_AUTH_ORCID_CLIENT_ID") or get_orcid_client_id()
+    return get_settings().hub.orcid_client_id or get_orcid_client_id()
 
 
 def _orcid_client_secret() -> str:
     try:
-        return get_hub_secret("HUB_AUTH_ORCID_CLIENT_SECRET") or get_orcid_client_secret()
-    except HubSecretUnavailable:
+        return optional_secret("HUB_AUTH_ORCID_CLIENT_SECRET") or get_orcid_client_secret()
+    except ConfigurationError:
         raise HubLoginUnavailable from None
 
 

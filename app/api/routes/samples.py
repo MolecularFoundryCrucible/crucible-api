@@ -60,7 +60,6 @@ from app.services.resource_pagination import (
 )
 
 router = APIRouter(tags=["samples"])
-engine = get_engine()
 SAMPLE_PAGINATION = ResourcePaginationSpec(
     kind="sample",
     unique_id_column=Sample.unique_id,
@@ -90,7 +89,7 @@ def link_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id
     '''
 
     reject_self_link(parent_sample_id, child_sample_id)
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         parent_sample = session.exec(select(Sample).where(Sample.unique_id == parent_sample_id)).first()
         if not parent_sample:
             raise HTTPException(status_code=404, detail="Parent sample not found")
@@ -132,7 +131,7 @@ def link_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id
 @router.delete("/samples/{parent_sample_mfid}/children/{child_sample_mfid}", response_model=MessageResponse)
 def unlink_sample_parent_child(parent_sample_id: ParentSampleMfid, child_sample_id: ChildSampleMfid, auth_res: Annotated[Principal, Depends(authorize_user)]):
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         # Both, not either: the pre-role check passed on any one.
 
         require_permission(session, auth_res, parent_sample_id, Permission.EDIT)
@@ -170,7 +169,7 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
     '''
     user_unique_id = auth_res.user_id
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         sample = session.exec(select(Sample).where(Sample.unique_id == sample_id)).one_or_none()
         if not sample:
             raise HTTPException(status_code=404, detail='Sample not found')
@@ -218,7 +217,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         raise HTTPException(status_code=400, detail="sample_name must not be empty.")
 
     sample_details = S.model_dump(exclude_unset=True)
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         if S.unique_id:
             assert_mfid_available(session, S.unique_id, "sample")
 
@@ -307,7 +306,7 @@ def get_sample_facets(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     params: Annotated[SampleFacetQuery, Query()],
 ):
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return list_sample_facets(session, auth_res, params)
 
 
@@ -388,7 +387,7 @@ def list_samples(
         user_id=auth_res.user_id,
     )
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         filter_project_mfid = resolve_project_filter_mfid(
             session, project_id, project_mfid)
         linked_dataset_id = None
@@ -601,7 +600,7 @@ def search_samples(
     effective_project_scope: ProjectScope = project_scope or "assigned"
     normalized_q, tokens = normalize_search_query(q)
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         configure_trigram_search(session, get_trgm_search_threshold())
         filter_project_mfid = resolve_project_filter_mfid(
             session, project_id, project_mfid)
@@ -658,7 +657,7 @@ def read_sample(
     Embedded dataset objects are retained by default for compatibility. New clients should pass include_datasets=false and use include_links or GET /datasets?sample_mfid=... instead.
     The owner identity is resolved by default. Pass include_owner=false to omit it.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return load_sample_detail(
             session,
             auth_res,
@@ -683,7 +682,7 @@ def list_parent_samples(child_sample_id: ChildSampleMfid, auth_res: Annotated[Pr
     relationship_type restricts the result to links of that kind. Links with no
     recorded type are excluded when the filter is set.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         child_sample = session.exec(select_active(Sample, child_sample_id)).one_or_none()
         if child_sample is None:
             raise HTTPException(status_code=404, detail="Child sample not found")
@@ -720,7 +719,7 @@ def list_child_samples(parent_sample_id: ParentSampleMfid, auth_res: Annotated[P
     relationship_type restricts the result to links of that kind. Links with no
     recorded type are excluded when the filter is set.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         parent_sample = session.exec(select_active(Sample, parent_sample_id)).one_or_none()
         if parent_sample is None:
             raise HTTPException(status_code=404, detail="Parent sample not found")

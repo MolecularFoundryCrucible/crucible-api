@@ -7,6 +7,7 @@ WORKDIR /root/
 
 # Disable development dependencies
 ENV UV_NO_DEV=1
+ENV PATH="/root/.venv/bin:$PATH"
 
 # dependencies first, so code-only changes reuse this layer
 COPY pyproject.toml uv.lock .python-version /root/
@@ -21,21 +22,21 @@ RUN echo "API_VERSION: $API_VERSION"
 
 ARG BRANCH_NAME
 ENV BRANCH_NAME=$BRANCH_NAME
-RUN if [ "$BRANCH_NAME" = "main" ]; then echo 7777 > /root/.port; else echo 8889 > /root/.port; fi
 
 # files
 COPY app/ /root/app/
-COPY migrations/versions/ /root/migrations/versions/
+COPY alembic.ini /root/alembic.ini
+COPY migrations/ /root/migrations/
 COPY scripts/cleanup_hub_auth.py /root/scripts/cleanup_hub_auth.py
 RUN mkdir uploads
 RUN mkdir download-zips
 
 RUN /bin/uv sync --locked
 
-# Run app
-#CMD python -m app.api.test
-#CMD exec /bin/uv run uvicorn app.api.main:app --host 0.0.0.0 --reload --port $(cat /root/.port)
-CMD exec /bin/uv run gunicorn app.api.main:app \
+# Run app. A worker still loading the code and reading its secrets counts as silent, and on a busy
+# node that has taken 25 of the default 30 seconds; the timeout does not limit request length here.
+CMD exec gunicorn app.api.main:app \
   --worker-class uvicorn.workers.UvicornWorker \
-  --workers 4 \
-  --bind 0.0.0.0:$(cat /root/.port)
+  --workers "${WEB_CONCURRENCY:-4}" \
+  --timeout 60 \
+  --bind "0.0.0.0:${PORT:-8000}"

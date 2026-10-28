@@ -12,12 +12,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from sqlmodel import Session, select
 from app.api.dependencies import get_engine
 from app.models.core_models import AssociatedFile, Dataset
-from app.api.routes.gcs_storage import _get_gcs_storage_client, _DOWNLOAD_BUCKET
+from app.api.routes.gcs_storage import _get_gcs_storage_client
+from app.services.storage_downloads import upload_bucket
 
 PROGRESS_EVERY = 500
 
 
 def backfill():
+    bucket_name = upload_bucket()
     engine = get_engine()
 
     with Session(engine) as session:
@@ -31,12 +33,12 @@ def backfill():
         print("No rows to backfill.")
         return
 
-    print(f"Found {len(rows)} files with no storage_path. Listing blobs in {_DOWNLOAD_BUCKET}...")
+    print(f"Found {len(rows)} files with no storage_path. Listing blobs in {bucket_name}...")
 
     storage_client = _get_gcs_storage_client()
-    bucket = storage_client.bucket(_DOWNLOAD_BUCKET)
+    bucket = storage_client.bucket(bucket_name)
     existing_blobs = {blob.name for blob in bucket.list_blobs()}
-    print(f"Found {len(existing_blobs)} blobs in {_DOWNLOAD_BUCKET}.")
+    print(f"Found {len(existing_blobs)} blobs in {bucket_name}.")
 
     matched = 0
     skipped = 0
@@ -49,7 +51,7 @@ def backfill():
             if blob_name in existing_blobs:
                 # Re-fetch within this session to update
                 af_live = session.get(AssociatedFile, af.id)
-                af_live.storage_path = f"{_DOWNLOAD_BUCKET}/{blob_name}"
+                af_live.storage_path = f"{bucket_name}/{blob_name}"
                 session.add(af_live)
                 matched += 1
             else:

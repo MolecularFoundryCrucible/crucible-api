@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 from fastapi import Depends, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.general_utils import  get_secret
-from app.api.dependencies import get_engine, get_api_path, get_api_url
+from app.config import get_secret
+from app.api.dependencies import get_engine
 from app.models.core_models import ApiToken
 from app.models.resource import ResourceCapabilities
 from app.utils.hub_tokens import ACCESS_PREFIX, InvalidHubGrant, hub_access_family
@@ -36,14 +36,9 @@ from sqlalchemy import join
 from datetime import date, timedelta
 
 # ====== Constants
-SECRET_KEY = get_secret("CRUCIBLE_SECRET_KEY", "crucible_secret_key/versions/1")
 ALGORITHM = "HS256"
 security = HTTPBearer()
 PRIVILEGE_MODE_HEADER = "Crucible-Privilege-Mode"
-
-engine = get_engine()
-api_path = get_api_path()
-api_url = get_api_url()
 
 # ====== Auth cache
 # Positive-only cache of validated tokens -> Principal.
@@ -117,15 +112,15 @@ def find_or_add_api_access(orcid: str, engine, regenerate = False):
             return(new_token)
 
 
-def generate_apikey(orcid: str, session):
-    # create token
+def add_apikey(orcid: str, session) -> str:
+    """Add a new API key to the session without committing."""
     new_token = secrets.token_hex(32)
-    # add to database
-    new_api_acct = ApiToken(user_unique_id = orcid,
-                            access_group_id = orcid,
-                            token = new_token,
-                            token_created = date.today().isoformat())
-    session.add(new_api_acct)
+    session.add(ApiToken(user_unique_id=orcid, access_group_id=orcid, token=new_token, token_created=date.today().isoformat()))
+    return new_token
+
+
+def generate_apikey(orcid: str, session):
+    new_token = add_apikey(orcid, session)
     session.commit()
     return(new_token)
 
@@ -157,13 +152,17 @@ def code_for_token_exchange(code: str, client_id, client_secret, redirect_uri):
     return response_data['access_token']
 
 
-def encode_token(claims: dict, secret_key = SECRET_KEY, alg = ALGORITHM) -> str:
-    return jwt.encode({"alg": alg}, claims, OctKey.import_key(secret_key))
+def get_secret_key() -> str:
+    return get_secret("CRUCIBLE_SECRET_KEY")
 
 
-def decode_token(token: str, secret_key = SECRET_KEY, alg = ALGORITHM):
+def encode_token(claims: dict, secret_key: str | None = None, alg = ALGORITHM) -> str:
+    return jwt.encode({"alg": alg}, claims, OctKey.import_key(secret_key or get_secret_key()))
+
+
+def decode_token(token: str, secret_key: str | None = None, alg = ALGORITHM):
     try:
-        decoded = jwt.decode(token, OctKey.import_key(secret_key), algorithms=[alg])
+        decoded = jwt.decode(token, OctKey.import_key(secret_key or get_secret_key()), algorithms=[alg])
         jwt.JWTClaimsRegistry(exp={"essential": True}).validate(decoded.claims)
     except (JoseError, ValueError):
         return None
@@ -242,6 +241,7 @@ def authorize_user(
 
 
 def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
+    engine = get_engine()
     apikey = credentials.credentials
     if apikey.startswith(ACCESS_PREFIX):
         with Session(engine) as session:

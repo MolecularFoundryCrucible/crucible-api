@@ -166,6 +166,96 @@ spec:
             configMapKeyRef:
               key: ANTHROPIC_DEFAULT_HAIKU_MODEL
               name: crucible-api-config-main
+        - name: "PGDB_PW_VERSION"
+          valueFrom:
+            configMapKeyRef:
+              key: PGDB_PW_VERSION
+              name: crucible-api-config-main
+        - name: "CRUCIBLE_SECRET_KEY_VERSION"
+          valueFrom:
+            configMapKeyRef:
+              key: CRUCIBLE_SECRET_KEY_VERSION
+              name: crucible-api-config-main
+        - name: "RABBITMQ_DEFAULT_PW_VERSION"
+          valueFrom:
+            configMapKeyRef:
+              key: RABBITMQ_DEFAULT_PW_VERSION
+              name: crucible-api-config-main
+        - name: "GCS_SA_VERSION"
+          valueFrom:
+            configMapKeyRef:
+              key: GCS_SA_VERSION
+              name: crucible-api-config-main
+        - name: "MQTT_PASSWORD_VERSION"
+          valueFrom:
+            configMapKeyRef:
+              key: MQTT_PASSWORD_VERSION
+              name: crucible-api-config-main
+        - name: "PROPDB_APIKEY_VERSION"
+          valueFrom:
+            configMapKeyRef:
+              key: PROPDB_APIKEY_VERSION
+              name: crucible-api-config-main
+        - name: "RMQ_HOST"
+          valueFrom:
+            configMapKeyRef:
+              key: RMQ_HOST
+              name: crucible-api-config-main
+        - name: "RMQ_PORT"
+          valueFrom:
+            configMapKeyRef:
+              key: RMQ_PORT
+              name: crucible-api-config-main
+        - name: "RMQ_USER"
+          valueFrom:
+            configMapKeyRef:
+              key: RMQ_USER
+              name: crucible-api-config-main
+        - name: "GCS_PROJECT"
+          valueFrom:
+            configMapKeyRef:
+              key: GCS_PROJECT
+              name: crucible-api-config-main
+        - name: "MQTT_HOST"
+          valueFrom:
+            configMapKeyRef:
+              key: MQTT_HOST
+              name: crucible-api-config-main
+        - name: "MQTT_PORT"
+          valueFrom:
+            configMapKeyRef:
+              key: MQTT_PORT
+              name: crucible-api-config-main
+        - name: "MQTT_USERNAME"
+          valueFrom:
+            configMapKeyRef:
+              key: MQTT_USERNAME
+              name: crucible-api-config-main
+        - name: "PROPOSAL_DB_URL"
+          valueFrom:
+            configMapKeyRef:
+              key: PROPOSAL_DB_URL
+              name: crucible-api-config-main
+        - name: "PRINTING_ENABLED"
+          valueFrom:
+            configMapKeyRef:
+              key: PRINTING_ENABLED
+              name: crucible-api-config-main
+        - name: "PROPOSAL_SYNC_ENABLED"
+          valueFrom:
+            configMapKeyRef:
+              key: PROPOSAL_SYNC_ENABLED
+              name: crucible-api-config-main
+        - name: "INGESTION_ENABLED"
+          valueFrom:
+            configMapKeyRef:
+              key: INGESTION_ENABLED
+              name: crucible-api-config-main
+        - name: "PORT"
+          valueFrom:
+            configMapKeyRef:
+              key: PORT
+              name: crucible-api-config-main
         image: "us-central1-docker.pkg.dev/mf-crucible/crucible-api/crucible-api-main:latest"
         imagePullPolicy: Always
         name: "crucible-api-container"

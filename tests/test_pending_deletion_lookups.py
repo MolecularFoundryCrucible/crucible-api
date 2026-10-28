@@ -93,8 +93,6 @@ def test_lists_hide_records_pending_deletion(records, path, key):
 
 @pytest.fixture
 def writer(records, db_engine, auth_as, monkeypatch):
-    monkeypatch.setattr("app.api.routes.gcs_storage.engine", db_engine)
-    monkeypatch.setattr("app.api.routes.multipart.engine", db_engine)
     monkeypatch.setenv("MULTIPART_UPLOAD_ENABLED", "true")
     monkeypatch.setenv("UPLOAD_BUCKET", "dedicated")
     monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", "dedicated")

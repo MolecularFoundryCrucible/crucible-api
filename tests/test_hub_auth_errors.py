@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.api import main
 from app.api.dependencies import get_engine
+from app.config import get_settings
 from app.api.routes import hub_auth
 from app.utils.hub_login import HubLoginUnavailable, InvalidHubLogin
 from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant
@@ -23,6 +24,8 @@ def client(monkeypatch, caplog):
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_ID", AUTH[0])
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", AUTH[1])
+    monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://example.test/hub/auth/callback")
+    monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_SECRET", "test-orcid-secret")
     monkeypatch.setitem(main.app.dependency_overrides, get_engine, lambda: object())
     with TestClient(main.app) as client:
         yield client
@@ -87,6 +90,7 @@ def test_authentication_failures_are_private(client, monkeypatch):
     assert response.headers["WWW-Authenticate"] == "Basic"
     assert_private(response)
     monkeypatch.delenv("HUB_AUTH_CLIENT_SECRET")
+    get_settings.cache_clear()
     response = client.post("/auth/hub/revoke", auth=AUTH, json={"token": "x" * 64})
     assert response.status_code == 503
     assert_private(response)

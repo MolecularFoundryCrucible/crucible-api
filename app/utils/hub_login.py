@@ -1,6 +1,5 @@
 import base64
 import hashlib
-import os
 import re
 import secrets
 from dataclasses import dataclass
@@ -9,17 +8,21 @@ from urllib.parse import urlencode, urlparse
 
 from sqlmodel import Session, select
 
+from app.config import ConfigurationError, get_settings, optional_secret
 from app.models.core_models import HubLoginCode, HubLoginTransaction, User
 from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens_in_session
 from app.utils.permissions import AccessGroupType, Role
 from app.utils.user_utils import sql_add_user_to_access_group
-from app.utils.hub_secrets import HubSecretUnavailable, get_hub_secret, hub_auth_enabled
 
 
 LOGIN_LIFETIME = timedelta(minutes=10)
 CODE_LIFETIME = timedelta(minutes=1)
 CHALLENGE_PATTERN = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 ORCID_PATTERN = re.compile(r"\d{4}-\d{4}-\d{4}-\d{3}[\dX]\Z")
+
+
+def hub_auth_enabled() -> bool:
+    return get_settings().hub.enabled
 
 
 class InvalidHubLogin(Exception):
@@ -51,13 +54,14 @@ def load_login_config() -> HubLoginConfig:
 
     if not hub_auth_enabled():
         raise HubLoginUnavailable
-    client_id = os.getenv("HUB_AUTH_CLIENT_ID", "crucible-hub")
-    callback_uri = os.getenv("HUB_AUTH_CALLBACK_URI", "")
-    public_api_url = os.getenv("HUB_AUTH_PUBLIC_API_URL") or get_api_url()
-    issuer = os.getenv("HUB_AUTH_ORCID_ISSUER", "https://orcid.org")
+    hub = get_settings().hub
+    client_id = hub.client_id
+    callback_uri = hub.callback_uri
+    public_api_url = hub.public_api_url or get_api_url()
+    issuer = hub.orcid_issuer
     try:
-        client_secret = get_hub_secret("HUB_AUTH_CLIENT_SECRET")
-    except HubSecretUnavailable:
+        client_secret = optional_secret("HUB_AUTH_CLIENT_SECRET")
+    except ConfigurationError:
         raise HubLoginUnavailable from None
     if not client_id or not client_secret:
         raise HubLoginUnavailable

@@ -34,10 +34,11 @@ from app.utils.permissions import (
     has_global_permission,
     resolve_authorization_context,
 )
+from app.api.errors import feature_disabled_response
+from app.config import require_feature
 from app.utils.user_utils import assert_profile_fields_available, assign_projects_to_user, commit_user, find_mf_user_proposals
 
 router = APIRouter(tags=["account"])
-engine = get_engine()
 
 
 def _self_user_read(user: User) -> UserRead:
@@ -55,7 +56,7 @@ def get_account_info(auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Return auth context for the authenticated caller: ORCID, access groups, and profile."""
     user_unique_id, ag_list = auth_res.user_id, auth_res.groups
     ag_ids = [ag.id for ag in ag_list]
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         user_info = _self_user_read(user) if user else None
     return AccountInfo(user_unique_id=user_unique_id, access_group_ids=ag_ids, user_info=user_info)
@@ -80,7 +81,7 @@ def get_account_profile(
 ):
     """Return the authenticated caller's profile and presentation capabilities."""
     user_unique_id = auth_res.user_id
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
@@ -104,7 +105,7 @@ def get_account_profile(
 def update_account_profile(auth_res: Annotated[Principal, Depends(authorize_user)], user_update: AccountProfileUpdate):
     """Partially update the authenticated caller's own profile."""
     user_unique_id = auth_res.user_id
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
@@ -118,12 +119,13 @@ def update_account_profile(auth_res: Annotated[Principal, Depends(authorize_user
         return _self_user_read(user)
 
 
-@router.post("/account/sync-projects", response_model=ProjectSyncResult)
+@router.post("/account/sync-projects", response_model=ProjectSyncResult, responses=feature_disabled_response("proposal_sync"))
 def sync_account_projects(auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Add project memberships discovered from the MF proposal database."""
+    require_feature("proposal_sync")
     user_unique_id = auth_res.user_id
     proposal_ids = find_mf_user_proposals(user_unique_id) if is_orcid(user_unique_id) else []
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         result = assign_projects_to_user(session, user_unique_id, proposal_ids)
         session.commit()
     return ProjectSyncResult(orcid=user_unique_id, **result)
@@ -140,7 +142,7 @@ def get_account_join_requests(
     filters = join_request_filters(scope=JoinRequestScope.SUBMITTED, status=[status] if status else None, project_mfid=None,
                                    group_name=None, requester_id=None, reviewer_id=None, requested_after=None,
                                    requested_before=None, reviewed_after=None, reviewed_before=None, q=None)
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return list_join_requests_page(session, auth_res, filters, JoinRequestSort.REQUEST_TIME, SortDirection.DESC, limit, None, offset)
 
 
@@ -157,7 +159,7 @@ def get_account_apikey(
     reject_hub_api_key_read(auth_res)
     response.headers["Deprecation"] = API_KEY_READ_DEPRECATION
     user_unique_id = auth_res.user_id
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         token = session.exec(
             select(ApiToken).where(ApiToken.user_unique_id == user_unique_id)
             .order_by(ApiToken.token_created.desc())
@@ -176,7 +178,7 @@ def regenerate_account_apikey(
     """Issue a new API key for the caller and revoke the previous one. The key is returned only once."""
     require_recent_authentication(auth_res)
     response.headers["Cache-Control"] = "no-store"
-    return ApiKeyRead(api_key=find_or_add_api_access(auth_res.user_id, engine, regenerate=True))
+    return ApiKeyRead(api_key=find_or_add_api_access(auth_res.user_id, get_engine(), regenerate=True))
 
 
 @router.get("/account/verify", response_model=ApiKeyVerify, responses={404: {"description": "A Hub session's account has no API key"}})
@@ -189,7 +191,7 @@ def verify_account_apikey(
     are rejected with 401 before this runs). With a Hub session, describes the account's newest key,
     with valid false once it has expired.
     """
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         if auth_res.credential == "hub":
             token = session.exec(
                 select(ApiToken).where(ApiToken.user_unique_id == auth_res.user_id)
@@ -244,7 +246,7 @@ def _caller_id(session: Session, principal: Principal) -> int:
 @router.get("/account/preferences", response_model=PreferencesRead, responses={200: {"headers": {"ETag": {"description": "Current preferences revision; send it as `If-Match` on PATCH", "schema": {"type": "string"}}}}})
 def get_account_preferences(auth_res: Annotated[Principal, Depends(authorize_user)], response: Response):
     """Return the caller's preferences. A caller who never saved any gets an empty document at revision 0."""
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         row = session.get(UserPreferences, _caller_id(session, auth_res))
         return _preferences_read(row, response)
 
@@ -255,7 +257,7 @@ def update_account_preferences(auth_res: Annotated[Principal, Depends(authorize_
     if not isinstance(patch, dict):
         raise RequestValidationError([{"type": "dict_type", "loc": ("body",), "msg": "Preferences patch must be a JSON object", "input": patch}])
     for attempt in range(2):
-        with Session(engine) as session:
+        with Session(get_engine()) as session:
             user_id = _caller_id(session, auth_res)
             row = session.exec(select(UserPreferences).where(UserPreferences.user_id == user_id).with_for_update()).one_or_none()
             current = _preferences_etag(row.revision if row else 0)
@@ -310,7 +312,7 @@ def _records_recent_resources(session: Session, user_id: int) -> bool:
 @router.post("/account/recent-resources", status_code=204, responses={404: {"description": "The resource does not exist or the caller cannot read it"}})
 def record_recent_resource(auth_res: Annotated[Principal, Depends(authorize_user)], body: RecentResourceRecord):
     """Record that the caller viewed a resource. Repeat views within a minute are not rewritten; the newest 50 entries are kept. Stores nothing when the caller's `record_recent_resources` preference is false."""
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         user_id = _caller_id(session, auth_res)
         if session.exec(_readable_resources(auth_res).where(Resource.mfid == body.resource_mfid)).first() is None:
             raise HTTPException(status_code=404, detail="Resource not found")
@@ -342,7 +344,7 @@ def list_recent_resources(auth_res: Annotated[Principal, Depends(authorize_user)
     record_project = aliased(Project)
     project = func.coalesce(record_project.project_id, Project.project_id)
     identifier = func.coalesce(Instrument.instrument_id, Project.project_id)
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         user_id = _caller_id(session, auth_res)
         statement = (
             select(UserRecentResource.resource_mfid, Resource.resource_type, name, project, identifier, UserRecentResource.viewed_at)
@@ -370,7 +372,7 @@ def list_recent_resources(auth_res: Annotated[Principal, Depends(authorize_user)
 @router.delete("/account/recent-resources", status_code=204)
 def clear_recent_resources(auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Clear the caller's recently viewed resources."""
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         session.execute(delete(UserRecentResource).where(UserRecentResource.user_id == _caller_id(session, auth_res)))
         session.commit()
     return Response(status_code=204)
@@ -379,7 +381,7 @@ def clear_recent_resources(auth_res: Annotated[Principal, Depends(authorize_user
 @router.delete("/account/recent-resources/{resource_mfid}", status_code=204)
 def remove_recent_resource(auth_res: Annotated[Principal, Depends(authorize_user)], resource_mfid: str):
     """Remove one resource from the caller's recently viewed resources. Succeeds when it is not in the list."""
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         session.execute(delete(UserRecentResource).where(UserRecentResource.user_id == _caller_id(session, auth_res), UserRecentResource.resource_mfid == resource_mfid))
         session.commit()
     return Response(status_code=204)

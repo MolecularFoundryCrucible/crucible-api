@@ -1,20 +1,21 @@
 import logging
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 import requests
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
-from app.general_utils import get_secret, is_orcid, is_valid_mfid
-from app.models.core_models import AccessGroup, Project, User
+from app.config import get_secret, get_settings
+from app.general_utils import is_orcid, is_valid_mfid
+from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
+from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 logger = logging.getLogger(__name__)
 # urllib3 logs request URLs at DEBUG, and the proposal service takes its API key in the query string.
 logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
-MF_PROPOSAL_DB_URL = "https://foundry-admin.lbl.gov/api/JSON/sciCat-GetUser.aspx"
 MF_PROPOSAL_DB_TIMEOUT = 10
 
 # A separator (- or _) must always be followed by an alphanumeric run, which
@@ -119,6 +120,25 @@ def commit_user(session) -> None:
         if "ux_user_email_lower" in str(error.orig):
             raise fields_in_use(["email"]) from None
         raise
+
+
+def provision_user(session, *, unique_id: str, first_name: str, last_name: str, email: Optional[str], username: Optional[str],
+                   project_groups: Sequence[AccessGroup] = (), platform_role: Optional[PlatformRole] = None) -> User:
+    """Add a person with their identity group (as owner) and contributor membership of the given
+    project groups. The caller checks availability and commits."""
+    user = User(unique_id=unique_id, first_name=first_name, last_name=last_name, email=email, username=username, is_service_account=False)
+    if platform_role is not None:
+        user.platform_role = platform_role.value
+    session.add(user)
+    identity_group = AccessGroup(group_name=unique_id, group_type=AccessGroupType.IDENTITY.value)
+    session.add(identity_group)
+    session.flush()
+    session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=identity_group.id, role=Role.OWNER.db_value))
+    session.add_all([
+        UserAccessGroupLink(user_id=user.id, accessgroup_id=group.id, role=Role.CONTRIBUTOR.db_value)
+        for group in project_groups
+    ])
+    return user
 
 
 def is_username_available(session, username: str) -> bool:
@@ -275,9 +295,12 @@ def close_pending_join_requests(session, accessgroup_id, orcid, granted_role, ac
 
 
 def find_mf_user_proposals(orcid: str) -> List[str]:
-    """Return MF proposal IDs for an ORCID without blocking on service failures."""
+    """Return MF proposal IDs for an ORCID without blocking on service failures. Returns nothing
+    when proposal sync is disabled."""
+    if not get_settings().proposals.enabled:
+        return []
     try:
-        api_key = get_secret("PROPDB_APIKEY", "propdb-apikey/versions/1")
+        api_key = get_secret("PROPDB_APIKEY")
     except Exception as exc:
         logger.warning("Could not load proposal service credentials: %s", exc)
         return []
@@ -287,7 +310,7 @@ def find_mf_user_proposals(orcid: str) -> List[str]:
 
     try:
         response = requests.get(
-            MF_PROPOSAL_DB_URL,
+            get_settings().proposals.url,
             params={"key": api_key, "orcid": orcid},
             timeout=MF_PROPOSAL_DB_TIMEOUT,
         )

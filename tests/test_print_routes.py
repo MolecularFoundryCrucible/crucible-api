@@ -204,3 +204,23 @@ def test_list_printers_empty_when_none_discovered(client, auth_as, monkeypatch):
 def test_list_printers_requires_authentication(client):
     response = client.get("/print/printers")
     assert response.status_code in (401, 403)
+
+
+def test_print_routes_disabled(client, auth_as, monkeypatch):
+    from app.config import get_settings
+
+    auth_as("0000-0000-0000-0001")
+    monkeypatch.setenv("PRINTING_ENABLED", "false")
+    get_settings.cache_clear()
+
+    def fail(*args, **kwargs):
+        raise AssertionError("no broker connection when printing is disabled")
+
+    monkeypatch.setattr(print_routes, "_publish_and_await_result", fail)
+    monkeypatch.setattr(print_routes, "_list_printer_statuses", fail)
+    listing = client.get("/print/printers")
+    printing = client.post("/print/barcode", json={"printer_id": "lab3-zebra", "mfid": "01hzzzzzzzzzzzzzzzzzzzzzzz", "name": "Sample A"})
+    for response in (listing, printing):
+        assert response.status_code == 501
+        assert response.json()["detail"]["code"] == "feature_disabled"
+        assert response.json()["detail"]["feature"] == "printing"

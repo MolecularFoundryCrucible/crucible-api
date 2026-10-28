@@ -27,7 +27,7 @@ def pg_upload_engine():
         connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     engine = create_engine(url, connect_args={"options": f"-csearch_path={schema},public"})
     try:
-        SQLModel.metadata.create_all(engine, tables=TEST_TABLES + [Keyword.__table__])
+        SQLModel.metadata.create_all(engine, tables=TEST_TABLES + [Keyword.__table__], checkfirst=False)
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE upload_sessions ALTER COLUMN expires_at TYPE timestamptz USING expires_at::timestamptz"))
         with Session(engine) as session:

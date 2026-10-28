@@ -1,35 +1,35 @@
 
 import logging
 import yaml
-import os
 import urllib.parse
-from app.general_utils import get_secret, get_utc_datetime, is_orcid
+from app.config import get_secret, get_settings, load_env_file
+from app.general_utils import get_utc_datetime, is_orcid
 
 logger = logging.getLogger(__name__)
 from fastapi import HTTPException
 from sqlalchemy import join
 from sqlmodel import create_engine, select
-from dotenv import load_dotenv
 # Need a .env file with the following variables
 #DB_PASSWORD
 #DB_USERNAME
 #DB_SERVER
 #DB_DATABASE
 
-def setup_engine(env_file = '.env'):
-    load_dotenv(env_file)
-    password = get_secret('PGDB_PW', 'pgcloud_pw/versions/2')
+def setup_engine(env_file=None):
+    load_env_file(env_file)
+    password = get_secret('PGDB_PW')
     if password is None:
         return
     encoded_pw = urllib.parse.quote_plus(password)
-    db_url = f'postgresql://{os.environ.get("DB_USERNAME")}:{encoded_pw}@{os.environ.get("DB_SERVER")}/{os.environ.get("DB_DATABASE")}'
+    db = get_settings().db
+    db_url = f'postgresql://{db.username}:{encoded_pw}@{db.server}/{db.database}'
     engine = create_engine(
         db_url,
         echo=False,
-        pool_size=int(os.environ.get("DB_POOL_SIZE", "15")),
-        max_overflow=int(os.environ.get("DB_MAX_OVERFLOW", "15")),
-        pool_timeout=int(os.environ.get("DB_POOL_TIMEOUT", "30")),
-        pool_recycle=int(os.environ.get("DB_POOL_RECYCLE", "1800")),
+        pool_size=db.pool_size,
+        max_overflow=db.max_overflow,
+        pool_timeout=db.pool_timeout,
+        pool_recycle=db.pool_recycle,
         pool_pre_ping=True,
     )
     return(engine)

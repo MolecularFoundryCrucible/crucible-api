@@ -221,9 +221,6 @@ def test_singleton_and_generic_routes_filter_expanded_links(
 ):
     group_id, _, _ = _setup(db_engine)
     principal = _reader(group_id)
-    monkeypatch.setattr(datasets_routes, "engine", db_engine)
-    monkeypatch.setattr(samples_routes, "engine", db_engine)
-    monkeypatch.setattr(resources_routes, "engine", db_engine)
 
     dataset = datasets_routes.read_dataset(
         principal,
@@ -278,8 +275,6 @@ def test_singleton_sample_can_omit_embedded_datasets_without_omitting_links(
 ):
     group_id, _, _ = _setup(db_engine)
     principal = _reader(group_id)
-    monkeypatch.setattr(samples_routes, "engine", db_engine)
-    monkeypatch.setattr(resources_routes, "engine", db_engine)
 
     sample = samples_routes.read_sample(
         "sample-root",
@@ -308,7 +303,6 @@ def test_singleton_sample_omits_dataset_query_when_expansions_are_disabled(
 ):
     group_id, _, _ = _setup(db_engine)
     principal = _reader(group_id)
-    monkeypatch.setattr(samples_routes, "engine", db_engine)
 
     def unexpected_dataset_query(*args, **kwargs):
         raise AssertionError("dataset relationship query should be skipped")
@@ -335,8 +329,6 @@ def test_collection_link_expansion_stays_filtered_and_batched(
 ):
     group_id, _, _ = _setup(db_engine)
     principal = _reader(group_id)
-    monkeypatch.setattr(datasets_routes, "engine", db_engine)
-    monkeypatch.setattr(samples_routes, "engine", db_engine)
 
     datasets = datasets_routes.list_datasets(
         principal,

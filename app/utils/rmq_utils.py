@@ -11,16 +11,14 @@ def get_ingestion_tier(file_size: int) -> str:
     elif file_size < _INGESTION_MEDIUM_MAX:
         return "medium"
     return "large"
-from app.utils.constants import rmq_host, rmq_port, rmq_user
-from app.general_utils import get_secret
 
-rmq_pw = get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1")
 
-def send_pika_message(message, exchange, routing_key, user = None, rmq_pw = ''):
-    if user is None:
-        user = rmq_user
-    credentials = pika.PlainCredentials(user, rmq_pw)
-    parameters = pika.ConnectionParameters(rmq_host, rmq_port, '/', credentials)
+def send_pika_message(message, exchange, routing_key, rmq_pw):
+    from app.config import get_settings
+
+    settings = get_settings().ingestion
+    credentials = pika.PlainCredentials(settings.user, rmq_pw)
+    parameters = pika.ConnectionParameters(settings.host, settings.port, '/', credentials)
     connection = pika.BlockingConnection(parameters)
     channel = connection.channel()
     # send the messsage based on input from CLI args

@@ -9,15 +9,13 @@ import paho.mqtt.client as mqtt
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
-from app.general_utils import get_secret, is_valid_mfid
+from app.api.errors import feature_disabled_response
+from app.config import get_secret, get_settings, require_feature
+from app.general_utils import is_valid_mfid
 from app.utils.auth_utils import authorize_user
 from app.utils.permissions import Principal
 
 router = APIRouter(tags=["print"])
-
-MQTT_BROKER = "mqtt.mfdata.org"
-MQTT_PORT = 8883
-MQTT_USERNAME = "crucible-printers"
 
 # Derived from crucible-label-printer's own retry behavior: the Pi retries a
 # failed ptouch-print up to twice with a 3s gap (it can still be feeding/
@@ -107,7 +105,7 @@ def _publish_and_await_result(printer_id: str, mfid: str, name: str) -> tuple[di
     None means no such printer_id has ever published a status (or the
     broker couldn't be reached in time), not that it's merely offline.
     """
-    mqtt_password = get_secret("MQTT_PASSWORD", "mqtt-crucible-printers-passwd/versions/1")
+    mqtt_password = get_secret("MQTT_PASSWORD")
 
     job_id = str(uuid.uuid4())
     payload = {"job_id": job_id, "mfid": mfid, "name": name, "ts": time.time()}
@@ -135,10 +133,10 @@ def _publish_and_await_result(printer_id: str, mfid: str, name: str) -> tuple[di
             status_received.set()
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"crucible-api-{job_id}")
-    client.username_pw_set(MQTT_USERNAME, mqtt_password)
+    client.username_pw_set(get_settings().printing.username, mqtt_password)
     client.tls_set()
     client.on_message = on_message
-    client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
+    client.connect(get_settings().printing.host, get_settings().printing.port, keepalive=60)
     # Subscribe before publishing so a fast result can't arrive before we're
     # listening for it. Status is retained, so it's delivered immediately
     # on subscribe, well before the result (if any) arrives.
@@ -203,7 +201,7 @@ def _list_printer_statuses() -> dict[str, dict]:
     discoverable this way and will not appear -- there is no separate
     registry of printer_ids to fall back on.
     """
-    mqtt_password = get_secret("MQTT_PASSWORD", "mqtt-crucible-printers-passwd/versions/1")
+    mqtt_password = get_secret("MQTT_PASSWORD")
 
     statuses: dict[str, dict] = {}
     subscribed = threading.Event()
@@ -223,11 +221,11 @@ def _list_printer_statuses() -> dict[str, dict]:
         subscribed.set()
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"crucible-api-list-{uuid.uuid4()}")
-    client.username_pw_set(MQTT_USERNAME, mqtt_password)
+    client.username_pw_set(get_settings().printing.username, mqtt_password)
     client.tls_set()
     client.on_message = on_message
     client.on_subscribe = on_subscribe
-    client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
+    client.connect(get_settings().printing.host, get_settings().printing.port, keepalive=60)
     client.subscribe("crucible-printer/+/status", qos=1)
     client.loop_start()
     try:
@@ -240,7 +238,7 @@ def _list_printer_statuses() -> dict[str, dict]:
     return statuses
 
 
-@router.get("/print/printers", response_model=PrinterListResponse)
+@router.get("/print/printers", response_model=PrinterListResponse, responses=feature_disabled_response("printing"))
 def list_printers(
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
@@ -250,6 +248,7 @@ def list_printers(
     there is no separate registry of valid printer_id values. `online`
     uses the same staleness rule as `POST /print/barcode`'s `detail` field.
     '''
+    require_feature("printing")
     statuses = _list_printer_statuses()
     printers = [
         PrinterStatus(
@@ -262,7 +261,7 @@ def list_printers(
     return PrinterListResponse(printers=printers)
 
 
-@router.post("/print/barcode", response_model=BarcodePrintResponse, status_code=200)
+@router.post("/print/barcode", response_model=BarcodePrintResponse, status_code=200, responses=feature_disabled_response("printing"))
 def print_barcode(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     body: BarcodePrintRequest,
@@ -276,6 +275,7 @@ def print_barcode(
     the requested printer's retained MQTT status currently looks online, to
     help diagnose typos vs. offline hardware.
     '''
+    require_feature("printing")
     printer_id = _validate_printer_id(body.printer_id)
     mfid = _validate_mfid(body.mfid)
     payload, result, printer_status = _publish_and_await_result(printer_id, mfid, body.name)

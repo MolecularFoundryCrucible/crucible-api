@@ -25,7 +25,8 @@ def pg_engine():
         connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     engine = create_engine(url, connect_args={"options": f"-csearch_path={schema},public"})
     try:
-        SQLModel.metadata.create_all(engine, tables=[table for table in TEST_TABLES if table is not ResourceEmbedding.__table__] + [Keyword.__table__, ScientificMetadataBinary.__table__])
+        # checkfirst=False: tables other tests left in public must not stand in for this schema's own.
+        SQLModel.metadata.create_all(engine, tables=[table for table in TEST_TABLES if table is not ResourceEmbedding.__table__] + [Keyword.__table__, ScientificMetadataBinary.__table__], checkfirst=False)
         with Session(engine) as session:
             session.add(Resource(mfid="r1", resource_type="dataset"))
             session.commit()
@@ -38,12 +39,12 @@ def pg_engine():
 
 
 @pytest.mark.parametrize("first_exists", [False, True])
-def test_concurrent_metadata_patches_keep_both_updates(pg_engine, monkeypatch, first_exists):
+def test_concurrent_metadata_patches_keep_both_updates(use_engine, pg_engine, monkeypatch, first_exists):
     if first_exists:
         with Session(pg_engine) as session:
             session.add(ScientificMetadataBinary(unique_id="r1", scientific_metadata={"base": 1}))
             session.commit()
-    monkeypatch.setattr(resources_routes, "engine", pg_engine)
+    use_engine(pg_engine)
     original = resources_routes.add_or_update
 
     def slow_add_or_update(*args, **kwargs):
@@ -65,10 +66,9 @@ def test_concurrent_metadata_patches_keep_both_updates(pg_engine, monkeypatch, f
     assert stored[0].scientific_metadata == ({"base": 1} if first_exists else {}) | {"a": 1, "b": 2}
 
 
-def test_deletion_request_and_new_dataset_cannot_both_succeed(pg_engine, monkeypatch, auth_as):
+def test_deletion_request_and_new_dataset_cannot_both_succeed(use_engine, pg_engine, monkeypatch, auth_as):
     from fastapi.testclient import TestClient
     from app.api.main import app
-    from app.api.routes import datasets as datasets_routes
     from app.models.core_models import AccessGroup, Dataset, Project, User
     from app.utils.permissions import AccessGroupType
     with Session(pg_engine) as session:
@@ -82,8 +82,7 @@ def test_deletion_request_and_new_dataset_cannot_both_succeed(pg_engine, monkeyp
                          AccessGroup(group_name="admin", group_type=AccessGroupType.IDENTITY.value)])
         session.commit()
         project_mfid = project.unique_id
-    for module in (resources_routes, datasets_routes):
-        monkeypatch.setattr(module, "engine", pg_engine)
+    use_engine(pg_engine)
     original = resources_routes.deletion_summary
 
     def slow_summary(*args, **kwargs):
@@ -112,7 +111,7 @@ def test_deletion_request_and_new_dataset_cannot_both_succeed(pg_engine, monkeyp
     assert assigned == []
 
 
-def test_metadata_search_member_affiliation_narrows_only_datasets_and_samples(pg_engine, monkeypatch):
+def test_metadata_search_member_affiliation_narrows_only_datasets_and_samples(use_engine, pg_engine, monkeypatch):
     from app.models.core_models import AccessGroup, Dataset, Instrument, ResourceACL, Sample
     from app.models.query_params import ResourceAffiliation
     from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, GroupMembership, Role
@@ -140,7 +139,7 @@ def test_metadata_search_member_affiliation_narrows_only_datasets_and_samples(pg
             GroupMembership(id=public.id, group_name=PUBLIC_GROUP_NAME, role=Role.VIEWER),
             GroupMembership(id=project.id, group_name="my-project", role=Role.EDITOR),
         ))
-    monkeypatch.setattr(resources_routes, "engine", pg_engine)
+    use_engine(pg_engine)
 
     def found(affiliation):
         return sorted(item.unique_id for item in resources_routes.search_resource_metadata_v2(caller, "perovskite", 20, affiliation).items)

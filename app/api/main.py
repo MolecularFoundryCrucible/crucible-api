@@ -2,6 +2,7 @@ import json
 import logging
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
@@ -13,7 +14,8 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.routes import multipart
 from app.build_info import api_version
-from app.utils.multipart_config import MultipartStorageConfig
+from app.api.errors import register_error_handlers
+from app.config import check_settings, read_secrets
 from app.api.dependencies import get_api_root_path
 from app.utils.auth_utils import PRIVILEGE_MODE_HEADER
 from app.utils.permissions import PrivilegeMode, PrivilegeModeSource
@@ -31,14 +33,25 @@ logger = logging.getLogger(__name__)
 # Uvicorn's raw query strings include OAuth callback codes; log_requests records safe request metadata.
 logging.getLogger("uvicorn.access").disabled = True
 
-multipart_storage_config = MultipartStorageConfig.from_env()
 api_root_path = get_api_root_path()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    check_settings()
+    read_secrets()
+    yield
+
+
 app = FastAPI(
     root_path=api_root_path,
     root_path_in_servers=False,
     servers=[{"url": api_root_path}],
     version=api_version(),
+    lifespan=lifespan,
 )
+
+register_error_handlers(app)
 
 
 HUB_AUTH_HEADERS = {

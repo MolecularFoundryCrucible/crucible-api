@@ -57,7 +57,6 @@ from app.utils.deletion_utils import deletion_preview_read, deletion_summary
 from app.general_utils import get_utc_isoformat
 
 router = APIRouter(tags=["deletion"])
-engine = get_engine()
 
 
 def _resolve_project_refs(
@@ -325,7 +324,7 @@ def list_deletion_requests(
     ),
 ):
     """List deletion requests visible to or actionable by the caller."""
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         filters_digest = filter_fingerprint({
             "scope": scope.value,
             "status": status.value if status is not None else None,
@@ -491,7 +490,7 @@ def get_deletion_request(
     request_id: int,
 ):
     """Return a request to its submitter or a caller with deletion-review authority."""
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         requester_user = aliased(User)
         reviewer_user = aliased(User)
         row = session.exec(
@@ -555,7 +554,7 @@ def review_deletion_request(
             detail="status must be 'approved' or 'rejected'.",
         )
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         req = session.exec(
             select(DeletionRequest)
             .where(DeletionRequest.id == request_id)
@@ -743,7 +742,7 @@ def hard_delete_resource_route(
     if force is not True:
         raise HTTPException(status_code=422, detail="Direct deletion requires force=true.")
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         resource = session.exec(
             select(Resource).where(Resource.mfid == resource_id).with_for_update()
         ).one_or_none()
@@ -918,7 +917,7 @@ def list_deletion_audit(
         require_platform_admin(auth_res)
     elif requester_id is not None and requester_id != auth_res.user_id:
         raise HTTPException(status_code=403, detail="Access denied")
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         effective_requester_id = (
             auth_res.user_id
             if scope is DeletionAuditScope.SUBMITTED
@@ -1045,7 +1044,7 @@ def get_deletion_audit(
 ):
     if auth_res.is_service_account:
         raise HTTPException(status_code=403, detail="Deletion audit is available only to human users")
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         requester_user = aliased(User)
         reviewer_user = aliased(User)
         row = session.exec(

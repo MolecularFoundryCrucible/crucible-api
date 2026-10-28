@@ -27,6 +27,12 @@ def _new_cursor():
     )
 
 
+def _restart():
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+
 def test_cursor_signing_key_rotation_accepts_retained_old_key(monkeypatch):
     monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEYS", json.dumps({"old": "old-secret"}))
     monkeypatch.setenv("CRUCIBLE_CURSOR_ACTIVE_KEY_ID", "old")
@@ -37,6 +43,7 @@ def test_cursor_signing_key_rotation_accepts_retained_old_key(monkeypatch):
         json.dumps({"old": "old-secret", "new": "new-secret"}),
     )
     monkeypatch.setenv("CRUCIBLE_CURSOR_ACTIVE_KEY_ID", "new")
+    _restart()
 
     assert decode_cursor(old_cursor, **CURSOR_CONTEXT).kid == "old"
     assert decode_cursor(_new_cursor(), **CURSOR_CONTEXT).kid == "new"
@@ -49,10 +56,12 @@ def test_cursor_rejects_removed_key_and_invalid_configuration(monkeypatch):
 
     monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEYS", json.dumps({"new": "new-secret"}))
     monkeypatch.setenv("CRUCIBLE_CURSOR_ACTIVE_KEY_ID", "new")
+    _restart()
     with pytest.raises(CursorError, match="Unknown cursor signing key"):
         decode_cursor(old_cursor, **CURSOR_CONTEXT)
 
     monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEYS", "[]")
+    _restart()
     with pytest.raises(RuntimeError, match="must map"):
         _new_cursor()
 
@@ -72,3 +81,16 @@ def test_cursor_signature_binds_request_context():
 
     with pytest.raises(CursorError, match="Invalid cursor or request context"):
         decode_cursor(cursor, **{**CURSOR_CONTEXT, "direction": "desc"})
+
+
+def test_cursor_signing_key_reference_is_used(monkeypatch):
+    from app import config
+
+    monkeypatch.delenv("CRUCIBLE_CURSOR_SIGNING_KEYS", raising=False)
+    monkeypatch.delenv("CRUCIBLE_CURSOR_SIGNING_KEY", raising=False)
+    monkeypatch.setenv("CRUCIBLE_CURSOR_SIGNING_KEY_VERSION", "projects/1/secrets/cursor/versions/1")
+    monkeypatch.setattr(config, "get_gcs_secret", lambda name: "from-manager")
+    _restart()
+    from app.utils import cursor_utils
+
+    assert cursor_utils._signing_keys() == ("v1", {"v1": b"from-manager"})

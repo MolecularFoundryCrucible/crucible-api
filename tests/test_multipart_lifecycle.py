@@ -104,7 +104,6 @@ def flow(db_engine, client, auth_as, monkeypatch):
         session.commit()
         group_id = group.id
     auth_as("owner", groups=[("owner-group", group_id, Role.OWNER)])
-    monkeypatch.setattr(routes, "engine", db_engine)
     monkeypatch.setenv("MULTIPART_UPLOAD_ENABLED", "true")
     monkeypatch.setenv("UPLOAD_BUCKET", "dedicated")
     monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", "dedicated")
@@ -520,7 +519,7 @@ def test_reference_client_resumes_after_lost_part_response(flow, tmp_path, monke
 
 
 @pytest.mark.parametrize("credential_kind", ["api_key", "oauth"])
-def test_real_authentication_supports_both_credentials(flow, monkeypatch, credential_kind):
+def test_real_authentication_supports_both_credentials(use_engine, flow, monkeypatch, credential_kind):
     from uuid import uuid4
     from sqlmodel import SQLModel
     from app.models.core_models import ApiToken, HubTokenFamily, HubRefreshToken, HubAccessToken
@@ -530,7 +529,7 @@ def test_real_authentication_supports_both_credentials(flow, monkeypatch, creden
 
     client, engine, storage = flow
     app.dependency_overrides.pop(auth_utils.authenticate_user, None)
-    monkeypatch.setattr(auth_utils, "engine", engine)
+    use_engine(engine)
     if credential_kind == "api_key":
         credential = uuid4().hex
         with Session(engine) as session:
@@ -611,14 +610,14 @@ def test_cleanup_protection_requires_server_recorded_generation(flow, generation
     assert bool(storage.objects) == (generation is not None)
 
 
-def test_unverified_multipart_hash_does_not_dedupe_legacy_paths(flow, monkeypatch):
+def test_unverified_multipart_hash_does_not_dedupe_legacy_paths(use_engine, flow, monkeypatch):
     client, engine, _ = flow
     publish(flow)
     publish(flow, filename="copy.bin")
     response = client.post("/datasets/ds/files", json={"filename": "legacy.bin", "size": len(DATA), "sha256_hash": SHA})
     assert response.status_code == 200, response.text
     assert response.json()["filename"] == "legacy.bin"
-    monkeypatch.setattr("app.api.routes.gcs_storage.engine", engine)
+    use_engine(engine)
     monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda dsid: ("token", "2030-01-01T00:00:00+00:00"))
     response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": SHA})
     assert response.status_code == 200, response.text
@@ -682,12 +681,12 @@ def test_file_record_filenames_are_unique_within_a_dataset(flow):
     assert sorted(f["filename"] for f in client.get("/datasets/ds/files").json()) == ["alias.bin", "data.bin"]
 
 
-def test_legacy_paths_respect_multipart_filename_reservation(flow, monkeypatch):
+def test_legacy_paths_respect_multipart_filename_reservation(use_engine, flow, monkeypatch):
     client, engine, _ = flow
     start(flow)
     response = client.post("/datasets/ds/files", json={"filename": "data.bin", "size": len(DATA), "sha256_hash": "1" * 64})
     assert response.status_code == 409
-    monkeypatch.setattr("app.api.routes.gcs_storage.engine", engine)
+    use_engine(engine)
     monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda: ("token", "2030-01-01T00:00:00+00:00"))
     response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "data.bin", "size": len(DATA)})
     assert response.status_code == 409
@@ -1280,9 +1279,9 @@ def test_new_files_touch_the_dataset(flow):
     assert dataset_touched(engine)
 
 
-def test_legacy_completion_touches_the_dataset(flow, monkeypatch):
+def test_legacy_completion_touches_the_dataset(use_engine, flow, monkeypatch):
     client, engine, _ = flow
-    monkeypatch.setattr("app.api.routes.gcs_storage.engine", engine)
+    use_engine(engine)
     monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda dsid: ("token", "2030-01-01T00:00:00+00:00"))
     upload_id = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA)}).json()["upload_id"]
     age_dataset(engine)
@@ -1299,9 +1298,9 @@ LEAKY = "https://storage.googleapis.com/mf-storage-prod/x signer@mf-crucible.iam
 
 
 @pytest.mark.parametrize("failure, status", [(NotFound("gone"), 422), (RuntimeError(LEAKY), 503)])
-def test_legacy_completion_storage_errors_stay_server_side(flow, monkeypatch, failure, status):
+def test_legacy_completion_storage_errors_stay_server_side(use_engine, flow, monkeypatch, failure, status):
     client, engine, _ = flow
-    monkeypatch.setattr("app.api.routes.gcs_storage.engine", engine)
+    use_engine(engine)
     monkeypatch.setattr("app.api.routes.gcs_storage._mint_upload_token", lambda dsid: ("token", "2030-01-01T00:00:00+00:00"))
     upload_id = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA)}).json()["upload_id"]
 
@@ -1315,9 +1314,9 @@ def test_legacy_completion_storage_errors_stay_server_side(flow, monkeypatch, fa
     assert "googleapis" not in response.text and "iam" not in response.text and "gone" not in response.text
 
 
-def test_legacy_initiate_token_errors_stay_server_side(flow, monkeypatch):
+def test_legacy_initiate_token_errors_stay_server_side(use_engine, flow, monkeypatch):
     client, engine, _ = flow
-    monkeypatch.setattr("app.api.routes.gcs_storage.engine", engine)
+    use_engine(engine)
 
     def mint(dsid):
         raise RuntimeError(LEAKY)

@@ -441,3 +441,4 @@ These are separate follow-up changes, not reasons to extend the production maint
 | `docs/permission_system_api_changes.md` | Client-facing route and schema changes. |
 | `docs/production_migration_data_followups.md` | Accepted production instrument and ownership anomalies with reconciliation recipes. |
 | `migrations/README.md` | Where schema revisions and data scripts belong. |
+| `docs/archive/permission_migration_2026-08_tests/` | The end-to-end test of this migration, archived 2026-10-27 and no longer run. |

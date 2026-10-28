@@ -11,7 +11,8 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import DatasetMfid
-from app.general_utils import get_secret, get_utc_datetime
+from app.config import get_secret, require_feature
+from app.general_utils import get_utc_datetime
 from app.models.core_models import Dataset, PostprocessingRun
 from app.models.pagination import PaginatedResponse
 from app.models.pipelines import PipelineRead, PostprocessingRunRead, PostprocessingRunStatus, PostprocessingRunUpdate, PostprocessRequest
@@ -23,7 +24,6 @@ from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["postprocessing"])
-engine = get_engine()
 
 FINISHED = {"completed", "failed"}
 
@@ -49,8 +49,7 @@ def _publish(run: PostprocessingRun, routing_key: str):
         }),
         exchange="",
         routing_key=routing_key,
-        user="admin",
-        rmq_pw=get_secret("RABBITMQ_DEFAULT_PW", "rabbitmq_default_pw/versions/1"),
+        rmq_pw=get_secret("RABBITMQ_DEFAULT_PW"),
     )
 
 
@@ -85,6 +84,7 @@ def _replay(session, run: PostprocessingRun, fingerprint: str, routing_key: str)
 
 
 def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_name: str, parameters: dict, idempotency_key: Optional[str] = None) -> PostprocessingRun:
+    require_feature("ingestion")
     pipeline = PIPELINES.get(pipeline_name)
     if pipeline is None:
         raise HTTPException(status_code=422, detail={"code": "unknown_pipeline", "message": f"Unknown pipeline '{pipeline_name}'", "pipelines": sorted(PIPELINES)})
@@ -94,7 +94,7 @@ def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_n
         raise HTTPException(status_code=422, detail={"code": "invalid_parameters", "errors": json.loads(error.json(include_url=False))}) from None
     fingerprint = hashlib.sha256(json.dumps({"pipeline": pipeline.name, "parameters": parameters}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         dataset = session.exec(select_readable(Dataset, dataset_mfid, principal=principal)).one_or_none()
         if dataset is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -130,6 +130,7 @@ def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_n
                         403: {"description": "Caller is below contributor on the dataset"},
                         409: {"description": "The dataset has an active deletion request (`pending_deletion`), or the Idempotency-Key was already used for a different pipeline or parameters (`idempotency_key_reused`)"},
                         422: {"description": "Unknown pipeline (`unknown_pipeline`) or invalid parameters (`invalid_parameters`)"},
+                        501: {"description": "Postprocessing is not enabled on this server (`feature_disabled`)"},
                         503: {"description": "The run could not be queued (`pipeline_unavailable`); it is recorded as failed"}})
 def postprocess_dataset(dataset_mfid: DatasetMfid, body: PostprocessRequest, auth_res: Annotated[Principal, Depends(authorize_user)],
                         idempotency_key: Annotated[Optional[str], Header(min_length=1, max_length=128, description="Retries with the same key return the original run instead of starting another.")] = None):
@@ -147,7 +148,7 @@ def list_postprocessing_runs(
     offset: int = Query(default=0, ge=0),
 ):
     '''List postprocessing runs on datasets the caller can read, newest first.'''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         if dataset_mfid is not None and session.exec(select_active(Dataset, dataset_mfid, Dataset.id, principal=auth_res)).first() is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
         query = (
@@ -181,7 +182,7 @@ def _run_with_access(session, principal, run_id, permission):
 @router.get("/postprocessing_runs/{run_id}", response_model=PostprocessingRunRead)
 def get_postprocessing_run(run_id: int, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Return one postprocessing run. Requires read access to its dataset.'''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         return _run_with_access(session, auth_res, run_id, Permission.READ)
 
 
@@ -189,7 +190,7 @@ def get_postprocessing_run(run_id: int, auth_res: Annotated[Principal, Depends(a
               responses={409: {"description": "The run already finished (`run_finished`)"}})
 def update_postprocessing_run(run_id: int, body: PostprocessingRunUpdate, auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Report a run's progress: running, completed, or failed with an error. Requires edit access to its dataset.'''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         run = _run_with_access(session, auth_res, run_id, Permission.EDIT)
         if run.status in FINISHED:
             raise HTTPException(status_code=409, detail={"code": "run_finished", "message": f"Run already {run.status}"})

@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -13,6 +12,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.build_info import api_version, branch_name, git_commit
+from app.config import get_settings
 from app.models.core_models import Keyword
 from app.models.health import LivenessResponse, ReadinessResponse
 from app.utils.auth_utils import authorize_user
@@ -20,13 +20,12 @@ from app.utils.auth_utils import authorize_user
 router = APIRouter(tags=["misc"])
 logger = logging.getLogger(__name__)
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "migrations"
-engine = get_engine()
 
 
 def _check_db():
     t0 = time.monotonic()
     try:
-        with Session(engine) as session:
+        with Session(get_engine()) as session:
             revisions = session.execute(
                 text("SELECT version_num FROM alembic_version ORDER BY version_num")
             ).scalars().all()
@@ -79,8 +78,12 @@ def _schema_state(current, expected):
 
 
 def _expected_schema_revisions():
-    configured = os.getenv("EXPECTED_DB_REVISIONS", "")
-    return sorted(revision.strip() for revision in configured.split(",") if revision.strip())
+    configured = get_settings().db.expected_revisions or ""
+    revisions = sorted(revision.strip() for revision in configured.split(",") if revision.strip())
+    if revisions:
+        return revisions
+    scripts = _migration_scripts()
+    return sorted(scripts.get_heads()) if scripts is not None else []
 
 
 @router.get("/health/live", response_model=LivenessResponse)
@@ -135,7 +138,7 @@ def list_all_keywords():
     Returns a list of all keywords in the database.
     Each keyword includes the num_datasets field showing how many datasets use that keyword.
     '''
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         keywords = session.exec(select(Keyword)).all()
     return keywords
 
@@ -152,7 +155,7 @@ def read_keyword(keyword: str, permissive: bool = True):
     else:
         cmd = select(Keyword).where(Keyword.keyword == keyword)
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         K = session.exec(cmd).all()
     return(K)
 

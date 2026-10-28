@@ -34,7 +34,11 @@ Status: written 2026-10-28 for review; not started.
 
 ---
 
-## Before the storage work: Hub image from GHCR
+## Order (agreed 2026-10-28)
+
+Task 1a, Task 1b, Task 2, Task 6, Task 3, Task 4, Task 5, Task 7. Task 1 is split so each review stays small, and the bundle (Task 6) comes right after the S3 adapter, so a self-hosted installation stores files as early as possible; the cleanup job, empty files, and the legacy routes matter less in a fresh installation and follow. Task numbers below keep their original names.
+
+## Before the storage work: Hub image from GHCR (done, PR #381)
 
 Small, independent pull request, worth doing first. The Hub now publishes `ghcr.io/molecularfoundrycrucible/crucible-hub:1.7.1` (amd64 and arm64, anonymous pulls, label `gov.lbl.crucible.api.min-version=3.2.0`). Switch the `compose-hub` CI job and the install guide from building the Hub at `v1.7.0` to pulling that image (`HUB_IMAGE` in the Hub's `.env`, then `docker compose pull hub hub-setup`), pinned by digest in CI. Verify with the existing `compose-hub` job.
 
@@ -60,7 +64,12 @@ After mf-crucible-deploy takes over (its Phase 3), staging runs only release ima
 
 ### Task 1: Storage interface with the Google adapter behind it
 
-No behavior change for the Foundry; this is the seam every later task uses.
+No behavior change for the Foundry; this is the seam every later task uses. Split into two pull requests:
+
+- **Task 1a:** `app/storage/` with the protocol, `GoogleStore`'s multipart methods (`start_upload`, `open_uploads`, `list_parts`, `sign_part`, `finish_upload`, `abort_upload`, `head`, `delete`) and `get_store()`; the multipart service and routes use it; `app/services/multipart_storage.py` is removed; `MemoryStorage` and `tests/test_multipart_storage.py` move to the new names.
+- **Task 1b:** signed downloads, retiring (`retire`, `retires_by_lifecycle`), and record files (`put_bytes`, `get_text`) move behind the same interface; `StorageObject.generation` becomes `version: str | None`; the doc corrections.
+
+Each is verified on staging (crucible-tests plus a real upload, replace, and download) before the next starts.
 
 **Files:**
 - Create: `app/storage/__init__.py`, `app/storage/base.py`, `app/storage/gcs.py`

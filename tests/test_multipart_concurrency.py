@@ -51,11 +51,11 @@ class SerialStorage:
         self.lock = Lock()
         self.created = []
 
-    def uploads(self, upload):
+    def open_uploads(self, bucket, key):
         with self.lock:
             return list(self.created)
 
-    def initiate(self, upload):
+    def start_upload(self, bucket, key):
         with self.lock:
             self.created.append(f"provider-{len(self.created) + 1}")
             return self.created[-1]

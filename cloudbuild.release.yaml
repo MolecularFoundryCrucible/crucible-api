@@ -1,0 +1,47 @@
+# Release images: one image per version tag (vX.Y.Z), the same for every environment, deployed by
+# mf-crucible-deploy. Environment values such as BRANCH_NAME come from each deployment's ConfigMap.
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        tag='${TAG_NAME}'
+        version="$${tag#v}"
+        declared=$(awk -F '"' '/^version = / {print $$2; exit}' pyproject.toml)
+        if [ "$$version" != "$$declared" ]; then
+          echo "Tag $$tag does not match version $$declared in pyproject.toml" >&2
+          exit 1
+        fi
+        docker build \
+          --build-arg githash=${COMMIT_SHA} \
+          --build-arg api_version="$$version" \
+          --label org.opencontainers.image.title=crucible-api \
+          --label org.opencontainers.image.version="$$version" \
+          --label org.opencontainers.image.revision=${COMMIT_SHA} \
+          --label org.opencontainers.image.source=https://github.com/MolecularFoundryCrucible/crucible-api \
+          --tag "${_IMAGE}:$$version" \
+          --tag "${_IMAGE}:${COMMIT_SHA}" \
+          .
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: [push, --all-tags, "${_IMAGE}"]
+  - id: digest
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        digest=$(gcloud artifacts docker images describe "${_IMAGE}:${COMMIT_SHA}" --format='value(image_summary.digest)')
+        echo "Released ${_IMAGE}@$$digest (${TAG_NAME}, ${COMMIT_SHA})"
+substitutions:
+  _IMAGE: us-central1-docker.pkg.dev/${PROJECT_ID}/crucible-api-releases/crucible-api
+options:
+  dynamicSubstitutions: true
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1200s

@@ -11,7 +11,7 @@ from app.api.path_params import DatasetMfid
 from app.models.datasets import AssociatedFileRead
 from app.models.multipart import MultipartComplete, MultipartInitiate, MultipartParts, MultipartReplace, MultipartStatus, SignedPart, SignedParts, UploadedPart
 from app.services import multipart as service
-from app.services.multipart_storage import get_multipart_storage, StorageFailure, UploadMissing
+from app.storage import StorageFailure, UploadMissing, get_store
 from app.utils.auth_utils import authorize_user
 from app.utils.multipart_config import MultipartStorageConfig
 from app.utils.permissions import Principal
@@ -24,7 +24,7 @@ def initiate(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Data
     config = MultipartStorageConfig.from_env()
     if not config.enabled:
         raise HTTPException(503, "New multipart uploads are disabled", headers={"Retry-After": "60"})
-    return service.initiate(get_engine(), get_multipart_storage, auth_res, dsid, body, idempotency_key, config)
+    return service.initiate(get_engine(), get_store, auth_res, dsid, body, idempotency_key, config)
 
 
 @router.post("/files/{file_mfid}/upload/multipart/initiate", response_model=MultipartStatus, responses={400: {"description": "The file is a catalog-only (non-GCS) record; edit it with `PATCH /files/{file_id}`"}, 409: {"description": "Another replace of this file is in progress: `{\"detail\": {\"code\": \"replace_in_progress\", \"upload_id\": ..., \"message\": ...}}`. A reused Idempotency-Key with a different request returns a plain string detail"}, 412: {"description": "If-Match does not match the file's current ETag: `{\"detail\": {\"code\": \"etag_mismatch\", \"etag\": ..., \"message\": ...}}`"}})
@@ -33,7 +33,7 @@ def initiate_replace(auth_res: Annotated[Principal, Depends(authorize_user)], fi
     config = MultipartStorageConfig.from_env()
     if not config.enabled:
         raise HTTPException(503, "New multipart uploads are disabled", headers={"Retry-After": "60"})
-    return service.initiate_replace(get_engine(), get_multipart_storage, auth_res, file_mfid, body, idempotency_key, if_match, config, backfill=gcs_storage._ensure_storage_path)
+    return service.initiate_replace(get_engine(), get_store, auth_res, file_mfid, body, idempotency_key, if_match, config, backfill=gcs_storage._ensure_storage_path)
 
 
 @router.post("/datasets/{dataset_mfid}/upload/multipart/{upload_id}/parts", response_model=SignedParts)
@@ -66,11 +66,11 @@ def sign_parts(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
 
     def sign(part):
         size = service.part_size(upload, part.part_number)
-        url, headers = storage.sign_part(upload, part.part_number, part.crc32c, size, expires_at)
+        url, headers = storage.sign_part(upload.bucket, upload.gcs_path, upload.provider_upload_id, part.part_number, part.crc32c, size, expires_at)
         return SignedPart(part_number=part.part_number, url=url, headers=headers, offset=(part.part_number - 1) * upload.part_size, size=size, expires_at=expires_at)
 
     try:
-        storage = get_multipart_storage()
+        storage = get_store()
         with ThreadPoolExecutor(max_workers=8) as pool:
             return SignedParts(parts=list(pool.map(sign, body.parts)))
     except Exception:
@@ -85,8 +85,8 @@ def get_status(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
         session.expunge(upload)
     if upload.state == "uploading" and not service.expired(upload):
         try:
-            parts, marker = get_multipart_storage().list_parts(upload, part_number_marker, limit)
-            result.parts = [UploadedPart(**part) for part in parts]
+            parts, marker = get_store().list_parts(upload.bucket, upload.gcs_path, upload.provider_upload_id, part_number_marker, limit)
+            result.parts = [UploadedPart(part_number=part.part_number, size=part.size, etag=part.etag) for part in parts]
             result.next_part_number_marker = marker
         except UploadMissing:
             raise HTTPException(409, "Provider upload is unavailable; abort and start a new upload") from None
@@ -97,10 +97,10 @@ def get_status(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
 
 @router.post("/datasets/{dataset_mfid}/upload/multipart/complete", response_model=AssociatedFileRead)
 def complete(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, body: MultipartComplete):
-    return service.complete(get_engine(), get_multipart_storage, auth_res, dsid, body, retire=lambda path, generation, retired_at: gcs_storage._retire_object(path, generation, retired_at))
+    return service.complete(get_engine(), get_store, auth_res, dsid, body, retire=lambda path, generation, retired_at: gcs_storage._retire_object(path, generation, retired_at))
 
 
 @router.delete("/datasets/{dataset_mfid}/upload/multipart/{upload_id}", status_code=204)
 def abort(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, upload_id: str):
-    service.abort(get_engine(), get_multipart_storage, auth_res, dsid, upload_id)
+    service.abort(get_engine(), get_store, auth_res, dsid, upload_id)
     return Response(status_code=204)

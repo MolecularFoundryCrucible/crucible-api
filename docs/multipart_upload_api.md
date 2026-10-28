@@ -88,4 +88,4 @@ The ingestion message retains `filename` as the full bucket/object path, adds `s
 
 The local tests use a deterministic storage adapter for lifecycle tests, mocked XML responses for adapter contract checks, and disposable PostgreSQL for migrations and concurrency. Signing, per-part checksum rejection, assembly, CRC32C verification, generation-pinned download, and deletion were smoke-tested from the staging API pod against the staging bucket.
 
-`MultipartStorage.sha256` is retained as the generation-pinned primitive for a future verification job. See [S3-compatible storage backends](multipart_storage_backends.md) for portability notes.
+The storage calls go through the `ObjectStore` interface in `app/storage/` (`GoogleStore` today). Server-side SHA-256 verification is not implemented; `sha256_hash` is the client's claim. See [S3-compatible storage backends](multipart_storage_backends.md) for portability notes.

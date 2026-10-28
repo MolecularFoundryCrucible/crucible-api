@@ -15,7 +15,7 @@ from app.api.routes import multipart as routes
 from app.models.core_models import AccessGroup, AssociatedFile, Dataset, DeletionRequest, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
 from app.models.datasets import file_etag
 from app.services import multipart as service
-from app.services.multipart_storage import StorageFailure, UploadMissing
+from app.storage import ObjectInfo, Part, StorageFailure, UploadMissing
 from app.utils.permissions import Role
 
 BASE = "/datasets/ds/upload/multipart"
@@ -32,40 +32,41 @@ class MemoryStorage:
         self.completions = 0
         self.fail_after_complete = False
         self.fail_after_initiate = False
-        self.read_hook = None
         self.complete_hook = None
         self.deleted = []
+        self.finished_checksums = []
 
-    def initiate(self, upload):
+    def start_upload(self, bucket, key):
         self.serial += 1
         identifier = str(self.serial)
-        self.pending[identifier] = {"key": upload.gcs_path, "parts": {}}
+        self.pending[identifier] = {"key": key, "parts": {}}
         if self.fail_after_initiate:
             self.fail_after_initiate = False
             raise StorageFailure()
         return identifier
 
-    def uploads(self, upload):
-        return [key for key, value in self.pending.items() if value["key"] == upload.gcs_path]
+    def open_uploads(self, bucket, key):
+        return [identifier for identifier, value in self.pending.items() if value["key"] == key]
 
-    def sign_part(self, upload, number, checksum, size, expires_at):
-        return f"https://storage.example/{upload.provider_upload_id}/{number}", {"x-goog-hash": f"crc32c={checksum}", "Content-Length": str(size)}
+    def sign_part(self, bucket, key, upload_id, number, crc32c, size, expires_at):
+        return f"https://storage.example/{upload_id}/{number}", {"x-goog-hash": f"crc32c={crc32c}", "Content-Length": str(size)}
 
     def put(self, identifier, number, data=DATA):
         self.pending[identifier]["parts"][number] = data
 
-    def list_parts(self, upload, marker=0, limit=1000):
-        if upload.provider_upload_id not in self.pending:
+    def list_parts(self, bucket, key, upload_id, marker=0, limit=1000):
+        if upload_id not in self.pending:
             raise UploadMissing()
-        parts = self.pending[upload.provider_upload_id]["parts"]
+        parts = self.pending[upload_id]["parts"]
         numbers = sorted(number for number in parts if number > marker)
         page = numbers[:limit]
-        return [{"part_number": n, "size": len(parts[n]), "etag": hashlib.md5(parts[n]).hexdigest()} for n in page], page[-1] if len(numbers) > limit else None
+        return [Part(part_number=n, size=len(parts[n]), etag=hashlib.md5(parts[n]).hexdigest()) for n in page], page[-1] if len(numbers) > limit else None
 
-    def complete(self, upload, parts):
-        pending = self.pending.pop(upload.provider_upload_id)
-        data = b"".join(pending["parts"][part["part_number"]] for part in parts)
-        self.objects[upload.gcs_path] = {"generation": "7", "size": len(data), "crc32c": base64.b64encode(google_crc32c.Checksum(data).digest()).decode(), "data": data}
+    def finish_upload(self, bucket, key, upload_id, parts, crc32c_by_part):
+        pending = self.pending.pop(upload_id)
+        data = b"".join(pending["parts"][part.part_number] for part in parts)
+        self.objects[key] = {"generation": "7", "size": len(data), "crc32c": base64.b64encode(google_crc32c.Checksum(data).digest()).decode(), "data": data}
+        self.finished_checksums.append(crc32c_by_part)
         self.completions += 1
         if self.complete_hook:
             self.complete_hook()
@@ -73,23 +74,17 @@ class MemoryStorage:
             self.fail_after_complete = False
             raise StorageFailure()
 
-    def metadata(self, upload):
-        return self.objects.get(upload.gcs_path)
+    def head(self, bucket, key):
+        stored = self.objects.get(key)
+        return ObjectInfo(size=stored["size"], crc32c=stored["crc32c"], version=stored["generation"]) if stored else None
 
-    def sha256(self, upload, generation, heartbeat):
-        assert generation == self.objects[upload.gcs_path]["generation"]
-        if self.read_hook:
-            self.read_hook()
-        heartbeat()
-        return hashlib.sha256(self.objects[upload.gcs_path]["data"]).hexdigest()
+    def abort_upload(self, bucket, key, upload_id):
+        self.pending.pop(upload_id, None)
 
-    def abort(self, upload, identifier):
-        self.pending.pop(identifier, None)
-
-    def delete(self, upload, generation):
-        assert self.objects[upload.gcs_path]["generation"] == generation
-        self.deleted.append((upload.gcs_path, generation))
-        self.objects.pop(upload.gcs_path)
+    def delete(self, bucket, key, version):
+        assert self.objects[key]["generation"] == version
+        self.deleted.append((key, version))
+        self.objects.pop(key)
 
 
 @pytest.fixture
@@ -110,7 +105,7 @@ def flow(db_engine, client, auth_as, monkeypatch):
     monkeypatch.setenv("MULTIPART_UPLOAD_SIGNER", "signer@example.iam.gserviceaccount.com")
     monkeypatch.setenv("MULTIPART_UPLOAD_PROJECT", "test-project")
     storage = MemoryStorage()
-    monkeypatch.setattr(routes, "get_multipart_storage", lambda: storage)
+    monkeypatch.setattr(routes, "get_store", lambda: storage)
     return client, db_engine, storage
 
 
@@ -463,11 +458,20 @@ def test_database_failure_after_provider_completion_retries_one_publication(flow
     assert len(files(engine)) == 1
 
 
+def test_completion_gives_the_store_each_authorized_part_checksum(flow):
+    _, _, storage = flow
+    identifier = start(flow)
+    put(flow, identifier)
+    assert complete(flow, identifier).status_code == 200
+    assert storage.finished_checksums == [{1: CRC}]
+
+
 def test_completion_aborts_duplicate_provider_uploads(flow):
     _, engine, storage = flow
     identifier = start(flow)
     put(flow, identifier)
-    storage.initiate(row(engine, identifier))
+    upload = row(engine, identifier)
+    storage.start_upload(upload.bucket, upload.gcs_path)
     assert complete(flow, identifier).status_code == 200
     assert not storage.pending
     assert storage.objects

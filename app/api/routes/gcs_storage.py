@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -11,13 +10,15 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import DatasetMfid
-from app.config import get_secret, get_settings
+from app.config import get_settings
 from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
 from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead, UploadMultipartInitiateRead
 from app.services import multipart
 from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE
-from app.services.storage_downloads import DOWNLOAD_LIFETIME, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, retire_object, signed_download_url, upload_bucket
+from app.services.storage_downloads import DOWNLOAD_LIFETIME, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, upload_bucket
+from app.storage import get_store
+from app.storage.gcs import key_client, key_credentials
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
 from app.utils.sql_utils import add_or_update, assert_not_pending_deletion, touch_resource_modification_time
@@ -29,38 +30,18 @@ _GCS_UPLOAD_API = "https://storage.googleapis.com/upload/storage/v1/b"
 _CHUNK_SIZE_HINT = 8 * 1024 * 1024  # 8 MiB — GCS recommended chunk multiple
 _MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 500 * 1024 ** 3))  # default 500 GiB
 
-_gcs_credentials = None
 _gcs_authed_session = None
-_gcs_storage_client = None
-
-
-def _get_gcs_credentials():
-    global _gcs_credentials
-    if _gcs_credentials is None:
-        from google.oauth2 import service_account
-        sa_creds = get_secret("GCS_SA")
-        service_account_info = json.loads(sa_creds)
-        _gcs_credentials = service_account.Credentials.from_service_account_info(service_account_info)
-    return _gcs_credentials
 
 
 def _get_gcs_authed_session():
     global _gcs_authed_session
     if _gcs_authed_session is None:
         from google.auth.transport.requests import AuthorizedSession
-        scoped = _get_gcs_credentials().with_scopes(
+        scoped = key_credentials().with_scopes(
             ["https://www.googleapis.com/auth/devstorage.read_write"]
         )
         _gcs_authed_session = AuthorizedSession(scoped)
     return _gcs_authed_session
-
-
-def _get_gcs_storage_client():
-    global _gcs_storage_client
-    if _gcs_storage_client is None:
-        from google.cloud import storage as gcs
-        _gcs_storage_client = gcs.Client(credentials=_get_gcs_credentials())
-    return _gcs_storage_client
 
 
 def _determine_storage_path(dataset_mfid, filename):
@@ -73,7 +54,7 @@ def _determine_storage_path(dataset_mfid, filename):
     exact = f"{dataset_mfid}/{filename}"
     names = [
         blob.name
-        for blob in _get_gcs_storage_client().bucket(bucket).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
+        for blob in key_client().bucket(bucket).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
         if not blob.name.startswith(multipart_prefix(dataset_mfid))
     ]
     if exact in names:
@@ -87,11 +68,6 @@ def _determine_storage_path(dataset_mfid, filename):
             detail=f"Several stored objects match {basename!r}; the file's location cannot be determined",
         )
     raise HTTPException(status_code=404, detail="File not found in production storage")
-
-def _retire_object(storage_path, generation, retired_at):
-    bucket, _, key = storage_path.partition("/")
-    return retire_object(_get_gcs_storage_client(), bucket, key, generation, retired_at)
-
 
 def _ensure_storage_path(af, dsid: str, session) -> str:
     """Backfill storage_path from GCS if not set. Returns the storage_path."""
@@ -109,7 +85,7 @@ def _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename
         logger.warning("file_location_rejected file=%s dataset=%s reason=%s", file_mfid, dataset_mfid, error.reason)
         raise HTTPException(status_code=409, detail=error.detail()) from None
     try:
-        url = signed_download_url(_get_gcs_storage_client(), obj, filename, disposition)
+        url = get_store().signed_download(obj.bucket, obj.key, obj.version, filename, disposition, DOWNLOAD_LIFETIME)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found in storage") from None
     except Exception:
@@ -124,7 +100,7 @@ def _mint_upload_token(dsid: str) -> tuple[str, str]:
     bucket = upload_bucket()
     from google.auth import downscoped
     from google.auth.transport.requests import Request
-    scoped = _get_gcs_credentials().with_scopes(
+    scoped = key_credentials().with_scopes(
         ["https://www.googleapis.com/auth/devstorage.read_write"]
     )
     if not get_settings().storage.legacy_upload_token_downscope:
@@ -345,7 +321,7 @@ def complete_resumable_upload(
             raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
 
         try:
-            blob = _get_gcs_storage_client().bucket(bucket).blob(us.object_key)
+            blob = key_client().bucket(bucket).blob(us.object_key)
             blob.reload()
         except NotFound:
             raise HTTPException(status_code=422, detail="Uploaded file not found in storage") from None

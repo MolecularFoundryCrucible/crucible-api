@@ -7,6 +7,7 @@ from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
 import app.api.routes.gcs_storage as gcs_storage
+import app.storage.gcs as google
 from app.models.core_models import AssociatedFile, Dataset, IngestionRequest, Resource
 from app.utils.permissions import PlatformRole
 
@@ -36,7 +37,8 @@ def signer(monkeypatch):
     blob = client.bucket.return_value.blob.return_value
     blob.content_type = "application/octet-stream"
     blob.generate_signed_url.return_value = "https://signed.example/x"
-    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: client)
+    monkeypatch.setattr(google, "key_client", lambda: client)
+    monkeypatch.setattr(gcs_storage, "get_store", lambda: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
     return client
 
 
@@ -145,14 +147,14 @@ def test_backfill_skips_multipart_objects(db_engine, monkeypatch):
     listed = [SimpleNamespace(name=f"{DS}/_files/abc-scan.pdf"), SimpleNamespace(name=f"{DS}/raw/scan.pdf")]
     client = MagicMock()
     client.bucket.return_value.list_blobs.return_value = listed
-    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: client)
+    monkeypatch.setattr(gcs_storage, "key_client", lambda: client)
     assert gcs_storage._determine_storage_path(DS, "scan.pdf") == f"mf-storage-prod/{DS}/raw/scan.pdf"
 
 
 def _listing(monkeypatch, *names):
     client = MagicMock()
     client.bucket.return_value.list_blobs.return_value = [SimpleNamespace(name=f"{DS}/{name}") for name in names]
-    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: client)
+    monkeypatch.setattr(gcs_storage, "key_client", lambda: client)
 
 
 def test_backfill_needs_a_whole_name_match(monkeypatch):

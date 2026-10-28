@@ -11,6 +11,7 @@ from app.api.path_params import DatasetMfid
 from app.models.datasets import AssociatedFileRead
 from app.models.multipart import MultipartComplete, MultipartInitiate, MultipartParts, MultipartReplace, MultipartStatus, SignedPart, SignedParts, UploadedPart
 from app.services import multipart as service
+from app.services.storage_downloads import retire_object
 from app.storage import StorageFailure, UploadMissing, get_store
 from app.utils.auth_utils import authorize_user
 from app.utils.multipart_config import MultipartStorageConfig
@@ -97,7 +98,7 @@ def get_status(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
 
 @router.post("/datasets/{dataset_mfid}/upload/multipart/complete", response_model=AssociatedFileRead)
 def complete(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: DatasetMfid, body: MultipartComplete):
-    return service.complete(get_engine(), get_store, auth_res, dsid, body, retire=lambda path, generation, retired_at: gcs_storage._retire_object(path, generation, retired_at))
+    return service.complete(get_engine(), get_store, auth_res, dsid, body, retire=lambda path, generation, retired_at: retire_object(get_store(), path, generation, retired_at))
 
 
 @router.delete("/datasets/{dataset_mfid}/upload/multipart/{upload_id}", status_code=204)

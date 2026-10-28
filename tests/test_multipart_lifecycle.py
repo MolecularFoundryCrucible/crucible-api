@@ -11,6 +11,7 @@ from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
 import app.api.routes.gcs_storage as gcs_storage
+import app.storage.gcs as google
 from app.api.routes import multipart as routes
 from app.models.core_models import AccessGroup, AssociatedFile, Dataset, DeletionRequest, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
 from app.models.datasets import file_etag
@@ -184,7 +185,8 @@ def test_upload_resume_publish_retry_download_ingestion_and_delete(flow, monkeyp
     signed_blob = signer.bucket.return_value.blob.return_value
     signed_blob.content_type = "application/octet-stream"
     signed_blob.generate_signed_url.return_value = "https://download.example/pinned-generation-7"
-    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: signer)
+    monkeypatch.setattr(google, "key_client", lambda: signer)
+    monkeypatch.setattr(gcs_storage, "get_store", lambda: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
     assert client.get(f"/files/{file_id}/download_link").json()["url"].endswith("pinned-generation-7")
     assert signer.bucket.return_value.blob.call_args.kwargs["generation"] == 7
     assert "filename*=UTF-8''data.bin" in signed_blob.generate_signed_url.call_args.kwargs["response_disposition"]
@@ -874,8 +876,7 @@ def test_replace_trusted_short_circuit_persists_the_backfilled_path(flow, monkey
 @pytest.fixture
 def retired(monkeypatch):
     calls = []
-    import app.api.routes.gcs_storage as gcs_storage
-    monkeypatch.setattr(gcs_storage, "_retire_object", lambda path, generation, retired_at: calls.append((path, generation)) or True)
+    monkeypatch.setattr(routes, "retire_object", lambda store, path, generation, retired_at: calls.append((path, generation)) or True)
     return calls
 
 
@@ -985,10 +986,9 @@ def test_aborted_replace_leaves_file_untouched(flow, retired):
 
 def test_retire_failure_does_not_fail_the_replace(flow, monkeypatch):
     client, engine, _ = flow
-    import app.api.routes.gcs_storage as gcs_storage
-    def broken(path, generation, retired_at):
+    def broken(store, path, generation, retired_at):
         raise RuntimeError("storage down")
-    monkeypatch.setattr(gcs_storage, "_retire_object", broken)
+    monkeypatch.setattr(routes, "retire_object", broken)
     file = published_file(flow)
     _, response = replace(flow, file["mfid"])
     assert response.status_code == 200, response.text
@@ -1229,7 +1229,7 @@ def test_backfill_listing_is_bounded(monkeypatch):
     blob = MagicMock()
     blob.name = "ds/legacy.bin"
     client.bucket.return_value.list_blobs.return_value = [blob]
-    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: client)
+    monkeypatch.setattr(gcs_storage, "key_client", lambda: client)
     assert gcs_storage._determine_storage_path("ds", "legacy.bin").endswith("/ds/legacy.bin")
     client.bucket.return_value.list_blobs.assert_called_once_with(prefix="ds/", timeout=30)
 
@@ -1292,7 +1292,7 @@ def test_legacy_completion_touches_the_dataset(use_engine, flow, monkeypatch):
     blob = SimpleNamespace(size=len(DATA), reload=lambda: None)
     gcs = MagicMock()
     gcs.bucket.return_value.blob.return_value = blob
-    monkeypatch.setattr("app.api.routes.gcs_storage._get_gcs_storage_client", lambda: gcs)
+    monkeypatch.setattr("app.api.routes.gcs_storage.key_client", lambda: gcs)
     response = client.post("/datasets/ds/upload/complete", json={"upload_id": upload_id, "sha256_hash": SHA})
     assert response.status_code == 200, response.text
     assert dataset_touched(engine)
@@ -1312,7 +1312,7 @@ def test_legacy_completion_storage_errors_stay_server_side(use_engine, flow, mon
         raise failure
     gcs = MagicMock()
     gcs.bucket.return_value.blob.return_value = SimpleNamespace(size=len(DATA), reload=reload)
-    monkeypatch.setattr("app.api.routes.gcs_storage._get_gcs_storage_client", lambda: gcs)
+    monkeypatch.setattr("app.api.routes.gcs_storage.key_client", lambda: gcs)
     response = client.post("/datasets/ds/upload/complete", json={"upload_id": upload_id, "sha256_hash": SHA})
     assert response.status_code == status
     assert "googleapis" not in response.text and "iam" not in response.text and "gone" not in response.text

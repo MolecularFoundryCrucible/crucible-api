@@ -24,6 +24,10 @@ Proposed instead: one interface, two adapters. A Google adapter for the Foundry,
 - The adapter exposes what the routes need: start, sign parts, list parts, complete and abort a multipart upload; object metadata (size, checksum, version token); a signed download with a filename and disposition; delete pinned to a version where the store has one; and record file writes.
 - Presigned URLs sign the host name, so the S3 adapter signs with the address clients reach (for the bundle, the public address of the store), not the internal service name.
 - boto3 is configured with `request_checksum_calculation` and `response_checksum_validation` set to `when_required`, path-style addressing, and an explicit endpoint, which many S3-compatible stores need.
+- The API asks little of the store, so any S3-compatible store fits: signed URLs (SigV4) for download and for uploading parts, multipart start, list parts, complete and abort, HEAD for size and checksum, and delete. Object versioning and conditional writes are not needed, and a per-part checksum is used where the store supports it. Which store runs is the deployer's choice; the bundled one is a default, left out with a Compose profile when a lab has its own (agreed 2026-10-28).
+- The API cleans up after itself instead of relying on store-side lifecycle rules, which every store configures differently: a scheduled job, tracked in the database, aborts abandoned multipart uploads and deletes retired objects after their grace period. A deployer only points Crucible at a bucket (agreed 2026-10-28).
+- `python -m app.cli storage check` runs a real round trip against the configured store (a small multipart upload through signed part URLs, a signed download, a delete) and reports what works, so a deployer learns at once whether their store fits. CI runs it against SeaweedFS and a second store (Garage or Versity) to keep the adapter portable (agreed 2026-10-28).
+- Azure Blob Storage is not S3-compatible and would need its own adapter or an S3 gateway; with one interface in the code that is one more adapter, nothing else.
 - Per-part CRC32C: GCS enforces it through the signed `x-goog-hash` header; the S3 adapter uses `x-amz-checksum-crc32c` where the store supports it, and the server checks the combined checksum at completion either way.
 
 ## Bundled object store
@@ -33,10 +37,11 @@ SeaweedFS (Apache-2.0, very active, one container configured from the environmen
 ## Pull requests, in order
 
 1. The storage interface with the Google adapter behind it: downloads, retiring, record files, and object metadata move into the adapter, and the three Google credential paths are consolidated. No behavior change for the Foundry; the existing tests and the staging checks prove it.
-2. The S3 adapter and the setting that chooses the adapter, tested in CI against a real SeaweedFS container (multipart, signed download, delete), not only against fakes.
-3. The Compose bundle gains SeaweedFS: a bucket created on first start, an address clients reach for presigned URLs, CORS for browser uploads, the install guide, and an upload and download step in the smoke test.
-4. Deleting a file or a dataset also deletes its stored objects, through the adapter and after a grace period, behind a setting, staging first. Today both remove database rows only. Open decision 3: part of Phase 2, or its own project.
-5. The legacy upload routes (`/upload/initiate`, `/upload/complete`, the downscoped upload token) are deprecated, after checking with the nano-crucible session which client versions still use them.
+2. The S3 adapter, the setting that chooses the adapter, and `python -m app.cli storage check`, tested in CI against real SeaweedFS and Garage or Versity containers, not only against fakes.
+3. The cleanup job: aborting abandoned multipart uploads and deleting retired objects after their grace period, through the adapter, replacing the GCS lifecycle rules for the S3 path.
+4. The Compose bundle gains SeaweedFS: a bucket created on first start, an address clients reach for presigned URLs, CORS for browser uploads, the install guide, and an upload and download step in the smoke test.
+5. Deleting a file or a dataset also deletes its stored objects, through the adapter and after a grace period, behind a setting, staging first. Today both remove database rows only. Open decision 3: part of Phase 2, or its own project.
+6. The legacy upload routes (`/upload/initiate`, `/upload/complete`, the downscoped upload token) are deprecated, after checking with the nano-crucible session which client versions still use them.
 
 Each pull request goes to staging, is checked in the staging pod and by the crucible-tests suite, and the Foundry switches nothing until the S3 path is proven.
 

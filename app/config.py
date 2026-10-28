@@ -428,10 +428,17 @@ def check_settings() -> None:
         raise ConfigurationError(f"Invalid multipart upload settings: {error}") from error
 
 
+def secrets_in_use() -> list[str]:
+    """The secrets a server reads at startup: every secret given any way for a feature in use."""
+    settings = get_settings()
+    return [
+        name for name, (group, _field) in _SECRETS.items()
+        if getattr(settings, group).in_use() and (configured_secret(name) is not None or optional_env(f"{name}_VERSION") is not None)
+    ]
+
+
 def read_secrets() -> None:
     """Read every secret given for a feature in use, into the cache requests read from, so a worker
     that cannot read one fails to start instead of failing on live traffic."""
-    settings = get_settings()
-    for name, (group, _field) in _SECRETS.items():
-        if getattr(settings, group).in_use():
-            optional_secret(name)
+    for name in secrets_in_use():
+        get_secret(name)

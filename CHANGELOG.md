@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `python -m app.cli settings check` (operator-facing) checks a deployment's settings before it goes out. It reads rendered Kubernetes YAML (files or standard input, for example from `kubectl kustomize`), resolves each named container's environment from its ConfigMaps, Kubernetes Secret references, and secret files mounted into the secrets directory (Secret volumes and the GKE Secret Manager add-on's SecretProviderClass), and runs the startup checks: `--server CONTAINER` for the API server, `--database CONTAINER` for database-only tools such as the Hub sign-in cleanup job. It reports settings given more than one way, missing or invalid settings, malformed Secret Manager paths, `NAME_FILE` paths no volume provides, and, as warnings, variables Crucible does not read. With `--verify-secrets` it also confirms that each Secret Manager version exists and is enabled, reading metadata only (`secretmanager.versions.get`). It exits 1 when a check fails.
+
 ## [3.2.0] - 2026-10-28
 
 Groundwork for running Crucible outside the Molecular Foundry (explicit settings, startup checks, database setup, and a Docker Compose bundle with the optional Hub), plus join requests, postprocessing pipelines, activity tracking, preferences, and many fixes. Exact request and response shapes are in the OpenAPI document; this section lists what changed.

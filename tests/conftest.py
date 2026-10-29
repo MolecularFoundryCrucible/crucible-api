@@ -111,7 +111,7 @@ def fresh_settings(monkeypatch):
 def block_record_bucket(monkeypatch):
     def _refuse():
         raise RuntimeError("tests must not write to the record bucket")
-    monkeypatch.setattr(gcs_record_utils, "_get_client", _refuse)
+    monkeypatch.setattr(gcs_record_utils, "get_store", _refuse)
 
 
 @pytest.fixture

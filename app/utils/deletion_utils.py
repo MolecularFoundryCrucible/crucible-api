@@ -167,8 +167,8 @@ def _delete_gcs_blobs_for_dataset(dataset_unique_id: str, associated_files: list
     except StorageNotConfigured:
         return
     try:
-        from app.api.routes.gcs_storage import _get_gcs_storage_client
-        client = _get_gcs_storage_client()
+        from app.storage.gcs import key_client
+        client = key_client()
         bucket = client.bucket(bucket_name)
     except Exception:
         logger.exception(

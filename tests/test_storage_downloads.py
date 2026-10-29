@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,8 +11,8 @@ from app.services.storage_downloads import (
     download_headers,
     resolve_storage_object,
     retire_object,
-    signed_download_url,
 )
+import app.storage.gcs as google
 
 DS = "0t3qajrnzhtn7000x6s0x427hg"
 MULTIPART = "mf-crucible-multipart-staging"
@@ -27,7 +28,7 @@ def multipart_bucket(monkeypatch):
     (f"mf-storage-prod/{DS}/sub/dir/scan.tif", None, StorageObject("mf-storage-prod", f"{DS}/sub/dir/scan.tif", None)),
     (f"mf-storage-prod/{DS}//scan.tif", None, StorageObject("mf-storage-prod", f"{DS}//scan.tif", None)),
     (f"mf-storage-prod/{DS}/scan..v2.tif", None, StorageObject("mf-storage-prod", f"{DS}/scan..v2.tif", None)),
-    (f"{MULTIPART}/{DS}/_files/abc", "7", StorageObject(MULTIPART, f"{DS}/_files/abc", 7)),
+    (f"{MULTIPART}/{DS}/_files/abc", "7", StorageObject(MULTIPART, f"{DS}/_files/abc", "7")),
 ])
 def test_paths_under_the_own_dataset_resolve(path, generation, expected):
     assert resolve_storage_object(path, generation, DS) == expected
@@ -103,17 +104,32 @@ def test_stored_atom_xml_with_unknown_extension_downloads_as_attachment_even_whe
     assert content_type is None
 
 
-def _client(content_type="application/octet-stream"):
+UNCONFIGURED = SimpleNamespace(bucket=None, signer_service_account=None, project=None)
+HOUR = timedelta(hours=1)
+
+
+@pytest.fixture
+def keyed(monkeypatch):
     client = MagicMock()
-    blob = client.bucket.return_value.blob.return_value
+    monkeypatch.setattr(google, "key_client", lambda: client)
+    return client
+
+
+@pytest.fixture
+def store(keyed):
+    return google.GoogleStore(UNCONFIGURED)
+
+
+def _client(keyed, content_type="application/octet-stream"):
+    blob = keyed.bucket.return_value.blob.return_value
     blob.content_type = content_type
     blob.generate_signed_url.return_value = "https://signed.example/x"
-    return client, blob
+    return keyed, blob
 
 
-def test_signed_url_is_generation_pinned_and_carries_headers():
-    client, blob = _client()
-    url = signed_download_url(client, StorageObject("bucket", f"{DS}/_files/abc", 7), "results/scan.pdf", disposition="inline")
+def test_signed_url_is_generation_pinned_and_carries_headers(store, keyed):
+    client, blob = _client(keyed)
+    url = store.signed_download("bucket", f"{DS}/_files/abc", "7", "results/scan.pdf", "inline", HOUR)
     assert url == "https://signed.example/x"
     client.bucket.assert_called_once_with("bucket")
     client.bucket.return_value.blob.assert_called_once_with(f"{DS}/_files/abc", generation=7)
@@ -127,35 +143,35 @@ def test_signed_url_is_generation_pinned_and_carries_headers():
     assert kwargs["response_type"] == "application/pdf"
 
 
-def test_unknown_type_keeps_the_stored_type():
-    client, blob = _client()
-    signed_download_url(client, StorageObject("bucket", f"{DS}/data.crucible-unknown", None), "data.crucible-unknown", disposition="inline")
+def test_unknown_type_keeps_the_stored_type(store, keyed):
+    client, blob = _client(keyed)
+    store.signed_download("bucket", f"{DS}/data.crucible-unknown", None, "data.crucible-unknown", "inline", HOUR)
     kwargs = blob.generate_signed_url.call_args.kwargs
     assert "response_type" not in kwargs
     assert kwargs["generation"] is None
 
 
-def test_signed_url_defaults_to_attachment_without_type_override():
-    client, blob = _client(content_type="application/pdf")
-    signed_download_url(client, StorageObject("bucket", f"{DS}/scan.pdf", None), "scan.pdf")
+def test_signed_url_defaults_to_attachment_without_type_override(store, keyed):
+    client, blob = _client(keyed, content_type="application/pdf")
+    store.signed_download("bucket", f"{DS}/scan.pdf", None, "scan.pdf", "attachment", HOUR)
     kwargs = blob.generate_signed_url.call_args.kwargs
     assert kwargs["response_disposition"].startswith("attachment;")
     assert "response_type" not in kwargs
 
 
-def test_signed_url_inline_guesses_type_for_pdf():
-    client, blob = _client(content_type="application/octet-stream")
-    signed_download_url(client, StorageObject("bucket", f"{DS}/scan.pdf", None), "scan.pdf", disposition="inline")
+def test_signed_url_inline_guesses_type_for_pdf(store, keyed):
+    client, blob = _client(keyed, content_type="application/octet-stream")
+    store.signed_download("bucket", f"{DS}/scan.pdf", None, "scan.pdf", "inline", HOUR)
     kwargs = blob.generate_signed_url.call_args.kwargs
     assert kwargs["response_disposition"].startswith("inline;")
     assert kwargs["response_type"] == "application/pdf"
 
 
-def test_missing_object_raises_file_not_found():
-    client, blob = _client()
+def test_missing_object_raises_file_not_found(store, keyed):
+    client, blob = _client(keyed)
     blob.reload.side_effect = NotFound("gone")
     with pytest.raises(FileNotFoundError):
-        signed_download_url(client, StorageObject("bucket", f"{DS}/a.txt", None), "a.txt")
+        store.signed_download("bucket", f"{DS}/a.txt", None, "a.txt", "attachment", HOUR)
     blob.generate_signed_url.assert_not_called()
 
 
@@ -169,10 +185,11 @@ def assert_bounded(call, **expected):
     assert retry._timeout == 30
 
 
-def test_retire_object_sets_custom_time_pinned_to_generation():
-    client = MagicMock()
+def test_retire_object_sets_custom_time_pinned_to_generation(store, keyed):
+    client = keyed
     blob = client.bucket.return_value.blob.return_value
-    assert retire_object(client, "bucket", f"{DS}/a.txt", "7", WHEN) is True
+    assert retire_object(store, f"bucket/{DS}/a.txt", "7", WHEN) is True
+    client.bucket.assert_called_once_with("bucket")
     client.bucket.return_value.blob.assert_called_once_with(f"{DS}/a.txt")
     assert blob.custom_time == WHEN
     blob.patch.assert_called_once()
@@ -180,23 +197,41 @@ def test_retire_object_sets_custom_time_pinned_to_generation():
     blob.reload.assert_not_called()
 
 
-def test_retire_object_reads_the_generation_of_a_legacy_object():
-    client = MagicMock()
-    blob = client.bucket.return_value.blob.return_value
+def test_retire_object_reads_the_generation_of_a_legacy_object(store, keyed):
+    blob = keyed.bucket.return_value.blob.return_value
     blob.generation = 42
-    assert retire_object(client, "bucket", f"{DS}/a.txt", None, WHEN) is True
+    assert retire_object(store, f"bucket/{DS}/a.txt", None, WHEN) is True
     blob.reload.assert_called_once()
     assert_bounded(blob.reload.call_args)
     blob.patch.assert_called_once()
     assert_bounded(blob.patch.call_args, if_generation_match=42)
 
 
-def test_retire_object_missing_object_is_false():
-    client = MagicMock()
-    blob = client.bucket.return_value.blob.return_value
+def test_retire_object_missing_object_is_false(store, keyed):
+    blob = keyed.bucket.return_value.blob.return_value
     blob.reload.side_effect = NotFound("gone")
-    assert retire_object(client, "bucket", f"{DS}/a.txt", None, WHEN) is False
+    assert retire_object(store, f"bucket/{DS}/a.txt", None, WHEN) is False
     blob.patch.assert_not_called()
+
+
+def test_retire_object_skips_a_store_without_lifecycle_retirement():
+    store = MagicMock(retires_by_lifecycle=False)
+    assert retire_object(store, f"bucket/{DS}/a.txt", "7", WHEN) is False
+    store.retire.assert_not_called()
+
+
+def test_record_files_use_the_key_client(store, keyed):
+    blob = keyed.bucket.return_value.blob.return_value
+    blob.exists.return_value = False
+    assert store.get_text("records", "ds1/record.json") is None
+    blob.download_as_text.assert_not_called()
+    blob.exists.return_value = True
+    blob.download_as_text.return_value = "{}"
+    assert store.get_text("records", "ds1/record.json") == "{}"
+    store.put_bytes("records", "ds1/record.json", b"{}", "application/json")
+    blob.upload_from_string.assert_called_once_with(b"{}", content_type="application/json")
+    keyed.bucket.assert_called_with("records")
+    keyed.bucket.return_value.blob.assert_called_with("ds1/record.json")
 
 
 def test_signing_errors_stay_server_side(monkeypatch):
@@ -205,8 +240,7 @@ def test_signing_errors_stay_server_side(monkeypatch):
 
     def fail(*args, **kwargs):
         raise RuntimeError("https://iamcredentials.googleapis.com signer@mf-crucible.iam.gserviceaccount.com")
-    monkeypatch.setattr(gcs_storage, "signed_download_url", fail)
-    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: MagicMock())
+    monkeypatch.setattr(gcs_storage, "get_store", lambda: SimpleNamespace(signed_download=fail))
     with pytest.raises(HTTPException) as raised:
         gcs_storage._signed_download("file", DS, f"mf-storage-prod/{DS}/scan.tif", None, "scan.tif")
     assert raised.value.status_code == 503

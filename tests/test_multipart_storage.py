@@ -21,6 +21,17 @@ def adapter():
 BUCKET, KEY, UPLOAD_ID = "dedicated", "uploads/ds/id/content", "provider-id"
 
 
+def test_multipart_is_refused_without_the_signer_settings(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise AssertionError("google.auth.default called")
+    monkeypatch.setattr("app.storage.gcs.google.auth.default", refuse)
+    storage = GoogleStore(SimpleNamespace(bucket="dedicated", signer_service_account=None, project="project"))
+    with pytest.raises(StorageFailure, match="storage_not_configured"):
+        storage.start_upload(BUCKET, KEY)
+    with pytest.raises(StorageFailure):
+        storage.sign_part(BUCKET, KEY, UPLOAD_ID, 1, "AAAAAA==", 1, now())
+
+
 def test_signing_binds_destination_method_checksum_length_and_expiry():
     storage = adapter()
     expires = now()

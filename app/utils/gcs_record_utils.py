@@ -4,6 +4,7 @@ import logging
 
 from app.config import get_settings
 from app.general_utils import get_utc_isoformat
+from app.storage import get_store
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +18,6 @@ def _record_bucket():
     return bucket
 
 
-def _get_client():
-    from app.api.routes.gcs_storage import _get_gcs_storage_client
-    return _get_gcs_storage_client()
-
-
 def _canonical_hash(payload: dict) -> str:
     """SHA-256 of payload excluding _audit, over canonical JSON (sorted keys)."""
     return hashlib.sha256(
@@ -29,26 +25,27 @@ def _canonical_hash(payload: dict) -> str:
     ).hexdigest()
 
 
-def _build_audit(blob, payload: dict, actor: str, operation: str) -> dict | None:
+def _build_audit(store, bucket: str, key: str, payload: dict, actor: str, operation: str) -> dict | None:
     """
-    Read previous revision from GCS, check if payload changed, build _audit block.
+    Read previous revision from storage, check if payload changed, build _audit block.
     Returns None if payload is unchanged (skip write).
     """
     revision = 1
     prev_hash = None
 
     try:
-        if blob.exists():
-            prev = json.loads(blob.download_as_text())
+        text = store.get_text(bucket, key)
+        if text is not None:
+            prev = json.loads(text)
             prev_audit = prev.get("_audit", {})
             revision = prev_audit.get("revision", 0) + 1
             prev_hash = prev_audit.get("content_sha256")
     except Exception:
-        logger.warning("Could not read previous revision for %s — starting at 1", blob.name)
+        logger.warning("Could not read previous revision for %s — starting at 1", key)
 
     content_sha256 = _canonical_hash(payload)
     if prev_hash == content_sha256:
-        logger.info("No change in %s — skipping write", blob.name)
+        logger.info("No change in %s — skipping write", key)
         return None
 
     return {
@@ -110,14 +107,11 @@ def write_record(mfid: str, record: dict, actor: str, operation: str) -> None:
     if not bucket:
         return
     try:
-        blob = _get_client().bucket(bucket).blob(f"{mfid}/record.json")
-        audit = _build_audit(blob, record, actor, operation)
+        store, key = get_store(), f"{mfid}/record.json"
+        audit = _build_audit(store, bucket, key, record, actor, operation)
         if audit is None:
             return
-        blob.upload_from_string(
-            json.dumps({"_audit": audit, **record}, default=str, indent=2),
-            content_type="application/json",
-        )
+        store.put_bytes(bucket, key, json.dumps({"_audit": audit, **record}, default=str, indent=2).encode(), "application/json")
         logger.info("Wrote record.json for %s (revision %d)", mfid, audit["revision"])
     except Exception:
         logger.exception("Failed to write record.json for %s", mfid)
@@ -129,14 +123,11 @@ def write_metadata(mfid: str, metadata: dict, actor: str, operation: str) -> Non
     if not bucket:
         return
     try:
-        blob = _get_client().bucket(bucket).blob(f"{mfid}/metadata.json")
-        audit = _build_audit(blob, metadata, actor, operation)
+        store, key = get_store(), f"{mfid}/metadata.json"
+        audit = _build_audit(store, bucket, key, metadata, actor, operation)
         if audit is None:
             return
-        blob.upload_from_string(
-            json.dumps({"_audit": audit, **metadata}, default=str, indent=2),
-            content_type="application/json",
-        )
+        store.put_bytes(bucket, key, json.dumps({"_audit": audit, **metadata}, default=str, indent=2).encode(), "application/json")
         logger.info("Wrote metadata.json for %s (revision %d)", mfid, audit["revision"])
     except Exception:
         logger.exception("Failed to write metadata.json for %s", mfid)

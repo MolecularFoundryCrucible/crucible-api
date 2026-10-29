@@ -5,9 +5,6 @@ from datetime import timedelta
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
-from google.api_core.exceptions import NotFound
-from google.cloud.storage.retry import DEFAULT_RETRY
-
 MULTIPART_SEGMENT = "_files"
 DOWNLOAD_LIFETIME = timedelta(hours=1)
 SCRIPT_CAPABLE_TYPES = frozenset({"text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml", "text/xsl"})
@@ -26,7 +23,7 @@ class StorageLocationError(Exception):
 class StorageObject:
     bucket: str
     key: str
-    generation: int | None
+    version: str | None
 
 
 def multipart_prefix(dataset_mfid):
@@ -70,7 +67,7 @@ def resolve_storage_object(storage_path, generation, dataset_mfid):
         raise StorageLocationError("outside_dataset")
     if key.startswith(multipart_prefix(dataset_mfid)) and generation is None:
         raise StorageLocationError("unpublished")
-    return StorageObject(bucket, key, int(generation) if generation is not None else None)
+    return StorageObject(bucket, key, str(generation) if generation is not None else None)
 
 
 def download_headers(filename, stored_type, disposition="attachment"):
@@ -85,27 +82,8 @@ def download_headers(filename, stored_type, disposition="attachment"):
     return f"{mode}; filename=\"{fallback}\"; filename*=UTF-8''{encoded}", guessed
 
 
-def signed_download_url(client, obj, filename, disposition="attachment"):
-    blob = client.bucket(obj.bucket).blob(obj.key, generation=obj.generation)
-    try:
-        blob.reload()
-    except NotFound:
-        raise FileNotFoundError(obj.key) from None
-    content_disposition, content_type = download_headers(filename, blob.content_type, disposition)
-    overrides = {"response_disposition": content_disposition}
-    if content_type:
-        overrides["response_type"] = content_type
-    return blob.generate_signed_url(version="v4", expiration=DOWNLOAD_LIFETIME, method="GET", generation=obj.generation, **overrides)
-
-
-def retire_object(client, bucket, key, generation, retired_at):
-    blob = client.bucket(bucket).blob(key)
-    if generation is None:
-        try:
-            blob.reload(timeout=30, retry=DEFAULT_RETRY.with_timeout(30))
-        except NotFound:
-            return False
-        generation = blob.generation
-    blob.custom_time = retired_at
-    blob.patch(if_generation_match=int(generation), timeout=30, retry=DEFAULT_RETRY.with_timeout(30))
-    return True
+def retire_object(store, storage_path, version, retired_at):
+    if not store.retires_by_lifecycle:
+        return False
+    bucket, _, key = storage_path.partition("/")
+    return store.retire(bucket, key, version, retired_at)

@@ -225,7 +225,7 @@ class TestMintUploadToken:
         scoped = MagicMock()
         source.with_scopes.return_value = scoped
         scoped.token, scoped.expiry = "broad", MagicMock(isoformat=lambda: "broad-expiry")
-        with patch.object(gcs_storage, "_get_gcs_credentials", return_value=source), \
+        with patch.object(gcs_storage, "key_credentials", return_value=source), \
              patch("google.auth.downscoped.Credentials") as downscoped_cls:
             downscoped_cls.return_value.token = "narrow"
             downscoped_cls.return_value.expiry = MagicMock(isoformat=lambda: "narrow-expiry")
@@ -263,7 +263,7 @@ class TestMintUploadToken:
         session.exec.return_value.first.return_value = None
         mock_session_cls.return_value.__enter__ = MagicMock(return_value=session)
         mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
-        with patch.object(gcs_storage, "_get_gcs_credentials", return_value=MagicMock()), \
+        with patch.object(gcs_storage, "key_credentials", return_value=MagicMock()), \
              patch("google.auth.downscoped.Credentials") as downscoped_cls, \
              patch.object(gcs_storage.multipart, "filename_reserved", return_value=False):
             downscoped_cls.return_value.refresh.side_effect = RuntimeError("sts unreachable")

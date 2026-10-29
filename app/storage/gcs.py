@@ -1,3 +1,5 @@
+import json
+from functools import lru_cache
 from urllib.parse import quote
 from xml.etree import ElementTree as ET
 
@@ -6,7 +8,10 @@ from google.auth import impersonated_credentials
 from google.auth.transport.requests import AuthorizedSession
 from google.cloud import storage
 from google.api_core.exceptions import NotFound
+from google.cloud.storage.retry import DEFAULT_RETRY
 
+from app.config import get_secret
+from app.services.storage_downloads import download_headers
 from app.storage.base import ObjectInfo, Part, StorageFailure, UploadMissing
 
 
@@ -14,12 +19,30 @@ def field(root, name):
     return root.findtext("{*}" + name)
 
 
+@lru_cache
+def key_credentials():
+    from google.oauth2 import service_account
+
+    return service_account.Credentials.from_service_account_info(json.loads(get_secret("GCS_SA")))
+
+
+@lru_cache
+def key_client():
+    return storage.Client(credentials=key_credentials())
+
+
 class GoogleStore:
-    """Google Cloud Storage through its XML API, signing as MULTIPART_UPLOAD_SIGNER by impersonation."""
+    """Google Cloud Storage. Multipart uploads go through the XML API, signed as MULTIPART_UPLOAD_SIGNER
+    by impersonation, and are refused when the multipart settings are incomplete; downloads, retiring,
+    and record files use the GCS_SA key, as the legacy routes do."""
+
+    retires_by_lifecycle = True
 
     def __init__(self, config):
+        self.config = config
+        self.credentials = self.client = self.http = None
         if not all((config.bucket, config.signer_service_account, config.project)):
-            raise StorageFailure("storage_not_configured")
+            return
         source, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
         credentials = impersonated_credentials.Credentials(
             source_credentials=source,
@@ -27,7 +50,6 @@ class GoogleStore:
             target_scopes=["https://www.googleapis.com/auth/devstorage.read_write"],
             lifetime=900,
         )
-        self.config = config
         self.credentials = credentials
         self.client = storage.Client(project=config.project, credentials=credentials)
         self.http = AuthorizedSession(credentials)
@@ -37,6 +59,8 @@ class GoogleStore:
         return self.client.bucket(bucket).blob(key, generation=generation)
 
     def check_bucket(self, bucket):
+        if self.http is None:
+            raise StorageFailure("storage_not_configured")
         if bucket != self.config.bucket:
             raise StorageFailure("bucket_mismatch")
 
@@ -137,3 +161,35 @@ class GoogleStore:
             self.blob(bucket, key, generation).delete(if_generation_match=generation, timeout=60)
         except NotFound:
             pass
+
+    def signed_download(self, bucket, key, version, filename, disposition, expires_in):
+        generation = int(version) if version is not None else None
+        blob = key_client().bucket(bucket).blob(key, generation=generation)
+        try:
+            blob.reload()
+        except NotFound:
+            raise FileNotFoundError(key) from None
+        content_disposition, content_type = download_headers(filename, blob.content_type, disposition)
+        overrides = {"response_disposition": content_disposition}
+        if content_type:
+            overrides["response_type"] = content_type
+        return blob.generate_signed_url(version="v4", expiration=expires_in, method="GET", generation=generation, **overrides)
+
+    def retire(self, bucket, key, version, retired_at):
+        blob = key_client().bucket(bucket).blob(key)
+        if version is None:
+            try:
+                blob.reload(timeout=30, retry=DEFAULT_RETRY.with_timeout(30))
+            except NotFound:
+                return False
+            version = blob.generation
+        blob.custom_time = retired_at
+        blob.patch(if_generation_match=int(version), timeout=30, retry=DEFAULT_RETRY.with_timeout(30))
+        return True
+
+    def put_bytes(self, bucket, key, data, content_type):
+        key_client().bucket(bucket).blob(key).upload_from_string(data, content_type=content_type)
+
+    def get_text(self, bucket, key):
+        blob = key_client().bucket(bucket).blob(key)
+        return blob.download_as_text() if blob.exists() else None

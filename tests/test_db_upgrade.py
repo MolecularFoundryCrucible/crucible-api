@@ -139,4 +139,6 @@ def test_readiness_expects_migration_heads_when_unset(monkeypatch):
     assert misc._expected_schema_revisions() == [HEAD]
     assert misc._schema_state([], [HEAD]) == "behind"
     monkeypatch.setenv("EXPECTED_DB_REVISIONS", "b8f2d6e41c07")
+    from app.config import get_settings
+    get_settings.cache_clear()
     assert misc._expected_schema_revisions() == ["b8f2d6e41c07"]

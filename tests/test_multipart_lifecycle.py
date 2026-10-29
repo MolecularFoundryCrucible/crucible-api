@@ -26,6 +26,8 @@ CRC = base64.b64encode(google_crc32c.Checksum(DATA).digest()).decode()
 
 
 class MemoryStorage:
+    retires_by_lifecycle = True
+
     def __init__(self, reports_crc32c=True):
         self.reports_crc32c = reports_crc32c
         self.reports_part_crc32c = not reports_crc32c
@@ -1231,7 +1233,7 @@ def test_retirement_errors_never_fail_a_committed_replace(flow, retired, monkeyp
     file = published_file(flow)
     def broken():
         raise RuntimeError("config unavailable")
-    monkeypatch.setattr(service, "upload_bucket", broken)
+    monkeypatch.setattr(service, "owned_object", broken)
     _, response = replace(flow, file["mfid"])
     assert response.status_code == 200, response.text
     assert retired == []

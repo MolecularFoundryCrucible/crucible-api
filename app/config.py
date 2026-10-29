@@ -228,6 +228,7 @@ class StorageSettings(SettingsGroup):
     s3_region: str = Field("us-east-1", validation_alias="S3_REGION")
     s3_access_key_id: SecretStr | None = Field(None, validation_alias="S3_ACCESS_KEY_ID")
     s3_secret_access_key: SecretStr | None = Field(None, validation_alias="S3_SECRET_ACCESS_KEY")
+    file_version_retention_days: int = Field(14, ge=1, validation_alias="FILE_VERSION_RETENTION_DAYS")
 
     @property
     def read_bucket_names(self) -> set[str]:

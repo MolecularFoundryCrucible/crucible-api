@@ -16,6 +16,7 @@ from app.models.core_models import AssociatedFile, Dataset, UploadSession, User
 from app.models.datasets import AssociatedFileRead, file_etag
 from app.models.multipart import MultipartStatus
 from app.storage import StorageFailure, UploadMissing
+from app.storage.crc32c import combine_parts
 from app.services.storage_downloads import StorageLocationError, StorageNotConfigured, multipart_prefix, resolve_storage_object, upload_bucket
 from app.utils.auth_utils import load_principal, require_permission
 from app.utils.permissions import Permission, PlatformRole
@@ -271,6 +272,18 @@ def initiate_replace(engine, storage, principal, file_mfid, body, key, if_match,
     return start(engine, storage, upload)
 
 
+def object_crc32c(upload, metadata):
+    """The stored object's CRC32C: as the store reports it, or, for a store that does not, combined
+    from the part checksums the store enforced on each part."""
+    if metadata.crc32c is not None:
+        return metadata.crc32c
+    authorized = (upload.part_manifest or {}).get("authorized", {})
+    try:
+        return combine_parts([(authorized[str(number)], part_size(upload, number)) for number in range(1, upload.part_count + 1)])
+    except (KeyError, ValueError):
+        return None
+
+
 def assemble(storage, upload):
     metadata = storage.head(upload.bucket, upload.object_key)
     if metadata is None:
@@ -291,6 +304,8 @@ def assemble(storage, upload):
             authorized = (upload.part_manifest or {}).get("authorized", {})
             if any(part.size != part_size(upload, part.part_number) or str(part.part_number) not in authorized for part in parts):
                 raise InvalidUpload("part_size_or_authorization_mismatch")
+            if any(part.crc32c is not None and part.crc32c != authorized[str(part.part_number)] for part in parts):
+                raise InvalidUpload("part_checksum_mismatch")
             try:
                 storage.finish_upload(upload.bucket, upload.object_key, upload.provider_upload_id, parts, {int(number): crc for number, crc in authorized.items()})
             except UploadMissing:
@@ -298,7 +313,7 @@ def assemble(storage, upload):
         metadata = storage.head(upload.bucket, upload.object_key)
         if metadata is None:
             raise InvalidUpload("provider_upload_missing")
-    if metadata.size != upload.size or metadata.crc32c != upload.claimed_crc32c:
+    if metadata.size != upload.size or object_crc32c(upload, metadata) != upload.claimed_crc32c:
         raise InvalidUpload("object_integrity_mismatch")
     return metadata
 

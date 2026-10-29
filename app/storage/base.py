@@ -13,9 +13,11 @@ class UploadMissing(StorageFailure):
 
 @dataclass(frozen=True)
 class Part:
+    """An uploaded part. `crc32c` is the base64 checksum the store computed, when it reports one."""
     part_number: int
     size: int
     etag: str
+    crc32c: str | None = None
 
 
 @dataclass(frozen=True)
@@ -25,6 +27,17 @@ class ObjectInfo:
     size: int
     crc32c: str | None
     version: str
+
+
+def check_part_listing(parts: list[Part], next_marker: int | None, marker: int, limit: int) -> None:
+    """Refuse a part listing page that is out of order, repeats or skips back, or does not advance."""
+    numbers = [part.part_number for part in parts]
+    if len(parts) > limit or numbers != sorted(set(numbers)) or any(n <= marker or n > 10000 for n in numbers):
+        raise StorageFailure("invalid_part_listing")
+    if next_marker is not None and (not parts or next_marker != numbers[-1] or next_marker <= marker):
+        raise StorageFailure("invalid_part_listing")
+    if any(not part.etag or part.size < 1 for part in parts):
+        raise StorageFailure("invalid_part_listing")
 
 
 class ObjectStore(Protocol):

@@ -61,6 +61,61 @@ jobs:
       - run: uv sync --locked
       - run: uv run pytest -q
 
+  storage-s3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      API_CONF_FILE: app/conf/api_conf_local.yaml
+      CRUCIBLE_SECRET_KEY: ci-only
+      PGDB_PW: ci-only
+      DB_USERNAME: ci
+      DB_SERVER: localhost
+      DB_DATABASE: ci
+      S3_TEST_ENDPOINTS: http://localhost:8333,http://localhost:7070
+      S3_TEST_ACCESS_KEY: ci-access-key
+      S3_TEST_SECRET_KEY: ci-secret-key-not-real
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.16"
+          enable-cache: true
+      - name: Start SeaweedFS and Versity S3 Gateway
+        run: |
+          docker run -d --name seaweedfs -p 8333:8333 \
+            -e AWS_ACCESS_KEY_ID="$S3_TEST_ACCESS_KEY" -e AWS_SECRET_ACCESS_KEY="$S3_TEST_SECRET_KEY" -e S3_BUCKET=crucible-files,crucible-records \
+            chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8 mini -dir=/data
+          docker run -d --name versitygw -p 7070:7070 --tmpfs /data \
+            -e ROOT_ACCESS_KEY_ID="$S3_TEST_ACCESS_KEY" -e ROOT_SECRET_ACCESS_KEY="$S3_TEST_SECRET_KEY" \
+            versity/versitygw:v1.9.0@sha256:eb7f786fcd91e72194e48fcf1ac16302d686bf8e3a71434bdbc067a6efd3fdc7 posix /data
+          uv sync --locked
+          for port in 8333 7070; do
+            for _ in $(seq 60); do curl -s -o /dev/null "http://localhost:$port/" && break; sleep 1; done
+          done
+          for _ in $(seq 60); do docker logs seaweedfs 2>&1 | grep -q "created bucket crucible-records" && break; sleep 1; done
+      - name: Upload and download through the API against both
+        shell: bash
+        run: |
+          uv run pytest -q -rs tests/test_s3_store_integration.py | tee "$RUNNER_TEMP/s3.txt"
+          if grep -q "skipped" "$RUNNER_TEMP/s3.txt"; then echo "S3 integration tests were skipped"; exit 1; fi
+      - name: storage check against both
+        env:
+          STORAGE_BACKEND: s3
+          UPLOAD_BUCKET: crucible-files
+          RECORD_BUCKET: crucible-records
+        run: |
+          export S3_ACCESS_KEY_ID="$S3_TEST_ACCESS_KEY" S3_SECRET_ACCESS_KEY="$S3_TEST_SECRET_KEY"
+          for endpoint in ${S3_TEST_ENDPOINTS//,/ }; do
+            S3_ENDPOINT_URL="$endpoint" uv run python -m app.cli storage check
+          done
+      - name: Server logs
+        if: failure()
+        run: |
+          docker logs seaweedfs 2>&1 | tail -100
+          docker logs versitygw 2>&1 | tail -100
+
   compose-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 25

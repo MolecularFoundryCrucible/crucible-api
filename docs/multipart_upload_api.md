@@ -57,12 +57,17 @@ Set `CRUCIBLE_API_TOKEN` in the environment. The resume record contains a source
 
 | Variable | Default / purpose |
 | --- | --- |
+| `STORAGE_BACKEND` | `gcs` (Google Cloud Storage); `s3` for an S3-compatible store |
 | `UPLOAD_BUCKET` | `mf-storage-prod`; the environment's single upload bucket, shared by legacy and multipart uploads (staging: `mf-storage-staging`) |
 | `STORAGE_READ_BUCKETS` | Optional comma-separated extra buckets that existing records may point at (staging: `mf-storage-prod`) |
 | `MULTIPART_UPLOAD_ENABLED` | `false`; controls new initiation only |
 | `MULTIPART_UPLOAD_BUCKET` | Required when enabled; must equal `UPLOAD_BUCKET` |
-| `MULTIPART_UPLOAD_SIGNER` | Required dedicated service-account email |
-| `MULTIPART_UPLOAD_PROJECT` | Required explicit project |
+| `MULTIPART_UPLOAD_SIGNER` | Required on `gcs`: dedicated service-account email |
+| `MULTIPART_UPLOAD_PROJECT` | Required on `gcs`: explicit project |
+| `S3_ENDPOINT_URL` | Required on `s3`: the address the API reaches the store on |
+| `S3_PUBLIC_URL` | On `s3`: the address in signed URLs, which clients must reach; defaults to `S3_ENDPOINT_URL` |
+| `S3_REGION` | On `s3`: `us-east-1` |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Required on `s3`, as secrets |
 | `MAX_UPLOAD_BYTES` | Existing application size limit, capped at 500 GiB for this protocol |
 | `MULTIPART_OWNER_SESSIONS` | 8 concurrent reservations |
 | `MULTIPART_DATASET_SESSIONS` | 32 concurrent reservations |
@@ -72,7 +77,9 @@ Set `CRUCIBLE_API_TOKEN` in the environment. The resume record contains a source
 
 Application Default Credentials impersonate the configured dedicated signer using Google's authentication library. The legacy `GCS_SA` secret is never used by this adapter. The API runtime identity needs the token-creator grant on the signer, and the signer needs object and multipart permissions on the upload bucket. Multipart objects share the bucket with legacy objects under the reserved `{dataset_mfid}/_files/` segment; the downscoped legacy upload token excludes that segment, so legacy token holders cannot read or overwrite them. [Google impersonation reference](https://google-auth.readthedocs.io/en/latest/reference/google.auth.impersonated_credentials.html)
 
-The environment bucket also needs a lifecycle rule `{"action": {"type": "Delete"}, "condition": {"daysSinceCustomTime": 7}}` that removes objects retired by a file replacement.
+On `s3`, part URLs are presigned with SigV4 and bind the part's CRC32C and length (`x-amz-checksum-crc32c` and `Content-Length`, both returned as headers to send), so the store refuses a part with other content. Many S3 servers do not report a whole-object CRC32C, so the API computes it from the authorized part checksums and sizes (with `awscrt`'s `combine_crc32c`) and compares it with the completion claim. When the store lists each part's own CRC32C (Versity S3 Gateway does; SeaweedFS 4.51 does not), the API first compares those with the authorized values, so the check does not depend on the store enforcing the signed checksum; otherwise it does. A store is supported only if `python -m app.cli storage check` passes on it, which proves that it refuses a part with the wrong checksum. Objects are recorded with `storage_backend` `"gcs"`, the historical name for "stored by the API", which released clients require. Signed URLs embed `S3_PUBLIC_URL`: a client that reaches the server by another address gets signature errors. Replaced objects are not retired on `s3` and stay in the bucket, and nothing aborts abandoned multipart uploads unless the store has a lifecycle rule for it. `python -m app.cli storage check` uploads, downloads, and deletes a test file under `_crucible-check/` with the configured store (`--public` signs for `S3_PUBLIC_URL`); CI runs it against SeaweedFS and Versity S3 Gateway.
+
+The Google environment bucket also needs a lifecycle rule `{"action": {"type": "Delete"}, "condition": {"daysSinceCustomTime": 7}}` that removes objects retired by a file replacement.
 
 The bucket lifecycle rule that aborts incomplete multipart uploads is required: it is the only cleanup for sessions that are abandoned or expire without an abort request. Set its age beyond the seven-day session lifetime. Failed verification and abort requests clean up immediately; when storage is unavailable during that cleanup, the lifecycle rule remains the fallback. Session records are retained; the scheduling columns `next_attempt_at`, `lease_owner`, `lease_expires_at`, `cleanup_requested_at`, and `attempts` are unused. Inspect `state`, `failure_code`, and `cleaned_at` for operations. GCS holds and retention can prevent object deletion and require operator intervention.
 
@@ -88,4 +95,4 @@ The ingestion message retains `filename` as the full bucket/object path, adds `s
 
 The local tests use a deterministic storage adapter for lifecycle tests, mocked XML responses for adapter contract checks, and disposable PostgreSQL for migrations and concurrency. Signing, per-part checksum rejection, assembly, CRC32C verification, generation-pinned download, and deletion were smoke-tested from the staging API pod against the staging bucket.
 
-The storage calls go through the `ObjectStore` interface in `app/storage/` (`GoogleStore` today). Server-side SHA-256 verification is not implemented; `sha256_hash` is the client's claim. See [S3-compatible storage backends](multipart_storage_backends.md) for portability notes.
+The storage calls go through the `ObjectStore` interface in `app/storage/` (`GoogleStore` and `S3Store`). Server-side SHA-256 verification is not implemented; `sha256_hash` is the client's claim. See [S3-compatible storage backends](multipart_storage_backends.md) for portability notes.

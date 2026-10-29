@@ -1,6 +1,6 @@
 # S3-compatible storage backends
 
-Status: in progress as part of self-hosting (Phase 2, storage). Every byte the API stores now goes through one interface, `ObjectStore` in `app/storage/base.py`, with `GoogleStore` (`app/storage/gcs.py`) as the only implementation; an S3 adapter comes next. This note records what S3-compatible backends (AWS S3, SeaweedFS, MinIO, Ceph RGW) need from that interface.
+Status: in progress as part of self-hosting (Phase 2, storage). Every byte the API stores now goes through one interface, `ObjectStore` in `app/storage/base.py`, with `GoogleStore` (`app/storage/gcs.py`) and `S3Store` (`app/storage/s3.py`, chosen with `STORAGE_BACKEND=s3`). This note records what S3-compatible backends (AWS S3, SeaweedFS, MinIO, Ceph RGW) need from that interface.
 
 ## What is already portable
 
@@ -24,10 +24,10 @@ Status: in progress as part of self-hosting (Phase 2, storage). Every byte the A
 
 ## Design changes needed
 
-1. Compute the expected whole-object CRC32C on the server from the authorized per-part CRC32C values and part sizes (CRC32C values can be combined), compare it with the completion claim, and rely on the provider only for per-part checksum enforcement. This removes the dependency on provider-computed full-object checksums.
+1. Done: when the store reports no whole-object CRC32C (`ObjectInfo.crc32c` is `None`), the API combines the authorized per-part CRC32C values and part sizes (`app/storage/crc32c.py`, using `awscrt`) and compares the result with the completion claim. Part checksums a store reports in its part listing are compared with the authorized ones first; a store that reports none is relied on to enforce the signed per-part checksum, which `storage check` verifies.
 2. Generalize `storage_generation` into a backend-neutral object version (GCS generation or S3 `VersionId`) across file records, downloads, cleanup, and ingestion messages.
 3. Record the backend explicitly instead of inferring it from a bare `bucket/key` `storage_path`.
-4. Select the adapter from configuration in `get_store()` (`app/storage/__init__.py`), which returns `GoogleStore` today.
+4. Done: `get_store()` (`app/storage/__init__.py`) returns the adapter `STORAGE_BACKEND` names.
 5. Keep the client contract provider-neutral: clients must send every header returned for a signed part except `Content-Length`, never a hard-coded provider header.
 
 ## Outside the multipart flow
@@ -36,4 +36,4 @@ The legacy upload routes (`/datasets/{dataset_mfid}/upload/initiate*`, `/upload/
 
 ## Open checks
 
-Verify per target backend: presigned `UploadPart` with a signed `x-amz-checksum-crc32c` header, full-object or composite checksum behavior on completion, conditional or version-pinned deletes, and lifecycle abort support. Current MinIO and Ceph support for these has not been verified.
+`python -m app.cli storage check` verifies a target store: presigned `UploadPart` with signed `x-amz-checksum-crc32c` and `Content-Length`, re-uploading a part, refusing a part with the wrong checksum, completion with per-part checksums, and a presigned download with response headers. SeaweedFS 4.51 and Versity S3 Gateway 1.9.0 pass it in CI. SeaweedFS 4.51 lists a part uploaded twice twice; `S3Store` treats identical entries as one part. Lifecycle abort of incomplete uploads and Ceph and MinIO support have not been verified.

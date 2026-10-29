@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- S3-compatible file storage (operator-facing): `STORAGE_BACKEND=s3` stores uploads, downloads, and record files in any S3-compatible store instead of Google Cloud Storage, with `S3_ENDPOINT_URL`, `S3_PUBLIC_URL` (the address in signed URLs, defaulting to the endpoint), `S3_REGION` (default `us-east-1`), and the secrets `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`. `MULTIPART_UPLOAD_SIGNER` and `MULTIPART_UPLOAD_PROJECT` are required only for `gcs`, which stays the default; nothing changes for existing deployments. Signed part URLs bind each part's CRC32C and length, the API compares part checksums the store reports with the authorized ones, and it checks the whole file's CRC32C combined from the part checksums, so clients send the part headers the API returns as before. A store is supported only if `storage check` passes on it. Records keep `storage_backend` `"gcs"`, which released clients treat as "stored by the API". On `s3`, replaced files are not retired yet and the legacy upload routes do not work. Tested against SeaweedFS 4.51 and Versity S3 Gateway 1.9.0.
+- `python -m app.cli storage check` (operator-facing) checks the configured storage end to end with a test file under `_crucible-check/`: a signed two-part upload, a re-uploaded part, a part with the wrong checksum (must be refused), completion, a signed download, record files when `RECORD_BUCKET` is set, and deletion. `--public` signs for `S3_PUBLIC_URL`, `--keep` leaves the file. It exits 1 when a step fails.
+
 ### Changed
 
 - The Compose bundle's Hub uses the published image (operator-facing): the install guide and CI run Crucible Hub 1.7.1 from `ghcr.io/molecularfoundrycrucible/crucible-hub:1.7.1` (amd64 and arm64) instead of building it, with `HUB_IMAGE` set in the Hub's `.env` and `docker compose pull hub hub-setup`. CI pins the image by digest. Settings, secrets, and health checks are unchanged from Hub 1.7.0.

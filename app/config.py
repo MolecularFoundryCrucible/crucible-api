@@ -2,6 +2,7 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, SettingsError
@@ -215,12 +216,18 @@ class HubSettings(SettingsGroup):
 
 
 class StorageSettings(SettingsGroup):
+    backend: Literal["gcs", "s3"] = Field("gcs", validation_alias="STORAGE_BACKEND")
     upload_bucket: str | None = Field(None, validation_alias="UPLOAD_BUCKET")
     gcs_project: str | None = Field(None, validation_alias="GCS_PROJECT")
     gcs_sa: SecretStr | None = Field(None, validation_alias="GCS_SA")
     record_bucket: str | None = Field(None, validation_alias="RECORD_BUCKET")
     read_buckets: str | None = Field(None, validation_alias="STORAGE_READ_BUCKETS")
     legacy_upload_token_downscope: bool = Field(True, validation_alias="LEGACY_UPLOAD_TOKEN_DOWNSCOPE")
+    s3_endpoint_url: str | None = Field(None, validation_alias="S3_ENDPOINT_URL")
+    s3_public_url: str | None = Field(None, validation_alias="S3_PUBLIC_URL")
+    s3_region: str = Field("us-east-1", validation_alias="S3_REGION")
+    s3_access_key_id: SecretStr | None = Field(None, validation_alias="S3_ACCESS_KEY_ID")
+    s3_secret_access_key: SecretStr | None = Field(None, validation_alias="S3_SECRET_ACCESS_KEY")
 
     @property
     def read_bucket_names(self) -> set[str]:
@@ -236,7 +243,8 @@ class StorageSettings(SettingsGroup):
     def problems(self, settings: "Settings") -> list[str]:
         if not self.in_use():
             return []
-        return self.missing("upload_bucket", "gcs_sa") if self.serves_files() else self.missing("gcs_sa")
+        credentials = ("s3_endpoint_url", "s3_access_key_id", "s3_secret_access_key") if self.backend == "s3" else ("gcs_sa",)
+        return self.missing("upload_bucket", *credentials) if self.serves_files() else self.missing(*credentials)
 
 
 class IngestionSettings(SettingsGroup):

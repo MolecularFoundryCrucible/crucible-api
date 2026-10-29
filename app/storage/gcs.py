@@ -12,7 +12,7 @@ from google.cloud.storage.retry import DEFAULT_RETRY
 
 from app.config import get_secret
 from app.services.storage_downloads import download_headers
-from app.storage.base import ObjectInfo, Part, StorageFailure, UploadMissing
+from app.storage.base import ObjectInfo, Part, StorageFailure, UploadMissing, check_part_listing
 
 
 def field(root, name):
@@ -114,16 +114,10 @@ class GoogleStore:
         try:
             parts = [Part(part_number=int(field(part, "PartNumber")), size=int(field(part, "Size")), etag=field(part, "ETag")) for part in root.findall("{*}Part")]
             next_marker = int(field(root, "NextPartNumberMarker")) if field(root, "IsTruncated") == "true" else None
-            numbers = [part.part_number for part in parts]
-            if len(parts) > limit or numbers != sorted(set(numbers)) or any(n <= marker or n > 10000 for n in numbers):
-                raise ValueError()
-            if next_marker is not None and (not parts or next_marker != numbers[-1] or next_marker <= marker):
-                raise ValueError()
-            if any(not part.etag or part.size < 1 for part in parts):
-                raise ValueError()
-            return parts, next_marker
         except (TypeError, ValueError):
             raise StorageFailure("invalid_part_listing") from None
+        check_part_listing(parts, next_marker, marker, limit)
+        return parts, next_marker
 
     def sign_part(self, bucket, key, upload_id, number, crc32c, size, expires_at):
         headers = {"x-goog-hash": f"crc32c={crc32c}", "Content-Length": str(size)}

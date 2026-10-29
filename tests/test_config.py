@@ -10,6 +10,8 @@ FEATURE_SETTINGS = (
     "RMQ_HOST", "RMQ_USER", "RMQ_ROUTING_SUFFIX", "RABBITMQ_DEFAULT_PW",
     "MQTT_HOST", "MQTT_USERNAME", "MQTT_PASSWORD", "PROPOSAL_DB_URL", "PROPDB_APIKEY",
     "UPLOAD_BUCKET", "GCS_PROJECT", "GCS_SA", "STORAGE_READ_BUCKETS", "MULTIPART_UPLOAD_ENABLED", "RECORD_BUCKET",
+    "STORAGE_BACKEND", "S3_ENDPOINT_URL", "S3_PUBLIC_URL", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY",
+    "MULTIPART_UPLOAD_BUCKET", "MULTIPART_UPLOAD_SIGNER", "MULTIPART_UPLOAD_PROJECT",
 )
 
 
@@ -197,6 +199,46 @@ def test_storage_bucket_needs_credentials(empty):
     get_settings.cache_clear()
     empty.setenv("GCS_SA_VERSION", "projects/1/secrets/sa/versions/latest")
     assert missing_required_settings() == []
+
+
+def test_s3_storage_needs_its_endpoint_and_keys_but_not_gcs_credentials(empty):
+    _required(empty)
+    empty.setenv("STORAGE_BACKEND", "s3")
+    empty.setenv("UPLOAD_BUCKET", "crucible-files")
+    assert missing_required_settings() == ["S3_ACCESS_KEY_ID", "S3_ENDPOINT_URL", "S3_SECRET_ACCESS_KEY"]
+    get_settings.cache_clear()
+    for name, value in (("S3_ENDPOINT_URL", "http://seaweedfs:8333"), ("S3_ACCESS_KEY_ID", "key"), ("S3_SECRET_ACCESS_KEY", "secret")):
+        empty.setenv(name, value)
+    assert missing_required_settings() == []
+    storage = get_settings().storage
+    assert (storage.backend, storage.s3_region, storage.s3_public_url) == ("s3", "us-east-1", None)
+
+
+def test_s3_record_bucket_alone_needs_the_s3_credentials(empty):
+    _required(empty)
+    empty.setenv("STORAGE_BACKEND", "s3")
+    empty.setenv("RECORD_BUCKET", "crucible-records")
+    assert missing_required_settings() == ["S3_ACCESS_KEY_ID", "S3_ENDPOINT_URL", "S3_SECRET_ACCESS_KEY"]
+
+
+def test_unknown_storage_backend_is_refused(empty):
+    _required(empty)
+    empty.setenv("STORAGE_BACKEND", "azure")
+    with pytest.raises(ConfigurationError, match="STORAGE_BACKEND"):
+        get_settings()
+
+
+def test_s3_multipart_needs_no_google_signer(empty):
+    _required(empty)
+    for name, value in (("STORAGE_BACKEND", "s3"), ("UPLOAD_BUCKET", "crucible-files"), ("MULTIPART_UPLOAD_ENABLED", "true"), ("MULTIPART_UPLOAD_BUCKET", "crucible-files"),
+                        ("S3_ENDPOINT_URL", "http://seaweedfs:8333"), ("S3_ACCESS_KEY_ID", "key"), ("S3_SECRET_ACCESS_KEY", "secret")):
+        empty.setenv(name, value)
+    check_settings()
+    get_settings.cache_clear()
+    empty.setenv("STORAGE_BACKEND", "gcs")
+    empty.setenv("GCS_SA", "{}")
+    with pytest.raises(ConfigurationError, match="signer and a project"):
+        check_settings()
 
 
 def test_server_refuses_to_start_when_settings_are_missing(empty):

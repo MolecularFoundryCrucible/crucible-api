@@ -26,7 +26,9 @@ CRC = base64.b64encode(google_crc32c.Checksum(DATA).digest()).decode()
 
 
 class MemoryStorage:
-    def __init__(self):
+    def __init__(self, reports_crc32c=True):
+        self.reports_crc32c = reports_crc32c
+        self.reports_part_crc32c = not reports_crc32c
         self.pending = {}
         self.objects = {}
         self.serial = 0
@@ -61,7 +63,9 @@ class MemoryStorage:
         parts = self.pending[upload_id]["parts"]
         numbers = sorted(number for number in parts if number > marker)
         page = numbers[:limit]
-        return [Part(part_number=n, size=len(parts[n]), etag=hashlib.md5(parts[n]).hexdigest()) for n in page], page[-1] if len(numbers) > limit else None
+        def crc(data):
+            return base64.b64encode(google_crc32c.Checksum(data).digest()).decode() if self.reports_part_crc32c else None
+        return [Part(part_number=n, size=len(parts[n]), etag=hashlib.md5(parts[n]).hexdigest(), crc32c=crc(parts[n])) for n in page], page[-1] if len(numbers) > limit else None
 
     def finish_upload(self, bucket, key, upload_id, parts, crc32c_by_part):
         pending = self.pending.pop(upload_id)
@@ -77,7 +81,7 @@ class MemoryStorage:
 
     def head(self, bucket, key):
         stored = self.objects.get(key)
-        return ObjectInfo(size=stored["size"], crc32c=stored["crc32c"], version=stored["generation"]) if stored else None
+        return ObjectInfo(size=stored["size"], crc32c=stored["crc32c"] if self.reports_crc32c else None, version=stored["generation"]) if stored else None
 
     def abort_upload(self, bucket, key, upload_id):
         self.pending.pop(upload_id, None)
@@ -88,8 +92,8 @@ class MemoryStorage:
         self.objects.pop(key)
 
 
-@pytest.fixture
-def flow(db_engine, client, auth_as, monkeypatch):
+@pytest.fixture(params=["store_crc32c", "combined_crc32c"])
+def flow(request, db_engine, client, auth_as, monkeypatch):
     with Session(db_engine) as session:
         user = User(unique_id="owner", first_name="A", last_name="B", email="a@example.test")
         group = AccessGroup(group_name="owner-group")
@@ -105,7 +109,7 @@ def flow(db_engine, client, auth_as, monkeypatch):
     monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", "dedicated")
     monkeypatch.setenv("MULTIPART_UPLOAD_SIGNER", "signer@example.iam.gserviceaccount.com")
     monkeypatch.setenv("MULTIPART_UPLOAD_PROJECT", "test-project")
-    storage = MemoryStorage()
+    storage = MemoryStorage(reports_crc32c=request.param == "store_crc32c")
     monkeypatch.setattr(routes, "get_store", lambda: storage)
     return client, db_engine, storage
 
@@ -413,12 +417,32 @@ def test_signing_batch_limits_and_expired_session_quota(flow, monkeypatch):
     assert client.post(BASE + "/initiate", json={"filename": "another", "size": 1}).status_code == 200
 
 
+def test_stored_part_content_must_match_its_authorized_checksum(flow):
+    client, engine, storage = flow
+    identifier = start(flow)
+    put(flow, identifier)
+    storage.pending[row(engine, identifier).provider_upload_id]["parts"][1] = b"verified scientific dat_"
+    response = complete(flow, identifier)
+    assert response.status_code == 422
+    code = "object_integrity_mismatch" if storage.reports_crc32c else "part_checksum_mismatch"
+    assert code in response.json()["detail"]
+    assert files(engine) == []
+
+
+def test_a_store_reporting_no_checksums_still_completes(flow):
+    _, engine, storage = flow
+    storage.reports_crc32c = storage.reports_part_crc32c = False
+    identifier = publish(flow)
+    assert row(engine, identifier).state == "completed"
+
+
 def test_more_than_1000_parts_are_read_from_all_provider_pages(flow):
     _, engine, storage = flow
     identifier = start(flow)
     count = 1001
     crc = base64.b64encode(google_crc32c.Checksum(b"x" * count).digest()).decode()
-    change(engine, identifier, part_size=1, part_count=count, size=count, claimed_sha256=None, part_manifest={"authorized": {str(n): CRC for n in range(1, count + 1)}})
+    part_crc = base64.b64encode(google_crc32c.Checksum(b"x").digest()).decode()
+    change(engine, identifier, part_size=1, part_count=count, size=count, claimed_sha256=None, part_manifest={"authorized": {str(n): part_crc for n in range(1, count + 1)}})
     for n in range(1, count + 1):
         storage.put(row(engine, identifier).provider_upload_id, n, b"x")
     response = complete(flow, identifier, digest=hashlib.sha256(b"x" * count).hexdigest(), crc=crc)

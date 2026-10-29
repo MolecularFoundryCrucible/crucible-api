@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - The Compose bundle's Hub uses the published image (operator-facing): the install guide and CI run Crucible Hub 1.7.1 from `ghcr.io/molecularfoundrycrucible/crucible-hub:1.7.1` (amd64 and arm64) instead of building it, with `HUB_IMAGE` set in the Hub's `.env` and `docker compose pull hub hub-setup`. CI pins the image by digest. Settings, secrets, and health checks are unchanged from Hub 1.7.0.
+- The Compose bundle builds the API image once (operator-facing): only the `api` service builds `crucible-api:local`, and the one-time `migrate` service runs that image and never tries to pull it. Before, both services built and exported the same image. The install and upgrade commands are unchanged.
 
 ## [3.2.1] - 2026-10-28
 

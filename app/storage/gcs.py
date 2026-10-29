@@ -1,4 +1,5 @@
 import json
+import threading
 from functools import lru_cache
 from urllib.parse import quote
 from xml.etree import ElementTree as ET
@@ -41,18 +42,28 @@ class GoogleStore:
     def __init__(self, config):
         self.config = config
         self.credentials = self.client = self.http = None
-        if not all((config.bucket, config.signer_service_account, config.project)):
-            return
-        source, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        credentials = impersonated_credentials.Credentials(
-            source_credentials=source,
-            target_principal=config.signer_service_account,
-            target_scopes=["https://www.googleapis.com/auth/devstorage.read_write"],
-            lifetime=900,
-        )
-        self.credentials = credentials
-        self.client = storage.Client(project=config.project, credentials=credentials)
-        self.http = AuthorizedSession(credentials)
+        self.connecting = threading.Lock()
+
+    def connect(self):
+        """Set up the impersonated signer on the first multipart call, so the rest never needs it."""
+        with self.connecting:
+            if self.http is not None:
+                return
+            if not all((self.config.bucket, self.config.signer_service_account, self.config.project)):
+                raise StorageFailure("storage_not_configured")
+            try:
+                source, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            except Exception:
+                raise StorageFailure("provider_unavailable") from None
+            credentials = impersonated_credentials.Credentials(
+                source_credentials=source,
+                target_principal=self.config.signer_service_account,
+                target_scopes=["https://www.googleapis.com/auth/devstorage.read_write"],
+                lifetime=900,
+            )
+            self.credentials = credentials
+            self.client = storage.Client(project=self.config.project, credentials=credentials)
+            self.http = AuthorizedSession(credentials)
 
     def blob(self, bucket, key, generation=None):
         self.check_bucket(bucket)
@@ -60,7 +71,7 @@ class GoogleStore:
 
     def check_bucket(self, bucket):
         if self.http is None:
-            raise StorageFailure("storage_not_configured")
+            self.connect()
         if bucket != self.config.bucket:
             raise StorageFailure("bucket_mismatch")
 
@@ -147,6 +158,8 @@ class GoogleStore:
             blob.reload(timeout=60)
         except NotFound:
             return None
+        except Exception:
+            raise StorageFailure("provider_unavailable") from None
         return ObjectInfo(size=blob.size, crc32c=blob.crc32c, version=str(blob.generation))
 
     def delete(self, bucket, key, version):
@@ -155,6 +168,10 @@ class GoogleStore:
             self.blob(bucket, key, generation).delete(if_generation_match=generation, timeout=60)
         except NotFound:
             pass
+        except StorageFailure:
+            raise
+        except Exception:
+            raise StorageFailure("provider_unavailable") from None
 
     def signed_download(self, bucket, key, version, filename, disposition, expires_in):
         generation = int(version) if version is not None else None

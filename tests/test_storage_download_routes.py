@@ -361,3 +361,27 @@ def test_download_without_storage_is_not_configured(client, db_engine, signer, a
     assert response.status_code == 501
     assert response.json()["detail"]["code"] == "storage_not_configured"
     signer.bucket.assert_not_called()
+
+
+def test_a_file_without_a_location_is_not_found_on_s3(client, db_engine, admin, monkeypatch):
+    def refuse():
+        raise AssertionError("Google storage was asked")
+    monkeypatch.setattr(gcs_storage, "key_client", refuse)
+    _switch(monkeypatch, "STORAGE_BACKEND", "s3")
+    file_mfid = _file(db_engine, None)
+    assert client.get(f"/files/{file_mfid}/download_link").status_code == 404
+    response = client.get(f"/datasets/{DS}/download_links")
+    assert response.status_code == 200, response.text
+    assert response.json() == {file_mfid: None}
+
+
+@pytest.mark.parametrize("path, body", [
+    ("initiate", {"filename": "a.bin", "size": 3}),
+    ("initiate/multipart", {"filename": "a.bin", "size": 3}),
+    ("complete", {"upload_id": "x", "sha256_hash": "a" * 64}),
+])
+def test_legacy_upload_routes_answer_clearly_on_s3(client, admin, monkeypatch, path, body):
+    _switch(monkeypatch, "STORAGE_BACKEND", "s3")
+    response = client.post(f"/datasets/{DS}/upload/{path}", json=body)
+    assert response.status_code == 501
+    assert response.json()["detail"]["code"] == "legacy_upload_unavailable"

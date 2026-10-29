@@ -403,3 +403,9 @@ def test_a_worker_starts_with_its_secrets_already_read(startup):
         assert startup == [KEY_VERSION]
         assert config.get_secret("CRUCIBLE_SECRET_KEY") == f"value of {KEY_VERSION}"
         assert startup == [KEY_VERSION]
+
+
+def test_s3_keys_must_be_one_line(empty):
+    empty.setenv("S3_SECRET_ACCESS_KEY", "two\nlines")
+    with pytest.raises(ConfigurationError, match="S3_SECRET_ACCESS_KEY must be one line of printable ASCII"):
+        config.get_secret("S3_SECRET_ACCESS_KEY")

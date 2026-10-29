@@ -15,7 +15,7 @@ from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
 from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead, UploadMultipartInitiateRead
 from app.services import multipart
-from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE
+from app.api.errors import NOT_AVAILABLE_HERE
 from app.services.storage_downloads import DOWNLOAD_LIFETIME, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, upload_bucket
 from app.storage import get_store
 from app.storage.gcs import key_client, key_credentials
@@ -25,6 +25,8 @@ from app.utils.sql_utils import add_or_update, assert_not_pending_deletion, touc
 
 router = APIRouter(tags=["storage"])
 logger = logging.getLogger(__name__)
+
+LEGACY_UPLOAD_RESPONSE = {NOT_AVAILABLE_HERE: {"description": "File storage is not configured on this server (`storage_not_configured`), or it is not Google Cloud Storage, which these routes need (`legacy_upload_unavailable`; upload through `/upload/multipart` instead): `{\"detail\": {\"code\": ..., \"message\": ...}}`"}}
 
 _GCS_UPLOAD_API = "https://storage.googleapis.com/upload/storage/v1/b"
 _CHUNK_SIZE_HINT = 8 * 1024 * 1024  # 8 MiB — GCS recommended chunk multiple
@@ -44,12 +46,23 @@ def _get_gcs_authed_session():
     return _gcs_authed_session
 
 
+def _legacy_upload_bucket():
+    """The upload bucket for the token-based upload routes, which only Google Cloud Storage supports."""
+    bucket = upload_bucket()
+    if get_settings().storage.backend != "gcs":
+        raise HTTPException(status_code=NOT_AVAILABLE_HERE, detail={"code": "legacy_upload_unavailable", "message": "This server does not store files in Google Cloud Storage; upload through /upload/multipart (nano-crucible 3.3.0 or newer)"})
+    return bucket
+
+
 def _determine_storage_path(dataset_mfid, filename):
     """
     For a given dataset ID, list the gcs blobs in the corresponding
     folder and return the storage path for the file. 
     """
     bucket = upload_bucket()
+    # Files without a recorded location predate the multipart uploads and exist only in Google Cloud Storage.
+    if get_settings().storage.backend != "gcs":
+        raise HTTPException(status_code=404, detail="File not found in storage")
     basename = filename.split("/")[-1]
     exact = f"{dataset_mfid}/{filename}"
     names = [
@@ -192,7 +205,7 @@ def _create_upload_session(
 
 
 
-@router.post("/datasets/{dataset_mfid}/upload/initiate", response_model=UploadInitiateRead, responses=STORAGE_NOT_CONFIGURED_RESPONSE)
+@router.post("/datasets/{dataset_mfid}/upload/initiate", response_model=UploadInitiateRead, responses=LEGACY_UPLOAD_RESPONSE)
 def initiate_resumable_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
@@ -206,7 +219,7 @@ def initiate_resumable_upload(
     Call POST /datasets/{dataset_mfid}/upload/complete when all chunks are uploaded.
     '''
     user_unique_id = auth_res.user_id
-    bucket = upload_bucket()
+    bucket = _legacy_upload_bucket()
 
     result = _validate_and_prepare_upload(dsid, body, user_unique_id, auth_res)
     if not isinstance(result, tuple):
@@ -241,7 +254,7 @@ def initiate_resumable_upload(
     )
 
 
-@router.post("/datasets/{dataset_mfid}/upload/initiate/multipart", response_model=UploadMultipartInitiateRead, responses=STORAGE_NOT_CONFIGURED_RESPONSE)
+@router.post("/datasets/{dataset_mfid}/upload/initiate/multipart", response_model=UploadMultipartInitiateRead, responses=LEGACY_UPLOAD_RESPONSE)
 def initiate_multipart_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
@@ -255,7 +268,7 @@ def initiate_multipart_upload(
     If existing_file is set, the file already exists; skip the upload entirely.
     '''
     user_unique_id = auth_res.user_id
-    bucket = upload_bucket()
+    bucket = _legacy_upload_bucket()
 
     result = _validate_and_prepare_upload(dsid, body, user_unique_id, auth_res)
     if not isinstance(result, tuple):
@@ -280,7 +293,7 @@ def initiate_multipart_upload(
     )
 
 
-@router.post("/datasets/{dataset_mfid}/upload/complete", response_model=AssociatedFileRead, responses=STORAGE_NOT_CONFIGURED_RESPONSE)
+@router.post("/datasets/{dataset_mfid}/upload/complete", response_model=AssociatedFileRead, responses=LEGACY_UPLOAD_RESPONSE)
 def complete_resumable_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
@@ -293,7 +306,7 @@ def complete_resumable_upload(
     and deletes the upload session record.
     '''
     user_unique_id = auth_res.user_id
-    bucket = upload_bucket()
+    bucket = _legacy_upload_bucket()
 
     with Session(get_engine()) as session:
         us = session.exec(

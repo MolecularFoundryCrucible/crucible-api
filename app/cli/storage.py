@@ -206,7 +206,7 @@ def register(groups: argparse._SubParsersAction) -> None:
     cleanup = commands.add_parser(
         "cleanup",
         help="Abort expired uploads and delete file versions past their grace period",
-        description="Aborts multipart uploads that expired or whose cleanup failed, and deletes the stored content of file versions older than FILE_VERSION_RETENTION_DAYS that no file uses. Run it hourly. Exits 1 when anything failed.",
+        description="Aborts multipart uploads that expired or whose cleanup failed, and deletes the stored content of file versions older than FILE_VERSION_RETENTION_DAYS that no file uses. Run it hourly. Does nothing unless STORAGE_CLEANUP_ENABLED=true, except --dry-run. Exits 1 when anything failed.",
     )
     cleanup.add_argument("--dry-run", action="store_true", help="Report what would be done without changing anything")
     cleanup.add_argument("--batch", type=int, default=500, help="Most uploads and versions to handle in one run (default 500)")
@@ -241,13 +241,16 @@ def _run_check(args: argparse.Namespace) -> int:
 
 def _run_cleanup(args: argparse.Namespace) -> int:
     from app.api.dependencies import get_engine
-    from app.config import check_settings
+    from app.config import check_settings, get_settings
     from app.services.multipart import now
     from app.services.storage_cleanup import run_cleanup
     from app.storage import get_store
 
     try:
         check_settings()
+        if not get_settings().storage.cleanup_enabled and not args.dry_run:
+            print("storage cleanup is disabled (STORAGE_CLEANUP_ENABLED=false); nothing done")
+            return 0
         store = get_store()
     except Exception as error:
         print(f"Storage is not usable: {error}", file=sys.stderr)

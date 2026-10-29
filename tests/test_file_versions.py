@@ -293,3 +293,26 @@ def test_restore_refuses_an_expired_or_changed_version(s3, situation, code):
         restore_latest(engine, storage, file["mfid"], service.now())
     assert refused.value.code == code
     assert stored_file(engine, file["mfid"]).storage_path != file["storage_path"]
+
+
+@pytest.mark.parametrize("enabled, dry_run, runs", [(None, False, False), ("false", False, False), ("true", False, True), (None, True, True)])
+def test_cleanup_command_runs_only_when_enabled_or_dry(monkeypatch, capsys, enabled, dry_run, runs):
+    from app.cli.__main__ import main
+    calls = []
+    monkeypatch.setattr("app.config.check_settings", lambda: None)
+    monkeypatch.setattr("app.storage.get_store", lambda: object())
+    monkeypatch.setattr("app.api.dependencies.get_engine", lambda: object())
+    monkeypatch.setattr("app.services.storage_cleanup.run_cleanup", lambda engine, store, now, dry_run, batch: calls.append(dry_run) or lifecycle_report())
+    if enabled is None:
+        monkeypatch.delenv("STORAGE_CLEANUP_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("STORAGE_CLEANUP_ENABLED", enabled)
+    assert main(["storage", "cleanup"] + (["--dry-run"] if dry_run else [])) == 0
+    assert calls == ([dry_run] if runs else [])
+    if not runs:
+        assert "disabled" in capsys.readouterr().out
+
+
+def lifecycle_report():
+    from app.services.storage_cleanup import CleanupReport
+    return CleanupReport()

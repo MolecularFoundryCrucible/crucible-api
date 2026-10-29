@@ -302,7 +302,7 @@ _SECRETS: dict[str, tuple[str, str]] = {
     if info.annotation == SecretStr | None
 }
 # Sent verbatim in HTTP Basic credentials and ORCID token requests, where a stray newline breaks every sign-in.
-_SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_ORCID_CLIENT_SECRET"})
+_SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_ORCID_CLIENT_SECRET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"})
 _FEATURES = {"ingestion": "ingestion", "printing": "printing", "proposal_sync": "proposals"}
 
 

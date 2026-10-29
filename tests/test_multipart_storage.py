@@ -3,6 +3,8 @@ from unittest.mock import MagicMock
 from xml.etree import ElementTree as ET
 
 import pytest
+from google.api_core.exceptions import ServiceUnavailable
+from google.auth.exceptions import DefaultCredentialsError, RefreshError
 
 from app.storage import Part, StorageFailure, UploadMissing
 from app.storage.gcs import GoogleStore
@@ -107,3 +109,34 @@ def test_finish_sends_part_numbers_and_etags():
     root = ET.fromstring(storage.request.call_args.kwargs["data"])
     assert [(p.findtext("PartNumber"), p.findtext("ETag")) for p in root.findall("Part")] == [("1", "a"), ("2", "b")]
     assert storage.request.call_args.kwargs["params"] == {"uploadId": UPLOAD_ID}
+
+
+@pytest.mark.parametrize("failure", [ServiceUnavailable("busy"), RefreshError("token")])
+def test_head_and_delete_report_google_failures_as_storage_failures(failure):
+    storage = adapter()
+    blob = storage.client.bucket.return_value.blob.return_value
+    blob.reload.side_effect = failure
+    blob.delete.side_effect = failure
+    with pytest.raises(StorageFailure, match="provider_unavailable"):
+        storage.head(BUCKET, KEY)
+    with pytest.raises(StorageFailure, match="provider_unavailable"):
+        storage.delete(BUCKET, KEY, "7")
+
+
+def test_the_signer_is_set_up_only_for_multipart_calls(monkeypatch):
+    calls = []
+
+    def default(**kwargs):
+        calls.append(kwargs)
+        raise DefaultCredentialsError("no credentials")
+    monkeypatch.setattr("app.storage.gcs.google.auth.default", default)
+    keyed = MagicMock()
+    keyed.bucket.return_value.blob.return_value.generate_signed_url.return_value = "https://signed.example/x"
+    monkeypatch.setattr("app.storage.gcs.key_client", lambda: keyed)
+    storage = GoogleStore(SimpleNamespace(bucket="dedicated", signer_service_account="signer@example.iam.gserviceaccount.com", project="project"))
+    from datetime import timedelta
+    assert storage.signed_download(BUCKET, KEY, "7", "a.bin", "attachment", timedelta(hours=1)) == "https://signed.example/x"
+    assert calls == []
+    with pytest.raises(StorageFailure, match="provider_unavailable"):
+        storage.start_upload(BUCKET, KEY)
+    assert len(calls) == 1

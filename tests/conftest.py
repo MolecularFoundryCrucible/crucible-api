@@ -95,16 +95,18 @@ def db_engine(use_engine):
 def fresh_settings(monkeypatch):
     """Settings are read once per process in production; tests change the environment, so each
     test starts from an empty settings cache, no secrets already fetched, and no engine."""
-    from app import config
+    from app import config, storage
     from app.api import dependencies
+    from app.storage import gcs
 
+    caches = (config.get_settings, dependencies.get_engine, storage.get_store, gcs.key_credentials, gcs.key_client)
     monkeypatch.setattr(config, "_fetched_secrets", {})
     monkeypatch.setattr(config, "_loaded_env_files", set())
-    config.get_settings.cache_clear()
-    dependencies.get_engine.cache_clear()
+    for cached in caches:
+        cached.cache_clear()
     yield
-    config.get_settings.cache_clear()
-    dependencies.get_engine.cache_clear()
+    for cached in caches:
+        cached.cache_clear()
 
 
 @pytest.fixture(autouse=True)

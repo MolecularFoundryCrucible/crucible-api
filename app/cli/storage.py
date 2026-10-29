@@ -12,6 +12,7 @@ import google_crc32c
 from app.storage.crc32c import combine_parts
 
 PREFIX = "_crucible-check"
+CHECKSUM_HEADERS = ("x-amz-checksum-crc32c", "x-goog-hash")
 
 
 def crc32c(data: bytes) -> str:
@@ -37,12 +38,28 @@ class StorageCheck:
         self.parts = {1: os.urandom(part_bytes), 2: os.urandom(1024)}
         self.data = self.parts[1] + self.parts[2]
         self.upload_id = None
-        self.finished = False
 
     def put_part(self, number: int, crc: str) -> int:
         data = self.parts[number]
         url, headers = self.store.sign_part(self.bucket, self.key, self.upload_id, number, crc, len(data), datetime.now(timezone.utc) + timedelta(minutes=15))
         status, _, _ = send("PUT", url, data, headers)
+        return status
+
+    def put_other_bytes(self, header: str) -> int:
+        """Send other bytes of part 2's length to the URL signed for part 2, with the checksum header
+        changed to match them, or left out."""
+        data = self.parts[2]
+        other = os.urandom(len(data))
+        url, headers = self.store.sign_part(self.bucket, self.key, self.upload_id, 2, crc32c(data), len(data), datetime.now(timezone.utc) + timedelta(minutes=15))
+        name = next((name for name in headers if name.lower() in CHECKSUM_HEADERS), None)
+        if name is None:
+            raise AssertionError(f"the store signed no checksum header (headers: {sorted(headers)})")
+        headers = dict(headers)
+        if header == "changed":
+            headers[name] = crc32c(other) if name.lower() == "x-amz-checksum-crc32c" else f"crc32c={crc32c(other)}"
+        else:
+            del headers[name]
+        status, _, _ = send("PUT", url, other, headers)
         return status
 
     def steps(self):
@@ -64,6 +81,14 @@ class StorageCheck:
                 raise AssertionError(f"a part with the wrong checksum answered HTTP {status}")
             return f"refused with HTTP {status}"
 
+        def other_bytes(header):
+            def step():
+                status = self.put_other_bytes(header)
+                if status < 400 or status >= 500:
+                    raise AssertionError(f"the store accepted other bytes with the checksum header {header} (HTTP {status})")
+                return f"refused with HTTP {status}"
+            return step
+
         def listed():
             parts, _ = self.store.list_parts(self.bucket, self.key, self.upload_id)
             found = [(item.part_number, item.size) for item in parts]
@@ -77,7 +102,6 @@ class StorageCheck:
 
         def finish():
             self.store.finish_upload(self.bucket, self.key, self.upload_id, self.listing, {number: crc32c(data) for number, data in self.parts.items()})
-            self.finished = True
             return "completed"
 
         def head():
@@ -115,13 +139,14 @@ class StorageCheck:
             self.store.delete(self.bucket, self.key, self.version)
             if self.store.head(self.bucket, self.key) is not None:
                 raise AssertionError("object still present")
-            self.finished = False
             return "removed"
 
         yield "start a multipart upload", start
         yield "upload part 1 through its signed URL", part(1)
         yield "upload part 1 again", part(1, again=True)
         yield "refuse a part with the wrong checksum", wrong_checksum
+        yield "refuse other bytes with the checksum header changed to match them", other_bytes("changed")
+        yield "refuse other bytes without the checksum header", other_bytes("left out")
         yield "upload part 2", part(2)
         yield "list the parts", listed
         yield "finish the upload", finish
@@ -145,11 +170,12 @@ class StorageCheck:
             self.clean_up()
 
     def clean_up(self):
+        if self.keep or not self.upload_id:
+            return
         try:
-            if self.upload_id and not self.finished and not self.keep:
-                self.store.abort_upload(self.bucket, self.key, self.upload_id)
-                if self.store.head(self.bucket, self.key) is not None:
-                    self.store.delete(self.bucket, self.key, None)
+            self.store.abort_upload(self.bucket, self.key, self.upload_id)
+            if self.store.head(self.bucket, self.key) is not None:
+                self.store.delete(self.bucket, self.key, None)
         except Exception as error:
             self.out(f"warning: could not remove {self.bucket}/{self.key}: {error or type(error).__name__}")
 
@@ -171,7 +197,7 @@ def register(groups: argparse._SubParsersAction) -> None:
     check = commands.add_parser(
         "check",
         help="Upload, download, and delete a test file with the configured storage",
-        description="Runs a two-part signed upload into UPLOAD_BUCKET under _crucible-check/, re-uploads a part, checks that a part with the wrong checksum is refused, finishes the upload, downloads the file through a signed URL, writes and reads a record file in RECORD_BUCKET when it is set, and deletes the test file. Signed URLs use S3_ENDPOINT_URL unless --public is given. Exits 1 when a step fails.",
+        description="Runs a two-part signed upload into UPLOAD_BUCKET under _crucible-check/, re-uploads a part, checks that the store refuses a part whose bytes do not match the signed checksum (sent with the signed checksum, with the checksum header changed to match the bytes, and without it), finishes the upload, downloads the file through a signed URL, writes and reads _crucible-check/record.json in RECORD_BUCKET when it is set (left there and overwritten by the next run), and deletes the test file, also when a step fails. Signed URLs use S3_ENDPOINT_URL unless --public is given. Exits 1 when a step fails.",
     )
     check.add_argument("--size-mib", type=int, default=5, help="Size of the first part in MiB (S3 requires at least 5; default 5)")
     check.add_argument("--keep", action="store_true", help="Leave the test file in the bucket")
@@ -187,6 +213,13 @@ def _run_check(args: argparse.Namespace) -> int:
         settings = get_settings().storage
         if not settings.upload_bucket:
             raise ConfigurationError("UPLOAD_BUCKET is not set")
+        if settings.backend == "gcs":
+            from app.utils.multipart_config import MultipartStorageConfig
+
+            config = MultipartStorageConfig.from_env()
+            missing = [name for name, value in (("MULTIPART_UPLOAD_BUCKET", config.bucket), ("MULTIPART_UPLOAD_SIGNER", config.signer_service_account), ("MULTIPART_UPLOAD_PROJECT", config.project)) if not value]
+            if missing:
+                raise ConfigurationError(f"checking Google Cloud Storage needs {', '.join(missing)}")
         store = check_store(args.public)
     except Exception as error:
         print(f"Storage is not usable: {error}", file=sys.stderr)

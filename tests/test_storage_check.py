@@ -1,4 +1,4 @@
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import pytest
 
@@ -23,7 +23,7 @@ class Store:
         return "upload-1"
 
     def sign_part(self, bucket, key, upload_id, number, crc, size, expires_at):
-        return f"https://store.example/{number}?crc={crc}", {"x-amz-checksum-crc32c": crc, "Content-Length": str(size)}
+        return f"https://store.example/{number}?crc={quote(crc, safe='')}", {"x-amz-checksum-crc32c": crc, "Content-Length": str(size)}
 
     def receive(self, url, data, headers):
         query = urlparse(url)

@@ -166,10 +166,21 @@ Clients refuse 0-byte files on the signed path today, which keeps the legacy rou
 
 **Files:** `app/api/routes/gcs_storage.py`, `tests/test_gcs_multipart_endpoint.py`, `tests/test_storage_download_routes.py`, `docs/remote_file_records.md`, `CHANGELOG.md`
 
-- [ ] **Step 1:** Tests: with `STORAGE_BACKEND=s3`, `POST /datasets/{dataset_mfid}/upload/initiate`, `/upload/initiate/multipart`, and `/upload/complete` answer 501 `{"detail": {"code": "upload_protocol_unsupported", ...}}` (not 503, which nano-crucible 3.3.0 treats as "fall back to legacy"); with `gcs` they behave as today and carry a `Deprecation` header; OpenAPI marks them deprecated.
-- [ ] **Step 2:** Implement; document in `docs/remote_file_records.md` that `storage_backend = "gcs"` means "stored by the API" whatever the store; CHANGELOG (clients: the legacy routes are deprecated; self-hosted installations need nano-crucible 3.3.0 or later).
+- [x] **Step 1 (done in #386):** with `STORAGE_BACKEND=s3`, `POST /datasets/{dataset_mfid}/upload/initiate`, `/upload/initiate/multipart`, and `/upload/complete` answer 501 `{"detail": {"code": "legacy_upload_unavailable", ...}}`, not 503.
+- [ ] **Step 2:** With `gcs` the three routes carry a `Deprecation` header and OpenAPI marks them deprecated; document in `docs/remote_file_records.md` that `storage_backend = "gcs"` means "stored by the API" whatever the store; CHANGELOG (clients: the legacy routes are deprecated; self-hosted installations need nano-crucible 3.3.0 or later).
+- [ ] **Step 3:** Measure before setting a retirement date: from production's request logs (read-only), how often the three routes are called and by which clients (nano-crucible sends its version in the User-Agent). Known callers from the local repositories (2026-10-29): crucible-hub uses only the signed routes; nano-crucible 3.3.0 uses them by default and falls back to the token route only when the server has multipart switched off, 3.2.1 and earlier only the token routes; the crucible-ingestion environment carries an older nano-crucible that calls the token routes; the upload UIs call neither directly and depend on the nano-crucible version they pin.
+
+### Before the Foundry switch (decided 2026-10-29)
+
+The Foundry moves to `S3Store` only after all of these:
+
+1. **Backfill file locations, then remove the lookup.** Some older records have no `storage_path`; today `_determine_storage_path` lists the dataset's prefix in Google on first use and fills it in, which only works on `gcs` (on `s3` such records answer 404 since #386). Run a one-off, reviewed, dry-run-first backfill that sets every such record's `storage_path` (reads storage, writes the database, needs the user's authorization), then remove `_determine_storage_path`, `_ensure_storage_path`, and their four callers (single and dataset download links, ingest, replace).
+2. **Retire the token-based upload routes** (Task 5, once Step 3 shows no remaining callers). They are the only way an object is overwritten in place, and `S3Store` does not pin downloads to an object version (GCS through the S3 API may not support it), so the routes go before the switch, not after.
+3. **The `Authorization` header on downloads** (Task 7): released clients send their API key along with the signed download URL. Through the bundle's Caddy it is stripped; on the Foundry the URL points at Google directly, so whether Google's S3 interface accepts a presigned GET that also carries `Authorization: Bearer` must be tested. If it refuses, the switch waits for a nano-crucible release that does not send the key to storage URLs, and for clients to move to it.
 
 ### Task 6: SeaweedFS in the Compose bundle
+
+Status 2026-10-29: built and tested, PR after #386. Differences from the steps below: the hourly `storage-cleanup` service moves to Task 3 (it needs the cleanup command); added `CRUCIBLE_FILES_DIR` (a folder of the lab's choice instead of the Docker volume) and a `files-backup` service (rclone through the S3 interface, incremental, plain files, store running) instead of stopping the store for a volume copy; the SeaweedFS health check waits for the buckets (through the filer on port 8888). The Caddy hop was measured: a 1 GiB download runs at about 2.5 GB/s through Caddy against 4.4 GB/s straight from SeaweedFS on one machine (plain HTTP), far above a 10 Gb link, so Caddy stays; a lab that needs more bandwidth can give the store its own address (README.md) or use its institution's store, which clients reach directly.
 
 **Files:** `deploy/compose/compose.yaml`, `deploy/compose/Caddyfile`, `deploy/compose/.env.example`, `deploy/compose/README.md`, `.github/workflows/tests.yml` (`compose-smoke`), `scripts/selfhost_smoke.py`
 
@@ -184,7 +195,7 @@ Clients refuse 0-byte files on the signed path today, which keeps the legacy rou
 No code unless the check finds a gap.
 
 - [ ] **Step 1 (user):** Confirm in the console that the LBL organization does not enforce `iam.disableServiceAccountKeyCreation` (or its managed form) or `storage.restrictAuthTypes`; create a disposable bucket, a dedicated service account with Storage Object Admin on that bucket only, and an HMAC key for it.
-- [ ] **Step 2:** Run `python -m app.cli storage check` with `STORAGE_BACKEND=s3`, `S3_ENDPOINT_URL=https://storage.googleapis.com`, `S3_REGION=auto`, the bucket, and the HMAC key, from a workstation; record each step's result in `docs/self_hosting_phase2_research.md` (part checksum enforcement, completion, head, signed download with filename, delete).
+- [ ] **Step 2:** Run `python -m app.cli storage check` with `STORAGE_BACKEND=s3`, `S3_ENDPOINT_URL=https://storage.googleapis.com`, `S3_REGION=auto`, the bucket, and the HMAC key, from a workstation; record each step's result in `docs/self_hosting_phase2_research.md` (part checksum enforcement including the changed and missing header cases, completion, head, signed download with filename, delete). Also download a presigned URL with an `Authorization: Bearer x` header added, as released clients do (see "Before the Foundry switch", item 3).
 - [ ] **Step 3:** If every step passes, propose the staging switch to the user and the deploy session (settings and secrets in mf-crucible-deploy, staging first, crucible-tests run, then production); after production runs on `S3Store`, remove `GoogleStore`, `google-cloud-storage`, and the legacy routes in a later release. If a step fails, `GoogleStore` stays, and the result is recorded with the reason.
 
 ## Open questions

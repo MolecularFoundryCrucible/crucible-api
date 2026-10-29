@@ -129,9 +129,10 @@ jobs:
       - name: Create secrets and settings as in the install guide
         run: |
           mkdir -p secrets && chmod 700 secrets
-          for name in POSTGRES_PASSWORD PGDB_PW CRUCIBLE_SECRET_KEY; do
+          for name in POSTGRES_PASSWORD PGDB_PW CRUCIBLE_SECRET_KEY S3_SECRET_ACCESS_KEY; do
             openssl rand -hex 32 > "secrets/$name"
           done
+          openssl rand -hex 16 > secrets/S3_ACCESS_KEY_ID
           chmod 644 secrets/*
           cp .env.example .env
       - name: Start
@@ -147,6 +148,14 @@ jobs:
           CRUCIBLE_API_KEY=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1]))['api_key'])" "$RUNNER_TEMP/admin.json")
           export CRUCIBLE_API_KEY
           python3 ../../scripts/selfhost_smoke.py
+      - name: Storage check inside the API container
+        run: docker compose exec -T api python -m app.cli storage check
+      - name: Back up the stored files as in the install guide
+        run: |
+          mkdir -p "$RUNNER_TEMP/backups/files"
+          CRUCIBLE_BACKUP_DIR="$RUNNER_TEMP/backups" docker compose run --rm --user "$(id -u):$(id -g)" files-backup
+          find "$RUNNER_TEMP/backups/files/crucible-files" -path '*/_files/*' -type f | grep -q .
+          find "$RUNNER_TEMP/backups/files/crucible-records" -name record.json -not -path '*/_crucible-check/*' | grep -q .
       - name: Service logs
         if: failure()
         run: docker compose logs --no-color
@@ -178,9 +187,10 @@ jobs:
           echo "CA=$RUNNER_TEMP/caddy-root.crt" >> "$GITHUB_ENV"
           CA="$RUNNER_TEMP/caddy-root.crt"
           mkdir -p secrets && chmod 700 secrets
-          for name in POSTGRES_PASSWORD PGDB_PW CRUCIBLE_SECRET_KEY HUB_AUTH_CLIENT_SECRET; do
+          for name in POSTGRES_PASSWORD PGDB_PW CRUCIBLE_SECRET_KEY HUB_AUTH_CLIENT_SECRET S3_SECRET_ACCESS_KEY; do
             openssl rand -hex 32 > "secrets/$name"
           done
+          openssl rand -hex 16 > secrets/S3_ACCESS_KEY_ID
           printf 'not-a-real-orcid-secret' > secrets/ORCID_CLIENT_SECRET
           chmod 644 secrets/*
           cp .env.example .env
@@ -234,13 +244,16 @@ jobs:
             const ok = right[0] === 401 && right[1] === 'Invalid or expired sign-in code' && wrong[0] === 401 && wrong[1] === 'Invalid client credentials';
             process.exit(ok ? 0 : 1);
           })();"
-      - name: Neither project can reach the other's database, and containers hold no extra capabilities
+      - name: Neither project can reach the other's database, the Hub cannot reach the store, and containers hold no extra capabilities
         run: |
-          (cd hub/deploy/compose && docker compose exec -T hub node -e "
-          const net = require('net');
-          const s = net.connect({host: 'db', port: 5432, timeout: 3000});
-          s.on('connect', () => { console.log('hub reached db'); process.exit(1); });
-          s.on('error', () => process.exit(0)); s.on('timeout', () => process.exit(0));")
+          for target in db:5432 seaweedfs:8333; do
+            (cd hub/deploy/compose && docker compose exec -T -e TARGET="$target" hub node -e "
+            const net = require('net');
+            const [host, port] = process.env.TARGET.split(':');
+            const s = net.connect({host, port: Number(port), timeout: 3000});
+            s.on('connect', () => { console.log('hub reached ' + process.env.TARGET); process.exit(1); });
+            s.on('error', () => process.exit(0)); s.on('timeout', () => process.exit(0));")
+          done
           cd deploy/compose
           docker compose exec -T api python -c "
           import socket
@@ -256,6 +269,7 @@ jobs:
           done
           test "$(docker compose exec -T api sh -c 'grep CapEff /proc/1/status' | awk '{print $2}')" = 0000000000000000
           test "$(docker compose exec -T proxy sh -c 'grep CapEff /proc/1/status' | awk '{print $2}')" = 0000000000000400
+          test "$(docker compose exec -T seaweedfs sh -c 'grep CapEff /proc/1/status' | awk '{print $2}')" = 0000000000000000
       # The API side of a second-machine Hub is only CRUCIBLE_HUB_UPSTREAM; the Hub's own calls to the API then go
       # over the public HTTPS address, which crucible-hub tests. Its API address here only has to be accepted.
       - name: The front door reaches a Hub that is off the shared network (second machine, simulated)

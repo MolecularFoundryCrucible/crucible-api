@@ -1,7 +1,6 @@
 import hashlib
 import json
 import logging
-import os
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
@@ -17,7 +16,8 @@ from app.models.datasets import AssociatedFileRead, file_etag
 from app.models.multipart import MultipartStatus
 from app.storage import StorageFailure, UploadMissing
 from app.storage.crc32c import combine_parts
-from app.services.storage_downloads import StorageLocationError, StorageNotConfigured, multipart_prefix, resolve_storage_object, upload_bucket
+from app.services.file_versions import keep_version
+from app.services.storage_downloads import multipart_prefix, owned_object
 from app.utils.auth_utils import load_principal, require_permission
 from app.utils.permissions import Permission, PlatformRole
 from app.utils.sql_utils import assert_not_pending_deletion, get_active_deletion_request, touch_resource_modification_time
@@ -416,6 +416,8 @@ def complete(engine, storage, principal, dsid, body, retire=None):
                 touch_resource_modification_time(session, dsid)
                 if file is not None:
                     previous = (file.storage_path, file.storage_generation, file.filename, file.dataset_id)
+                    if not storage().retires_by_lifecycle:
+                        keep_version(session, file, dsid, now())
                     file.storage_path = f"{current.bucket}/{current.object_key}"
                     file.storage_generation = metadata.version
                     file.size = current.size
@@ -458,17 +460,8 @@ def retire_previous(engine, retire, result, dsid, previous):
 
 
 def retire_if_eligible(engine, retire, dsid, path, generation, filename, dataset_id):
-    bucket, _, key = path.partition("/")
-    try:
-        current = upload_bucket()
-    except StorageNotConfigured:
-        current = ""
-    own_buckets = {current, os.environ.get("MULTIPART_UPLOAD_BUCKET", "").strip()} - {""}
-    if retire is None or bucket not in own_buckets:
-        return False
-    try:
-        resolve_storage_object(path, generation, dsid)
-    except StorageLocationError:
+    key = path.partition("/")[2]
+    if retire is None or not owned_object(path, generation, dsid):
         return False
     with Session(engine) as session:
         if session.exec(select(AssociatedFile.id).where(AssociatedFile.storage_path == path)).first() is not None:

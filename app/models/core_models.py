@@ -582,6 +582,38 @@ class PostprocessingRun(SQLModel, table=True):
     request_fingerprint: Optional[str] = Field(default=None, max_length=64)
 
 
+FILE_VERSION_REASONS = ("replaced",)
+FILE_VERSION_WAITING = "deleted_at IS NULL AND restored_at IS NULL"
+
+
+class FileVersion(SQLModel, table=True):
+    """Content a file had before it was replaced: kept for FILE_VERSION_RETENTION_DAYS so it can be
+    restored, then deleted from storage by `python -m app.cli storage cleanup`. Written in the same
+    transaction that repoints the file, so no replaced object is forgotten. No foreign key to the
+    file: a version outlives its file."""
+    __tablename__ = "file_versions"
+    __table_args__ = (
+        CheckConstraint(f"reason IN ({', '.join(repr(reason) for reason in FILE_VERSION_REASONS)})", name="ck_file_versions_reason"),
+        Index("ix_file_versions_due", "delete_after", postgresql_where=text(FILE_VERSION_WAITING), sqlite_where=text(FILE_VERSION_WAITING)),
+        Index("uq_file_versions_waiting_path", "storage_path", unique=True, postgresql_where=text(FILE_VERSION_WAITING), sqlite_where=text(FILE_VERSION_WAITING)),
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    file_mfid: str = Field(index=True)
+    dataset_mfid: str
+    storage_path: str
+    storage_generation: Optional[str] = None
+    size: int = Field(sa_column=Column(BigInteger(), nullable=False))
+    sha256_hash: str
+    storage_crc32c: Optional[str] = None
+    reason: str
+    created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    delete_after: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    deleted_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    restored_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    attempts: int = Field(default=0, sa_column=Column(Integer(), nullable=False, server_default="0"))
+    failure_code: Optional[str] = None
+
+
 class UploadSession(SQLModel, table=True):
     __tablename__ = "upload_sessions"
     __table_args__ = (

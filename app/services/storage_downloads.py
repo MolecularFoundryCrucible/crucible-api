@@ -70,6 +70,23 @@ def resolve_storage_object(storage_path, generation, dataset_mfid):
     return StorageObject(bucket, key, str(generation) if generation is not None else None)
 
 
+def owned_object(storage_path, generation, dataset_mfid):
+    """Whether the API may delete or retire this object: it is in one of this environment's own
+    upload buckets and inside its dataset, by the same rule downloads follow."""
+    bucket = (storage_path or "").partition("/")[0]
+    try:
+        current = upload_bucket()
+    except StorageNotConfigured:
+        current = ""
+    if bucket not in {current, os.environ.get("MULTIPART_UPLOAD_BUCKET", "").strip()} - {""}:
+        return False
+    try:
+        resolve_storage_object(storage_path, generation, dataset_mfid)
+    except (StorageLocationError, StorageNotConfigured):
+        return False
+    return True
+
+
 def download_headers(filename, stored_type, disposition="attachment"):
     basename = PurePosixPath(filename or "").name
     fallback = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in basename).strip() or "download"

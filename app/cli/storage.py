@@ -203,6 +203,14 @@ def register(groups: argparse._SubParsersAction) -> None:
     check.add_argument("--keep", action="store_true", help="Leave the test file in the bucket")
     check.add_argument("--public", action="store_true", help="Sign URLs for S3_PUBLIC_URL, as clients receive them (run from where clients run)")
     check.set_defaults(handler=_run_check)
+    cleanup = commands.add_parser(
+        "cleanup",
+        help="Abort expired uploads and delete file versions past their grace period",
+        description="Aborts multipart uploads that expired or whose cleanup failed, and deletes the stored content of file versions older than FILE_VERSION_RETENTION_DAYS that no file uses. Run it hourly. Does nothing unless STORAGE_CLEANUP_ENABLED=true, except --dry-run. Exits 1 when anything failed.",
+    )
+    cleanup.add_argument("--dry-run", action="store_true", help="Report what would be done without changing anything")
+    cleanup.add_argument("--batch", type=int, default=500, help="Most uploads and versions to handle in one run (default 500)")
+    cleanup.set_defaults(handler=_run_cleanup)
 
 
 def _run_check(args: argparse.Namespace) -> int:
@@ -229,3 +237,27 @@ def _run_check(args: argparse.Namespace) -> int:
     passed = StorageCheck(store, settings.upload_bucket, settings.record_bucket, args.size_mib * 1024 * 1024, args.keep).run()
     print("Storage check passed" if passed else "Storage check failed")
     return 0 if passed else 1
+
+
+def _run_cleanup(args: argparse.Namespace) -> int:
+    from app.api.dependencies import get_engine
+    from app.config import check_settings, get_settings
+    from app.services.multipart import now
+    from app.services.storage_cleanup import run_cleanup
+    from app.storage import get_store
+
+    try:
+        check_settings()
+        if not get_settings().storage.cleanup_enabled and not args.dry_run:
+            print("storage cleanup is disabled (STORAGE_CLEANUP_ENABLED=false); nothing done")
+            return 0
+        store = get_store()
+    except Exception as error:
+        print(f"Storage is not usable: {error}", file=sys.stderr)
+        return 1
+    report = run_cleanup(get_engine(), store, now(), dry_run=args.dry_run, batch=args.batch)
+    verb = "would " if args.dry_run else ""
+    print(f"{verb}abort {report.aborted_uploads} uploads, {verb}delete {report.deleted_versions} file versions; {report.kept_in_use} still in use, {len(report.failures)} failures")
+    for failure in report.failures:
+        print(f"  failed: {failure}")
+    return 1 if report.failures else 0

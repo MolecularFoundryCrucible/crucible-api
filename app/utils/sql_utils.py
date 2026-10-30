@@ -1,9 +1,8 @@
 
 import logging
-import yaml
 import urllib.parse
 from app.config import get_secret, get_settings, load_env_file
-from app.general_utils import get_utc_datetime, is_orcid
+from app.general_utils import get_utc_datetime
 
 logger = logging.getLogger(__name__)
 from fastapi import HTTPException
@@ -41,16 +40,6 @@ def get_any(d, keys, default=None):
            return d[k]
     return default
 
-def table_obj_to_dict(obj):
-    d = dict(obj)
-    if not 'id' in d.keys():
-        return(d)
-    elif d['id'] is not None:
-        return(d)
-    else:
-        d.pop('id')
-        return(d)
-    
 def only_update(session, cls, where, **kwargs):
     statement = select(cls).where(where)
     obj = session.exec(statement).first()

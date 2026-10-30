@@ -2,9 +2,9 @@ import logging
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, List
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter
 from alembic.script import ScriptDirectory
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -15,7 +15,6 @@ from app.build_info import api_version, branch_name, git_commit
 from app.config import get_settings
 from app.models.core_models import Keyword
 from app.models.health import LivenessResponse, ReadinessResponse
-from app.utils.auth_utils import authorize_user
 
 router = APIRouter(tags=["misc"])
 logger = logging.getLogger(__name__)

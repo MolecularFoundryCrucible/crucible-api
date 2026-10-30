@@ -1,12 +1,11 @@
 import json
 import logging
-from datetime import timedelta
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func, join
+from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 

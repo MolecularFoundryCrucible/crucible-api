@@ -1,8 +1,14 @@
+.git
+.github
+.claude
 .venv
 .env*
 **/__pycache__
 **/*.pyc
+.pytest_cache
+docs
+tests
+openapi
 migrations/data
-**/.env
-deploy/compose/secrets
+deploy
 **/*.dump

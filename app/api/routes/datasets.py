@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -11,7 +10,7 @@ from sqlalchemy import exists, func, join
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
-from sqlmodel import and_, or_, Session, select
+from sqlmodel import and_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.build_info import api_version
@@ -26,7 +25,6 @@ from app.models.core_models import (
     DatasetKeywordLink,
     DatasetLink,
     DatasetSampleLink,
-    DeletionRequest,
     Instrument,
     Keyword,
     Project,
@@ -84,7 +82,6 @@ from app.utils.instrument_utils import (
     resolve_instrument_mfids_to_references,
 )
 from app.utils.link_utils import reject_lineage_cycle, reject_self_link, require_link_create_permissions
-from app.utils.rmq_utils import get_ingestion_tier
 from app.api.routes.pipelines import start_postprocessing_run
 from app.models.pipelines import PostprocessingRunRead
 from app.utils.search_utils import (
@@ -94,7 +91,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.user_utils import resolve_create_owner
-from app.utils.sql_utils import add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, only_update, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
+from app.utils.sql_utils import add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 

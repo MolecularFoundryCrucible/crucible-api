@@ -1,13 +1,12 @@
 import datetime
 import logging
 from html import escape
-from typing import Annotated
 from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
 import requests
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
 

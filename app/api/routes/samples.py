@@ -6,15 +6,14 @@ logger = logging.getLogger(__name__)
 import os
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import exists, func, join
-from sqlalchemy.orm import joinedload
-from sqlmodel import and_, or_, Session, select
+from sqlmodel import and_, Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ChildSampleMfid, ParentSampleMfid, SampleMfid
 from app.general_utils import get_utc_datetime
 from app.models.core_models import (
     Dataset, DatasetSampleLink,
-    DeletionRequest, Project, Resource, Sample, SampleLink, ScientificMetadataBinary, User,
+    Project, Resource, Sample, SampleLink, ScientificMetadataBinary, User,
 )
 from app.models.datasets import DatasetRead
 from app.models.facets import FacetResponse

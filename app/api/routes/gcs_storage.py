@@ -1,6 +1,5 @@
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -19,9 +18,9 @@ from app.api.errors import NOT_AVAILABLE_HERE
 from app.services.storage_downloads import DOWNLOAD_LIFETIME, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, upload_bucket
 from app.storage import get_store
 from app.storage.gcs import server_client, server_credentials, storage_scoped
-from app.utils.auth_utils import authorize_user, permission_filter, require_permission
+from app.utils.auth_utils import authorize_user, require_permission
 from app.utils.permissions import Principal, Permission
-from app.utils.sql_utils import add_or_update, assert_not_pending_deletion, touch_resource_modification_time
+from app.utils.sql_utils import assert_not_pending_deletion, touch_resource_modification_time
 
 router = APIRouter(tags=["storage"])
 logger = logging.getLogger(__name__)

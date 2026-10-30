@@ -6,9 +6,8 @@ from dataclasses import replace
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import and_, func, join, or_
-from sqlalchemy.orm import selectinload
-from sqlmodel import Session, select, col
+from sqlalchemy import and_, func, or_
+from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import DatasetMfid, UserRef
@@ -31,24 +30,20 @@ from app.utils.search_utils import (
 )
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, get_active_deletion_request, select_active
 from app.utils.user_utils import assert_profile_fields_available, commit_user, find_mf_user_proposals, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
-from app.utils.project_utils import resolve_project_reference, sql_get_projects_for_user
+from app.utils.project_utils import resolve_project_reference
 from app.models.pagination import PaginatedResponse
 from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
 from app.api.routes.projects import PROJECT_PAGINATION
 from app.models.users import UserCreate, UserPublicRead, UserRead, UserUpdate
 from app.models.response_schemas import ApiKeyRead, ApiKeyVerify, DetailResponse
-from app.models.core_models import ApiToken
 from app.models.projects import ProjectWithLead
 from app.models.access_groups import AccessGroupRead
 from app.models.access import EffectiveAccess, EffectiveResourceAccessRead
 from app.models.query_params import SortDirection, UserListQuery, UserProjectListQuery, UserSearchField, UserSort
 from app.models.users import (
-    AccountCapabilities,
     ServiceAccountKeyStatus,
     UserCapabilities,
     UserPlatformRoleUpdate,
-    UserPublicRead,
-    UserRead,
 )
 
 router = APIRouter(tags=["users"])

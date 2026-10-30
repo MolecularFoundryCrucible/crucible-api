@@ -203,7 +203,7 @@ Done 2026-10-29: results in `docs/self_hosting_phase2_research.md` ("Tested 2026
 
 1. SHA-256: the server takes the client's hash on trust today (`sha256_verified_at` is never set). Either the cleanup job (or a separate one) reads each new object once and sets `sha256_verified_at`, or the field is documented as the client's claim. Reading every object costs one full read of each upload.
 2. Testing on staging after the cut-over: patch releases or release-candidate tags (see "Process change after the Foundry cut-over").
-3. `docs/multipart_upload_api.md` is out of date (old staging bucket name, a default `UPLOAD_BUCKET` that no longer exists, schema head); correct it in Task 4, which edits it anyway.
+3. Done (#393): `docs/multipart_upload_api.md` brought up to date.
 
 ## Later items
 

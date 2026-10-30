@@ -6,12 +6,13 @@ from xml.etree import ElementTree as ET
 
 import google.auth
 from google.auth import impersonated_credentials
-from google.auth.transport.requests import AuthorizedSession
+from google.auth.credentials import Scoped, Signing
+from google.auth.transport.requests import AuthorizedSession, Request
 from google.cloud import storage
 from google.api_core.exceptions import NotFound
 from google.cloud.storage.retry import DEFAULT_RETRY
 
-from app.config import get_secret
+from app.config import get_settings, optional_secret
 from app.services.storage_downloads import download_headers
 from app.storage.base import ObjectInfo, Part, StorageFailure, UploadMissing, check_part_listing
 
@@ -20,22 +21,60 @@ def field(root, name):
     return root.findtext("{*}" + name)
 
 
+CLOUD_PLATFORM = "https://www.googleapis.com/auth/cloud-platform"
+READ_WRITE = "https://www.googleapis.com/auth/devstorage.read_write"
+
+
 @lru_cache
-def key_credentials():
+def server_credentials():
+    """The server's Google identity: the GCS_SA key when one is given, else Application Default
+    Credentials (an attached service account, Workload Identity, or GOOGLE_APPLICATION_CREDENTIALS)."""
+    key = optional_secret("GCS_SA")
+    if key is None:
+        credentials, _ = google.auth.default(scopes=[CLOUD_PLATFORM])
+        return credentials
     from google.oauth2 import service_account
 
-    return service_account.Credentials.from_service_account_info(json.loads(get_secret("GCS_SA")))
+    return service_account.Credentials.from_service_account_info(json.loads(key))
+
+
+def storage_scoped(credentials):
+    """The credentials limited to Cloud Storage read and write, for tokens that leave the server."""
+    return credentials.with_scopes([READ_WRITE]) if isinstance(credentials, Scoped) else credentials
 
 
 @lru_cache
-def key_client():
-    return storage.Client(credentials=key_credentials())
+def server_client():
+    return storage.Client(project=get_settings().storage.gcs_project, credentials=server_credentials())
+
+
+@lru_cache
+def signer(service_account):
+    return impersonated_credentials.Credentials(
+        source_credentials=google.auth.default(scopes=[CLOUD_PLATFORM])[0],
+        target_principal=service_account,
+        target_scopes=[READ_WRITE],
+        lifetime=900,
+    )
+
+
+def signing(credentials):
+    """generate_signed_url arguments that sign as these credentials: locally with a key or through
+    impersonation, else with IAM signBlob as the service account behind an access token."""
+    if isinstance(credentials, Signing):
+        return {"credentials": credentials}
+    if not credentials.valid:
+        credentials.refresh(Request())
+    email = getattr(credentials, "service_account_email", None)
+    if not email or email == "default":
+        raise StorageFailure("signer_required")
+    return {"service_account_email": email, "access_token": credentials.token}
 
 
 class GoogleStore:
-    """Google Cloud Storage. Multipart uploads go through the XML API, signed as MULTIPART_UPLOAD_SIGNER
-    by impersonation, and are refused when the multipart settings are incomplete; downloads, retiring,
-    and record files use the GCS_SA key, as the legacy routes do."""
+    """Google Cloud Storage as the server's identity. With MULTIPART_UPLOAD_SIGNER set, URLs are signed
+    by impersonating it, which identities that cannot sign need (Workload Identity); downloads still
+    sign with the GCS_SA key when one is given."""
 
     retires_by_lifecycle = True
 
@@ -45,25 +84,24 @@ class GoogleStore:
         self.connecting = threading.Lock()
 
     def connect(self):
-        """Set up the impersonated signer on the first multipart call, so the rest never needs it."""
+        """Set up the multipart credentials on the first multipart call, so the rest never needs them."""
         with self.connecting:
             if self.http is not None:
                 return
-            if not all((self.config.bucket, self.config.signer_service_account, self.config.project)):
+            if not self.config.bucket:
                 raise StorageFailure("storage_not_configured")
             try:
-                source, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+                credentials = signer(self.config.signer_service_account) if self.config.signer_service_account else server_credentials()
             except Exception:
                 raise StorageFailure("provider_unavailable") from None
-            credentials = impersonated_credentials.Credentials(
-                source_credentials=source,
-                target_principal=self.config.signer_service_account,
-                target_scopes=["https://www.googleapis.com/auth/devstorage.read_write"],
-                lifetime=900,
-            )
             self.credentials = credentials
-            self.client = storage.Client(project=self.config.project, credentials=credentials)
+            self.client = storage.Client(project=self.config.project or get_settings().storage.gcs_project, credentials=credentials)
             self.http = AuthorizedSession(credentials)
+
+    def url_credentials(self):
+        if optional_secret("GCS_SA") is None and self.config.signer_service_account:
+            return signer(self.config.signer_service_account)
+        return server_credentials()
 
     def blob(self, bucket, key, generation=None):
         self.check_bucket(bucket)
@@ -133,8 +171,10 @@ class GoogleStore:
     def sign_part(self, bucket, key, upload_id, number, crc32c, size, expires_at):
         headers = {"x-goog-hash": f"crc32c={crc32c}", "Content-Length": str(size)}
         try:
-            url = self.blob(bucket, key).generate_signed_url(version="v4", expiration=expires_at, method="PUT", headers=headers, query_parameters={"uploadId": upload_id, "partNumber": str(number)}, credentials=self.credentials)
+            url = self.blob(bucket, key).generate_signed_url(version="v4", expiration=expires_at, method="PUT", headers=headers, query_parameters={"uploadId": upload_id, "partNumber": str(number)}, **signing(self.credentials))
             return url, headers
+        except StorageFailure:
+            raise
         except Exception:
             raise StorageFailure("signing_failed") from None
 
@@ -175,7 +215,7 @@ class GoogleStore:
 
     def signed_download(self, bucket, key, version, filename, disposition, expires_in):
         generation = int(version) if version is not None else None
-        blob = key_client().bucket(bucket).blob(key, generation=generation)
+        blob = server_client().bucket(bucket).blob(key, generation=generation)
         try:
             blob.reload()
         except NotFound:
@@ -184,10 +224,10 @@ class GoogleStore:
         overrides = {"response_disposition": content_disposition}
         if content_type:
             overrides["response_type"] = content_type
-        return blob.generate_signed_url(version="v4", expiration=expires_in, method="GET", generation=generation, **overrides)
+        return blob.generate_signed_url(version="v4", expiration=expires_in, method="GET", generation=generation, **overrides, **signing(self.url_credentials()))
 
     def retire(self, bucket, key, version, retired_at):
-        blob = key_client().bucket(bucket).blob(key)
+        blob = server_client().bucket(bucket).blob(key)
         if version is None:
             try:
                 blob.reload(timeout=30, retry=DEFAULT_RETRY.with_timeout(30))
@@ -199,8 +239,8 @@ class GoogleStore:
         return True
 
     def put_bytes(self, bucket, key, data, content_type):
-        key_client().bucket(bucket).blob(key).upload_from_string(data, content_type=content_type)
+        server_client().bucket(bucket).blob(key).upload_from_string(data, content_type=content_type)
 
     def get_text(self, bucket, key):
-        blob = key_client().bucket(bucket).blob(key)
+        blob = server_client().bucket(bucket).blob(key)
         return blob.download_as_text() if blob.exists() else None

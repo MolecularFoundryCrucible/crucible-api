@@ -1,10 +1,11 @@
 import os
 import re
+from urllib.parse import urlparse
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr, ValidationError
+from pydantic import BaseModel, Field, SecretStr, ValidationError, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, SettingsError
 
 from app.utils.multipart_config import MultipartStorageConfig
@@ -231,6 +232,14 @@ class StorageSettings(SettingsGroup):
     file_version_retention_days: int = Field(14, ge=1, validation_alias="FILE_VERSION_RETENTION_DAYS")
     cleanup_enabled: bool = Field(False, validation_alias="STORAGE_CLEANUP_ENABLED")
 
+    @field_validator("s3_endpoint_url")
+    @classmethod
+    def not_google(cls, value: str | None, info: ValidationInfo) -> str | None:
+        host = urlparse(value or "").hostname or ""
+        if info.data.get("backend") == "s3" and (host == "googleapis.com" or host.endswith(".googleapis.com")):
+            raise ValueError("points at Google Cloud Storage, whose S3 interface refuses the checksums S3 uploads send; use STORAGE_BACKEND=gcs")
+        return value
+
     @property
     def read_bucket_names(self) -> set[str]:
         return {name.strip() for name in (self.read_buckets or "").split(",")} - {""}
@@ -245,7 +254,7 @@ class StorageSettings(SettingsGroup):
     def problems(self, settings: "Settings") -> list[str]:
         if not self.in_use():
             return []
-        credentials = ("s3_endpoint_url", "s3_access_key_id", "s3_secret_access_key") if self.backend == "s3" else ("gcs_sa",)
+        credentials = ("s3_endpoint_url", "s3_access_key_id", "s3_secret_access_key") if self.backend == "s3" else ()
         return self.missing("upload_bucket", *credentials) if self.serves_files() else self.missing(*credentials)
 
 

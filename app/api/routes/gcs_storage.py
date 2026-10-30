@@ -18,7 +18,7 @@ from app.services import multipart
 from app.api.errors import NOT_AVAILABLE_HERE
 from app.services.storage_downloads import DOWNLOAD_LIFETIME, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, upload_bucket
 from app.storage import get_store
-from app.storage.gcs import key_client, key_credentials
+from app.storage.gcs import server_client, server_credentials, storage_scoped
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
 from app.utils.sql_utils import add_or_update, assert_not_pending_deletion, touch_resource_modification_time
@@ -40,9 +40,7 @@ def _get_gcs_authed_session():
     global _gcs_authed_session
     if _gcs_authed_session is None:
         from google.auth.transport.requests import AuthorizedSession
-        scoped = key_credentials().with_scopes(
-            ["https://www.googleapis.com/auth/devstorage.read_write"]
-        )
+        scoped = storage_scoped(server_credentials())
         _gcs_authed_session = AuthorizedSession(scoped)
     return _gcs_authed_session
 
@@ -68,7 +66,7 @@ def _determine_storage_path(dataset_mfid, filename):
     exact = f"{dataset_mfid}/{filename}"
     names = [
         blob.name
-        for blob in key_client().bucket(bucket).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
+        for blob in server_client().bucket(bucket).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
         if not blob.name.startswith(multipart_prefix(dataset_mfid))
     ]
     if exact in names:
@@ -114,9 +112,7 @@ def _mint_upload_token(dsid: str) -> tuple[str, str]:
     bucket = upload_bucket()
     from google.auth import downscoped
     from google.auth.transport.requests import Request
-    scoped = key_credentials().with_scopes(
-        ["https://www.googleapis.com/auth/devstorage.read_write"]
-    )
+    scoped = storage_scoped(server_credentials())
     if not get_settings().storage.legacy_upload_token_downscope:
         scoped.refresh(Request())
         return scoped.token, scoped.expiry.isoformat()
@@ -344,7 +340,7 @@ def complete_resumable_upload(
             raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
 
         try:
-            blob = key_client().bucket(bucket).blob(us.object_key)
+            blob = server_client().bucket(bucket).blob(us.object_key)
             blob.reload()
         except NotFound:
             raise HTTPException(status_code=422, detail="Uploaded file not found in storage") from None

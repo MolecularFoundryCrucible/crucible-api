@@ -111,7 +111,7 @@ HOUR = timedelta(hours=1)
 @pytest.fixture
 def keyed(monkeypatch):
     client = MagicMock()
-    monkeypatch.setattr(google, "key_client", lambda: client)
+    monkeypatch.setattr(google, "server_client", lambda: client)
     return client
 
 
@@ -220,7 +220,7 @@ def test_retire_object_skips_a_store_without_lifecycle_retirement():
     store.retire.assert_not_called()
 
 
-def test_record_files_use_the_key_client(store, keyed):
+def test_record_files_use_the_server_client(store, keyed):
     blob = keyed.bucket.return_value.blob.return_value
     blob.exists.return_value = False
     assert store.get_text("records", "ds1/record.json") is None

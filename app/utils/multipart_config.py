@@ -24,10 +24,8 @@ class MultipartStorageConfig:
 
             env = os.environ
             upload_bucket = get_settings().storage.upload_bucket
-            backend = get_settings().storage.backend
         else:
             upload_bucket = env.get("UPLOAD_BUCKET", "").strip() or None
-            backend = env.get("STORAGE_BACKEND", "").strip().lower() or "gcs"
         flag = env.get("MULTIPART_UPLOAD_ENABLED", "false").strip().lower()
         if flag not in {"true", "false"}:
             raise ValueError("MULTIPART_UPLOAD_ENABLED must be true or false")

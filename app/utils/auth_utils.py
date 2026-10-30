@@ -1,13 +1,11 @@
 from typing import Annotated, Callable, Iterable, Optional, Sequence
 import logging
-import re
 import os
 import hashlib
 import threading
 import requests
 import secrets
 import datetime
-from collections import namedtuple
 from dataclasses import replace
 from cachetools import TTLCache
 from joserfc import jwt
@@ -32,7 +30,6 @@ from app.utils.permissions import (
     resolve_authorization_context)
 from sqlmodel import Session, select
 from sqlalchemy.sql import and_
-from sqlalchemy import join
 from datetime import date, timedelta
 
 # ====== Constants

@@ -1,5 +1,4 @@
-FROM python:3.11-trixie
-#UV
+FROM python:3.11-slim-trixie
 COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
 
 USER root
@@ -18,18 +17,12 @@ ENV GITHASH=$githash
 
 ARG api_version
 ENV API_VERSION=$api_version
-RUN echo "API_VERSION: $API_VERSION"
-
-ARG BRANCH_NAME
-ENV BRANCH_NAME=$BRANCH_NAME
 
 # files
 COPY app/ /root/app/
 COPY alembic.ini /root/alembic.ini
 COPY migrations/ /root/migrations/
 COPY scripts/cleanup_hub_auth.py /root/scripts/cleanup_hub_auth.py
-RUN mkdir uploads
-RUN mkdir download-zips
 
 RUN /bin/uv sync --locked
 

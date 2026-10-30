@@ -1,7 +1,7 @@
 import re
 
 from fastapi import HTTPException
-from sqlalchemy import and_, exists, func, or_
+from sqlalchemy import exists, func
 from sqlmodel import select
 
 from app.general_utils import is_valid_mfid

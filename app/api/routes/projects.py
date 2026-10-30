@@ -2,9 +2,8 @@ import os
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import selectinload
-from sqlmodel import Session, select, col
+from sqlalchemy import func
+from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import ProjectRef, UserRef
@@ -19,8 +18,7 @@ from app.utils.auth_utils import (
     require_grant, require_permission, resolve_access_principal,
     resource_capabilities)
 from app.utils.permissions import (
-    AccessGroupType, Permission, PlatformRole, Principal, Role, can_grant,
-    effective_role, has_global_permission)
+    AccessGroupType, Permission, PlatformRole, Principal, Role, has_global_permission)
 from app.utils.search_utils import (
     apply_trigram_search,
     configure_trigram_search,
@@ -32,8 +30,8 @@ from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.sql_utils import assert_not_pending_deletion
 from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import (
-    assert_project_id_available, is_project_owner, project_id_matches, sql_add_user_to_project,
-    sql_get_projects_for_user, resolve_project_reference)
+    assert_project_id_available, project_id_matches, sql_add_user_to_project,
+    resolve_project_reference)
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import ProjectDetailQuery, ProjectListQuery, SearchQuery

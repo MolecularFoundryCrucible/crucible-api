@@ -1,4 +1,4 @@
-from typing import Any, List, Literal, Optional
+from typing import Literal, Optional
 from pydantic import MISSING, AliasChoices, ConfigDict, Field, field_validator
 from sqlmodel import SQLModel
 from app.general_utils import is_orcid, is_valid_mfid

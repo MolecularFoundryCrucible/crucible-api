@@ -11,7 +11,7 @@ from app.models.access import EntryCapabilities
 from app.models.access_groups import AccessGroupMemberRead
 from app.models.core_models import (
     AccessGroup, Instrument, Resource, ResourceACL, ScientificMetadataBinary, User, UserAccessGroupLink)
-from app.models.instrument import InstrumentCreate, InstrumentRead, InstrumentResponse, InstrumentUpdate
+from app.models.instrument import InstrumentCreate, InstrumentResponse, InstrumentUpdate
 from app.models.pagination import PaginatedResponse
 from app.models.query_params import (
     InstrumentAffiliation, InstrumentDetailQuery, InstrumentListQuery,

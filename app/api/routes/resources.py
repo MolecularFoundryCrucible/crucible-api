@@ -53,8 +53,6 @@ from app.utils.permissions import (
     Permission,
     Principal,
     Role,
-    can_grant,
-    effective_role,
     has_permission,
 )
 from app.utils.sql_utils import add_or_update, set_public, sql_create_resource_acl, touch_resource_modification_time

@@ -1,7 +1,6 @@
-# Builds and pushes the image; deployment belongs to the Foundry deploy repository (mf-crucible-deploy).
-# A merge to main pushes crucible-api/crucible-api:<commit> and :main, which staging follows by digest and
-# a vX.Y.Z tag copies into the release repository (cloudbuild.release.yaml). Until the staging branch is
-# retired, it still pushes crucible-api/crucible-api-staging:<short commit> and :latest.
+# Builds and pushes the image on each merge to main: crucible-api/crucible-api:<commit> and :main.
+# Staging follows it by digest, and a vX.Y.Z tag copies it into the release repository
+# (cloudbuild.release.yaml). Deployment belongs to mf-crucible-deploy.
 steps:
   - id: build
     name: gcr.io/cloud-builders/docker
@@ -11,26 +10,22 @@ steps:
       - pipefail
       - -c
       - |
-        registry=us-central1-docker.pkg.dev/${PROJECT_ID}/crucible-api
-        if [ '${BRANCH_NAME}' = main ]; then
-          image=$$registry/crucible-api; tags="${COMMIT_SHA} main"; moving=main; branch_arg=
-        else
-          image=$$registry/crucible-api-${BRANCH_NAME}; tags="${SHORT_SHA} latest"; moving=latest; branch_arg="--build-arg BRANCH_NAME=${BRANCH_NAME}"
-        fi
+        image=us-central1-docker.pkg.dev/${PROJECT_ID}/crucible-api/crucible-api
         version=$(awk -F '"' '/^version = / {print $$2; exit}' pyproject.toml)
-        docker pull "$$image:$$moving" || true
+        docker pull "$$image:main" || true
         docker build \
           --build-arg githash=${COMMIT_SHA} \
           --build-arg api_version="$$version" \
-          $$branch_arg \
           --label org.opencontainers.image.title=crucible-api \
           --label org.opencontainers.image.version="$$version" \
           --label org.opencontainers.image.revision=${COMMIT_SHA} \
           --label org.opencontainers.image.source=https://github.com/MolecularFoundryCrucible/crucible-api \
-          --cache-from "$$image:$$moving" \
-          $$(for tag in $$tags; do echo --tag "$$image:$$tag"; done) \
+          --cache-from "$$image:main" \
+          --tag "$$image:${COMMIT_SHA}" \
+          --tag "$$image:main" \
           .
-        for tag in $$tags; do docker push "$$image:$$tag"; done
+        docker push "$$image:${COMMIT_SHA}"
+        docker push "$$image:main"
 options:
   logging: CLOUD_LOGGING_ONLY
 timeout: 1200s

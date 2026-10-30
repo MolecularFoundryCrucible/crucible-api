@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
@@ -26,6 +26,7 @@ from app.utils.sql_utils import add_or_update, assert_not_pending_deletion, touc
 router = APIRouter(tags=["storage"])
 logger = logging.getLogger(__name__)
 
+LEGACY_UPLOAD_DEPRECATION = "@1793318400"
 LEGACY_UPLOAD_RESPONSE = {NOT_AVAILABLE_HERE: {"description": "File storage is not configured on this server (`storage_not_configured`), or it is not Google Cloud Storage, which these routes need (`legacy_upload_unavailable`; upload through `/upload/multipart` instead): `{\"detail\": {\"code\": ..., \"message\": ...}}`"}}
 
 _GCS_UPLOAD_API = "https://storage.googleapis.com/upload/storage/v1/b"
@@ -205,10 +206,11 @@ def _create_upload_session(
 
 
 
-@router.post("/datasets/{dataset_mfid}/upload/initiate", response_model=UploadInitiateRead, responses=LEGACY_UPLOAD_RESPONSE)
+@router.post("/datasets/{dataset_mfid}/upload/initiate", deprecated=True, response_model=UploadInitiateRead, responses=LEGACY_UPLOAD_RESPONSE)
 def initiate_resumable_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
+    response: Response,
     body: UploadInitiate,
 ):
     '''
@@ -217,7 +219,9 @@ def initiate_resumable_upload(
     Returns an upload_id and a resumable_uri the client uses to PUT chunks directly to GCS
     (no API credentials needed for the chunk transfers).
     Call POST /datasets/{dataset_mfid}/upload/complete when all chunks are uploaded.
+    Deprecated: use POST /datasets/{dataset_mfid}/upload/multipart/initiate.
     '''
+    response.headers["Deprecation"] = LEGACY_UPLOAD_DEPRECATION
     user_unique_id = auth_res.user_id
     bucket = _legacy_upload_bucket()
 
@@ -254,10 +258,11 @@ def initiate_resumable_upload(
     )
 
 
-@router.post("/datasets/{dataset_mfid}/upload/initiate/multipart", response_model=UploadMultipartInitiateRead, responses=LEGACY_UPLOAD_RESPONSE)
+@router.post("/datasets/{dataset_mfid}/upload/initiate/multipart", deprecated=True, response_model=UploadMultipartInitiateRead, responses=LEGACY_UPLOAD_RESPONSE)
 def initiate_multipart_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
+    response: Response,
     body: UploadInitiate,
 ):
     '''
@@ -266,7 +271,9 @@ def initiate_multipart_upload(
     The client uses this token with google-cloud-storage transfer_manager.upload_chunks_concurrently().
     Returns upload_id — pass it to POST /datasets/{dataset_mfid}/upload/complete after the transfer.
     If existing_file is set, the file already exists; skip the upload entirely.
+    Deprecated: use POST /datasets/{dataset_mfid}/upload/multipart/initiate.
     '''
+    response.headers["Deprecation"] = LEGACY_UPLOAD_DEPRECATION
     user_unique_id = auth_res.user_id
     bucket = _legacy_upload_bucket()
 
@@ -293,10 +300,11 @@ def initiate_multipart_upload(
     )
 
 
-@router.post("/datasets/{dataset_mfid}/upload/complete", response_model=AssociatedFileRead, responses=LEGACY_UPLOAD_RESPONSE)
+@router.post("/datasets/{dataset_mfid}/upload/complete", deprecated=True, response_model=AssociatedFileRead, responses=LEGACY_UPLOAD_RESPONSE)
 def complete_resumable_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
+    response: Response,
     body: UploadComplete,
 ):
     '''
@@ -304,7 +312,9 @@ def complete_resumable_upload(
     Requires contributor access to the dataset and ownership of the upload session.
     Verifies the blob landed in GCS, registers it as an AssociatedFile on the dataset,
     and deletes the upload session record.
+    Deprecated: use POST /datasets/{dataset_mfid}/upload/multipart/initiate.
     '''
+    response.headers["Deprecation"] = LEGACY_UPLOAD_DEPRECATION
     user_unique_id = auth_res.user_id
     bucket = _legacy_upload_bucket()
 

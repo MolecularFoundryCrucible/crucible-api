@@ -124,3 +124,19 @@ def test_large_ascii_bodies_are_scanned_quickly():
     started = time.perf_counter()
     assert _unsupported_reason(text) is None
     assert time.perf_counter() - started < 0.05
+
+
+def test_request_log_names_the_client_of_a_deprecated_route(client, auth_as, caplog):
+    auth_as("0000-0005-0000-0001")
+    with caplog.at_level("INFO", logger="app.api.main"):
+        client.post("/datasets/ds-none/upload/complete", json={"upload_id": "missing"}, headers={"User-Agent": 'nano-crucible/3.2.1 "x" forged=1'})
+    line = next(line for line in _request_lines(caplog) if line.startswith("POST /datasets/{dataset_mfid}/upload/complete "))
+    assert line.endswith(' credential=api_key user_agent="nano-crucible/3.2.1 \\"x\\" forged=1"')
+
+
+def test_request_log_omits_the_client_of_a_current_route(client, auth_as, caplog):
+    auth_as("0000-0005-0000-0001")
+    with caplog.at_level("INFO", logger="app.api.main"):
+        client.get("/account/preferences", headers={"User-Agent": "nano-crucible/3.3.0"})
+    line = next(line for line in _request_lines(caplog) if line.startswith("GET /account/preferences "))
+    assert "user_agent=" not in line

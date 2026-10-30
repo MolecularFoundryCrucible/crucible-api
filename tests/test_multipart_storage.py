@@ -4,9 +4,13 @@ from xml.etree import ElementTree as ET
 
 import pytest
 from google.api_core.exceptions import ServiceUnavailable
+from google.auth.credentials import Signing
 from google.auth.exceptions import DefaultCredentialsError, RefreshError
+from google.oauth2 import service_account
 
 from app.storage import Part, StorageFailure, UploadMissing
+from app.config import get_settings
+from app.storage import gcs
 from app.storage.gcs import GoogleStore
 from app.services.multipart import now
 
@@ -14,7 +18,7 @@ from app.services.multipart import now
 def adapter():
     storage = GoogleStore.__new__(GoogleStore)
     storage.config = SimpleNamespace(bucket="dedicated")
-    storage.credentials = object()
+    storage.credentials = MagicMock(spec=Signing)
     storage.client = MagicMock()
     storage.http = MagicMock()
     return storage
@@ -23,15 +27,73 @@ def adapter():
 BUCKET, KEY, UPLOAD_ID = "dedicated", "uploads/ds/id/content", "provider-id"
 
 
-def test_multipart_is_refused_without_the_signer_settings(monkeypatch):
-    def refuse(*args, **kwargs):
-        raise AssertionError("google.auth.default called")
-    monkeypatch.setattr("app.storage.gcs.google.auth.default", refuse)
-    storage = GoogleStore(SimpleNamespace(bucket="dedicated", signer_service_account=None, project="project"))
+def refuse_default(*args, **kwargs):
+    raise AssertionError("google.auth.default called")
+
+
+def test_multipart_is_refused_without_its_bucket(monkeypatch):
+    monkeypatch.setattr("app.storage.gcs.google.auth.default", refuse_default)
+    storage = GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None))
     with pytest.raises(StorageFailure, match="storage_not_configured"):
         storage.start_upload(BUCKET, KEY)
     with pytest.raises(StorageFailure):
         storage.sign_part(BUCKET, KEY, UPLOAD_ID, 1, "AAAAAA==", 1, now())
+
+
+def test_multipart_without_a_signer_signs_with_the_key(monkeypatch):
+    monkeypatch.setattr("app.storage.gcs.google.auth.default", refuse_default)
+    storage = GoogleStore(SimpleNamespace(bucket="dedicated", signer_service_account=None, project=None))
+    url, headers = storage.sign_part(BUCKET, KEY, UPLOAD_ID, 1, "AAAAAA==", 1, now())
+    assert storage.credentials is gcs.server_credentials()
+    assert isinstance(storage.credentials, service_account.Credentials)
+    assert "X-Goog-Credential=crucible-test%40test-project.iam.gserviceaccount.com" in url
+    assert (headers["x-goog-hash"], headers["Content-Length"]) == ("crc32c=AAAAAA==", "1")
+
+
+class TokenOnly:
+    """Credentials without a private key, as on Compute Engine, Cloud Run, or GKE with a Google service account."""
+
+    def __init__(self, email):
+        self.service_account_email, self.token, self.valid = email, None, False
+        self.universe_domain = "googleapis.com"
+
+    def refresh(self, request):
+        self.token, self.valid = "access-token", True
+
+
+def test_signing_uses_the_key_or_impersonation_locally():
+    signer = MagicMock(spec=Signing)
+    assert gcs.signing(signer) == {"credentials": signer}
+
+
+def test_signing_without_a_key_goes_through_sign_blob():
+    assert gcs.signing(TokenOnly("server@lab.iam.gserviceaccount.com")) == {"service_account_email": "server@lab.iam.gserviceaccount.com", "access_token": "access-token"}
+
+
+@pytest.mark.parametrize("email", [None, "default"])
+def test_signing_needs_a_service_account(email):
+    with pytest.raises(StorageFailure, match="signer_required"):
+        gcs.signing(TokenOnly(email))
+
+
+def test_without_a_key_the_server_uses_application_default_credentials(monkeypatch):
+    monkeypatch.delenv("GCS_SA")
+    identity = TokenOnly("server@lab.iam.gserviceaccount.com")
+    monkeypatch.setattr("app.storage.gcs.google.auth.default", lambda scopes: (identity, "lab"))
+    assert gcs.server_credentials() is identity
+    assert GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)).url_credentials() is identity
+
+
+def test_download_signer_keeps_the_key_and_impersonates_only_without_one(monkeypatch):
+    with_signer = SimpleNamespace(bucket=None, signer_service_account="signer@lab.iam.gserviceaccount.com", project=None)
+    monkeypatch.setattr("app.storage.gcs.google.auth.default", refuse_default)
+    assert GoogleStore(with_signer).url_credentials() is gcs.server_credentials()
+    monkeypatch.delenv("GCS_SA")
+    get_settings.cache_clear()
+    gcs.server_credentials.cache_clear()
+    monkeypatch.setattr("app.storage.gcs.google.auth.default", lambda scopes: (TokenOnly("workload"), "lab"))
+    impersonated = GoogleStore(with_signer).url_credentials()
+    assert impersonated.signer_email == "signer@lab.iam.gserviceaccount.com"
 
 
 def test_signing_binds_destination_method_checksum_length_and_expiry():
@@ -132,7 +194,7 @@ def test_the_signer_is_set_up_only_for_multipart_calls(monkeypatch):
     monkeypatch.setattr("app.storage.gcs.google.auth.default", default)
     keyed = MagicMock()
     keyed.bucket.return_value.blob.return_value.generate_signed_url.return_value = "https://signed.example/x"
-    monkeypatch.setattr("app.storage.gcs.key_client", lambda: keyed)
+    monkeypatch.setattr("app.storage.gcs.server_client", lambda: keyed)
     storage = GoogleStore(SimpleNamespace(bucket="dedicated", signer_service_account="signer@example.iam.gserviceaccount.com", project="project"))
     from datetime import timedelta
     assert storage.signed_download(BUCKET, KEY, "7", "a.bin", "attachment", timedelta(hours=1)) == "https://signed.example/x"
@@ -140,3 +202,8 @@ def test_the_signer_is_set_up_only_for_multipart_calls(monkeypatch):
     with pytest.raises(StorageFailure, match="provider_unavailable"):
         storage.start_upload(BUCKET, KEY)
     assert len(calls) == 1
+
+
+def test_tokens_that_leave_the_server_are_limited_to_storage():
+    assert gcs.server_credentials().scopes is None
+    assert list(gcs.storage_scoped(gcs.server_credentials()).scopes) == [gcs.READ_WRITE]

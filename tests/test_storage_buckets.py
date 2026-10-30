@@ -55,10 +55,9 @@ def test_multipart_bucket_must_be_the_upload_bucket():
         MultipartStorageConfig.from_env(MULTIPART | {"MULTIPART_UPLOAD_BUCKET": "mf-crucible-multipart-staging", "UPLOAD_BUCKET": "mf-storage-staging"})
 
 
-def test_multipart_signer_is_required_only_on_google_storage():
+def test_multipart_needs_no_signer():
     plain = {"MULTIPART_UPLOAD_ENABLED": "true", "MULTIPART_UPLOAD_BUCKET": "crucible-files", "UPLOAD_BUCKET": "crucible-files"}
-    with pytest.raises(ValueError, match="signer and a project"):
-        MultipartStorageConfig.from_env(plain)
+    assert MultipartStorageConfig.from_env(plain).signer_service_account is None
     assert MultipartStorageConfig.from_env(plain | {"STORAGE_BACKEND": "s3"}).enabled
     with pytest.raises(ValueError, match="explicit bucket"):
         MultipartStorageConfig.from_env({"MULTIPART_UPLOAD_ENABLED": "true", "STORAGE_BACKEND": "s3"})

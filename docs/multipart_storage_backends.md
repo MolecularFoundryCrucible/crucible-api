@@ -14,13 +14,15 @@ Status: in progress as part of self-hosting (Phase 2, storage). Every byte the A
 
 | Area | GCS today | S3-compatible equivalent |
 | --- | --- | --- |
-| Server credentials | ADC impersonating a keyless signer | IAM role (AWS) or access keys (MinIO/Ceph) |
+| Server credentials | `GCS_SA` key or Application Default Credentials; URLs signed locally, by impersonation, or through IAM signBlob | IAM role (AWS) or access keys (MinIO/Ceph) |
 | Part URL signing | `blob.generate_signed_url` (V4, IAM signBlob) | boto3 `generate_presigned_url("upload_part", ...)` |
 | Per-part checksum header | `x-goog-hash: crc32c=...` | `x-amz-checksum-crc32c` |
 | Final object CRC32C | Provider computes a full-object CRC32C | AWS requires the full-object checksum type at initiation; other servers may only return a composite (`-N`) checksum |
 | Object version pinning | Object generation | `VersionId` (bucket versioning) or ETag |
 | Provider requests | Google `AuthorizedSession` with hand-parsed XML | boto3 SigV4 client |
-| Configuration | `MULTIPART_UPLOAD_SIGNER`, `MULTIPART_UPLOAD_PROJECT` | Backend selector, endpoint, region, credentials |
+| Configuration | `STORAGE_BACKEND=gcs`; optional `GCS_SA` and `MULTIPART_UPLOAD_SIGNER` | `STORAGE_BACKEND=s3`, endpoint, region, keys |
+
+Google's S3 interface is not used: it refuses per-part checksums in `CompleteMultipartUpload` and does not check a whole-object checksum there (tested 2026-10-29), so `STORAGE_BACKEND=s3` refuses a Google `S3_ENDPOINT_URL`.
 
 ## Design changes needed
 

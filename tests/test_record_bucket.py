@@ -11,7 +11,7 @@ import app.utils.gcs_record_utils as gcs_record_utils
 def storage(monkeypatch):
     client = MagicMock()
     client.bucket.return_value.blob.return_value.exists.return_value = False
-    monkeypatch.setattr(google, "key_client", lambda: client)
+    monkeypatch.setattr(google, "server_client", lambda: client)
     store = google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None))
     monkeypatch.setattr(gcs_record_utils, "get_store", lambda: store)
     return client

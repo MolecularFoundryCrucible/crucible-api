@@ -47,8 +47,6 @@ class MultipartStorageConfig:
             raise ValueError("Multipart limits must be positive")
         if config.enabled and not config.bucket:
             raise ValueError("Multipart uploads require an explicit bucket")
-        if config.enabled and backend == "gcs" and not (config.signer_service_account and config.project):
-            raise ValueError("Multipart uploads on Google Cloud Storage require a signer and a project")
         if config.enabled and config.bucket != upload_bucket:
             raise ValueError("Multipart uploads must use UPLOAD_BUCKET, the environment's single upload bucket")
         return config

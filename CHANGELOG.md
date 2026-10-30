@@ -13,12 +13,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The Compose bundle stores files in SeaweedFS (profile `bundled-storage`), with two new secret files, `CRUCIBLE_FILES_DIR`, and a `files-backup` service. Upgrading: see README.md.
 - On `s3`, replaced files are kept for `FILE_VERSION_RETENTION_DAYS` (14) and restorable with `python -m app.cli files restore`; `python -m app.cli storage cleanup` deletes them afterwards, only when `STORAGE_CLEANUP_ENABLED=true`. Migration `564d0bd33a5c` adds one table.
 - Empty files on the signed multipart upload (`size` 0, no parts).
+- The Compose bundle can use a Google Cloud Storage bucket (`CRUCIBLE_STORAGE_BACKEND=gcs`); see README.md.
 
 ### Changed
 
 - The Compose bundle runs the Hub from its published image (1.7.1) and builds the API image once.
 - On `s3`, the legacy upload routes answer 501 `legacy_upload_unavailable`, and a file without a stored location answers 404 instead of 500.
 - `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` must be one line.
+- On `gcs`, `GCS_SA`, `MULTIPART_UPLOAD_SIGNER`, and `MULTIPART_UPLOAD_PROJECT` are optional; without a key the server uses Application Default Credentials. Existing settings are unchanged.
+- `STORAGE_BACKEND=s3` refuses a Google `S3_ENDPOINT_URL`: use `gcs`.
 
 ### Deprecated
 

@@ -225,9 +225,8 @@ def _run_check(args: argparse.Namespace) -> int:
             from app.utils.multipart_config import MultipartStorageConfig
 
             config = MultipartStorageConfig.from_env()
-            missing = [name for name, value in (("MULTIPART_UPLOAD_BUCKET", config.bucket), ("MULTIPART_UPLOAD_SIGNER", config.signer_service_account), ("MULTIPART_UPLOAD_PROJECT", config.project)) if not value]
-            if missing:
-                raise ConfigurationError(f"checking Google Cloud Storage needs {', '.join(missing)}")
+            if not config.bucket:
+                raise ConfigurationError("checking Google Cloud Storage needs MULTIPART_UPLOAD_BUCKET")
         store = check_store(args.public)
     except Exception as error:
         print(f"Storage is not usable: {error}", file=sys.stderr)

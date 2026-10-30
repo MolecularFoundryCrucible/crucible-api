@@ -2,7 +2,7 @@ import pytest
 from pydantic import SecretStr
 
 from app import config
-from app.config import ConfigurationError, check_settings, get_settings, missing_required_settings, optional_env
+from app.config import ConfigurationError, check_settings, get_settings, missing_required_settings, optional_env, secrets_in_use
 
 BASE = ("DB_SERVER", "DB_USERNAME", "DB_DATABASE", "PGDB_PW", "CRUCIBLE_SECRET_KEY")
 FEATURE_SETTINGS = (
@@ -183,22 +183,35 @@ def test_storage_is_off_when_not_configured(empty):
 def test_storage_requested_without_bucket_is_missing(empty, setting):
     _required(empty)
     empty.setenv(*setting)
-    assert missing_required_settings() == ["GCS_SA", "UPLOAD_BUCKET"]
+    assert missing_required_settings() == ["UPLOAD_BUCKET"]
 
 
-def test_record_bucket_needs_credentials_but_no_upload_bucket(empty):
+def test_record_bucket_needs_no_upload_bucket(empty):
     _required(empty)
     empty.setenv("RECORD_BUCKET", "records")
-    assert missing_required_settings() == ["GCS_SA"]
+    assert missing_required_settings() == []
 
 
-def test_storage_bucket_needs_credentials(empty):
+def test_google_storage_needs_no_key(empty):
     _required(empty)
     empty.setenv("UPLOAD_BUCKET", "bucket")
-    assert missing_required_settings() == ["GCS_SA"]
+    assert missing_required_settings() == []
+    assert "GCS_SA" not in secrets_in_use()
     get_settings.cache_clear()
     empty.setenv("GCS_SA_VERSION", "projects/1/secrets/sa/versions/latest")
-    assert missing_required_settings() == []
+    assert "GCS_SA" in secrets_in_use()
+
+
+@pytest.mark.parametrize("endpoint", ["https://storage.googleapis.com", "https://storage.us-central1.rep.googleapis.com/"])
+def test_s3_backend_refuses_google_endpoints(empty, endpoint):
+    _required(empty)
+    empty.setenv("STORAGE_BACKEND", "s3")
+    empty.setenv("S3_ENDPOINT_URL", endpoint)
+    with pytest.raises(ConfigurationError, match="S3_ENDPOINT_URL .*use STORAGE_BACKEND=gcs"):
+        get_settings()
+    get_settings.cache_clear()
+    empty.setenv("STORAGE_BACKEND", "gcs")
+    assert get_settings().storage.backend == "gcs"
 
 
 def test_s3_storage_needs_its_endpoint_and_keys_but_not_gcs_credentials(empty):
@@ -236,9 +249,7 @@ def test_s3_multipart_needs_no_google_signer(empty):
     check_settings()
     get_settings.cache_clear()
     empty.setenv("STORAGE_BACKEND", "gcs")
-    empty.setenv("GCS_SA", "{}")
-    with pytest.raises(ConfigurationError, match="signer and a project"):
-        check_settings()
+    check_settings()
 
 
 def test_server_refuses_to_start_when_settings_are_missing(empty):

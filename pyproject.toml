@@ -19,7 +19,7 @@ dependencies = [
     "networkx>=3.6.1",
     "numpy==2.4.6",
     "paho-mqtt>=2.1.0",
-    "pg8000==1.31.5",
+    "pg8000==1.31.6",
     "pika==1.4.4",
     "pillow==13.0.0",
     "pgvector>=0.4.1",
@@ -28,7 +28,7 @@ dependencies = [
     "pytz>=2025.2",
     "pydantic>=2.14,<3",
     "pyyaml==6.0.3",
-    "sqlalchemy==2.0.37",
+    "sqlalchemy==2.1.6",
     "sqlmodel==0.0.48",
     "urllib3==2.8.0",
     "uvicorn==0.54.0",
@@ -39,8 +39,8 @@ dependencies = [
     "authlib>=1.8,<2",
     "python-dotenv>=1.0.1",
     "pydantic-settings==2.16.1",
-    "boto3==1.43.113",
-    "awscrt==0.37.0",
+    "boto3==1.43.120",
+    "awscrt==0.38.0",
 ]
 
 [tool.uv]

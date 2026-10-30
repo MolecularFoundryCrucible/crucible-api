@@ -36,7 +36,7 @@ def test_orcid_failure_is_502(client, monkeypatch):
     assert client.get("/auth/callback", params={"code": "abc"}, follow_redirects=False).status_code == 502
 
 
-@pytest.mark.parametrize("path", ["/user_apikey", "/auth/apikey", "/regenerate_apikey"])
+@pytest.mark.parametrize("path", ["/user_apikey", "/auth/apikey"])
 @pytest.mark.parametrize("token", [None, "expired-or-forged"])
 def test_missing_or_invalid_session_redirects_to_login(client, path, token):
     if token:
@@ -44,6 +44,12 @@ def test_missing_or_invalid_session_redirects_to_login(client, path, token):
     response = client.get(path, follow_redirects=False)
     assert response.status_code == 307
     assert response.headers["location"].endswith("login")
+
+
+def test_api_key_rotation_refuses_get(client):
+    assert client.get("/regenerate_apikey", follow_redirects=False).status_code == 404
+    assert client.get("/auth/apikey/regenerate", follow_redirects=False).status_code == 405
+    assert client.post("/auth/apikey/regenerate", follow_redirects=False).status_code == 307
 
 
 def test_session_token_round_trips_and_rejects_expired_forged_or_unbounded_tokens():

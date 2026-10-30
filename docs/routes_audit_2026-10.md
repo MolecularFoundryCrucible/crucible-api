@@ -4,7 +4,7 @@ Status: open. Audit of `main` at 3.3.0 (commit 9361f65), to work through after t
 
 ## Fix first
 
-- `GET /regenerate_apikey` (deprecated alias, `app/api/routes/auth.py:298`) rotates the caller's API key from the browser login cookie. A link or image on any page can trigger it and lock a user out of their key. Remove it, or make it refuse, before 4.0.
+- Done: `GET /regenerate_apikey` rotated the caller's key from the session cookie on a GET, so any page could trigger it. Removed after 3.3.0; no client called it.
 - `GET /keywords`, `GET /keywords/{keyword}` and `GET /ingestors` (`app/api/routes/misc.py`) require no sign-in. Decide whether that is intended.
 - The deprecation message of `POST /datasets/{id}/upload/complete` points to `/upload/multipart/initiate`; its replacement is `/upload/multipart/complete` (`app/api/routes/gcs_storage.py:311`).
 

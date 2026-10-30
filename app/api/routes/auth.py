@@ -292,9 +292,3 @@ def redirect_exchange_deprecated(request: Request, code: str, state: str = None)
 def get_apikey_deprecated(request: Request):
     """Deprecated: use GET /auth/apikey."""
     return get_apikey(request)
-
-
-@router.get("/regenerate_apikey", deprecated=True, response_model=ApiKeyRead, responses={307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}})
-def regenerate_apikey_deprecated(request: Request):
-    """Deprecated: use POST /auth/apikey/regenerate."""
-    return regenerate_apikey(request)

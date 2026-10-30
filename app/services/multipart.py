@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from app.general_utils import if_match_satisfied
 from app.models.core_models import AssociatedFile, Dataset, UploadSession, User
 from app.models.datasets import AssociatedFileRead, file_etag
-from app.models.multipart import MultipartStatus
+from app.models.multipart import EMPTY_SHA256, MultipartStatus
 from app.storage import StorageFailure, UploadMissing
 from app.storage.crc32c import combine_parts
 from app.services.file_versions import keep_version
@@ -98,7 +98,6 @@ def active(upload):
 
 
 # An empty file has no parts and no provider upload: completion writes the empty object directly.
-EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 EMPTY_CRC32C = "AAAAAA=="
 
 
@@ -413,6 +412,7 @@ def complete(engine, storage, principal, dsid, body, retire=None):
     except StorageFailure:
         raise unavailable("Storage is temporarily unavailable; retry completion") from None
     previous = None
+    aborted = False
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid).with_for_update()).one_or_none()
         current = session.exec(select(UploadSession).where(UploadSession.upload_id == upload.upload_id).with_for_update()).one_or_none()
@@ -422,47 +422,56 @@ def complete(engine, storage, principal, dsid, body, retire=None):
             if current.state == "completed":
                 return file_read(session, current)
             if current.state != "finalizing":
-                raise HTTPException(409, "Upload was aborted during completion")
-            file = None
-            if dataset is None:
-                code = "dataset_deleted"
-            elif get_active_deletion_request(session, dsid) is not None:
-                code = "dataset_pending_deletion"
-            elif current.replace_file_mfid:
-                try:
-                    require_permission(session, demoted(session, principal), dsid, Permission.EDIT)
-                except HTTPException:
-                    code = "permission_revoked"
-                else:
-                    file = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == current.replace_file_mfid).with_for_update()).one_or_none()
-                    code = None if file is not None and file.storage_backend == "gcs" and file_etag(file.storage_path, file.storage_generation, file.sha256_hash, file.size) == current.replace_base_etag else "file_changed"
+                # Aborted or expired while the object was being assembled: the abort could not see the
+                # object yet, so remove it here.
+                aborted = True
             else:
-                authorize(session, principal, dsid)
-                conflict = session.exec(select(AssociatedFile.id).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.filename == current.associated_file_name)).first()
-                code = "filename_conflict" if conflict is not None else None
-            if code is None:
-                touch_resource_modification_time(session, dsid)
-                if file is not None:
-                    previous = (file.storage_path, file.storage_generation, file.filename, file.dataset_id)
-                    if not storage().retires_by_lifecycle:
-                        keep_version(session, file, dsid, now())
-                    file.storage_path = f"{current.bucket}/{current.object_key}"
-                    file.storage_generation = metadata.version
-                    file.size = current.size
-                    file.sha256_hash = current.claimed_sha256
-                    file.storage_crc32c = current.claimed_crc32c
-                    file.sha256_verified_at = None
-                    session.add(file)
+                file = None
+                if dataset is None:
+                    code = "dataset_deleted"
+                elif get_active_deletion_request(session, dsid) is not None:
+                    code = "dataset_pending_deletion"
+                elif current.replace_file_mfid:
+                    try:
+                        require_permission(session, demoted(session, principal), dsid, Permission.EDIT)
+                    except HTTPException:
+                        code = "permission_revoked"
+                    else:
+                        file = session.exec(select(AssociatedFile).where(AssociatedFile.mfid == current.replace_file_mfid).with_for_update()).one_or_none()
+                        code = None if file is not None and file.storage_backend == "gcs" and file_etag(file.storage_path, file.storage_generation, file.sha256_hash, file.size) == current.replace_base_etag else "file_changed"
                 else:
-                    file = AssociatedFile(dataset_id=dataset.id, filename=current.associated_file_name, storage_path=f"{current.bucket}/{current.object_key}", size=current.size, sha256_hash=current.claimed_sha256, storage_generation=metadata.version, storage_crc32c=current.claimed_crc32c)
-                    session.add(file)
-                current.result_file_mfid = file.mfid
-                current.storage_generation = metadata.version
-                current.state = "completed"
-                current.failure_code = None
-                save(session, current)
-                session.commit()
-                result = file_read(session, current)
+                    authorize(session, principal, dsid)
+                    conflict = session.exec(select(AssociatedFile.id).where(AssociatedFile.dataset_id == dataset.id, AssociatedFile.filename == current.associated_file_name)).first()
+                    code = "filename_conflict" if conflict is not None else None
+                if code is None:
+                    touch_resource_modification_time(session, dsid)
+                    if file is not None:
+                        previous = (file.storage_path, file.storage_generation, file.filename, file.dataset_id)
+                        if not storage().retires_by_lifecycle:
+                            keep_version(session, file, dsid, now())
+                        file.storage_path = f"{current.bucket}/{current.object_key}"
+                        file.storage_generation = metadata.version
+                        file.size = current.size
+                        file.sha256_hash = current.claimed_sha256
+                        file.storage_crc32c = current.claimed_crc32c
+                        file.sha256_verified_at = None
+                        session.add(file)
+                    else:
+                        file = AssociatedFile(dataset_id=dataset.id, filename=current.associated_file_name, storage_path=f"{current.bucket}/{current.object_key}", size=current.size, sha256_hash=current.claimed_sha256, storage_generation=metadata.version, storage_crc32c=current.claimed_crc32c)
+                        session.add(file)
+                    current.result_file_mfid = file.mfid
+                    current.storage_generation = metadata.version
+                    current.state = "completed"
+                    current.failure_code = None
+                    save(session, current)
+                    session.commit()
+                    result = file_read(session, current)
+    if aborted:
+        try:
+            cleanup(engine, storage(), upload)
+        except StorageFailure:
+            logger.warning("multipart_cleanup_deferred upload_id=%s", upload.upload_id)
+        raise HTTPException(409, "Upload was aborted during completion")
     if code is not None:
         fail(engine, storage(), upload, code)
         raise HTTPException(403 if code == "permission_revoked" else 409, f"Upload could not be published: {code}")

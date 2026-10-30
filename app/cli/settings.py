@@ -27,6 +27,10 @@ OTHER_VARIABLES = frozenset({
     "PORT", "PYTHONUNBUFFERED", "THUMBNAIL_LARGE_LOOKUP_WARNING_SIZE", "THUMBNAIL_MAX_SOURCE_BYTES",
     "THUMBNAIL_MAX_SOURCE_PIXELS", "WEB_CONCURRENCY",
 })
+# Settings the server no longer reads, with what replaced them.
+RETIRED_VARIABLES = {
+    name: "Google storage uses Application Default Credentials" for name in ("GCS_SA", "GCS_SA_FILE", "GCS_SA_VERSION")
+}
 HIDDEN = "unchecked"
 DEFAULT_SECRETS_DIR = "/run/secrets"
 GKE_SECRET_MANAGER_DRIVER = "secrets-store-gke.csi.k8s.io"
@@ -205,7 +209,7 @@ def _as_container(container: Container):
 def _unknown_variables(environment: dict[str, str]) -> list[str]:
     from app import config
 
-    known = set(OTHER_VARIABLES)
+    known = set(OTHER_VARIABLES) | set(RETIRED_VARIABLES)
     for group in config.GROUPS.values():
         for name in map(group.env_name, group.model_fields):
             known |= {name, f"{name}_FILE"}
@@ -259,6 +263,7 @@ def check_container(container: Container, profile: str, verify_secrets: bool = F
     report.errors += _pointed_files(container)
     if profile == "server":
         report.warnings += [f"{name} is not a Crucible setting" for name in _unknown_variables(container.environment)]
+        report.warnings += [f"{name} is no longer read ({reason}); remove it" for name, reason in RETIRED_VARIABLES.items() if name in container.environment]
     paths = list(container.secret_manager_paths)
     with _as_container(container):
         malformed = [name for name in config._SECRETS if (config.optional_env(f"{name}_VERSION") or "").strip() and not config._SECRET_VERSION.fullmatch(config.optional_env(f"{name}_VERSION"))]

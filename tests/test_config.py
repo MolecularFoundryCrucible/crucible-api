@@ -9,7 +9,7 @@ FEATURE_SETTINGS = (
     "INGESTION_ENABLED", "PRINTING_ENABLED", "PROPOSAL_SYNC_ENABLED",
     "RMQ_HOST", "RMQ_USER", "RMQ_ROUTING_SUFFIX", "RABBITMQ_DEFAULT_PW",
     "MQTT_HOST", "MQTT_USERNAME", "MQTT_PASSWORD", "PROPOSAL_DB_URL", "PROPDB_APIKEY",
-    "UPLOAD_BUCKET", "GCS_PROJECT", "GCS_SA", "STORAGE_READ_BUCKETS", "MULTIPART_UPLOAD_ENABLED", "RECORD_BUCKET",
+    "UPLOAD_BUCKET", "GCS_PROJECT", "GCS_SA", "GCS_SA_VERSION", "STORAGE_READ_BUCKETS", "MULTIPART_UPLOAD_ENABLED", "RECORD_BUCKET",
     "STORAGE_BACKEND", "S3_ENDPOINT_URL", "S3_PUBLIC_URL", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY",
     "MULTIPART_UPLOAD_BUCKET", "MULTIPART_UPLOAD_SIGNER", "MULTIPART_UPLOAD_PROJECT", "FILE_VERSION_RETENTION_DAYS", "STORAGE_CLEANUP_ENABLED",
 )
@@ -192,14 +192,12 @@ def test_record_bucket_needs_no_upload_bucket(empty):
     assert missing_required_settings() == []
 
 
-def test_google_storage_needs_no_key(empty):
+def test_google_storage_needs_no_key_and_ignores_gcs_sa(empty):
     _required(empty)
     empty.setenv("UPLOAD_BUCKET", "bucket")
+    empty.setenv("GCS_SA_VERSION", "projects/1/secrets/sa/versions/latest")
     assert missing_required_settings() == []
     assert "GCS_SA" not in secrets_in_use()
-    get_settings.cache_clear()
-    empty.setenv("GCS_SA_VERSION", "projects/1/secrets/sa/versions/latest")
-    assert "GCS_SA" in secrets_in_use()
 
 
 @pytest.mark.parametrize("endpoint", ["https://storage.googleapis.com", "https://storage.us-central1.rep.googleapis.com/"])
@@ -342,13 +340,14 @@ def test_read_secrets_skips_features_that_are_off(startup, empty):
 
 
 def test_read_secrets_skips_storage_when_it_is_not_configured(startup, empty):
-    empty.setenv("GCS_SA_VERSION", "projects/1/secrets/sa/versions/1")
+    empty.setenv("STORAGE_BACKEND", "s3")
+    empty.setenv("S3_SECRET_ACCESS_KEY_VERSION", "projects/1/secrets/s3/versions/1")
     config.read_secrets()
     assert startup == [KEY_VERSION]
     empty.setenv("RECORD_BUCKET", "records")
     get_settings.cache_clear()
     config.read_secrets()
-    assert "projects/1/secrets/sa/versions/1" in startup
+    assert "projects/1/secrets/s3/versions/1" in startup
 
 
 def test_read_secrets_names_the_secret_it_cannot_read(startup, empty):

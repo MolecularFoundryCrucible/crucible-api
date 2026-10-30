@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from google.api_core.exceptions import NotFound
 
+from app.storage import StorageFailure
 from app.services.storage_downloads import (
     StorageLocationError,
     StorageObject,
@@ -133,7 +134,7 @@ def test_signed_url_is_generation_pinned_and_carries_headers(store, keyed):
     assert url == "https://signed.example/x"
     client.bucket.assert_called_once_with("bucket")
     client.bucket.return_value.blob.assert_called_once_with(f"{DS}/_files/abc", generation=7)
-    blob.reload.assert_called_once_with()
+    blob.reload.assert_called_once_with(timeout=60)
     kwargs = blob.generate_signed_url.call_args.kwargs
     assert kwargs["version"] == "v4"
     assert kwargs["method"] == "GET"
@@ -221,15 +222,15 @@ def test_retire_object_skips_a_store_without_lifecycle_retirement():
 
 
 def test_record_files_use_the_server_client(store, keyed):
+    from google.api_core.exceptions import NotFound
     blob = keyed.bucket.return_value.blob.return_value
-    blob.exists.return_value = False
+    blob.download_as_text.side_effect = NotFound("missing")
     assert store.get_text("records", "ds1/record.json") is None
-    blob.download_as_text.assert_not_called()
-    blob.exists.return_value = True
+    blob.download_as_text.side_effect = None
     blob.download_as_text.return_value = "{}"
     assert store.get_text("records", "ds1/record.json") == "{}"
     store.put_bytes("records", "ds1/record.json", b"{}", "application/json")
-    blob.upload_from_string.assert_called_once_with(b"{}", content_type="application/json")
+    blob.upload_from_string.assert_called_once_with(b"{}", content_type="application/json", timeout=60)
     keyed.bucket.assert_called_with("records")
     keyed.bucket.return_value.blob.assert_called_with("ds1/record.json")
 
@@ -245,3 +246,14 @@ def test_signing_errors_stay_server_side(monkeypatch):
         gcs_storage._signed_download("file", DS, f"mf-storage-prod/{DS}/scan.tif", None, "scan.tif")
     assert raised.value.status_code == 503
     assert "googleapis" not in raised.value.detail and "iam" not in raised.value.detail
+
+
+def test_record_file_errors_become_storage_unavailable(store, keyed):
+    from google.api_core.exceptions import ServiceUnavailable
+    blob = keyed.bucket.return_value.blob.return_value
+    blob.download_as_text.side_effect = ServiceUnavailable("down")
+    blob.upload_from_string.side_effect = ServiceUnavailable("down")
+    with pytest.raises(StorageFailure, match="provider_unavailable"):
+        store.get_text("records", "ds1/record.json")
+    with pytest.raises(StorageFailure, match="provider_unavailable"):
+        store.put_bytes("bucket", "ds1/_files/empty", b"", "application/octet-stream")

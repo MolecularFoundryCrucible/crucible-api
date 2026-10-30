@@ -20,9 +20,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The Compose bundle runs the Hub from its published image (1.7.1) and builds the API image once.
 - On `s3`, the legacy upload routes answer 501 `legacy_upload_unavailable`, and a file without a stored location answers 404 instead of 500.
 - `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` must be one line.
-- On `gcs`, `GCS_SA`, `MULTIPART_UPLOAD_SIGNER`, and `MULTIPART_UPLOAD_PROJECT` are optional; without a key the server uses Application Default Credentials. Existing settings are unchanged.
+- On `gcs`, the server uses Application Default Credentials and, when `MULTIPART_UPLOAD_SIGNER` is set, acts as that account for every storage operation, so the signer needs access to the record bucket; `MULTIPART_UPLOAD_SIGNER` and `MULTIPART_UPLOAD_PROJECT` are optional.
+- `GET /datasets/{dataset_mfid}/download_links` signs the links in parallel.
 - `STORAGE_BACKEND=s3` refuses a Google `S3_ENDPOINT_URL`: use `gcs`.
 - The Compose bundle runs the hourly storage cleanup by default (`CRUCIBLE_STORAGE_CLEANUP_ENABLED=false` turns it off); the server setting `STORAGE_CLEANUP_ENABLED` stays off by default.
+
+### Removed
+
+- `GCS_SA`: the server no longer reads a service-account key of its own; use Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS` for a key file).
 
 ### Deprecated
 
@@ -30,7 +35,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
-- A Google storage error during multipart completion or abort answers 503 instead of 500.
+- A Google storage error during multipart completion or abort, or while writing an empty file, answers 503 instead of 500.
+- An empty-file upload whose SHA-256 is not the empty hash is refused when it starts (422).
+- An abort or the cleanup job during completion no longer leaves the assembled object in storage.
 
 ## [3.2.1] - 2026-10-28
 

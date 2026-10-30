@@ -1,5 +1,7 @@
+import atexit
 import json
 import os
+import tempfile
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -7,6 +9,14 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 TEST_SERVICE_ACCOUNT = "crucible-test@test-project.iam.gserviceaccount.com"
 _TEST_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
     serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+# Application Default Credentials from a throwaway key file, so signing runs for real without network
+# access, and a developer's own Google credentials never reach a test.
+with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as _key_file:
+    json.dump({"type": "service_account", "project_id": "test-project", "private_key_id": "test", "private_key": _TEST_KEY,
+               "client_email": TEST_SERVICE_ACCOUNT, "client_id": "1", "token_uri": "https://oauth2.googleapis.com/token"}, _key_file)
+atexit.register(os.unlink, _key_file.name)
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _key_file.name
+os.environ.pop("MULTIPART_UPLOAD_SIGNER", None)
 
 for _name, _value in {
     "DB_SERVER": "localhost",
@@ -18,8 +28,6 @@ for _name, _value in {
     "API_CONF_FILE": "app/conf/api_conf_local.yaml",
     "UPLOAD_BUCKET": "mf-storage-prod",
     "GCS_PROJECT": "crucible-prod",
-    "GCS_SA": json.dumps({"type": "service_account", "project_id": "test-project", "private_key_id": "test", "private_key": _TEST_KEY,
-                          "client_email": TEST_SERVICE_ACCOUNT, "client_id": "1", "token_uri": "https://oauth2.googleapis.com/token"}),
     "INGESTION_ENABLED": "true",
     "RMQ_HOST": "localhost",
     "RMQ_USER": "test",
@@ -108,7 +116,7 @@ def fresh_settings(monkeypatch):
     from app.api import dependencies
     from app.storage import gcs
 
-    caches = (config.get_settings, dependencies.get_engine, storage.get_store, gcs.server_credentials, gcs.server_client, gcs.signer)
+    caches = (config.get_settings, dependencies.get_engine, storage.get_store, gcs.server_credentials, gcs.server_client)
     monkeypatch.setattr(config, "_fetched_secrets", {})
     monkeypatch.setattr(config, "_loaded_env_files", set())
     for cached in caches:

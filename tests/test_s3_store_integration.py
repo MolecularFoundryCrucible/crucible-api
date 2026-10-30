@@ -105,3 +105,15 @@ def test_a_wrong_whole_file_checksum_is_refused(api):
     refused = api.post(BASE + "/complete", json={"upload_id": upload["upload_id"], "sha256_hash": hashlib.sha256(data).hexdigest(), "crc32c": crc32c(b"other")})
     assert refused.status_code == 422
     assert "object_integrity_mismatch" in refused.text
+
+
+def test_an_empty_file_uploads_and_downloads(api):
+    digest = hashlib.sha256(b"").hexdigest()
+    started = api.post(BASE + "/initiate", json={"filename": "empty.txt", "size": 0, "sha256_hash": digest}, headers={"Idempotency-Key": "empty"})
+    assert started.status_code == 200, started.text
+    assert started.json()["part_count"] == 0
+    finished = api.post(BASE + "/complete", json={"upload_id": started.json()["upload_id"], "sha256_hash": digest, "crc32c": crc32c(b"")})
+    assert finished.status_code == 200, finished.text
+    link = api.get(f"/files/{finished.json()['mfid']}/download_link")
+    status, body, _ = send("GET", link.json()["url"])
+    assert (status, body) == (200, b"")

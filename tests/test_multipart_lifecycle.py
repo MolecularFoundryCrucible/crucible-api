@@ -81,6 +81,9 @@ class MemoryStorage:
             self.fail_after_complete = False
             raise StorageFailure()
 
+    def put_bytes(self, bucket, key, data, content_type):
+        self.objects[key] = {"generation": "7", "size": len(data), "crc32c": base64.b64encode(google_crc32c.Checksum(data).digest()).decode(), "data": data}
+
     def head(self, bucket, key):
         stored = self.objects.get(key)
         return ObjectInfo(size=stored["size"], crc32c=stored["crc32c"] if self.reports_crc32c else None, version=stored["generation"]) if stored else None
@@ -387,7 +390,7 @@ def test_same_content_under_another_name_is_a_new_upload(flow):
     assert response.json()["upload_id"] is not None
 
 
-@pytest.mark.parametrize("body", [{"filename": "../x", "size": 1}, {"filename": "/x", "size": 1}, {"filename": "x", "size": True}, {"filename": "x", "size": 0}, {"filename": "x", "size": 1, "sha256_hash": "bad"}])
+@pytest.mark.parametrize("body", [{"filename": "../x", "size": 1}, {"filename": "/x", "size": 1}, {"filename": "x", "size": True}, {"filename": "x", "size": -1}, {"filename": "x", "size": 1, "sha256_hash": "bad"}])
 def test_invalid_initiation_is_rejected(flow, body):
     assert flow[0].post(BASE + "/initiate", json=body).status_code == 422
 
@@ -1354,3 +1357,57 @@ def test_legacy_initiate_token_errors_stay_server_side(use_engine, flow, monkeyp
     response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA)})
     assert response.status_code == 503
     assert "googleapis" not in response.text and "iam" not in response.text
+
+
+EMPTY_SHA = hashlib.sha256(b"").hexdigest()
+EMPTY_CRC = "AAAAAA=="
+
+
+def start_empty(flow, filename="empty.txt"):
+    response = flow[0].post(BASE + "/initiate", json={"filename": filename, "size": 0, "sha256_hash": EMPTY_SHA}, headers={"Idempotency-Key": filename})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_an_empty_file_uploads_without_parts(flow):
+    client, engine, storage = flow
+    started = start_empty(flow)
+    assert (started["state"], started["part_size"], started["part_count"]) == ("uploading", 0, 0)
+    assert storage.pending == {}
+    status = client.get(BASE + f"/{started['upload_id']}").json()
+    assert (status["parts"], status["part_count"]) == ([], 0)
+    assert client.post(BASE + f"/{started['upload_id']}/parts", json={"parts": [{"part_number": 1, "crc32c": EMPTY_CRC}]}).status_code == 422
+    response = complete(flow, started["upload_id"], digest=EMPTY_SHA, crc=EMPTY_CRC)
+    assert response.status_code == 200, response.text
+    assert (response.json()["size"], response.json()["filename"]) == (0, "empty.txt")
+    key = row(engine, started["upload_id"]).object_key
+    assert storage.objects[key]["data"] == b""
+    assert complete(flow, started["upload_id"], digest=EMPTY_SHA, crc=EMPTY_CRC).json()["mfid"] == response.json()["mfid"]
+
+
+@pytest.mark.parametrize("digest, crc", [(SHA, EMPTY_CRC), (EMPTY_SHA, CRC)])
+def test_an_empty_file_with_wrong_checksums_is_refused_before_storing(flow, digest, crc):
+    _, engine, storage = flow
+    started = start_empty(flow)
+    response = complete(flow, started["upload_id"], digest=digest, crc=crc)
+    assert response.status_code in (409, 422), response.text
+    assert row(engine, started["upload_id"]).object_key not in storage.objects
+    assert files(engine) == []
+
+
+def test_a_file_can_be_replaced_with_empty_content(flow):
+    client, engine, storage = flow
+    file = published_file(flow)
+    response = client.post(REPLACE.format(file["mfid"]), json={"size": 0, "sha256_hash": EMPTY_SHA})
+    assert response.status_code == 200, response.text
+    assert response.json()["part_count"] == 0
+    replaced = complete(flow, response.json()["upload_id"], digest=EMPTY_SHA, crc=EMPTY_CRC)
+    assert replaced.status_code == 200, replaced.text
+    assert (replaced.json()["mfid"], replaced.json()["size"]) == (file["mfid"], 0)
+
+
+def test_an_empty_upload_can_be_aborted(flow):
+    client, engine, _ = flow
+    started = start_empty(flow)
+    assert client.delete(BASE + f"/{started['upload_id']}").status_code == 204
+    assert row(engine, started["upload_id"]).state == "aborted"

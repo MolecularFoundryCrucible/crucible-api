@@ -97,6 +97,15 @@ def active(upload):
         raise HTTPException(409, "Upload is aborted or failed")
 
 
+# An empty file has no parts and no provider upload: completion writes the empty object directly.
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+EMPTY_CRC32C = "AAAAAA=="
+
+
+def part_total(upload):
+    return upload.part_count or 0
+
+
 def part_size(upload, number):
     return min(upload.part_size, upload.size - (number - 1) * upload.part_size)
 
@@ -117,7 +126,7 @@ def file_read(session, upload):
 
 
 def status(session, upload):
-    return MultipartStatus(upload_id=upload.upload_id, state="expired" if expired(upload) else upload.state, expires_at=utc(upload.expires_at), part_size=upload.part_size, part_count=upload.part_count, failure_code=upload.failure_code, existing_file=file_read(session, upload) if upload.state == "completed" else None)
+    return MultipartStatus(upload_id=upload.upload_id, state="expired" if expired(upload) else upload.state, expires_at=utc(upload.expires_at), part_size=upload.part_size or 0, part_count=part_total(upload), failure_code=upload.failure_code, existing_file=file_read(session, upload) if upload.state == "completed" else None)
 
 
 def unavailable(message):
@@ -146,8 +155,8 @@ def new_session(session, principal, dsid, size, key, fingerprint, claimed_sha256
         if count >= count_limit or reserved + size > byte_limit:
             raise HTTPException(429, "Upload reservation quota exceeded", headers={"Retry-After": "60"})
     identifier = uuid4().hex
-    part_size = choose_part_size(size)
-    upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, object_key=f"{multipart_prefix(dsid)}{identifier}", associated_file_name=filename, expires_at=now() + INITIATION_WINDOW, size=size, protocol=PROTOCOL, bucket=config.bucket, state="initiating", part_size=part_size, part_count=(size + part_size - 1) // part_size, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=claimed_sha256, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0, replace_file_mfid=replace_file_mfid, replace_base_etag=replace_base_etag)
+    part_size = choose_part_size(size) if size else None
+    upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, object_key=f"{multipart_prefix(dsid)}{identifier}", associated_file_name=filename, expires_at=now() + INITIATION_WINDOW, size=size, protocol=PROTOCOL, bucket=config.bucket, state="initiating", part_size=part_size, part_count=(size + part_size - 1) // part_size if size else None, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=claimed_sha256, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0, replace_file_mfid=replace_file_mfid, replace_base_etag=replace_base_etag)
     session.add(upload)
     session.commit()
     session.refresh(upload)
@@ -191,16 +200,19 @@ def initiate(engine, storage, principal, dsid, body, key, config):
 
 
 def start(engine, storage, upload):
-    try:
-        identifiers = sorted(storage().open_uploads(upload.bucket, upload.object_key))
-        provider_id = identifiers[0] if identifiers else storage().start_upload(upload.bucket, upload.object_key)
-    except StorageFailure:
-        raise unavailable("Storage is temporarily unavailable; retry with the same Idempotency-Key") from None
+    provider_id = None
+    if upload.size:
+        try:
+            identifiers = sorted(storage().open_uploads(upload.bucket, upload.object_key))
+            provider_id = identifiers[0] if identifiers else storage().start_upload(upload.bucket, upload.object_key)
+        except StorageFailure:
+            raise unavailable("Storage is temporarily unavailable; retry with the same Idempotency-Key") from None
     with Session(engine) as session:
         current = session.exec(select(UploadSession).where(UploadSession.upload_id == upload.upload_id).with_for_update()).one_or_none()
         if current is None:
             try:
-                storage().abort_upload(upload.bucket, upload.object_key, provider_id)
+                if provider_id:
+                    storage().abort_upload(upload.bucket, upload.object_key, provider_id)
             except StorageFailure:
                 logger.warning("multipart_leftover_abort_deferred upload_id=%s", upload.upload_id)
             raise HTTPException(409, "Upload could not be started: dataset_deleted")
@@ -279,12 +291,14 @@ def object_crc32c(upload, metadata):
         return metadata.crc32c
     authorized = (upload.part_manifest or {}).get("authorized", {})
     try:
-        return combine_parts([(authorized[str(number)], part_size(upload, number)) for number in range(1, upload.part_count + 1)])
+        return combine_parts([(authorized[str(number)], part_size(upload, number)) for number in range(1, part_total(upload) + 1)])
     except (KeyError, ValueError):
         return None
 
 
 def assemble(storage, upload):
+    if not upload.size:
+        return assemble_empty(storage, upload)
     metadata = storage.head(upload.bucket, upload.object_key)
     if metadata is None:
         parts, marker = [], 0
@@ -314,6 +328,20 @@ def assemble(storage, upload):
         if metadata is None:
             raise InvalidUpload("provider_upload_missing")
     if metadata.size != upload.size or object_crc32c(upload, metadata) != upload.claimed_crc32c:
+        raise InvalidUpload("object_integrity_mismatch")
+    return metadata
+
+
+def assemble_empty(storage, upload):
+    """The claims of an empty file can be checked here in full, so a wrong one is refused before
+    anything is stored."""
+    if upload.claimed_sha256 != EMPTY_SHA256 or upload.claimed_crc32c != EMPTY_CRC32C:
+        raise InvalidUpload("object_integrity_mismatch")
+    metadata = storage.head(upload.bucket, upload.object_key)
+    if metadata is None:
+        storage.put_bytes(upload.bucket, upload.object_key, b"", "application/octet-stream")
+        metadata = storage.head(upload.bucket, upload.object_key)
+    if metadata is None or metadata.size != 0:
         raise InvalidUpload("object_integrity_mismatch")
     return metadata
 
@@ -365,7 +393,7 @@ def complete(engine, storage, principal, dsid, body, retire=None):
             return file_read(session, upload)
         active(upload)
         if upload.state == "uploading":
-            if len((upload.part_manifest or {}).get("authorized", {})) != upload.part_count:
+            if len((upload.part_manifest or {}).get("authorized", {})) != part_total(upload):
                 raise HTTPException(409, "All parts must be authorized before completion")
             upload.claimed_sha256 = body.sha256_hash
             upload.claimed_crc32c = body.crc32c

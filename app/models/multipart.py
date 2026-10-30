@@ -25,7 +25,7 @@ SHA256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 class MultipartInitiate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     filename: str = Field(min_length=1, max_length=1024)
-    size: int = Field(gt=0, le=500 * 1024 ** 3, strict=True)
+    size: int = Field(ge=0, le=500 * 1024 ** 3, strict=True)
     sha256_hash: SHA256 | None = None
 
     @field_validator("filename")
@@ -40,7 +40,7 @@ class MultipartInitiate(BaseModel):
 
 class MultipartReplace(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    size: int = Field(gt=0, le=500 * 1024 ** 3, strict=True)
+    size: int = Field(ge=0, le=500 * 1024 ** 3, strict=True)
     sha256_hash: SHA256 | None = None
 
 

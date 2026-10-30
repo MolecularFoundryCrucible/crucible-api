@@ -1,10 +1,10 @@
 # Hub login design
 
-Status: implemented and enabled on production. The Tailscale URLs below describe the original local pilot.
+Status: implemented and enabled on production.
 
-For the plain-language flow and table lifecycle, start with [How Hub authentication works](hub_auth_overview.md). Use [the rollout guide](archive/hub_auth_release_rollout.md) for dated deployment status.
+For the plain-language flow and table lifecycle, start with [How Hub authentication works](hub_auth_overview.md).
 
-Local integration is working through Tailscale. The API public base URL is `https://leviathan.rooster-chimaera.ts.net/testapi` and the Hub callback is `https://leviathan.rooster-chimaera.ts.net/hub/auth/callback`. The ORCID redirect is the API base URL plus `/auth/hub/callback`. These supersede the earlier loopback reservations. Production deployment remains gated by [authentication operations](hub_auth_operations.md).
+The ORCID redirect is the API base URL plus `/auth/hub/callback`. Production deployment remains gated by [authentication operations](hub_auth_operations.md).
 
 This document records the API-side design for production Hub login. Before changing the Hub contract, coordinate the decision and update `crucible-hub/docs/authentication-transition.md`, its authentication decision, API integration documentation, pinned OpenAPI artifact, generated client, and tests. Do not change the Hub repository as part of this API branch without explicit authorization.
 
@@ -35,9 +35,7 @@ Both dedicated Hub tokens should be opaque random values stored hashed at rest a
 
 The API uses `HUB_AUTH_CLIENT_ID` (default `crucible-hub`), `HUB_AUTH_CALLBACK_URI` (exact Hub callback), `HUB_AUTH_PUBLIC_API_URL` (public API base URL), and `HUB_AUTH_ORCID_ISSUER` (production or sandbox ORCID). Deployed credentials use pinned `HUB_AUTH_CLIENT_SECRET_VERSION` and `HUB_AUTH_ORCID_CLIENT_SECRET_VERSION` Secret Manager references; local inline secrets remain supported when references are absent. `HUB_AUTH_ORCID_CLIENT_ID` selects the matching ORCID client without changing legacy API-key login. Deployment ConfigMaps initially set `HUB_AUTH_ENABLED=false`. See [deployment credentials and activation](hub_auth_operations.md#deployment-credentials-and-activation). The ORCID callback is `{public API URL}/auth/hub/callback`; register it with ORCID separately from the Hub callback. Never use a Cloud Run upstream URL as a browser callback.
 
-For local end-to-end testing, use a test database or explicitly approved staging database and the exact Tailscale callbacks recorded above. The Hub uses its own process-local session store for the pilot. Local Hub and API must both be reachable by the browser and by each other for the code exchange. A deployed Hub cannot exchange a code against `127.0.0.1` on a developer machine.
-
-Local sign-in, logout, and fresh sign-in passed through Tailscale after credential rotation. Earlier loopback callback and self-signed-certificate reservations are superseded. Staging's schema is now `e92a6b1c730f`; the feature API image has not been deployed. Production ORCID callback registration is confirmed, but deployed browser verification remains pending.
+For local end-to-end testing, use a test database or an explicitly approved staging database, with callbacks that match the Hub and API URLs in use. The Hub uses its own process-local session store for the pilot. Local Hub and API must both be reachable by the browser and by each other for the code exchange. A deployed Hub cannot exchange a code against `127.0.0.1` on a developer machine.
 
 New human users are provisioned from the validated ORCID subject. If the ID token omits names, first and last name initially remain blank and the Hub should offer profile completion; a login must not infer identity from a typed ORCID iD or display name. The current user model has no disabled-account field. Account suspension is a separate schema and policy follow-up; session revocation must not be presented as account suspension.
 

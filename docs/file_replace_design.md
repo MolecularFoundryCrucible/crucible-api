@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented on branch feat/file-replace (2026-10-13). Builds on storage location confinement ([design](storage_download_design.md)) and one upload bucket per environment (`UPLOAD_BUCKET`).
+Implemented (2026-10-13), through `POST /files/{file_mfid}/upload/multipart/initiate`. Builds on storage location confinement ([design](storage_download_design.md)) and one upload bucket per environment (`UPLOAD_BUCKET`).
 
 ## Problem
 

@@ -1,6 +1,6 @@
 # Join requests and notifications design
 
-Status: approved (2026-10-16). Phase 1 (join requests) is being built. In-app notifications are a possible future direction, not scheduled. Email notifications are out of scope.
+Status: approved (2026-10-16). Phase 1 (join requests) is built (`app/api/routes/join_requests.py`). In-app notifications are a possible future direction, not scheduled. Email notifications are out of scope.
 
 ## Goals
 

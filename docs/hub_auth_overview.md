@@ -2,7 +2,7 @@
 
 ORCID proves who you are. The API issues temporary credentials for your user. The Hub keeps those credentials on its server and gives your browser only an opaque session cookie. Existing API keys and clients continue working unchanged.
 
-This describes the implemented API flow, not a claim that production authentication is enabled. See [rollout status](archive/hub_auth_release_rollout.md), [integration details](hub_login_design.md), and [operations](hub_auth_operations.md).
+This describes the implemented API flow, not a claim that production authentication is enabled. See [integration details](hub_login_design.md), and [operations](hub_auth_operations.md).
 
 ## From sign-in to logout
 

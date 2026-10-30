@@ -4,7 +4,7 @@ Status: open, not scheduled (2026-10-16).
 
 ## Finding
 
-The API runs gunicorn with 4 Uvicorn workers per pod (`Dockerfile`, `--workers 4`). `prometheus_fastapi_instrumentator` (`app/api/main.py`, `Instrumentator(...).instrument(app).expose(app)`) keeps its counters and histograms in each worker's own memory, and `GET /metrics` returns the numbers of whichever worker serves the scrape. Google Managed Prometheus scrapes each pod every 30 seconds (`k8s-conf/pod-monitoring-*.yaml`), so consecutive samples of one series come from different workers. Each drop looks like a counter reset, and `rate()` and `increase()` add phantom increments.
+The API runs gunicorn with 4 Uvicorn workers per pod (`Dockerfile`, `--workers 4`). `prometheus_fastapi_instrumentator` (`app/api/main.py`, `Instrumentator(...).instrument(app).expose(app)`) keeps its counters and histograms in each worker's own memory, and `GET /metrics` returns the numbers of whichever worker serves the scrape. Google Managed Prometheus scrapes each pod every 30 seconds (the PodMonitoring manifests in mf-crucible-deploy), so consecutive samples of one series come from different workers. Each drop looks like a counter reset, and `rate()` and `increase()` add phantom increments.
 
 Observed on 2026-10-16: `increase(http_requests_total{handler="/project_graph/..."}[30d])` reported about 140,000 requests, while the request log showed 20 calls in its 3-day retention. All request counts and rates from these metrics are inflated by a large, varying factor.
 

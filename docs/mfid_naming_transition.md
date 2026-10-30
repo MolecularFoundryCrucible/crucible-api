@@ -1,6 +1,6 @@
 # Batch lookup and the `unique_id` to `mfid` transition
 
-Status: Phase 1 implemented 2026-10-21 (branch `feat/batch-mfid-filters`). Phase 2 and later items are agreed direction but not scheduled; do not start them without a decision.
+Status: Phase 1 implemented 2026-10-21. Phase 2 and later items are agreed direction but not scheduled; do not start them without a decision.
 
 ## Goals
 

@@ -60,6 +60,9 @@ Production commands require the explicit safety flag, including read-only Alembi
 
 ```bash
 DB_CONF_FILE=.env.prod \
+.venv/bin/python -m app.cli db upgrade --yes-this-is-production
+
+DB_CONF_FILE=.env.prod \
 .venv/bin/alembic -x yes-this-is-production=true current
 
 DB_CONF_FILE=.env.prod \
@@ -83,29 +86,12 @@ DB_CONF_FILE=.env.prod \
   --yes-this-is-production
 ```
 
-The August 2026 permission rollout is complete. Its ordered procedure is retained only as a [historical runbook](../docs/archive/permission_migration_runbook_2026-08.md). Do not replay it against a current environment. Accepted production cleanup items remain in [production migration data follow-ups](../docs/production_migration_data_followups.md).
+Scripts in `migrations/data/` are dated and record one-time work; most have already run in production. The August 2026 permission rollout and the September 2026 timestamp and contributor-role migrations are complete; do not replay their procedures (they are in git history). Accepted production cleanup items are in [production migration data follow-ups](../docs/archive/production_migration_data_followups.md).
 
-## Resource timestamp migration
+## Connecting to Cloud SQL
 
-Revisions `8c4f2a1d7e60` and `3f2b6a9c1d84` converted API-owned lifecycle timestamps to PostgreSQL `TIMESTAMPTZ` and added database enforcement. Production completed this migration on 2026-09-15. Current behavior is documented in the [resource timestamp policy](../docs/resource_timestamp_policy.md), and the rollout evidence is retained in the [archived migration record](../docs/archive/resource_timestamp_migration_2026-09.md).
-
-`migrations/data/20260908_audit_resource_timestamps.py` remains a read-only diagnostic for databases that have not reached revision `8c4f2a1d7e60`. Do not replay the completed production procedure against a current environment.
-
-## Platform contributor role migration
-
-Revision `7a1c4e8d2f90` adds `contributor` to the PostgreSQL `platform_role` enum. It does not update user rows and can run while the API remains available.
-
-Staging and production completed this migration on 2026-09-16. The production migration ran online through the Cloud SQL proxy, and the main API completed a zero-downtime rolling deployment.
+Authenticate with Application Default Credentials and run the Cloud SQL Auth Proxy on an unused local port, then point an untracked environment file at it. Confirm the database name before any write.
 
 ```bash
-DB_CONF_FILE=.env.prod \
-.venv/bin/alembic -x yes-this-is-production=true current
-
-DB_CONF_FILE=.env.prod \
-.venv/bin/alembic -x yes-this-is-production=true upgrade 7a1c4e8d2f90
-
-DB_CONF_FILE=.env.prod \
-.venv/bin/alembic -x yes-this-is-production=true current
+cloud-sql-proxy --address 127.0.0.1 --port 5433 <project>:<region>:<instance>
 ```
-
-Both environments are at revision `7a1c4e8d2f90`, and their enum contains `none`, `contributor`, `support`, and `admin`. Existing service accounts remain unchanged until a human platform administrator updates them individually.

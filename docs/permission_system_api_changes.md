@@ -1,6 +1,6 @@
 # API Contract Changes - Permission System Redesign
 
-Reference for the API v3 permission contract deployed to production. Verify `GET /health/ready` and the deployed OpenAPI before testing an environment. Start with `docs/client_migration_summary.md` for changes grouped by client type. See `docs/resource_identifier_routes.md` for canonical identifiers, exact lookup filters, compatibility aliases, and current path parameter names. The completed rollout is retained in `docs/archive/permission_migration_runbook_2026-08.md`.
+Reference for the API v3 permission contract deployed to production. Verify `GET /health/ready` and the deployed OpenAPI before testing an environment. Start with `docs/client_migration_summary.md` for changes grouped by client type. See `docs/resource_identifier_routes.md` for canonical identifiers, exact lookup filters, compatibility aliases, and current path parameter names. The completed rollout is in git history.
 
 ## New routes
 
@@ -380,11 +380,10 @@ This was silently broken for every real project (500, not surfaced clearly) sinc
 
 ## Verification
 
-Generate and inspect the deterministic repository schema after a contract change:
+The OpenAPI document is no longer tracked in the repository. Regenerate it after a contract change; CI attaches it to each GitHub release:
 
 ```bash
-.venv/bin/python -m scripts.export_openapi
-git diff --exit-code -- openapi/crucible-api.json
+uv run python -m scripts.export_openapi
 ```
 
-Compare the repository artifact with the target environment's deployed OpenAPI, confirm the commit and schema revisions through `GET /health/ready`, and run the applicable contract checks in `docs/resource_identifier_routes.md`.
+Compare the generated document (or the one attached to the release) with the target environment's deployed OpenAPI, confirm the commit and schema revisions through `GET /health/ready`, and run the applicable contract checks in `docs/resource_identifier_routes.md`.

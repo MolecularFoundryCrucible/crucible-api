@@ -1,6 +1,6 @@
 # User representation and search: follow-up
 
-Status: proposed 2026-10-21. The `/users/search` envelope is implemented on `feat/users-search-envelope`; the rest is not scheduled.
+Status: proposed 2026-10-21. The `/users/search` envelope is implemented; the rest is not scheduled.
 
 ## One user schema with null fields
 

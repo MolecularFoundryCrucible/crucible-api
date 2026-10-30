@@ -12,7 +12,7 @@ Delete an access group. Deferred because it requires deciding whether to cascade
 
 ## `DELETE /users/{orcid}`
 
-User deactivation or removal. Deferred because it requires a design decision on soft versus hard deletion, API-key invalidation, memberships, ownership transfer, audit retention, and service-account behavior. A hard-delete design must account for every user foreign key and denormalized owner or project-lead reference in the current schema.
+User deactivation or removal is designed in [user_deactivation.md](user_deactivation.md).
 
 ## Generalize `AssociatedFile.dataset_id` to a resource-generic `resource_id`
 

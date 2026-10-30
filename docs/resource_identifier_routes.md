@@ -134,4 +134,3 @@ Legacy slugs longer than 25 characters (48 projects and 2 instruments in staging
 
 - Route index: [`app/api/routes/readme.md`](../app/api/routes/readme.md)
 - Permission migration API changes: [`docs/permission_system_api_changes.md`](permission_system_api_changes.md)
-- Historical permission migration runbook: [`docs/archive/permission_migration_runbook_2026-08.md`](archive/permission_migration_runbook_2026-08.md)

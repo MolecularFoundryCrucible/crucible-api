@@ -364,7 +364,5 @@ Use the returned `unique_id` MFID for canonical user routes. To authenticate as 
 - [Permission API changes](../permission_system_api_changes.md)
 - [Identifier route contract](../resource_identifier_routes.md)
 - [Remote file records](../remote_file_records.md)
-- [Historical permission migration runbook](permission_migration_runbook_2026-08.md)
-- [Repository OpenAPI artifact](../../openapi/crucible-api.json)
 - [Production OpenAPI](https://crucible.lbl.gov/api/v3/openapi.json)
-- [Staging OpenAPI](https://crucible.lbl.gov/testapi-staging/openapi.json)
+- [API docs](https://crucible.lbl.gov/api/v3/docs)

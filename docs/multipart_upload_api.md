@@ -1,6 +1,6 @@
 # Signed multipart uploads
 
-The legacy resumable and token routes are deprecated (they send a `Deprecation` header) and answer 501 on `s3`. Sessions started here cannot be completed through the legacy endpoint. The API performs every storage operation inside the request; there is no background worker.
+The legacy resumable and token routes are deprecated (they send a `Deprecation` header), answer 501 on `s3`, and retire in 4.0. Sessions started here cannot be completed through the legacy endpoint. The API performs every storage operation inside the request; there is no background worker.
 
 ## HTTP workflow
 

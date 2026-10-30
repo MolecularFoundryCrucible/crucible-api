@@ -2,15 +2,15 @@
 
 ## Status
 
-Implemented on branch fix/storage-path-confinement (2026-10-13). Step 2 of the storage work that follows the downscoped legacy upload token (#310). Per-environment buckets and file replacement build on it.
+Implemented (2026-10-13). Step 2 of the storage work that follows the downscoped legacy upload token (#310). Per-environment buckets and file replacement build on it.
 
 ## Problem
 
-`GET /files/{file_id}/download_link`, `GET /datasets/{dataset_mfid}/download_links`, and ingestion dispatch trust `AssociatedFile.storage_path` as written. They split it into bucket and object key and act on it with the `GCS_SA` identity, which holds project `roles/owner`.
+`GET /files/{file_id}/download_link`, `GET /datasets/{dataset_mfid}/download_links`, and ingestion dispatch trust `AssociatedFile.storage_path` as written. They split it into bucket and object key and act on it with the server's own storage identity, which held project `roles/owner` at the time.
 
 `POST /datasets/{dataset_mfid}/files` already rejects a client `storage_path` for GCS files, but `PATCH /files/{file_id}` does not. A caller with `EDIT` on one dataset can set any `storage_path`, or create a catalog-only record and switch its backend to `gcs`, then obtain a signed URL for any object in any bucket of the project, including other datasets and unrelated buckets. Ingestion forwards the same path to workers.
 
-Downloads also follow two code paths chosen by bucket name: the multipart bucket signs with the dedicated signer and requires a generation, every other bucket signs with `GCS_SA`. Once uploads share one bucket per environment (step 3), bucket name can no longer tell the two apart.
+Downloads also follow two code paths chosen by bucket name: the multipart bucket signed with the dedicated signer and required a generation, every other bucket signed with the server identity. Uploads now share one bucket per environment (`UPLOAD_BUCKET`), so bucket name can no longer tell the two apart and one path signs every download.
 
 ## Audit of existing records
 
@@ -39,7 +39,7 @@ Every existing record satisfies the rule below. The audit reflects current value
 ## Non-goals
 
 - Per-environment buckets and the `UPLOAD_BUCKET` setting (step 3).
-- Moving signing to a keyless dedicated signer for every file (step 3, when bucket and IAM configuration change anyway).
+- Moving signing to a keyless signer for every file (done later: one identity signs all downloads through `app/storage/`).
 - File replacement.
 - Cleaning up the 244 shared-object records or the empty-segment keys.
 
@@ -66,7 +66,7 @@ Keys are not named by file MFID: a future file replacement writes a new object a
 
 A GCS file's `storage_path` is `{bucket}/{key}`. It is servable when:
 
-1. `bucket` is an allowed read bucket: the environment's `UPLOAD_BUCKET` (default `mf-storage-prod`), the configured `MULTIPART_UPLOAD_BUCKET` (which must equal it when multipart is enabled), or one of the optional `STORAGE_READ_BUCKETS` that older records point at.
+1. `bucket` is an allowed read bucket: the environment's `UPLOAD_BUCKET` (no default; unset means storage is not configured), the configured `MULTIPART_UPLOAD_BUCKET` (which must equal it when multipart is enabled), or one of the optional `STORAGE_READ_BUCKETS` that older records point at.
 2. `key` starts with `{dataset_mfid}/`, where `dataset_mfid` is the dataset that owns the record.
 3. `key` has no `.` or `..` segment and no leading `/`. Empty segments are allowed because 3,769 production keys contain them and GCS treats them literally.
 4. A multipart key (`{dataset_mfid}/_files/...`) has a recorded `storage_generation`. Without one the object is not a published multipart file.
@@ -82,7 +82,7 @@ The rule is a pure function, `resolve_storage_object(storage_path, generation, d
 3. Response headers, set through V4 signed URL response overrides, chosen by the caller's `disposition` query parameter (`attachment` by default, `inline` opt-in; any other value is rejected with 422):
    - `attachment`: `Content-Disposition: attachment` with `filename*=UTF-8''<encoded basename>` and an ASCII fallback, both from the record filename. The stored content type is served unchanged (no `response-content-type` override).
    - `inline`: `Content-Disposition: inline` with the same filename, and `response-content-type` guessed from the record's `filename` when recognized; when no guess exists, the stored object type is left unchanged. Script-capable types are still forced to `attachment` regardless of the request: `text/html`, `application/xhtml+xml`, `image/svg+xml`, `text/xml`, `application/xml`, `text/xsl`, or any type ending in `+xml`.
-4. Sign a V4 GET URL valid for one hour, pinned to the generation when recorded, with the existing `GCS_SA` credentials. The multipart signer stays dedicated to upload operations in this step.
+4. Sign a V4 GET URL valid for one hour, pinned to the generation when recorded, through the store's `signed_download` (`app/storage/`). `GoogleStore` uses Application Default Credentials and impersonates `MULTIPART_UPLOAD_SIGNER` when it is set; `S3Store` presigns the GET with the same overrides.
 
 `GET /files/{file_id}/download_link` and `GET /datasets/{dataset_mfid}/download_links` both accept `?disposition=attachment|inline`. The Hub pattern: a download button omits the parameter (saves with the record name, original type preserved), a filename link uses `?disposition=inline` (opens in the browser when the type allows it).
 
@@ -148,6 +148,6 @@ No migration and no configuration change. Deploy to staging, re-run the audit, a
 
 ## Follow-ups
 
-- Step 3: per-environment buckets, `UPLOAD_BUCKET`, and one keyless signer for all downloads.
+- Done since: per-environment buckets (`UPLOAD_BUCKET`) and one keyless signer for all downloads.
 - Check whether GCS data-access logs are enabled on `mf-storage-prod` to look for past cross-dataset reads.
 - Deduplicate the 102 shared objects once file replacement exists.

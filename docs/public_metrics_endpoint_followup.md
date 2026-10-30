@@ -10,7 +10,7 @@ It contains no secrets or user data, but it discloses the full endpoint list, tr
 
 ## Who needs it
 
-Only Google Managed Prometheus, through `k8s-conf/pod-monitoring-main.yaml` and `pod-monitoring-staging.yaml`. It scrapes each pod directly on its container port (7777 on main, 8889 on staging) every 30 seconds, inside the cluster. Nothing uses the public path through nginx and Cloudflare.
+Only Google Managed Prometheus, through the PodMonitoring manifests in mf-crucible-deploy. It scrapes each pod directly on its container port (7777 on main, 8889 on staging) every 30 seconds, inside the cluster. Nothing uses the public path through nginx and Cloudflare.
 
 ## Options
 

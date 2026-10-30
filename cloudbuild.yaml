@@ -1,71 +1,36 @@
-substitutions:
-  _IMAGE_PATH: "us-central1-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${REPO_NAME}-${BRANCH_NAME}"
-
+# Builds and pushes the image; deployment belongs to the Foundry deploy repository (mf-crucible-deploy).
+# A merge to main pushes crucible-api/crucible-api:<commit> and :main, which staging follows by digest and
+# a vX.Y.Z tag copies into the release repository (cloudbuild.release.yaml). Until the staging branch is
+# retired, it still pushes crucible-api/crucible-api-staging:<short commit> and :latest.
 steps:
-  # Pull latest for caching
-  - name: 'gcr.io/cloud-builders/docker'
-    entrypoint: 'bash'
-    args: [-c, 'docker pull ${_IMAGE_PATH}:latest || exit 0']
-  - name: 'gcr.io/cloud-builders/docker'
-    entrypoint: 'bash'
-    args:
-      - -c
-      - >
-        docker build
-        --build-arg githash=$(git rev-parse HEAD)
-        --build-arg api_version=$(awk -F '"' '/^version = / {print $2; exit}' pyproject.toml)
-        --build-arg BRANCH_NAME=${BRANCH_NAME}
-        -t ${_IMAGE_PATH}:${SHORT_SHA}
-        -t ${_IMAGE_PATH}:latest
-        --cache-from ${_IMAGE_PATH}:latest
-        .
-
-  # Push SHA-tagged image
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '${_IMAGE_PATH}:${SHORT_SHA}']
-
-  # Push latest tag
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '${_IMAGE_PATH}:latest']
-
-  # Apply ConfigMap first (deployment depends on it)
-  - name: 'gcr.io/cloud-builders/kubectl'
-    args:
-    - apply
-    - -f
-    - ./k8s-conf/configmap-${BRANCH_NAME}.yaml
-    env:
-    - CLOUDSDK_COMPUTE_REGION=us-central1
-    - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
-
-  # Apply deployment (creates if doesn't exist, updates if exists)
-  - name: 'gcr.io/cloud-builders/kubectl'
-    args:
-    - apply
-    - -f
-    - ./k8s-conf/deployment-k8s-conf-${BRANCH_NAME}.yaml
-    env:
-    - CLOUDSDK_COMPUTE_REGION=us-central1
-    - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
-
-  # Update the deployment with the new SHA-tagged image
-  - name: 'gcr.io/cloud-builders/kubectl'
-    args:
-    - set
-    - image
-    - deployment/crucible-api-${BRANCH_NAME}
-    - crucible-api-container=${_IMAGE_PATH}:${SHORT_SHA}
-    env:
-    - CLOUDSDK_COMPUTE_REGION=us-central1
-    - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
-
-  - name: 'gcr.io/cloud-builders/kubectl'
-    id: deploy-hub-auth-cleanup
+  - id: build
+    name: gcr.io/cloud-builders/docker
     entrypoint: bash
     args:
-    - -ceu
-    - |
-      gcloud container clusters get-credentials crucible-cluster --region us-central1 --project '${PROJECT_ID}'
-      bash scripts/deploy_hub_auth_cleanup.sh '${BRANCH_NAME}' '${_IMAGE_PATH}:${SHORT_SHA}'
-
-timeout: 600s
+      - -euo
+      - pipefail
+      - -c
+      - |
+        registry=us-central1-docker.pkg.dev/${PROJECT_ID}/crucible-api
+        if [ '${BRANCH_NAME}' = main ]; then
+          image=$$registry/crucible-api; tags="${COMMIT_SHA} main"; moving=main; branch_arg=
+        else
+          image=$$registry/crucible-api-${BRANCH_NAME}; tags="${SHORT_SHA} latest"; moving=latest; branch_arg="--build-arg BRANCH_NAME=${BRANCH_NAME}"
+        fi
+        version=$(awk -F '"' '/^version = / {print $$2; exit}' pyproject.toml)
+        docker pull "$$image:$$moving" || true
+        docker build \
+          --build-arg githash=${COMMIT_SHA} \
+          --build-arg api_version="$$version" \
+          $$branch_arg \
+          --label org.opencontainers.image.title=crucible-api \
+          --label org.opencontainers.image.version="$$version" \
+          --label org.opencontainers.image.revision=${COMMIT_SHA} \
+          --label org.opencontainers.image.source=https://github.com/MolecularFoundryCrucible/crucible-api \
+          --cache-from "$$image:$$moving" \
+          $$(for tag in $$tags; do echo --tag "$$image:$$tag"; done) \
+          .
+        for tag in $$tags; do docker push "$$image:$$tag"; done
+options:
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1200s

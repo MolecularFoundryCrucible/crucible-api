@@ -72,6 +72,6 @@ Point an untracked environment file at that local port. Confirm the database nam
 
 To run your own Crucible on one machine with Docker Compose, follow [deploy/compose/README.md](deploy/compose/README.md).
 
-The Foundry's container and Kubernetes configuration lives in `Dockerfile`, `cloudbuild.yaml`, and `k8s-conf/`. Monitoring notes are in [k8s-conf/README.md](k8s-conf/README.md).
+This repository builds the image (`Dockerfile`, `cloudbuild.yaml`; release images by `cloudbuild.release.yaml`). The Foundry's deployment configuration lives in the mf-crucible-deploy repository; `k8s-conf/` is kept only as a reference until it is removed. Monitoring notes are in [k8s-conf/README.md](k8s-conf/README.md).
 
-Changes reach `main` through a pull request from `staging` or another reviewed branch. Do not push or force-push directly to `main`.
+Changes reach `main`, the only long-lived branch, through a reviewed pull request. Do not push or force-push directly to `main`. Production deploys only from release tags through mf-crucible-deploy.

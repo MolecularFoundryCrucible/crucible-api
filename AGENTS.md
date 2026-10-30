@@ -1,6 +1,6 @@
 # Crucible API
 
-FastAPI and SQLModel service for the Molecular Foundry's scientific records. The Foundry runs it on GKE (`k8s-conf/`, staging and main); labs self-host it with `deploy/compose/`.
+FastAPI and SQLModel service for the Molecular Foundry's scientific records. The Foundry runs it on GKE, deployed from the mf-crucible-deploy repository; labs self-host it with `deploy/compose/`.
 
 ## Commands
 
@@ -24,10 +24,10 @@ FastAPI and SQLModel service for the Molecular Foundry's scientific records. The
 
 ## Git workflow
 
-- Changes must reach `main` through a pull request from `staging` or another reviewed branch.
+- `main` is the only long-lived branch. Changes reach `main` through a reviewed pull request; the user merges.
 - Never push directly to `main`, even when branch protection permits it.
 - Never force-push `main`.
-- Pushing to feature branches or `staging` is allowed when the user authorizes the release workflow.
+- A merge to `main` builds the image staging runs; production deploys only from release tags through mf-crucible-deploy.
 
 ## Change history
 

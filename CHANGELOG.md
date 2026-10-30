@@ -6,32 +6,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-10-30
+
+File storage for self-hosting: an S3 adapter, SeaweedFS in the Compose bundle, kept versions of replaced files, and Google storage without a key.
+
+### Upgrading from 3.2.1
+
+- Database: migration `564d0bd33a5c` (one new table, `file_versions`), applied by `python -m app.cli db upgrade` before deploying; then `EXPECTED_DB_REVISIONS` is `564d0bd33a5c`.
+- Google storage: the server no longer reads `GCS_SA` and acts as `MULTIPART_UPLOAD_SIGNER` for every storage operation, so the signer needs object access on the record bucket (and read access on `STORAGE_READ_BUCKETS`). Remove `GCS_SA_VERSION`; `settings check` reports it.
+- Clients: the legacy upload routes are deprecated; self-hosted servers on S3 need nano-crucible 3.3.0 or later.
+
 ### Added
 
-- S3-compatible storage: `STORAGE_BACKEND=s3` with `S3_ENDPOINT_URL`, `S3_PUBLIC_URL`, `S3_REGION`, and the secrets `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`. The default, `gcs`, is unchanged.
+- S3-compatible storage: `STORAGE_BACKEND=s3` with `S3_ENDPOINT_URL`, `S3_PUBLIC_URL`, `S3_REGION`, and the secrets `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`.
 - `python -m app.cli storage check` tests the configured storage end to end.
-- The Compose bundle stores files in SeaweedFS (profile `bundled-storage`), with two new secret files, `CRUCIBLE_FILES_DIR`, and a `files-backup` service. Upgrading: see README.md.
-- On `s3`, replaced files are kept for `FILE_VERSION_RETENTION_DAYS` (14) and restorable with `python -m app.cli files restore`; `python -m app.cli storage cleanup` deletes them afterwards, only when `STORAGE_CLEANUP_ENABLED=true`. Migration `564d0bd33a5c` adds one table.
+- On `s3`, replaced files are kept for `FILE_VERSION_RETENTION_DAYS` (14), restorable with `python -m app.cli files restore`, and deleted afterwards by `python -m app.cli storage cleanup` when `STORAGE_CLEANUP_ENABLED=true`.
 - Empty files on the signed multipart upload (`size` 0, no parts).
-- The Compose bundle can use a Google Cloud Storage bucket (`CRUCIBLE_STORAGE_BACKEND=gcs`); see README.md.
+- Compose bundle: SeaweedFS (profile `bundled-storage`), `CRUCIBLE_FILES_DIR`, a `files-backup` service, the hourly cleanup (on by default), and a Google bucket option (`CRUCIBLE_STORAGE_BACKEND=gcs`); see `deploy/compose/README.md`.
 
 ### Changed
 
-- The Compose bundle runs the Hub from its published image (1.7.1) and builds the API image once.
-- On `s3`, the legacy upload routes answer 501 `legacy_upload_unavailable`, and a file without a stored location answers 404 instead of 500.
-- `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` must be one line.
-- On `gcs`, the server uses Application Default Credentials and, when `MULTIPART_UPLOAD_SIGNER` is set, acts as that account for every storage operation, so the signer needs access to the record bucket; `MULTIPART_UPLOAD_SIGNER` and `MULTIPART_UPLOAD_PROJECT` are optional.
+- On `gcs`, the server uses Application Default Credentials, impersonating `MULTIPART_UPLOAD_SIGNER` when it is set; `MULTIPART_UPLOAD_PROJECT` is optional.
 - `GET /datasets/{dataset_mfid}/download_links` signs the links in parallel.
-- `STORAGE_BACKEND=s3` refuses a Google `S3_ENDPOINT_URL`: use `gcs`.
-- The Compose bundle runs the hourly storage cleanup by default (`CRUCIBLE_STORAGE_CLEANUP_ENABLED=false` turns it off); the server setting `STORAGE_CLEANUP_ENABLED` stays off by default.
-
-### Removed
-
-- `GCS_SA`: the server no longer reads a service-account key of its own; use Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS` for a key file).
+- On `s3`, the legacy upload routes answer 501 `legacy_upload_unavailable`, and a file without a stored location answers 404 instead of 500.
+- `STORAGE_BACKEND=s3` refuses a Google `S3_ENDPOINT_URL`.
+- `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` must be one line.
+- The Compose bundle runs the Hub from its published image (1.7.1) and builds the API image once.
 
 ### Deprecated
 
-- The legacy upload routes `POST /datasets/{dataset_mfid}/upload/initiate`, `/upload/initiate/multipart`, and `/upload/complete` (with a `Deprecation` header; their request log lines name the client's User-Agent): use `/upload/multipart`. Self-hosted servers on S3 need nano-crucible 3.3.0 or later.
+- `POST /datasets/{dataset_mfid}/upload/initiate`, `/upload/initiate/multipart`, and `/upload/complete` (with a `Deprecation` header; their request log lines name the client's User-Agent): use `/upload/multipart`.
+
+### Removed
+
+- `GCS_SA`: use Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS` for a key file).
 
 ### Fixed
 

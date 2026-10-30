@@ -1,7 +1,7 @@
 import argparse
 import sys
 
-from app.cli import admin, db, settings
+from app.cli import admin, db, files, settings, storage
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -10,6 +10,8 @@ def build_parser() -> argparse.ArgumentParser:
     db.register(groups)
     admin.register(groups)
     settings.register(groups)
+    storage.register(groups)
+    files.register(groups)
     return parser
 
 

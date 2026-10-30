@@ -431,3 +431,33 @@ def test_patch_guards_file_identity(client, db_engine, auth_as):
     clash = client.patch(f"/files/{gcs}", json={"filename": "b.tif"})
     assert (clash.status_code, clash.json()["detail"]["code"]) == (409, "filename_exists")
     assert client.patch(f"/files/{gcs}", json={"filename": "c.tif"}).status_code == 200
+
+
+def test_catalog_records_work_on_an_s3_server(client, db_engine, auth_as, monkeypatch):
+    from app.config import get_settings
+    from app.storage import get_store
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://seaweedfs:8333")
+    get_settings.cache_clear()
+    get_store.cache_clear()
+    assert get_settings().storage.backend == "s3"
+    user_id = "0000-0000-0000-0001"
+    ag_id = _grant_write_access(db_engine, "ds_s3_catalog", user_id)
+    auth_as(user_id, groups=[("ds_s3_catalog", ag_id)])
+
+    try:
+        with patch("app.storage.s3.S3Store.__init__", side_effect=AssertionError("catalog records must not touch storage")):
+            create = client.post("/datasets/ds_s3_catalog/files", json={
+                "filename": "run1/remote.dat", "size": 42, "sha256_hash": "deadbeef",
+                "storage_backend": "nersc-perlmutter", "storage_path": "/global/cfs/run1/remote.dat",
+            })
+            assert create.status_code == 200, create.text
+            file_mfid = create.json()["mfid"]
+            assert client.get(f"/files/{file_mfid}").json()["storage_path"] == "/global/cfs/run1/remote.dat"
+            assert client.get(f"/files/{file_mfid}/download_link").json() == {"url": None, "expires_in": None}
+            links = client.get("/datasets/ds_s3_catalog/download_links")
+            assert links.status_code == 200, links.text
+            assert links.json() == {file_mfid: None}
+    finally:
+        get_settings.cache_clear()
+        get_store.cache_clear()

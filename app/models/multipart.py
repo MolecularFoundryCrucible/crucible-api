@@ -1,8 +1,9 @@
 import base64
+import hashlib
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, AfterValidator, field_validator
+from pydantic import BaseModel, ConfigDict, Field, AfterValidator, field_validator, model_validator
 
 from app.models.datasets import AssociatedFileRead
 from app.models.timestamps import UtcDatetime
@@ -20,13 +21,21 @@ def validate_crc32c(value: str) -> str:
 
 CRC32C = Annotated[str, Field(min_length=8, max_length=8), AfterValidator(validate_crc32c)]
 SHA256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+
+
+def empty_hash(body):
+    if body.size == 0 and body.sha256_hash not in (None, EMPTY_SHA256):
+        raise ValueError(f"An empty file's SHA-256 is {EMPTY_SHA256}")
+    return body
 
 
 class MultipartInitiate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     filename: str = Field(min_length=1, max_length=1024)
-    size: int = Field(gt=0, le=500 * 1024 ** 3, strict=True)
+    size: int = Field(ge=0, le=500 * 1024 ** 3, strict=True)
     sha256_hash: SHA256 | None = None
+    check_empty_hash = model_validator(mode="after")(empty_hash)
 
     @field_validator("filename")
     @classmethod
@@ -40,8 +49,9 @@ class MultipartInitiate(BaseModel):
 
 class MultipartReplace(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    size: int = Field(gt=0, le=500 * 1024 ** 3, strict=True)
+    size: int = Field(ge=0, le=500 * 1024 ** 3, strict=True)
     sha256_hash: SHA256 | None = None
+    check_empty_hash = model_validator(mode="after")(empty_hash)
 
 
 class MultipartPart(BaseModel):

@@ -4,6 +4,7 @@ import os
 from unittest.mock import patch, MagicMock
 
 from fastapi import FastAPI
+from google.auth.credentials import Scoped
 from fastapi.testclient import TestClient
 
 
@@ -221,11 +222,11 @@ class TestMintUploadToken:
             monkeypatch.delenv("LEGACY_UPLOAD_TOKEN_DOWNSCOPE", raising=False)
         else:
             monkeypatch.setenv("LEGACY_UPLOAD_TOKEN_DOWNSCOPE", flag)
-        source = MagicMock()
+        source = MagicMock(spec=Scoped)
         scoped = MagicMock()
         source.with_scopes.return_value = scoped
         scoped.token, scoped.expiry = "broad", MagicMock(isoformat=lambda: "broad-expiry")
-        with patch.object(gcs_storage, "_get_gcs_credentials", return_value=source), \
+        with patch.object(gcs_storage, "server_credentials", return_value=source), \
              patch("google.auth.downscoped.Credentials") as downscoped_cls:
             downscoped_cls.return_value.token = "narrow"
             downscoped_cls.return_value.expiry = MagicMock(isoformat=lambda: "narrow-expiry")
@@ -263,7 +264,7 @@ class TestMintUploadToken:
         session.exec.return_value.first.return_value = None
         mock_session_cls.return_value.__enter__ = MagicMock(return_value=session)
         mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
-        with patch.object(gcs_storage, "_get_gcs_credentials", return_value=MagicMock()), \
+        with patch.object(gcs_storage, "server_credentials", return_value=MagicMock()), \
              patch("google.auth.downscoped.Credentials") as downscoped_cls, \
              patch.object(gcs_storage.multipart, "filename_reserved", return_value=False):
             downscoped_cls.return_value.refresh.side_effect = RuntimeError("sts unreachable")
@@ -271,3 +272,31 @@ class TestMintUploadToken:
                                json={"filename": "a.bin", "size": 10})
         assert resp.status_code == 503
         assert "broad" not in resp.text
+
+
+class TestLegacyUploadDeprecation:
+
+    def test_openapi_marks_the_legacy_upload_routes_deprecated(self, app):
+        paths = app.openapi()["paths"]
+        for route in ("initiate", "initiate/multipart", "complete"):
+            assert paths[f"/api/datasets/{{dataset_mfid}}/upload/{route}"]["post"]["deprecated"] is True
+
+    @patch('app.api.routes.gcs_storage.require_permission')
+    @patch('app.api.routes.gcs_storage.Session')
+    @patch('app.api.routes.gcs_storage._mint_upload_token')
+    def test_legacy_initiate_sends_the_deprecation_header(self, mock_mint, mock_session_cls, mock_require_permission, client, app):
+        from app.api.routes.gcs_storage import LEGACY_UPLOAD_DEPRECATION
+        from app.utils.auth_utils import authorize_user
+        app.dependency_overrides[authorize_user] = _fake_auth
+        mock_mint.return_value = ("ya29.fake_token", "2026-06-08T16:00:00+00:00")
+        session = MagicMock()
+        mock_session_cls.return_value.__enter__.return_value = session
+        exec_result = MagicMock()
+        exec_result.one_or_none.side_effect = [_make_mock_dataset()]
+        exec_result.first.return_value = None
+        session.exec.return_value = exec_result
+
+        resp = client.post("/api/datasets/ds-001/upload/initiate/multipart", json={"filename": "data.h5", "size": 1024, "sha256_hash": "abc123"})
+
+        assert resp.status_code == 200
+        assert resp.headers["Deprecation"] == LEGACY_UPLOAD_DEPRECATION == "@1793318400"

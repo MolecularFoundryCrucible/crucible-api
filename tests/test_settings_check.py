@@ -49,7 +49,8 @@ def test_foundry_manifests_pass(environment):
     assert [(container.name, profile, report.errors) for container, profile, report in results] == [
         ("crucible-api-container", "server", []), ("cleanup", "database", []),
     ]
-    assert results[0][2].warnings == [f"{name} is not a Crucible setting" for name in ("ANTHROPIC_BASE_URL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "DB_AUTH", "DB_TYPE")]
+    assert results[0][2].warnings == [f"{name} is not a Crucible setting" for name in ("ANTHROPIC_BASE_URL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "DB_AUTH", "DB_TYPE")] + [
+        "GCS_SA_VERSION is no longer read (Google storage uses Application Default Credentials); remove it"]
 
 
 def test_a_complete_server_passes_and_the_process_is_left_alone():

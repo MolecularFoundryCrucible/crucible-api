@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated, Dict, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 
 router = APIRouter(tags=["datasets"])
 RELATIONSHIP_ROUTE_DEPRECATION = "@1788307200"
+DOWNLOAD_SIGNING_WORKERS = 16
 DATASET_PAGINATION = ResourcePaginationSpec(
     kind="dataset",
     unique_id_column=Dataset.unique_id,
@@ -1338,19 +1340,20 @@ def generate_dataset_download_links(
                 mfid_to_path[af.mfid] = None
         session.commit()
 
-    # Generate signed URLs outside the DB session; null for missing blobs
-    result = {}
-    for mfid, storage_path in mfid_to_path.items():
+    # Generate signed URLs outside the DB session; null for missing blobs. Keyless signing is a call
+    # to Google per URL (about 0.1 s), so a large dataset is signed in parallel.
+    def sign(item):
+        mfid, storage_path = item
         if storage_path is None:
-            result[mfid] = None
-            continue
+            return mfid, None
         try:
             path, generation, filename = storage_path
-            url, _ = _signed_download(mfid, dsid, path, generation, filename, disposition)
-            result[mfid] = url
+            return mfid, _signed_download(mfid, dsid, path, generation, filename, disposition)[0]
         except HTTPException:
-            result[mfid] = None
-    return result
+            return mfid, None
+
+    with ThreadPoolExecutor(max_workers=DOWNLOAD_SIGNING_WORKERS) as pool:
+        return dict(pool.map(sign, mfid_to_path.items()))
 
 
 @router.get("/datasets/{dataset_mfid}/files", response_model=List[AssociatedFileRead])

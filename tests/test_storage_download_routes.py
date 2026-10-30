@@ -7,6 +7,7 @@ from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
 import app.api.routes.gcs_storage as gcs_storage
+import app.storage.gcs as google
 from app.models.core_models import AssociatedFile, Dataset, IngestionRequest, Resource
 from app.utils.permissions import PlatformRole
 
@@ -36,7 +37,8 @@ def signer(monkeypatch):
     blob = client.bucket.return_value.blob.return_value
     blob.content_type = "application/octet-stream"
     blob.generate_signed_url.return_value = "https://signed.example/x"
-    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: client)
+    monkeypatch.setattr(google, "server_client", lambda: client)
+    monkeypatch.setattr(gcs_storage, "get_store", lambda: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
     return client
 
 
@@ -145,14 +147,14 @@ def test_backfill_skips_multipart_objects(db_engine, monkeypatch):
     listed = [SimpleNamespace(name=f"{DS}/_files/abc-scan.pdf"), SimpleNamespace(name=f"{DS}/raw/scan.pdf")]
     client = MagicMock()
     client.bucket.return_value.list_blobs.return_value = listed
-    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: client)
+    monkeypatch.setattr(gcs_storage, "server_client", lambda: client)
     assert gcs_storage._determine_storage_path(DS, "scan.pdf") == f"mf-storage-prod/{DS}/raw/scan.pdf"
 
 
 def _listing(monkeypatch, *names):
     client = MagicMock()
     client.bucket.return_value.list_blobs.return_value = [SimpleNamespace(name=f"{DS}/{name}") for name in names]
-    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: client)
+    monkeypatch.setattr(gcs_storage, "server_client", lambda: client)
 
 
 def test_backfill_needs_a_whole_name_match(monkeypatch):
@@ -359,3 +361,27 @@ def test_download_without_storage_is_not_configured(client, db_engine, signer, a
     assert response.status_code == 501
     assert response.json()["detail"]["code"] == "storage_not_configured"
     signer.bucket.assert_not_called()
+
+
+def test_a_file_without_a_location_is_not_found_on_s3(client, db_engine, admin, monkeypatch):
+    def refuse():
+        raise AssertionError("Google storage was asked")
+    monkeypatch.setattr(gcs_storage, "server_client", refuse)
+    _switch(monkeypatch, "STORAGE_BACKEND", "s3")
+    file_mfid = _file(db_engine, None)
+    assert client.get(f"/files/{file_mfid}/download_link").status_code == 404
+    response = client.get(f"/datasets/{DS}/download_links")
+    assert response.status_code == 200, response.text
+    assert response.json() == {file_mfid: None}
+
+
+@pytest.mark.parametrize("path, body", [
+    ("initiate", {"filename": "a.bin", "size": 3}),
+    ("initiate/multipart", {"filename": "a.bin", "size": 3}),
+    ("complete", {"upload_id": "x", "sha256_hash": "a" * 64}),
+])
+def test_legacy_upload_routes_answer_clearly_on_s3(client, admin, monkeypatch, path, body):
+    _switch(monkeypatch, "STORAGE_BACKEND", "s3")
+    response = client.post(f"/datasets/{DS}/upload/{path}", json=body)
+    assert response.status_code == 501
+    assert response.json()["detail"]["code"] == "legacy_upload_unavailable"

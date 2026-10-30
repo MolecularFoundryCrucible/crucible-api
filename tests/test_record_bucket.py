@@ -1,7 +1,9 @@
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
+import app.storage.gcs as google
 import app.utils.gcs_record_utils as gcs_record_utils
 
 
@@ -9,7 +11,9 @@ import app.utils.gcs_record_utils as gcs_record_utils
 def storage(monkeypatch):
     client = MagicMock()
     client.bucket.return_value.blob.return_value.exists.return_value = False
-    monkeypatch.setattr(gcs_record_utils, "_get_client", lambda: client)
+    monkeypatch.setattr(google, "server_client", lambda: client)
+    store = google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None))
+    monkeypatch.setattr(gcs_record_utils, "get_store", lambda: store)
     return client
 
 
@@ -17,8 +21,8 @@ def storage(monkeypatch):
 def test_writes_go_to_the_configured_bucket(storage, monkeypatch, write, name):
     monkeypatch.setenv("RECORD_BUCKET", "mf-record-staging")
     write("ds1", {"a": 1}, "actor", "create")
-    storage.bucket.assert_called_once_with("mf-record-staging")
-    storage.bucket.return_value.blob.assert_called_once_with(f"ds1/{name}")
+    assert {call.args for call in storage.bucket.call_args_list} == {("mf-record-staging",)}
+    assert {call.args for call in storage.bucket.return_value.blob.call_args_list} == {(f"ds1/{name}",)}
     storage.bucket.return_value.blob.return_value.upload_from_string.assert_called_once()
 
 

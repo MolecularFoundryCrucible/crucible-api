@@ -55,6 +55,14 @@ def test_multipart_bucket_must_be_the_upload_bucket():
         MultipartStorageConfig.from_env(MULTIPART | {"MULTIPART_UPLOAD_BUCKET": "mf-crucible-multipart-staging", "UPLOAD_BUCKET": "mf-storage-staging"})
 
 
+def test_multipart_needs_no_signer():
+    plain = {"MULTIPART_UPLOAD_ENABLED": "true", "MULTIPART_UPLOAD_BUCKET": "crucible-files", "UPLOAD_BUCKET": "crucible-files"}
+    assert MultipartStorageConfig.from_env(plain).signer_service_account is None
+    assert MultipartStorageConfig.from_env(plain | {"STORAGE_BACKEND": "s3"}).enabled
+    with pytest.raises(ValueError, match="explicit bucket"):
+        MultipartStorageConfig.from_env({"MULTIPART_UPLOAD_ENABLED": "true", "STORAGE_BACKEND": "s3"})
+
+
 @pytest.mark.parametrize("environment, bucket", [("main", "mf-storage-prod"), ("staging", "mf-storage-staging")])
 def test_deployments_wire_one_bucket_per_environment(environment, bucket):
     config = yaml.safe_load((ROOT / f"k8s-conf/configmap-{environment}.yaml").read_text())["data"]

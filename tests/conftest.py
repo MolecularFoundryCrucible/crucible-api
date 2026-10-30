@@ -1,4 +1,22 @@
+import atexit
+import json
 import os
+import tempfile
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+
+TEST_SERVICE_ACCOUNT = "crucible-test@test-project.iam.gserviceaccount.com"
+_TEST_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+    serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+# Application Default Credentials from a throwaway key file, so signing runs for real without network
+# access, and a developer's own Google credentials never reach a test.
+with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as _key_file:
+    json.dump({"type": "service_account", "project_id": "test-project", "private_key_id": "test", "private_key": _TEST_KEY,
+               "client_email": TEST_SERVICE_ACCOUNT, "client_id": "1", "token_uri": "https://oauth2.googleapis.com/token"}, _key_file)
+atexit.register(os.unlink, _key_file.name)
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _key_file.name
+os.environ.pop("MULTIPART_UPLOAD_SIGNER", None)
 
 for _name, _value in {
     "DB_SERVER": "localhost",
@@ -10,7 +28,6 @@ for _name, _value in {
     "API_CONF_FILE": "app/conf/api_conf_local.yaml",
     "UPLOAD_BUCKET": "mf-storage-prod",
     "GCS_PROJECT": "crucible-prod",
-    "GCS_SA": "test-only",
     "INGESTION_ENABLED": "true",
     "RMQ_HOST": "localhost",
     "RMQ_USER": "test",
@@ -36,7 +53,7 @@ from app.models.core_models import (
     AssociatedFile, IngestionRequest, Project, Sample,
     DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
     DatasetLink, ApiToken, UploadSession, DeletionAuditLog, DatasetKeywordLink, Thumbnail,
-    ResourceEmbedding, UserPreferences, UserRecentResource, PostprocessingRun,
+    ResourceEmbedding, UserPreferences, UserRecentResource, PostprocessingRun, FileVersion,
 )
 from app.utils.auth_utils import authenticate_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
@@ -52,7 +69,7 @@ TEST_TABLES = [
     SampleLink.__table__, DatasetLink.__table__, ApiToken.__table__, UploadSession.__table__,
     DeletionAuditLog.__table__, DatasetKeywordLink.__table__, Thumbnail.__table__,
     ResourceEmbedding.__table__, UserPreferences.__table__, UserRecentResource.__table__,
-    PostprocessingRun.__table__,
+    PostprocessingRun.__table__, FileVersion.__table__,
 ]
 
 
@@ -95,23 +112,25 @@ def db_engine(use_engine):
 def fresh_settings(monkeypatch):
     """Settings are read once per process in production; tests change the environment, so each
     test starts from an empty settings cache, no secrets already fetched, and no engine."""
-    from app import config
+    from app import config, storage
     from app.api import dependencies
+    from app.storage import gcs
 
+    caches = (config.get_settings, dependencies.get_engine, storage.get_store, gcs.server_credentials, gcs.server_client)
     monkeypatch.setattr(config, "_fetched_secrets", {})
     monkeypatch.setattr(config, "_loaded_env_files", set())
-    config.get_settings.cache_clear()
-    dependencies.get_engine.cache_clear()
+    for cached in caches:
+        cached.cache_clear()
     yield
-    config.get_settings.cache_clear()
-    dependencies.get_engine.cache_clear()
+    for cached in caches:
+        cached.cache_clear()
 
 
 @pytest.fixture(autouse=True)
 def block_record_bucket(monkeypatch):
     def _refuse():
         raise RuntimeError("tests must not write to the record bucket")
-    monkeypatch.setattr(gcs_record_utils, "_get_client", _refuse)
+    monkeypatch.setattr(gcs_record_utils, "get_store", _refuse)
 
 
 @pytest.fixture

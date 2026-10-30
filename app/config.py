@@ -1,9 +1,11 @@
 import os
 import re
+from urllib.parse import urlparse
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr, ValidationError
+from pydantic import BaseModel, Field, SecretStr, ValidationError, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, SettingsError
 
 from app.utils.multipart_config import MultipartStorageConfig
@@ -215,12 +217,27 @@ class HubSettings(SettingsGroup):
 
 
 class StorageSettings(SettingsGroup):
+    backend: Literal["gcs", "s3"] = Field("gcs", validation_alias="STORAGE_BACKEND")
     upload_bucket: str | None = Field(None, validation_alias="UPLOAD_BUCKET")
     gcs_project: str | None = Field(None, validation_alias="GCS_PROJECT")
-    gcs_sa: SecretStr | None = Field(None, validation_alias="GCS_SA")
     record_bucket: str | None = Field(None, validation_alias="RECORD_BUCKET")
     read_buckets: str | None = Field(None, validation_alias="STORAGE_READ_BUCKETS")
     legacy_upload_token_downscope: bool = Field(True, validation_alias="LEGACY_UPLOAD_TOKEN_DOWNSCOPE")
+    s3_endpoint_url: str | None = Field(None, validation_alias="S3_ENDPOINT_URL")
+    s3_public_url: str | None = Field(None, validation_alias="S3_PUBLIC_URL")
+    s3_region: str = Field("us-east-1", validation_alias="S3_REGION")
+    s3_access_key_id: SecretStr | None = Field(None, validation_alias="S3_ACCESS_KEY_ID")
+    s3_secret_access_key: SecretStr | None = Field(None, validation_alias="S3_SECRET_ACCESS_KEY")
+    file_version_retention_days: int = Field(14, ge=1, validation_alias="FILE_VERSION_RETENTION_DAYS")
+    cleanup_enabled: bool = Field(False, validation_alias="STORAGE_CLEANUP_ENABLED")
+
+    @field_validator("s3_endpoint_url")
+    @classmethod
+    def not_google(cls, value: str | None, info: ValidationInfo) -> str | None:
+        host = urlparse(value or "").hostname or ""
+        if info.data.get("backend") == "s3" and (host == "googleapis.com" or host.endswith(".googleapis.com")):
+            raise ValueError("points at Google Cloud Storage, whose S3 interface refuses the checksums S3 uploads send; use STORAGE_BACKEND=gcs")
+        return value
 
     @property
     def read_bucket_names(self) -> set[str]:
@@ -236,7 +253,8 @@ class StorageSettings(SettingsGroup):
     def problems(self, settings: "Settings") -> list[str]:
         if not self.in_use():
             return []
-        return self.missing("upload_bucket", "gcs_sa") if self.serves_files() else self.missing("gcs_sa")
+        credentials = ("s3_endpoint_url", "s3_access_key_id", "s3_secret_access_key") if self.backend == "s3" else ()
+        return self.missing("upload_bucket", *credentials) if self.serves_files() else self.missing(*credentials)
 
 
 class IngestionSettings(SettingsGroup):
@@ -294,7 +312,7 @@ _SECRETS: dict[str, tuple[str, str]] = {
     if info.annotation == SecretStr | None
 }
 # Sent verbatim in HTTP Basic credentials and ORCID token requests, where a stray newline breaks every sign-in.
-_SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_ORCID_CLIENT_SECRET"})
+_SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_ORCID_CLIENT_SECRET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"})
 _FEATURES = {"ingestion": "ingestion", "printing": "printing", "proposal_sync": "proposals"}
 
 

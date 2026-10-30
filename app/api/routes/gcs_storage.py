@@ -1,23 +1,24 @@
-import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import DatasetMfid
-from app.config import get_secret, get_settings
+from app.config import get_settings
 from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead
 from app.models.uploads import UploadComplete, UploadInitiate, UploadInitiateRead, UploadMultipartInitiateRead
 from app.services import multipart
-from app.api.errors import STORAGE_NOT_CONFIGURED_RESPONSE
-from app.services.storage_downloads import DOWNLOAD_LIFETIME, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, retire_object, signed_download_url, upload_bucket
+from app.api.errors import NOT_AVAILABLE_HERE
+from app.services.storage_downloads import DOWNLOAD_LIFETIME, MULTIPART_SEGMENT, StorageLocationError, multipart_prefix, resolve_storage_object, upload_bucket
+from app.storage import get_store
+from app.storage.gcs import server_client, server_credentials, storage_scoped
 from app.utils.auth_utils import authorize_user, permission_filter, require_permission
 from app.utils.permissions import Principal, Permission
 from app.utils.sql_utils import add_or_update, assert_not_pending_deletion, touch_resource_modification_time
@@ -25,42 +26,31 @@ from app.utils.sql_utils import add_or_update, assert_not_pending_deletion, touc
 router = APIRouter(tags=["storage"])
 logger = logging.getLogger(__name__)
 
+LEGACY_UPLOAD_DEPRECATION = "@1793318400"
+LEGACY_UPLOAD_RESPONSE = {NOT_AVAILABLE_HERE: {"description": "File storage is not configured on this server (`storage_not_configured`), or it is not Google Cloud Storage, which these routes need (`legacy_upload_unavailable`; upload through `/upload/multipart` instead): `{\"detail\": {\"code\": ..., \"message\": ...}}`"}}
+
 _GCS_UPLOAD_API = "https://storage.googleapis.com/upload/storage/v1/b"
 _CHUNK_SIZE_HINT = 8 * 1024 * 1024  # 8 MiB — GCS recommended chunk multiple
 _MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 500 * 1024 ** 3))  # default 500 GiB
 
-_gcs_credentials = None
 _gcs_authed_session = None
-_gcs_storage_client = None
-
-
-def _get_gcs_credentials():
-    global _gcs_credentials
-    if _gcs_credentials is None:
-        from google.oauth2 import service_account
-        sa_creds = get_secret("GCS_SA")
-        service_account_info = json.loads(sa_creds)
-        _gcs_credentials = service_account.Credentials.from_service_account_info(service_account_info)
-    return _gcs_credentials
 
 
 def _get_gcs_authed_session():
     global _gcs_authed_session
     if _gcs_authed_session is None:
         from google.auth.transport.requests import AuthorizedSession
-        scoped = _get_gcs_credentials().with_scopes(
-            ["https://www.googleapis.com/auth/devstorage.read_write"]
-        )
+        scoped = storage_scoped(server_credentials())
         _gcs_authed_session = AuthorizedSession(scoped)
     return _gcs_authed_session
 
 
-def _get_gcs_storage_client():
-    global _gcs_storage_client
-    if _gcs_storage_client is None:
-        from google.cloud import storage as gcs
-        _gcs_storage_client = gcs.Client(credentials=_get_gcs_credentials())
-    return _gcs_storage_client
+def _legacy_upload_bucket():
+    """The upload bucket for the token-based upload routes, which only Google Cloud Storage supports."""
+    bucket = upload_bucket()
+    if get_settings().storage.backend != "gcs":
+        raise HTTPException(status_code=NOT_AVAILABLE_HERE, detail={"code": "legacy_upload_unavailable", "message": "This server does not store files in Google Cloud Storage; upload through /upload/multipart (nano-crucible 3.3.0 or newer)"})
+    return bucket
 
 
 def _determine_storage_path(dataset_mfid, filename):
@@ -69,11 +59,14 @@ def _determine_storage_path(dataset_mfid, filename):
     folder and return the storage path for the file. 
     """
     bucket = upload_bucket()
+    # Files without a recorded location predate the multipart uploads and exist only in Google Cloud Storage.
+    if get_settings().storage.backend != "gcs":
+        raise HTTPException(status_code=404, detail="File not found in storage")
     basename = filename.split("/")[-1]
     exact = f"{dataset_mfid}/{filename}"
     names = [
         blob.name
-        for blob in _get_gcs_storage_client().bucket(bucket).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
+        for blob in server_client().bucket(bucket).list_blobs(prefix=f'{dataset_mfid}/', timeout=30)
         if not blob.name.startswith(multipart_prefix(dataset_mfid))
     ]
     if exact in names:
@@ -87,11 +80,6 @@ def _determine_storage_path(dataset_mfid, filename):
             detail=f"Several stored objects match {basename!r}; the file's location cannot be determined",
         )
     raise HTTPException(status_code=404, detail="File not found in production storage")
-
-def _retire_object(storage_path, generation, retired_at):
-    bucket, _, key = storage_path.partition("/")
-    return retire_object(_get_gcs_storage_client(), bucket, key, generation, retired_at)
-
 
 def _ensure_storage_path(af, dsid: str, session) -> str:
     """Backfill storage_path from GCS if not set. Returns the storage_path."""
@@ -109,7 +97,7 @@ def _signed_download(file_mfid, dataset_mfid, storage_path, generation, filename
         logger.warning("file_location_rejected file=%s dataset=%s reason=%s", file_mfid, dataset_mfid, error.reason)
         raise HTTPException(status_code=409, detail=error.detail()) from None
     try:
-        url = signed_download_url(_get_gcs_storage_client(), obj, filename, disposition)
+        url = get_store().signed_download(obj.bucket, obj.key, obj.version, filename, disposition, DOWNLOAD_LIFETIME)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found in storage") from None
     except Exception:
@@ -124,9 +112,7 @@ def _mint_upload_token(dsid: str) -> tuple[str, str]:
     bucket = upload_bucket()
     from google.auth import downscoped
     from google.auth.transport.requests import Request
-    scoped = _get_gcs_credentials().with_scopes(
-        ["https://www.googleapis.com/auth/devstorage.read_write"]
-    )
+    scoped = storage_scoped(server_credentials())
     if not get_settings().storage.legacy_upload_token_downscope:
         scoped.refresh(Request())
         return scoped.token, scoped.expiry.isoformat()
@@ -202,7 +188,7 @@ def _create_upload_session(
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
     us = UploadSession(
         dataset_mfid=dsid,
-        gcs_path=gcs_path,
+        object_key=gcs_path,
         associated_file_name=safe_filename,
         owner_user_id=user_unique_id,
         expires_at=expires_at,
@@ -216,10 +202,11 @@ def _create_upload_session(
 
 
 
-@router.post("/datasets/{dataset_mfid}/upload/initiate", response_model=UploadInitiateRead, responses=STORAGE_NOT_CONFIGURED_RESPONSE)
+@router.post("/datasets/{dataset_mfid}/upload/initiate", deprecated=True, response_model=UploadInitiateRead, responses=LEGACY_UPLOAD_RESPONSE)
 def initiate_resumable_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
+    response: Response,
     body: UploadInitiate,
 ):
     '''
@@ -228,9 +215,11 @@ def initiate_resumable_upload(
     Returns an upload_id and a resumable_uri the client uses to PUT chunks directly to GCS
     (no API credentials needed for the chunk transfers).
     Call POST /datasets/{dataset_mfid}/upload/complete when all chunks are uploaded.
+    Deprecated: use POST /datasets/{dataset_mfid}/upload/multipart/initiate.
     '''
+    response.headers["Deprecation"] = LEGACY_UPLOAD_DEPRECATION
     user_unique_id = auth_res.user_id
-    bucket = upload_bucket()
+    bucket = _legacy_upload_bucket()
 
     result = _validate_and_prepare_upload(dsid, body, user_unique_id, auth_res)
     if not isinstance(result, tuple):
@@ -265,10 +254,11 @@ def initiate_resumable_upload(
     )
 
 
-@router.post("/datasets/{dataset_mfid}/upload/initiate/multipart", response_model=UploadMultipartInitiateRead, responses=STORAGE_NOT_CONFIGURED_RESPONSE)
+@router.post("/datasets/{dataset_mfid}/upload/initiate/multipart", deprecated=True, response_model=UploadMultipartInitiateRead, responses=LEGACY_UPLOAD_RESPONSE)
 def initiate_multipart_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
+    response: Response,
     body: UploadInitiate,
 ):
     '''
@@ -277,9 +267,11 @@ def initiate_multipart_upload(
     The client uses this token with google-cloud-storage transfer_manager.upload_chunks_concurrently().
     Returns upload_id — pass it to POST /datasets/{dataset_mfid}/upload/complete after the transfer.
     If existing_file is set, the file already exists; skip the upload entirely.
+    Deprecated: use POST /datasets/{dataset_mfid}/upload/multipart/initiate.
     '''
+    response.headers["Deprecation"] = LEGACY_UPLOAD_DEPRECATION
     user_unique_id = auth_res.user_id
-    bucket = upload_bucket()
+    bucket = _legacy_upload_bucket()
 
     result = _validate_and_prepare_upload(dsid, body, user_unique_id, auth_res)
     if not isinstance(result, tuple):
@@ -304,10 +296,11 @@ def initiate_multipart_upload(
     )
 
 
-@router.post("/datasets/{dataset_mfid}/upload/complete", response_model=AssociatedFileRead, responses=STORAGE_NOT_CONFIGURED_RESPONSE)
+@router.post("/datasets/{dataset_mfid}/upload/complete", deprecated=True, response_model=AssociatedFileRead, responses=LEGACY_UPLOAD_RESPONSE)
 def complete_resumable_upload(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     dsid: DatasetMfid,
+    response: Response,
     body: UploadComplete,
 ):
     '''
@@ -315,9 +308,11 @@ def complete_resumable_upload(
     Requires contributor access to the dataset and ownership of the upload session.
     Verifies the blob landed in GCS, registers it as an AssociatedFile on the dataset,
     and deletes the upload session record.
+    Deprecated: use POST /datasets/{dataset_mfid}/upload/multipart/initiate.
     '''
+    response.headers["Deprecation"] = LEGACY_UPLOAD_DEPRECATION
     user_unique_id = auth_res.user_id
-    bucket = upload_bucket()
+    bucket = _legacy_upload_bucket()
 
     with Session(get_engine()) as session:
         us = session.exec(
@@ -345,7 +340,7 @@ def complete_resumable_upload(
             raise HTTPException(status_code=409, detail="Filename is reserved by an active multipart upload")
 
         try:
-            blob = _get_gcs_storage_client().bucket(bucket).blob(us.gcs_path)
+            blob = server_client().bucket(bucket).blob(us.object_key)
             blob.reload()
         except NotFound:
             raise HTTPException(status_code=422, detail="Uploaded file not found in storage") from None
@@ -362,7 +357,7 @@ def complete_resumable_upload(
         assoc = AssociatedFile(
             dataset_id=ds.id,
             filename=us.associated_file_name,
-            storage_path=f"{bucket}/{us.gcs_path}",
+            storage_path=f"{bucket}/{us.object_key}",
             size=blob.size,
             sha256_hash=body.sha256_hash,
         )

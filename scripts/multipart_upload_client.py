@@ -55,11 +55,11 @@ class Client:
         raise RuntimeError("API retry budget exhausted; rerun to resume")
 
 
-def put(path, part):
+def put(path, part, expected):
     with path.open("rb") as stream:
         stream.seek(part["offset"])
         data = stream.read(part["size"])
-    if len(data) != part["size"] or f"crc32c={checksum(data)}" != part["headers"]["x-goog-hash"]:
+    if len(data) != part["size"] or checksum(data) != expected:
         raise RuntimeError("Source file changed; abort this session and start a new one")
     for _ in range(3):
         try:
@@ -84,8 +84,8 @@ def main():
     token = os.environ.get(args.token_env)
     if not token:
         parser.error(f"Set the API token in {args.token_env}")
-    if not args.file.is_file() or args.file.stat().st_size == 0:
-        parser.error("--file must be a nonempty regular file")
+    if not args.file.is_file():
+        parser.error("--file must be a regular file")
     client = Client(args.api, token)
     base = f"/datasets/{args.dataset}/upload/multipart"
     part_size = 64 * 1024 ** 2
@@ -126,7 +126,7 @@ def main():
             parts = [{"part_number": n, "crc32c": checksums[n - 1]} for n in remaining[offset:offset + 32]]
             signed = client.request("POST", f"{base}/{identifier}/parts", json={"parts": parts}).json()["parts"]
             with ThreadPoolExecutor(max_workers=8) as pool:
-                list(pool.map(lambda part: put(args.file, part), signed))
+                list(pool.map(lambda part: put(args.file, part, checksums[part["part_number"] - 1]), signed))
     elif status["state"] not in {"finalizing", "completed"}:
         raise RuntimeError(f"Upload is {status['state']}: {status.get('failure_code')}")
     response = client.request("POST", base + "/complete", timeout=120, json={"upload_id": identifier, "sha256_hash": sha, "crc32c": crc})

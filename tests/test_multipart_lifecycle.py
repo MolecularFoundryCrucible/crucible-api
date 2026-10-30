@@ -11,11 +11,12 @@ from google.api_core.exceptions import NotFound
 from sqlmodel import Session, select
 
 import app.api.routes.gcs_storage as gcs_storage
+import app.storage.gcs as google
 from app.api.routes import multipart as routes
 from app.models.core_models import AccessGroup, AssociatedFile, Dataset, DeletionRequest, Resource, ResourceACL, UploadSession, User, UserAccessGroupLink
 from app.models.datasets import file_etag
 from app.services import multipart as service
-from app.services.multipart_storage import StorageFailure, UploadMissing
+from app.storage import ObjectInfo, Part, StorageFailure, UploadMissing
 from app.utils.permissions import Role
 
 BASE = "/datasets/ds/upload/multipart"
@@ -25,47 +26,54 @@ CRC = base64.b64encode(google_crc32c.Checksum(DATA).digest()).decode()
 
 
 class MemoryStorage:
-    def __init__(self):
+    retires_by_lifecycle = True
+
+    def __init__(self, reports_crc32c=True):
+        self.reports_crc32c = reports_crc32c
+        self.reports_part_crc32c = not reports_crc32c
         self.pending = {}
         self.objects = {}
         self.serial = 0
         self.completions = 0
         self.fail_after_complete = False
         self.fail_after_initiate = False
-        self.read_hook = None
         self.complete_hook = None
         self.deleted = []
+        self.finished_checksums = []
 
-    def initiate(self, upload):
+    def start_upload(self, bucket, key):
         self.serial += 1
         identifier = str(self.serial)
-        self.pending[identifier] = {"key": upload.gcs_path, "parts": {}}
+        self.pending[identifier] = {"key": key, "parts": {}}
         if self.fail_after_initiate:
             self.fail_after_initiate = False
             raise StorageFailure()
         return identifier
 
-    def uploads(self, upload):
-        return [key for key, value in self.pending.items() if value["key"] == upload.gcs_path]
+    def open_uploads(self, bucket, key):
+        return [identifier for identifier, value in self.pending.items() if value["key"] == key]
 
-    def sign_part(self, upload, number, checksum, size, expires_at):
-        return f"https://storage.example/{upload.provider_upload_id}/{number}", {"x-goog-hash": f"crc32c={checksum}", "Content-Length": str(size)}
+    def sign_part(self, bucket, key, upload_id, number, crc32c, size, expires_at):
+        return f"https://storage.example/{upload_id}/{number}", {"x-goog-hash": f"crc32c={crc32c}", "Content-Length": str(size)}
 
     def put(self, identifier, number, data=DATA):
         self.pending[identifier]["parts"][number] = data
 
-    def list_parts(self, upload, marker=0, limit=1000):
-        if upload.provider_upload_id not in self.pending:
+    def list_parts(self, bucket, key, upload_id, marker=0, limit=1000):
+        if upload_id not in self.pending:
             raise UploadMissing()
-        parts = self.pending[upload.provider_upload_id]["parts"]
+        parts = self.pending[upload_id]["parts"]
         numbers = sorted(number for number in parts if number > marker)
         page = numbers[:limit]
-        return [{"part_number": n, "size": len(parts[n]), "etag": hashlib.md5(parts[n]).hexdigest()} for n in page], page[-1] if len(numbers) > limit else None
+        def crc(data):
+            return base64.b64encode(google_crc32c.Checksum(data).digest()).decode() if self.reports_part_crc32c else None
+        return [Part(part_number=n, size=len(parts[n]), etag=hashlib.md5(parts[n]).hexdigest(), crc32c=crc(parts[n])) for n in page], page[-1] if len(numbers) > limit else None
 
-    def complete(self, upload, parts):
-        pending = self.pending.pop(upload.provider_upload_id)
-        data = b"".join(pending["parts"][part["part_number"]] for part in parts)
-        self.objects[upload.gcs_path] = {"generation": "7", "size": len(data), "crc32c": base64.b64encode(google_crc32c.Checksum(data).digest()).decode(), "data": data}
+    def finish_upload(self, bucket, key, upload_id, parts, crc32c_by_part):
+        pending = self.pending.pop(upload_id)
+        data = b"".join(pending["parts"][part.part_number] for part in parts)
+        self.objects[key] = {"generation": "7", "size": len(data), "crc32c": base64.b64encode(google_crc32c.Checksum(data).digest()).decode(), "data": data}
+        self.finished_checksums.append(crc32c_by_part)
         self.completions += 1
         if self.complete_hook:
             self.complete_hook()
@@ -73,27 +81,24 @@ class MemoryStorage:
             self.fail_after_complete = False
             raise StorageFailure()
 
-    def metadata(self, upload):
-        return self.objects.get(upload.gcs_path)
+    def put_bytes(self, bucket, key, data, content_type):
+        self.objects[key] = {"generation": "7", "size": len(data), "crc32c": base64.b64encode(google_crc32c.Checksum(data).digest()).decode(), "data": data}
 
-    def sha256(self, upload, generation, heartbeat):
-        assert generation == self.objects[upload.gcs_path]["generation"]
-        if self.read_hook:
-            self.read_hook()
-        heartbeat()
-        return hashlib.sha256(self.objects[upload.gcs_path]["data"]).hexdigest()
+    def head(self, bucket, key):
+        stored = self.objects.get(key)
+        return ObjectInfo(size=stored["size"], crc32c=stored["crc32c"] if self.reports_crc32c else None, version=stored["generation"]) if stored else None
 
-    def abort(self, upload, identifier):
-        self.pending.pop(identifier, None)
+    def abort_upload(self, bucket, key, upload_id):
+        self.pending.pop(upload_id, None)
 
-    def delete(self, upload, generation):
-        assert self.objects[upload.gcs_path]["generation"] == generation
-        self.deleted.append((upload.gcs_path, generation))
-        self.objects.pop(upload.gcs_path)
+    def delete(self, bucket, key, version):
+        assert self.objects[key]["generation"] == version
+        self.deleted.append((key, version))
+        self.objects.pop(key)
 
 
-@pytest.fixture
-def flow(db_engine, client, auth_as, monkeypatch):
+@pytest.fixture(params=["store_crc32c", "combined_crc32c"])
+def flow(request, db_engine, client, auth_as, monkeypatch):
     with Session(db_engine) as session:
         user = User(unique_id="owner", first_name="A", last_name="B", email="a@example.test")
         group = AccessGroup(group_name="owner-group")
@@ -109,8 +114,8 @@ def flow(db_engine, client, auth_as, monkeypatch):
     monkeypatch.setenv("MULTIPART_UPLOAD_BUCKET", "dedicated")
     monkeypatch.setenv("MULTIPART_UPLOAD_SIGNER", "signer@example.iam.gserviceaccount.com")
     monkeypatch.setenv("MULTIPART_UPLOAD_PROJECT", "test-project")
-    storage = MemoryStorage()
-    monkeypatch.setattr(routes, "get_multipart_storage", lambda: storage)
+    storage = MemoryStorage(reports_crc32c=request.param == "store_crc32c")
+    monkeypatch.setattr(routes, "get_store", lambda: storage)
     return client, db_engine, storage
 
 
@@ -189,7 +194,8 @@ def test_upload_resume_publish_retry_download_ingestion_and_delete(flow, monkeyp
     signed_blob = signer.bucket.return_value.blob.return_value
     signed_blob.content_type = "application/octet-stream"
     signed_blob.generate_signed_url.return_value = "https://download.example/pinned-generation-7"
-    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: signer)
+    monkeypatch.setattr(google, "server_client", lambda: signer)
+    monkeypatch.setattr(gcs_storage, "get_store", lambda: google.GoogleStore(SimpleNamespace(bucket=None, signer_service_account=None, project=None)))
     assert client.get(f"/files/{file_id}/download_link").json()["url"].endswith("pinned-generation-7")
     assert signer.bucket.return_value.blob.call_args.kwargs["generation"] == 7
     assert "filename*=UTF-8''data.bin" in signed_blob.generate_signed_url.call_args.kwargs["response_disposition"]
@@ -322,6 +328,29 @@ def test_abort_during_completion_prevents_publication(flow):
     assert files(engine) == []
 
 
+@pytest.mark.parametrize("state", ["aborted", "expired"])
+def test_object_assembled_after_an_abort_saw_nothing_is_removed(flow, state):
+    """The abort (or the cleanup job) ran while the store was still assembling, so it found no object
+    to delete; completion must remove the object it then finds itself unable to publish."""
+    client, engine, storage = flow
+    identifier = start(flow)
+    put(flow, identifier)
+    key = row(engine, identifier).object_key
+
+    def give_up_before_the_object_is_visible():
+        assembled = storage.objects.pop(key)
+        if state == "aborted":
+            assert client.delete(BASE + f"/{identifier}").status_code == 204
+        else:
+            change(engine, identifier, state="expired")
+        storage.objects[key] = assembled
+    storage.complete_hook = give_up_before_the_object_is_visible
+    response = complete(flow, identifier)
+    assert response.status_code == 409, response.text
+    assert key not in storage.objects
+    assert files(engine) == []
+
+
 def test_expiry_and_disabled_initiation(flow, monkeypatch):
     client, engine, storage = flow
     identifier = start(flow)
@@ -384,7 +413,7 @@ def test_same_content_under_another_name_is_a_new_upload(flow):
     assert response.json()["upload_id"] is not None
 
 
-@pytest.mark.parametrize("body", [{"filename": "../x", "size": 1}, {"filename": "/x", "size": 1}, {"filename": "x", "size": True}, {"filename": "x", "size": 0}, {"filename": "x", "size": 1, "sha256_hash": "bad"}])
+@pytest.mark.parametrize("body", [{"filename": "../x", "size": 1}, {"filename": "/x", "size": 1}, {"filename": "x", "size": True}, {"filename": "x", "size": -1}, {"filename": "x", "size": 1, "sha256_hash": "bad"}, {"filename": "x", "size": 0, "sha256_hash": SHA}])
 def test_invalid_initiation_is_rejected(flow, body):
     assert flow[0].post(BASE + "/initiate", json=body).status_code == 422
 
@@ -416,12 +445,32 @@ def test_signing_batch_limits_and_expired_session_quota(flow, monkeypatch):
     assert client.post(BASE + "/initiate", json={"filename": "another", "size": 1}).status_code == 200
 
 
+def test_stored_part_content_must_match_its_authorized_checksum(flow):
+    client, engine, storage = flow
+    identifier = start(flow)
+    put(flow, identifier)
+    storage.pending[row(engine, identifier).provider_upload_id]["parts"][1] = b"verified scientific dat_"
+    response = complete(flow, identifier)
+    assert response.status_code == 422
+    code = "object_integrity_mismatch" if storage.reports_crc32c else "part_checksum_mismatch"
+    assert code in response.json()["detail"]
+    assert files(engine) == []
+
+
+def test_a_store_reporting_no_checksums_still_completes(flow):
+    _, engine, storage = flow
+    storage.reports_crc32c = storage.reports_part_crc32c = False
+    identifier = publish(flow)
+    assert row(engine, identifier).state == "completed"
+
+
 def test_more_than_1000_parts_are_read_from_all_provider_pages(flow):
     _, engine, storage = flow
     identifier = start(flow)
     count = 1001
     crc = base64.b64encode(google_crc32c.Checksum(b"x" * count).digest()).decode()
-    change(engine, identifier, part_size=1, part_count=count, size=count, claimed_sha256=None, part_manifest={"authorized": {str(n): CRC for n in range(1, count + 1)}})
+    part_crc = base64.b64encode(google_crc32c.Checksum(b"x").digest()).decode()
+    change(engine, identifier, part_size=1, part_count=count, size=count, claimed_sha256=None, part_manifest={"authorized": {str(n): part_crc for n in range(1, count + 1)}})
     for n in range(1, count + 1):
         storage.put(row(engine, identifier).provider_upload_id, n, b"x")
     response = complete(flow, identifier, digest=hashlib.sha256(b"x" * count).hexdigest(), crc=crc)
@@ -463,11 +512,20 @@ def test_database_failure_after_provider_completion_retries_one_publication(flow
     assert len(files(engine)) == 1
 
 
+def test_completion_gives_the_store_each_authorized_part_checksum(flow):
+    _, _, storage = flow
+    identifier = start(flow)
+    put(flow, identifier)
+    assert complete(flow, identifier).status_code == 200
+    assert storage.finished_checksums == [{1: CRC}]
+
+
 def test_completion_aborts_duplicate_provider_uploads(flow):
     _, engine, storage = flow
     identifier = start(flow)
     put(flow, identifier)
-    storage.initiate(row(engine, identifier))
+    upload = row(engine, identifier)
+    storage.start_upload(upload.bucket, upload.object_key)
     assert complete(flow, identifier).status_code == 200
     assert not storage.pending
     assert storage.objects
@@ -604,7 +662,7 @@ def test_cleanup_protection_requires_server_recorded_generation(flow, generation
     upload = row(engine, identifier)
     with Session(engine) as session:
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == "ds")).one()
-        session.add(AssociatedFile(dataset_id=dataset.id, filename="reference", storage_path=f"{upload.bucket}/{upload.gcs_path}", size=len(DATA), sha256_hash=SHA, storage_generation=generation))
+        session.add(AssociatedFile(dataset_id=dataset.id, filename="reference", storage_path=f"{upload.bucket}/{upload.object_key}", size=len(DATA), sha256_hash=SHA, storage_generation=generation))
         session.commit()
     assert client.delete(BASE + f"/{identifier}").status_code == 204
     assert bool(storage.objects) == (generation is not None)
@@ -728,7 +786,7 @@ def test_replace_initiation_creates_a_session_for_the_file(flow):
     assert session.replace_file_mfid == file["mfid"]
     assert session.replace_base_etag == file["etag"]
     assert session.associated_file_name == "data.bin"
-    assert session.gcs_path == f"ds/_files/{session.upload_id}"
+    assert session.object_key == f"ds/_files/{session.upload_id}"
 
 
 def test_replace_accepts_a_weakened_if_match(flow):
@@ -870,8 +928,7 @@ def test_replace_trusted_short_circuit_persists_the_backfilled_path(flow, monkey
 @pytest.fixture
 def retired(monkeypatch):
     calls = []
-    import app.api.routes.gcs_storage as gcs_storage
-    monkeypatch.setattr(gcs_storage, "_retire_object", lambda path, generation, retired_at: calls.append((path, generation)) or True)
+    monkeypatch.setattr(routes, "retire_object", lambda store, path, generation, retired_at: calls.append((path, generation)) or True)
     return calls
 
 
@@ -981,10 +1038,9 @@ def test_aborted_replace_leaves_file_untouched(flow, retired):
 
 def test_retire_failure_does_not_fail_the_replace(flow, monkeypatch):
     client, engine, _ = flow
-    import app.api.routes.gcs_storage as gcs_storage
-    def broken(path, generation, retired_at):
+    def broken(store, path, generation, retired_at):
         raise RuntimeError("storage down")
-    monkeypatch.setattr(gcs_storage, "_retire_object", broken)
+    monkeypatch.setattr(routes, "retire_object", broken)
     file = published_file(flow)
     _, response = replace(flow, file["mfid"])
     assert response.status_code == 200, response.text
@@ -1192,7 +1248,7 @@ def test_pending_legacy_upload_blocks_retirement(flow, retired, expires_in):
     client, engine, _ = flow
     mfid = legacy_file(engine, "old.bin")
     with Session(engine) as session:
-        session.add(UploadSession(dataset_mfid="ds", gcs_path="ds/old.bin", associated_file_name="old.bin", owner_user_id="owner", expires_at=service.now() + (expires_in or -timedelta(hours=1)), size=3))
+        session.add(UploadSession(dataset_mfid="ds", object_key="ds/old.bin", associated_file_name="old.bin", owner_user_id="owner", expires_at=service.now() + (expires_in or -timedelta(hours=1)), size=3))
         session.commit()
     _, response = replace(flow, mfid)
     assert response.status_code == 200, response.text
@@ -1203,7 +1259,7 @@ def test_retirement_errors_never_fail_a_committed_replace(flow, retired, monkeyp
     file = published_file(flow)
     def broken():
         raise RuntimeError("config unavailable")
-    monkeypatch.setattr(service, "upload_bucket", broken)
+    monkeypatch.setattr(service, "owned_object", broken)
     _, response = replace(flow, file["mfid"])
     assert response.status_code == 200, response.text
     assert retired == []
@@ -1225,7 +1281,7 @@ def test_backfill_listing_is_bounded(monkeypatch):
     blob = MagicMock()
     blob.name = "ds/legacy.bin"
     client.bucket.return_value.list_blobs.return_value = [blob]
-    monkeypatch.setattr(gcs_storage, "_get_gcs_storage_client", lambda: client)
+    monkeypatch.setattr(gcs_storage, "server_client", lambda: client)
     assert gcs_storage._determine_storage_path("ds", "legacy.bin").endswith("/ds/legacy.bin")
     client.bucket.return_value.list_blobs.assert_called_once_with(prefix="ds/", timeout=30)
 
@@ -1288,7 +1344,7 @@ def test_legacy_completion_touches_the_dataset(use_engine, flow, monkeypatch):
     blob = SimpleNamespace(size=len(DATA), reload=lambda: None)
     gcs = MagicMock()
     gcs.bucket.return_value.blob.return_value = blob
-    monkeypatch.setattr("app.api.routes.gcs_storage._get_gcs_storage_client", lambda: gcs)
+    monkeypatch.setattr("app.api.routes.gcs_storage.server_client", lambda: gcs)
     response = client.post("/datasets/ds/upload/complete", json={"upload_id": upload_id, "sha256_hash": SHA})
     assert response.status_code == 200, response.text
     assert dataset_touched(engine)
@@ -1308,7 +1364,7 @@ def test_legacy_completion_storage_errors_stay_server_side(use_engine, flow, mon
         raise failure
     gcs = MagicMock()
     gcs.bucket.return_value.blob.return_value = SimpleNamespace(size=len(DATA), reload=reload)
-    monkeypatch.setattr("app.api.routes.gcs_storage._get_gcs_storage_client", lambda: gcs)
+    monkeypatch.setattr("app.api.routes.gcs_storage.server_client", lambda: gcs)
     response = client.post("/datasets/ds/upload/complete", json={"upload_id": upload_id, "sha256_hash": SHA})
     assert response.status_code == status
     assert "googleapis" not in response.text and "iam" not in response.text and "gone" not in response.text
@@ -1324,3 +1380,64 @@ def test_legacy_initiate_token_errors_stay_server_side(use_engine, flow, monkeyp
     response = client.post("/datasets/ds/upload/initiate/multipart", json={"filename": "legacy.bin", "size": len(DATA)})
     assert response.status_code == 503
     assert "googleapis" not in response.text and "iam" not in response.text
+
+
+EMPTY_SHA = hashlib.sha256(b"").hexdigest()
+EMPTY_CRC = "AAAAAA=="
+
+
+def start_empty(flow, filename="empty.txt"):
+    response = flow[0].post(BASE + "/initiate", json={"filename": filename, "size": 0, "sha256_hash": EMPTY_SHA}, headers={"Idempotency-Key": filename})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_an_empty_file_uploads_without_parts(flow):
+    client, engine, storage = flow
+    started = start_empty(flow)
+    assert (started["state"], started["part_size"], started["part_count"]) == ("uploading", 0, 0)
+    assert storage.pending == {}
+    status = client.get(BASE + f"/{started['upload_id']}").json()
+    assert (status["parts"], status["part_count"]) == ([], 0)
+    assert client.post(BASE + f"/{started['upload_id']}/parts", json={"parts": [{"part_number": 1, "crc32c": EMPTY_CRC}]}).status_code == 422
+    response = complete(flow, started["upload_id"], digest=EMPTY_SHA, crc=EMPTY_CRC)
+    assert response.status_code == 200, response.text
+    assert (response.json()["size"], response.json()["filename"]) == (0, "empty.txt")
+    key = row(engine, started["upload_id"]).object_key
+    assert storage.objects[key]["data"] == b""
+    assert complete(flow, started["upload_id"], digest=EMPTY_SHA, crc=EMPTY_CRC).json()["mfid"] == response.json()["mfid"]
+
+
+@pytest.mark.parametrize("digest, crc", [(SHA, EMPTY_CRC), (EMPTY_SHA, CRC)])
+def test_an_empty_file_with_wrong_checksums_is_refused_before_storing(flow, digest, crc):
+    _, engine, storage = flow
+    started = start_empty(flow)
+    response = complete(flow, started["upload_id"], digest=digest, crc=crc)
+    assert response.status_code in (409, 422), response.text
+    assert row(engine, started["upload_id"]).object_key not in storage.objects
+    assert files(engine) == []
+
+
+def test_an_empty_replacement_with_another_hash_is_refused_at_the_start(flow):
+    client, _, _ = flow
+    file = published_file(flow)
+    response = client.post(f"/files/{file['mfid']}/upload/multipart/initiate", json={"size": 0, "sha256_hash": SHA}, headers={"Idempotency-Key": "empty-wrong-hash"})
+    assert response.status_code == 422, response.text
+
+
+def test_a_file_can_be_replaced_with_empty_content(flow):
+    client, engine, storage = flow
+    file = published_file(flow)
+    response = client.post(REPLACE.format(file["mfid"]), json={"size": 0, "sha256_hash": EMPTY_SHA})
+    assert response.status_code == 200, response.text
+    assert response.json()["part_count"] == 0
+    replaced = complete(flow, response.json()["upload_id"], digest=EMPTY_SHA, crc=EMPTY_CRC)
+    assert replaced.status_code == 200, replaced.text
+    assert (replaced.json()["mfid"], replaced.json()["size"]) == (file["mfid"], 0)
+
+
+def test_an_empty_upload_can_be_aborted(flow):
+    client, engine, _ = flow
+    started = start_empty(flow)
+    assert client.delete(BASE + f"/{started['upload_id']}").status_code == 204
+    assert row(engine, started["upload_id"]).state == "aborted"

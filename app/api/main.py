@@ -240,6 +240,12 @@ def _caller(request: Request) -> tuple[str, str]:
     return actor.user_id, actor.credential
 
 
+def _deprecated_caller_agent(request: Request) -> str:
+    if not getattr(request.scope.get("route"), "deprecated", False):
+        return ""
+    return " user_agent=" + json.dumps(request.headers.get("user-agent", "-")[:200])
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     request.state.request_id = str(uuid.uuid4())
@@ -249,13 +255,14 @@ async def log_requests(request: Request, call_next):
     except Exception as error:
         duration_ms = (time.perf_counter() - started) * 1000
         logger.info(
-            "%s %s %s %.3fms request_id=%s actor=%s credential=%s",
+            "%s %s %s %.3fms request_id=%s actor=%s credential=%s%s",
             request.method,
             _route_template(request),
             500,
             duration_ms,
             request.state.request_id,
             *_caller(request),
+            _deprecated_caller_agent(request),
         )
         _audit_privileged_request(request, 500, duration_ms)
         if _is_hub_auth_request(request):
@@ -287,13 +294,14 @@ async def log_requests(request: Request, call_next):
     if response.status_code < 400 and route in QUIET_ROUTES:
         return response
     logger.info(
-        "%s %s %s %.3fms request_id=%s actor=%s credential=%s",
+        "%s %s %s %.3fms request_id=%s actor=%s credential=%s%s",
         request.method,
         route,
         response.status_code,
         duration_ms,
         request.state.request_id,
         *_caller(request),
+        _deprecated_caller_agent(request),
     )
     _audit_privileged_request(request, response.status_code, duration_ms)
     return response

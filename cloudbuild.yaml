@@ -28,44 +28,22 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', '${_IMAGE_PATH}:latest']
 
-  # Apply ConfigMap first (deployment depends on it)
+  # Staging is deployed by the Foundry deploy repository (mf-crucible-deploy), which follows the image
+  # pushed above; only main is still deployed from here, until its cut-over.
   - name: 'gcr.io/cloud-builders/kubectl'
-    args:
-    - apply
-    - -f
-    - ./k8s-conf/configmap-${BRANCH_NAME}.yaml
-    env:
-    - CLOUDSDK_COMPUTE_REGION=us-central1
-    - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
-
-  # Apply deployment (creates if doesn't exist, updates if exists)
-  - name: 'gcr.io/cloud-builders/kubectl'
-    args:
-    - apply
-    - -f
-    - ./k8s-conf/deployment-k8s-conf-${BRANCH_NAME}.yaml
-    env:
-    - CLOUDSDK_COMPUTE_REGION=us-central1
-    - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
-
-  # Update the deployment with the new SHA-tagged image
-  - name: 'gcr.io/cloud-builders/kubectl'
-    args:
-    - set
-    - image
-    - deployment/crucible-api-${BRANCH_NAME}
-    - crucible-api-container=${_IMAGE_PATH}:${SHORT_SHA}
-    env:
-    - CLOUDSDK_COMPUTE_REGION=us-central1
-    - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
-
-  - name: 'gcr.io/cloud-builders/kubectl'
-    id: deploy-hub-auth-cleanup
+    id: deploy-main
     entrypoint: bash
     args:
     - -ceu
     - |
+      if [ '${BRANCH_NAME}' != main ]; then echo "${BRANCH_NAME} is deployed by mf-crucible-deploy; image pushed only"; exit 0; fi
+      /builder/kubectl.bash apply -f ./k8s-conf/configmap-main.yaml
+      /builder/kubectl.bash apply -f ./k8s-conf/deployment-k8s-conf-main.yaml
+      /builder/kubectl.bash set image deployment/crucible-api-main crucible-api-container=${_IMAGE_PATH}:${SHORT_SHA}
       gcloud container clusters get-credentials crucible-cluster --region us-central1 --project '${PROJECT_ID}'
       bash scripts/deploy_hub_auth_cleanup.sh '${BRANCH_NAME}' '${_IMAGE_PATH}:${SHORT_SHA}'
+    env:
+    - CLOUDSDK_COMPUTE_REGION=us-central1
+    - CLOUDSDK_CONTAINER_CLUSTER=crucible-cluster
 
 timeout: 600s

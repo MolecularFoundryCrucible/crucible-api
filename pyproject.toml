@@ -20,11 +20,11 @@ dependencies = [
     "psycopg2-binary>=2.9.11",
     "python-multipart==0.0.32",
     "pydantic>=2.14,<3",
-    "requests>=2.33.1",
-    "joserfc>=1.7.5",
-    "google-crc32c>=1.8.0",
+    "requests>=2.34.2",
+    "joserfc>=1.7.7",
+    "google-crc32c>=1.9.0",
     "pyyaml==6.0.3",
-    "sqlalchemy==2.0.37",
+    "sqlalchemy==2.1.6",
     "sqlmodel==0.0.48",
     "urllib3==2.8.0",
     "uvicorn==0.54.0",
@@ -34,8 +34,8 @@ dependencies = [
     "authlib>=1.8,<2",
     "python-dotenv>=1.0.1",
     "pydantic-settings==2.16.1",
-    "boto3==1.43.113",
-    "awscrt==0.37.0",
+    "boto3==1.43.120",
+    "awscrt==0.38.0",
 ]
 
 [tool.uv]
@@ -50,7 +50,7 @@ constraint-dependencies = [
 
 [dependency-groups]
 dev = [
-    "pytest>=9.1.1",
+    "pytest>=9.2.0",
     "pyflakes>=3.2.0",
     "httpx>=0.28.1",
 ]

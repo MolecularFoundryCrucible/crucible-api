@@ -21,7 +21,7 @@ def setup_engine(env_file=None):
         return
     encoded_pw = urllib.parse.quote_plus(password)
     db = get_settings().db
-    db_url = f'postgresql://{db.username}:{encoded_pw}@{db.server}/{db.database}'
+    db_url = f'postgresql+psycopg2://{db.username}:{encoded_pw}@{db.server}/{db.database}'
     engine = create_engine(
         db_url,
         echo=False,

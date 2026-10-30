@@ -7,7 +7,7 @@ FastAPI service for Crucible scientific datasets, samples, projects, instruments
 - [Staging Swagger UI](https://crucible.lbl.gov/testapi-staging/docs)
 - [Staging ReDoc](https://crucible.lbl.gov/testapi-staging/redoc)
 - [Staging OpenAPI JSON](https://crucible.lbl.gov/testapi-staging/openapi.json)
-- OpenAPI for a release: `crucible-api.json` on its [GitHub release](https://github.com/MolecularFoundryCrucible/crucible-api/releases); regenerate locally with `PYTHONPATH=. uv run python scripts/export_openapi.py`
+- OpenAPI for a release: `crucible-api.json` on its [GitHub release](https://github.com/MolecularFoundryCrucible/crucible-api/releases); regenerate locally with `uv run python -m scripts.export_openapi`
 - [Client migration summary](docs/archive/client_migration_summary.md)
 - [Documentation index](docs/README.md)
 - [Changelog](CHANGELOG.md)
@@ -45,14 +45,6 @@ Run tests:
 
 ```bash
 uv run pytest -q
-```
-
-Regenerate the repository OpenAPI checkpoint:
-
-```bash
-DB_CONF_FILE=.env.local \
-API_CONF_FILE=app/conf/api_conf.yaml \
-.venv/bin/python -m scripts.export_openapi
 ```
 
 ## Database access and migrations

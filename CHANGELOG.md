@@ -8,131 +8,104 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
-- Replaced file content is kept and restorable on `s3` (operator-facing): a replace records the previous content in a new `file_versions` table in the same transaction that repoints the file. `python -m app.cli storage cleanup [--dry-run]` deletes versions older than `FILE_VERSION_RETENTION_DAYS` (default 14) that no file uses and aborts expired or uncleaned multipart uploads; run it hourly (the Compose bundle's new `storage-cleanup` service does). It does nothing unless `STORAGE_CLEANUP_ENABLED=true` (`CRUCIBLE_STORAGE_CLEANUP_ENABLED` in the bundle), off by default for now; `--dry-run` works either way. `python -m app.cli files restore FILE_MFID` makes the newest kept version current again. On `gcs` nothing changes: the bucket's lifecycle rule still deletes replaced objects. Migration `564d0bd33a5c` adds the table only.
-
-- File storage in the Compose bundle (operator-facing): SeaweedFS 4.51 runs in the bundle (profile `bundled-storage`, on by default in `.env.example`) with the buckets `crucible-files` and `crucible-records` in the `seaweedfs-data` volume, as uid 1000 with no Linux capabilities, on an internal `storage` network that only the API and Caddy join. Caddy forwards `/crucible-files/` to it unchanged, without the client's `Authorization` or `Cookie` headers and with `Content-Security-Policy: sandbox; default-src 'none'`, `X-Content-Type-Options: nosniff`, and `Cross-Origin-Resource-Policy: same-site`, so signed URLs use the site's own address (`CRUCIBLE_PUBLIC_URL`). Two new secret files, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`. To use another S3-compatible store, leave the profile out and set `CRUCIBLE_S3_ENDPOINT_URL`, `CRUCIBLE_S3_PUBLIC_URL`, `CRUCIBLE_S3_REGION`, `CRUCIBLE_UPLOAD_BUCKET`, and `CRUCIBLE_RECORD_BUCKET`. Upgrading an existing bundle: create the two secrets and add `COMPOSE_PROFILES=bundled-storage` to `.env` (README.md, "Upgrading"). `CRUCIBLE_FILES_DIR` keeps the store's data in a folder of your choice instead of the Docker volume. `docker compose run --rm files-backup` (rclone 1.75.2, profile `backup`) copies both buckets to `CRUCIBLE_BACKUP_DIR/files/` as plain files while the store keeps running, incrementally, and `files-backup restore` copies them back; it works with your own S3 store too. The install guide covers storage, choosing the disk, backups and restores, a reverse proxy other than Caddy, and troubleshooting. Uploading needs nano-crucible 3.3.0 or newer.
-- S3-compatible file storage (operator-facing): `STORAGE_BACKEND=s3` stores uploads, downloads, and record files in any S3-compatible store instead of Google Cloud Storage, with `S3_ENDPOINT_URL`, `S3_PUBLIC_URL` (the address in signed URLs, defaulting to the endpoint), `S3_REGION` (default `us-east-1`), and the secrets `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`. `MULTIPART_UPLOAD_SIGNER` and `MULTIPART_UPLOAD_PROJECT` are required only for `gcs`, which stays the default; nothing changes for existing deployments. Signed part URLs bind each part's CRC32C and length, the API compares part checksums the store reports with the authorized ones, and it checks the whole file's CRC32C combined from the part checksums, so clients send the part headers the API returns as before. A store is supported only if `storage check` passes on it. Records keep `storage_backend` `"gcs"`, which released clients treat as "stored by the API". On `s3`, the legacy upload routes do not work. Tested against SeaweedFS 4.51 and Versity S3 Gateway 1.9.0.
-- `python -m app.cli storage check` (operator-facing) checks the configured storage end to end with a test file under `_crucible-check/`: a signed two-part upload, a re-uploaded part, a part whose bytes do not match the signed checksum (must be refused when sent with the signed checksum header, with the header changed to match the bytes, and without it), completion, a signed download, record files when `RECORD_BUCKET` is set, and deletion, which also happens when a step fails. On `gcs` it names any missing `MULTIPART_UPLOAD_*` setting. `--public` signs for `S3_PUBLIC_URL`, `--keep` leaves the file. It exits 1 when a step fails.
+- S3-compatible storage: `STORAGE_BACKEND=s3` with `S3_ENDPOINT_URL`, `S3_PUBLIC_URL`, `S3_REGION`, and the secrets `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`. The default, `gcs`, is unchanged.
+- `python -m app.cli storage check` tests the configured storage end to end.
+- The Compose bundle stores files in SeaweedFS (profile `bundled-storage`), with two new secret files, `CRUCIBLE_FILES_DIR`, and a `files-backup` service. Upgrading: see README.md.
+- On `s3`, replaced files are kept for `FILE_VERSION_RETENTION_DAYS` (14) and restorable with `python -m app.cli files restore`; `python -m app.cli storage cleanup` deletes them afterwards, only when `STORAGE_CLEANUP_ENABLED=true`. Migration `564d0bd33a5c` adds one table.
+- Empty files on the signed multipart upload (`size` 0, no parts).
 
 ### Changed
 
-- The Compose bundle's Hub uses the published image (operator-facing): the install guide and CI run Crucible Hub 1.7.1 from `ghcr.io/molecularfoundrycrucible/crucible-hub:1.7.1` (amd64 and arm64) instead of building it, with `HUB_IMAGE` set in the Hub's `.env` and `docker compose pull hub hub-setup`. CI pins the image by digest. Settings, secrets, and health checks are unchanged from Hub 1.7.0.
-- On `s3`, the token-based upload routes (`/datasets/{dataset_mfid}/upload/initiate`, `/upload/initiate/multipart`, `/upload/complete`) answer `501` with code `legacy_upload_unavailable` instead of `503`, and a file record without a stored location gets `404` for its download link (and `null` in the dataset's download links) instead of a `500` for the whole dataset (client-facing).
-- `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` must each be one line of printable ASCII, like the Hub secrets (operator-facing).
-- The Compose bundle builds the API image once (operator-facing): only the `api` service builds `crucible-api:local`, and the one-time `migrate` service runs that image and never tries to pull it. Before, both services built and exported the same image. The install and upgrade commands are unchanged.
+- The Compose bundle runs the Hub from its published image (1.7.1) and builds the API image once.
+- On `s3`, the legacy upload routes answer 501 `legacy_upload_unavailable`, and a file without a stored location answers 404 instead of 500.
+- `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` must be one line.
 
 ### Fixed
 
-- A Google Cloud Storage error while reading or deleting an object during multipart completion, failed-verification cleanup, or abort answers `503` (retry) instead of `500`, and no longer leaves the upload session in `finalizing` (client-facing). The multipart signer's credentials are set up on the first multipart request, so downloads and record files never depend on them.
+- A Google storage error during multipart completion or abort answers 503 instead of 500.
 
 ## [3.2.1] - 2026-10-28
 
-Dependency upgrades, a settings check for deployments, and versioned release images. No database migration and no change for clients: responses keep the same fields.
+Dependency upgrades, a deployment settings check, and release images. No migration; responses unchanged.
 
 ### Added
 
-- `python -m app.cli settings check` (operator-facing) checks a deployment's settings before it goes out. It reads rendered Kubernetes YAML (files or standard input, for example from `kubectl kustomize`), resolves each named container's environment from its ConfigMaps, Kubernetes Secret references, and secret files mounted into the secrets directory (Secret volumes and the GKE Secret Manager add-on's SecretProviderClass), and runs the startup checks: `--server CONTAINER` for the API server, `--database CONTAINER` for database-only tools such as the Hub sign-in cleanup job. It reports settings given more than one way, missing or invalid settings, malformed Secret Manager paths, `NAME_FILE` paths no volume provides, and, as warnings, variables Crucible does not read. With `--verify-secrets` it also confirms that each Secret Manager version exists and is enabled, reading metadata only (`secretmanager.versions.get`). It exits 1 when a check fails.
-- Release images (operator-facing): a `vX.Y.Z` tag builds one image for every environment with `cloudbuild.release.yaml`, tagged with the version and the commit and labelled with OCI `version`, `revision`, and `source`, in the `crucible-api-releases` Artifact Registry repository. The build refuses a tag that does not match the version in `pyproject.toml`, bakes in nothing environment-specific (`BRANCH_NAME` comes from each deployment's configuration), deploys nothing, and prints the image digest for mf-crucible-deploy. The branch builds in `cloudbuild.yaml` keep deploying as before until the Foundry moves to mf-crucible-deploy.
+- `python -m app.cli settings check` checks rendered Kubernetes manifests against the startup checks (`--server`, `--database`, `--verify-secrets`).
+- Release images: a `vX.Y.Z` tag builds one image in `crucible-api-releases` with `cloudbuild.release.yaml`.
 
 ### Changed
 
-- Dependency upgrades: FastAPI 0.142.4 to 0.162.0, uvicorn 0.32.1 to 0.54.0, gunicorn 25.3.0 to 26.2.0 (the image's server), SQLModel 0.0.22 to 0.0.48, Alembic 1.20.1, Authlib 1.9.1, google-auth 2.62.0, pika 1.4.4, pydantic-settings 2.16.1, NumPy 2.4.6, and others. SQLModel 0.0.48 applies a field's `alias`, which would have renamed `dataset_mfid` to `dataset_id` in ingestion request responses; the unused aliases on four table models are removed, so every response keeps its field names.
+- Dependency upgrades, including FastAPI 0.162, uvicorn 0.54, gunicorn 26.2, and SQLModel 0.0.48; response field names are kept.
 
 ## [3.2.0] - 2026-10-28
 
-Groundwork for running Crucible outside the Molecular Foundry (explicit settings, startup checks, database setup, and a Docker Compose bundle with the optional Hub), plus join requests, postprocessing pipelines, activity tracking, preferences, and many fixes. Exact request and response shapes are in the OpenAPI document; this section lists what changed.
+Groundwork for self-hosting, plus join requests, postprocessing pipelines, activity tracking, and preferences. Exact shapes are in the OpenAPI document.
 
 ### Upgrading from 3.1.0
 
-Production has run the database and client changes below since 2026-10-22; deploying this version adds none that break clients.
-
-- Operators: settings are explicit and checked at startup. Required: `DB_SERVER`, `DB_USERNAME`, `DB_DATABASE`, `PGDB_PW`, `CRUCIBLE_SECRET_KEY`. Printing, ingestion and postprocessing, and proposal sync are off unless `PRINTING_ENABLED`, `INGESTION_ENABLED`, or `PROPOSAL_SYNC_ENABLED` is `true`, and their hosts and users no longer have built-in values (see Changed). Each setting must be given one way only, and a worker that cannot read a secret its features need does not start. Secret Manager is used only through full `NAME_VERSION` paths; `CLIENT_SECRET` is now `ORCID_CLIENT_SECRET`, and `GCS_SECRET_STORE` is gone. The container listens on `PORT`. The Foundry's Kubernetes configuration sets all of these.
-- Database, in order: migrations `5582366c0eb4` (preferences), `d7b51bd885fc` (recent resources), `b644cf2e7240` (activity; then `migrations/data/20261014_backfill_activity_timestamps.py --commit` fills existing rows), `aa8eb05c643d` (postprocessing runs), `c3f1d29a7b64` (join requests), `5be2f0c8d4a1` (owner indexes, built concurrently), `9d41c6a2e7f3` (project links by MFID), and `b8f2d6e41c07` (file identity; stops if existing non-GCS files have non-canonical paths or repeated names). `python -m app.cli db upgrade` applies them, and creates the schema of a new installation.
-- Clients: `GET /users/search` returns `{limit, items}` (nano-crucible 3.0.0 and later); multipart uploads must plan parts from the returned `part_size`; filenames are unique within a dataset (409 `filename_exists`); timestamps are UTC with a `Z` suffix; PATCH rejects `null` for required fields (422); writes to records pending deletion return 409 `pending_deletion`; routes of a disabled feature answer 501; `GET /users/me`, `PATCH /users/me`, `GET /samples/{sample_mfid}/datasets`, nine legacy graph routes, and `POST /extract_metadata` are removed.
+- Operators: settings are explicit, given one way each, and checked at startup. Required: `DB_SERVER`, `DB_USERNAME`, `DB_DATABASE`, `PGDB_PW`, `CRUCIBLE_SECRET_KEY`. Printing, ingestion, and proposal sync need `PRINTING_ENABLED`, `INGESTION_ENABLED`, `PROPOSAL_SYNC_ENABLED`. `CLIENT_SECRET` is now `ORCID_CLIENT_SECRET`. The container listens on `PORT`.
+- Database: migrations `5582366c0eb4`, `d7b51bd885fc`, `b644cf2e7240` (then `migrations/data/20261014_backfill_activity_timestamps.py --commit`), `aa8eb05c643d`, `c3f1d29a7b64`, `5be2f0c8d4a1`, `9d41c6a2e7f3`, `b8f2d6e41c07`, applied by `python -m app.cli db upgrade`.
+- Clients: `GET /users/search` returns `{limit, items}`; plan multipart parts from `part_size`; filenames are unique per dataset; timestamps are UTC with `Z`; see Removed.
 
 ### Added
 
-- Batch lookup: `GET /datasets`, `/samples`, `/projects`, and `/instruments` accept a repeatable `mfid` filter, and `GET /users` repeatable `unique_id` and `username` filters (at most 100 values each). Unreadable, missing, and pending-deletion records are omitted.
-- `affiliation=member` on dataset and sample lists, search, and facets, and on `GET /resources/metadata/search`: records the caller reaches through their own grants, not only through public access. Combines with `affiliation=owner` and `visibility`.
-- Join requests, reworked (`docs/join_requests_design.md`): `POST /projects/{project_ref}/join_requests` (201; 403 for service accounts); `GET /join_requests` with scopes, filters, sorting, and cursor pagination; `GET /join_requests/facets`; `GET /join_requests/{request_id}`; `PATCH /join_requests/{request_id}` to approve at a role up to the reviewer's own (default `contributor`) or reject; `POST /join_requests/{request_id}/withdraw`. Creating one returns 409 `already_member`, `join_request_pending`, `too_many_pending_requests` (20 pending), or `project_not_accepting_requests`; `status` can be `withdrawn`. Project editors and above review requests (before, only owners), a request is visible only to its requester, its reviewers, and platform administrators, and adding someone to a project closes their pending request there.
-- Postprocessing pipelines: `GET /pipelines` lists the pipelines (`carrier_segmentation`, `insitu_aggregation`, `rga_analysis`, `mosaic_stitch`) and their parameter schemas; `POST /datasets/{dataset_mfid}/postprocess` queues a run (202; contributor access; 404 for a dataset that is missing, unreadable, or pending deletion; 422 `unknown_pipeline` or `invalid_parameters`; 503 `pipeline_unavailable` records the run as failed; an `Idempotency-Key` retry returns the original run, and reusing it with other parameters returns 409 `idempotency_key_reused`); `GET /postprocessing_runs`, `GET /postprocessing_runs/{run_id}`, and `PATCH /postprocessing_runs/{run_id}` for consumers to report progress (409 `run_finished` once completed or failed). Queue messages carry `run_id`, `dataset_mfid`, `pipeline`, `parameters`, `requested_by`, and `dsid`.
-- Activity tracking: `last_active_at` on users and `last_used_at` on API keys; `last_activity_at` on projects and instruments, with `sort=activity` and `active_since`; administrators filter users by `active_since`, `inactive_since`, and `never_active`, and sort them with `sort=last_active`.
-- Preferences: `GET` and `PATCH /account/preferences` (JSON Merge Patch with `ETag` and `If-Match`; 412 `etag_mismatch`), with shared keys `theme`, `default_record_kind`, and `record_recent_resources`, and a `hub` namespace.
-- Recently viewed resources: `POST`, `GET`, and `DELETE /account/recent-resources` (and `DELETE /account/recent-resources/{resource_mfid}`), newest 50 kept for 90 days and filtered by current access; items include `identifier` for projects and instruments.
-- Capabilities for the caller: `can_remove`, `can_change_role`, and `assignable_roles` on member and grant entries; `can_request_deletion` and `can_view_access` on resources.
-- `GET /print/printers` lists printers from their MQTT status heartbeat, with `online` and the last heartbeat time `ts`.
-- Self-hosting (operator-facing):
-  - `python -m app.cli db upgrade` creates the schema in an empty database from a baseline at revision `b8f2d6e41c07` and applies later migrations; concurrent runs wait for each other, and the database named by `ALEMBIC_PRODUCTION_DATABASE` (default `crucible`) needs `--yes-this-is-production`.
-  - `python -m app.cli admin create` creates the first platform administrator and prints their API key; interactive in a terminal, or `--no-input`.
-  - A Docker Compose bundle in `deploy/compose/` (PostgreSQL 17 with pgvector, a one-time migration job, the API, and Caddy with automatic HTTPS) with an install guide covering backups, upgrades, and other secret stores. `compose.hub.yaml` adds Hub sign-in, and Caddy serves the Hub from crucible-hub `v1.7.0` at `/hub/`, on the same machine or a second one. The database sits on an internal network the Hub cannot reach, and every container drops the Linux capabilities it does not need. CI starts the bundle with and without the Hub.
+- Batch lookup by repeatable `mfid` on dataset, sample, project, and instrument lists, and by `unique_id` and `username` on `GET /users`.
+- `affiliation=member` on lists, search, and facets.
+- Join requests: `/projects/{project_ref}/join_requests`, `/join_requests`, review by project editors.
+- Postprocessing pipelines: `GET /pipelines`, `POST /datasets/{dataset_mfid}/postprocess`, `/postprocessing_runs`.
+- Activity tracking: `last_active_at`, `last_used_at`, `last_activity_at`, with sorting and filters.
+- `/account/preferences` and `/account/recent-resources`.
+- Caller capabilities on members, grants, and resources (`can_remove`, `assignable_roles`, `can_view_access`, and others).
+- `GET /print/printers` with online status.
+- Self-hosting: `python -m app.cli db upgrade`, `python -m app.cli admin create`, and a Docker Compose bundle with an optional Hub (`deploy/compose/`).
 
 ### Changed
 
-- Settings (operator-facing) are read with pydantic-settings, grouped by area in `app/config.py`, once at startup; invalid or missing required settings stop the server with one message listing them. Each setting is given exactly one way: the `NAME` environment variable, a file named by `NAME_FILE`, a file `NAME` in the secrets directory (`CRUCIBLE_SECRETS_DIR`, default `/run/secrets`), or, for secrets, a Secret Manager path in `NAME_VERSION`. Giving one two ways is an error; names match regardless of case, and blank values count as not given. Apart from `CLIENT_SECRET`, no environment variable was renamed. `.env` is read only from `DB_CONF_FILE` or the working directory. With `HUB_AUTH_ENABLED=true`, startup requires `HUB_AUTH_CLIENT_SECRET`, `HUB_AUTH_CALLBACK_URI`, and an ORCID client secret.
-- Foundry values are no longer built in (operator-facing): `RMQ_HOST`, `RMQ_PORT`, `RMQ_USER`, `RMQ_ROUTING_SUFFIX`, `MQTT_HOST`, `MQTT_PORT`, `MQTT_USERNAME`, `PROPOSAL_DB_URL`, `UPLOAD_BUCKET`, `GCS_PROJECT`, and every Secret Manager path now come from settings. `RECORD_BUCKET` names the record bucket; record files are skipped, with a warning, when it is unset. `API_PUBLIC_URL`, `API_PATH`, `ORCID_CLIENT_ID`, and `TRGM_SEARCH_THRESHOLD` replace the YAML file, which is now optional.
-- Optional features answer `501` with `{"detail": {"code": "feature_disabled", "feature": ...}}` when off (`POST /files/{file_id}/ingest` with `status=not_requested` still works), and storage routes `501` `storage_not_configured` when no upload bucket is set. `MULTIPART_UPLOAD_ENABLED` or `STORAGE_READ_BUCKETS` without `UPLOAD_BUCKET` stops startup.
-- Startup (operator-facing): each worker reads every secret its enabled features need before serving and refuses to start if one cannot be read, naming it, so a bad secret keeps a new pod out of service instead of failing requests. One reader serves every secret, with a 10-second Secret Manager timeout; the Hub client and Hub ORCID secrets must be one line of printable ASCII. `GCS_SA` is required when any bucket, including `RECORD_BUCKET`, is set.
-- The container image listens on `PORT` (default `8000`) with `WEB_CONCURRENCY` workers (default `4`), gives workers 60 seconds to start (`--timeout 60`), and includes `alembic.ini` and `migrations/` (without the one-off scripts in `migrations/data/`).
-- `GET /health/ready` stays ready when the schema is ahead of the build, reports `database.schema_state` (`current`, `ahead`, `behind`, `mismatch`), and without `EXPECTED_DB_REVISIONS` expects the running code's migration heads.
-- Successful health and metrics requests are no longer logged or counted in request metrics; request log lines end with `actor=` and `credential=`.
-- `POST /files/{file_id}/ingest` answers `503` `ingestion_unavailable` and records the request as failed when the message broker cannot be reached (500 before).
-- One rule for granting access: you may grant, change, or remove a role up to your own, for project membership and resource grants alike. Ownership changes only through `POST /resources/{mfid}/transfer_ownership`.
-- `GET /resources/{mfid}/access` and `GET /instruments/{instrument_ref}/service_accounts` are readable by anyone holding a non-public role on the resource (admin before), read-only for those who cannot manage access.
-- `GET /users/search` returns the shared paginated envelope (`limit`, `items`). `GET /users` returns `user_capabilities` on every item, and `api_key_status` to platform administrators.
-- Files: filenames are unique within a dataset. Repeating a filename on `POST /datasets/{dataset_mfid}/files` with the same `sha256_hash` and `size` returns the existing record; otherwise it returns 409 `filename_exists` with `file_mfid` and `etag`, as does renaming a file onto a taken name. To overwrite, update the existing file (`PATCH /files/{file_mfid}`, or multipart replace for GCS files). Non-GCS filenames must be canonical relative POSIX paths (422 otherwise), cannot be renamed (409 `filename_immutable`), and a record cannot move between GCS and non-GCS storage (409 `storage_backend_class_change`).
-- Multipart uploads size parts from the file (size / 8, between 8 and 64 MiB) and return it as `part_size`; sessions in progress keep theirs.
-- Datasets and samples link to their project and instrument only by MFID; `project_id`, `instrument_id`, and `instrument_name` always come from the current project and instrument (null without a registered instrument), the `instrument_name` filter matches only registered instruments, and record files in the record bucket carry `project_mfid` and `instrument_mfid` instead of `project_id` and `instrument_name`.
-- Datasets and samples with a pending or approved deletion request follow one contract (`docs/database_deletion_contract.md`): exact lookups work, lists and traversals hide them, and writes return 409 `pending_deletion`. `GET /files/{file_id}` and `GET /ingestion_requests/{request_id}` return 404 instead of 403 when the caller cannot read the dataset.
-- Timestamps are UTC: time filters without an offset are read as UTC, and responses write UTC with a `Z` suffix.
-- PATCH routes reject `null` (422) for fields that cannot be empty, such as `sample_name`, `project_id`, `first_name`, and `filename`; leaving a field out still leaves it unchanged.
-- Lineage links reject self-links (422 `self_link`) and cycles (409 `lineage_cycle`).
-- `GET /entity_graph_cte/{entity_mfid}` returns `relationship_type` on parent and child edges.
-- Faster owner filters and facets (indexed `owner_orcid`), recursive graphs (about 1 s to under 25 ms on production), and project and instrument deletion.
+- Settings are read once at startup with pydantic-settings, from `NAME`, `NAME_FILE`, the secrets directory, or `NAME_VERSION`.
+- Foundry hosts, buckets, and Secret Manager paths are no longer built in; `RECORD_BUCKET` names the record bucket.
+- Disabled features answer 501 `feature_disabled`; no upload bucket answers 501 `storage_not_configured`.
+- Workers read every needed secret before serving and refuse to start if one fails.
+- The image listens on `PORT` with `WEB_CONCURRENCY` workers and `--timeout 60`.
+- `GET /health/ready` accepts a schema ahead of the build and reports `schema_state`.
+- `POST /files/{file_id}/ingest` answers 503 `ingestion_unavailable` when the broker is down.
+- One rule for granting access: up to your own role; ownership moves only through `transfer_ownership`.
+- Access lists are readable by anyone with a non-public role on the resource.
+- Filenames are unique within a dataset (409 `filename_exists`); non-GCS filenames must be canonical paths.
+- Multipart part size depends on the file (8 to 64 MiB).
+- Datasets and samples link to projects and instruments by MFID only.
+- Records pending deletion: lookups work, lists hide them, writes return 409 `pending_deletion`.
+- Timestamps are UTC; PATCH rejects `null` for required fields; lineage rejects self-links and cycles.
+- Faster owner filters, graphs, and project and instrument deletion.
 
 ### Deprecated
 
-- `POST /users/resolve`: use `GET /users` with `unique_id`, `username`, or `email`.
-- The `unique_id` filter on `GET /datasets` and `GET /samples`: use `mfid`.
-- `GET /users/{user_ref}/apikey/verify`: use `api_key_status` from `GET /users/{user_ref}`, or `GET /account/verify` for your own key.
-- `POST /access_groups/{group_name}/join` and `GET /account/join_requests`: use `POST /projects/{project_ref}/join_requests` and `GET /join_requests?scope=submitted`. The join request `group_name` field and parameter: use `project` and `project_mfid`.
-- `POST /datasets/{dataset_mfid}/carrier_segmentation`, `/insitu_spec_aggregation`, `/rga_analysis`, and `/mosaic_stitch`: use `POST /datasets/{dataset_mfid}/postprocess`. They now start a tracked run and return it.
-
-`POST /users/resolve`, the `unique_id` filter, and `GET /users/{user_ref}/apikey/verify` send a `Deprecation` header.
+- `POST /users/resolve`, the `unique_id` filter on datasets and samples, and `GET /users/{user_ref}/apikey/verify` (with a `Deprecation` header).
+- `POST /access_groups/{group_name}/join` and `GET /account/join_requests`: use the join request routes.
+- The per-pipeline dataset processing routes: use `POST /datasets/{dataset_mfid}/postprocess`.
 
 ### Removed
 
-- `GET /users/me` and `PATCH /users/me` (use `/account/profile`) and `GET /samples/{sample_mfid}/datasets` (use `GET /datasets?sample_mfid=`).
-- Nine unused legacy graph routes: `GET /entity_graph/{entity_mfid}`, `/entity_graph_bfs/{entity_mfid}`, `/datasets/{dataset_mfid}/dataset_graph` and `/dataset_graph_cte`, `/samples/{sample_mfid}/sample_graph` and `/sample_graph_cte`, and `/projects/{project_ref}/sample_graph`, `/dataset_graph`, and `/entity_graph`; use `GET /resources/{resource_mfid}/graph`, `GET /entity_graph_cte/{entity_mfid}`, or `GET /project_graph/{project_ref}`.
-- `POST /extract_metadata` and the `anthropic` dependency.
-- `requirements.txt` (install from `uv.lock`), `GCS_SECRET_STORE`, and the `CLIENT_SECRET` variable for ORCID sign-in (use `ORCID_CLIENT_SECRET`).
+- `GET` and `PATCH /users/me` (use `/account/profile`) and `GET /samples/{sample_mfid}/datasets`.
+- Nine legacy graph routes (use `/resources/{resource_mfid}/graph`, `/entity_graph_cte/`, or `/project_graph/`).
+- `POST /extract_metadata`, `requirements.txt`, `GCS_SECRET_STORE`, and `CLIENT_SECRET`.
 
 ### Fixed
 
-- Renaming a project returned 500 for every project.
-- Moving a dataset or sample to another project deleted its shares with other projects.
-- Three races: a multipart upload completing while its dataset is deleted (now 409 `dataset_deleted`, object removed), concurrent metadata writes on one record, and assigning a record to a project or instrument that is being deleted.
-- Records pending deletion are not found when used as a lookup target, as lists already treated them.
-- Uploads: a new file now updates the dataset's modification time; content matching a file under another name is stored as a new file; locating an old record's object requires the whole name and returns 409 when several match.
-- `POST /users` resolves `project_ids` like other project references and returns 409 `pending_deletion` for a project being deleted.
-- 500 responses on `GET /account/join_requests`, join request lists with a missing project, `POST /datasets/{dataset_mfid}/samples/{sample_mfid}` for an unnamed dataset, and `GET /users/{user_ref}/apikey/verify`.
-- The legacy ORCID sign-in routes redirect to sign-in again instead of returning 500 when the sign-in token is missing, expired, or invalid.
-- `GET /account/verify` describes the key presented; with a Hub session it reports the newest key, invalid once expired, and 404 when there is none.
-- `GET /deletion_requests` reports project deletion requests' own project.
-- JSON bodies nested too deeply (`json_too_deep`), containing characters PostgreSQL cannot store (`unsupported_character`), or using `NaN` or `Infinity` (`invalid_number`) return 422 instead of 500.
-- Creating a dataset with an unknown `project_id` returns 404 instead of 403.
-- `If-Match` accepts weak ETags and lists, so writes through Cloudflare no longer always return 412.
-- Staging wrote record files into the production record bucket; the bucket now comes from `RECORD_BUCKET`.
-- OpenAPI documents what 21 operations actually return; the models declare the unique indexes production has.
+- Renaming a project returned 500.
+- Moving a record to another project deleted its shares.
+- Races around dataset deletion, concurrent metadata writes, and deleted projects or instruments.
+- Several 500s on join requests, linking, and key verification; invalid JSON bodies return 422.
+- `If-Match` accepts weak ETags (Cloudflare no longer causes 412).
+- Staging wrote record files to the production bucket.
 
 ### Security
 
-- Dependency upgrades, including FastAPI 0.142 (Starlette 1.7), Pillow 13, python-multipart 0.0.32, urllib3 2.8, and Pydantic 2.14. python-jose (unpatched critical advisory) is replaced by joserfc, and the legacy ORCID session cookie must now carry an expiry.
-- `POST /extract_metadata` let any caller make the server connect to a URL of their choice; it is removed.
-- The legacy dataset processing routes let any authenticated caller queue jobs on any dataset; they now require contributor access to an existing dataset that is not pending deletion.
-- Project roles could be granted outside membership through resource grants; `PUT` and `DELETE /resources/{project_mfid}/access/...` and `POST /resources/{project_mfid}/access_groups` now return 409 `use_project_members` (use project members), and a record's grant for its own project returns 409 `owning_project_grant`.
-- The legacy ORCID sign-in routes return only to a local path after sign-in, never to another site, and time out ORCID calls after 10 seconds (502).
-- Storage errors no longer expose bucket URLs or service-account emails: download links and legacy upload initiation return 503 with a fixed message, and `POST /datasets/{dataset_mfid}/upload/complete` returns 422 only when the object is missing (503 otherwise).
-- The removed legacy graph routes could return MFIDs of records the caller could not read.
+- Dependency upgrades; python-jose replaced by joserfc.
+- `POST /extract_metadata` allowed server-side requests to any URL; removed.
+- Legacy processing routes now require contributor access.
+- Project roles can no longer be granted through resource grants.
+- Legacy ORCID sign-in returns only to local paths.
+- Storage errors no longer expose bucket URLs or service-account emails.
 
 ## [3.1.0] - 2026-10-13
 

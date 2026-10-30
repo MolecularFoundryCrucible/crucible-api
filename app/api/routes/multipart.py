@@ -50,7 +50,7 @@ def sign_parts(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
         manifest = dict(upload.part_manifest or {})
         authorized = dict(manifest.get("authorized", {}))
         for part in body.parts:
-            if part.part_number > upload.part_count:
+            if part.part_number > service.part_total(upload):
                 raise HTTPException(422, "Part number exceeds session geometry")
             previous = authorized.get(str(part.part_number))
             if previous is not None and previous != part.crc32c:
@@ -84,7 +84,7 @@ def get_status(auth_res: Annotated[Principal, Depends(authorize_user)], dsid: Da
         upload = service.owned(session, dsid, upload_id, auth_res)
         result = service.status(session, upload)
         session.expunge(upload)
-    if upload.state == "uploading" and not service.expired(upload):
+    if upload.state == "uploading" and upload.provider_upload_id and not service.expired(upload):
         try:
             parts, marker = get_store().list_parts(upload.bucket, upload.object_key, upload.provider_upload_id, part_number_marker, limit)
             result.parts = [UploadedPart(part_number=part.part_number, size=part.size, etag=part.etag) for part in parts]

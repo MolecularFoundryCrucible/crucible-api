@@ -167,8 +167,9 @@ Clients refuse 0-byte files on the signed path today, which keeps the legacy rou
 **Files:** `app/api/routes/gcs_storage.py`, `tests/test_gcs_multipart_endpoint.py`, `tests/test_storage_download_routes.py`, `docs/remote_file_records.md`, `CHANGELOG.md`
 
 - [x] **Step 1 (done in #386):** with `STORAGE_BACKEND=s3`, `POST /datasets/{dataset_mfid}/upload/initiate`, `/upload/initiate/multipart`, and `/upload/complete` answer 501 `{"detail": {"code": "legacy_upload_unavailable", ...}}`, not 503.
-- [ ] **Step 2:** With `gcs` the three routes carry a `Deprecation` header and OpenAPI marks them deprecated; document in `docs/remote_file_records.md` that `storage_backend = "gcs"` means "stored by the API" whatever the store; CHANGELOG (clients: the legacy routes are deprecated; self-hosted installations need nano-crucible 3.3.0 or later).
+- [x] **Step 2 (#390):** With `gcs` the three routes carry a `Deprecation` header and OpenAPI marks them deprecated; document in `docs/remote_file_records.md` that `storage_backend = "gcs"` means "stored by the API" whatever the store; CHANGELOG (clients: the legacy routes are deprecated; self-hosted installations need nano-crucible 3.3.0 or later).
 - [ ] **Step 3:** Measure before setting a retirement date: from production's request logs (read-only), how often the three routes are called and by which clients (nano-crucible sends its version in the User-Agent). Known callers from the local repositories (2026-10-29): crucible-hub uses only the signed routes; nano-crucible 3.3.0 uses them by default and falls back to the token route only when the server has multipart switched off, 3.2.1 and earlier only the token routes; the crucible-ingestion environment carries an older nano-crucible that calls the token routes; the upload UIs call neither directly and depend on the nano-crucible version they pin.
+  - Measured 2026-10-29: production keeps request logs 3 days (kept so, decided by the user). In that window 85 uploads used the legacy routes (two accounts, known to the user) and 3 the signed routes; `POST /datasets/{dataset_mfid}/files` had no calls. Since #390 the log lines of deprecated routes carry the User-Agent, so later samples show client versions. The routes are retired later, once the clients have been migrated (user's decision); `POST /datasets/{dataset_mfid}/files` stays for catalog records.
 
 ### Before the Foundry switch (decided 2026-10-29)
 
@@ -203,6 +204,10 @@ No code unless the check finds a gap.
 1. SHA-256: the server takes the client's hash on trust today (`sha256_verified_at` is never set). Either the cleanup job (or a separate one) reads each new object once and sets `sha256_verified_at`, or the field is documented as the client's claim. Reading every object costs one full read of each upload.
 2. Testing on staging after the cut-over: patch releases or release-candidate tags (see "Process change after the Foundry cut-over").
 3. `docs/multipart_upload_api.md` is out of date (old staging bucket name, a default `UPLOAD_BUCKET` that no longer exists, schema head); correct it in Task 4, which edits it anyway.
+
+## Later items
+
+1. **`storage_backend` naming a store.** With several stores connected, `storage_backend` could say which store holds a file, with `"gcs"` kept as the name of the default store for existing records. Today every value other than `"gcs"` means catalog only, and catalog records already use free text (`"nersc-perlmutter"`, `"globus"`), so a store ID must not be confusable with them: use a reserved form such as `store:<id>`, or a table of registered stores the value must match. No change until a second store is needed.
 
 ## Done when
 

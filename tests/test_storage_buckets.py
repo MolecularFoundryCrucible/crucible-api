@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-import yaml
 
 from app.services.storage_downloads import StorageLocationError, StorageNotConfigured, allowed_buckets, resolve_storage_object, upload_bucket
 from app.utils.multipart_config import MultipartStorageConfig
@@ -61,25 +60,6 @@ def test_multipart_needs_no_signer():
     assert MultipartStorageConfig.from_env(plain | {"STORAGE_BACKEND": "s3"}).enabled
     with pytest.raises(ValueError, match="explicit bucket"):
         MultipartStorageConfig.from_env({"MULTIPART_UPLOAD_ENABLED": "true", "STORAGE_BACKEND": "s3"})
-
-
-@pytest.mark.parametrize("environment, bucket", [("main", "mf-storage-prod"), ("staging", "mf-storage-staging")])
-def test_deployments_wire_one_bucket_per_environment(environment, bucket):
-    config = yaml.safe_load((ROOT / f"k8s-conf/configmap-{environment}.yaml").read_text())["data"]
-    deployment = yaml.safe_load((ROOT / f"k8s-conf/deployment-k8s-conf-{environment}.yaml").read_text())
-    values = {entry["name"]: entry for entry in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
-    assert config["UPLOAD_BUCKET"] == bucket
-    for key in ("UPLOAD_BUCKET", "STORAGE_READ_BUCKETS", "MULTIPART_UPLOAD_ENABLED", "MULTIPART_UPLOAD_BUCKET", "MULTIPART_UPLOAD_SIGNER", "MULTIPART_UPLOAD_PROJECT"):
-        if key in config:
-            assert values[key]["valueFrom"]["configMapKeyRef"] == {"name": f"crucible-api-config-{environment}", "key": key}
-    assert config["MULTIPART_UPLOAD_ENABLED"] == "true"
-    assert config["MULTIPART_UPLOAD_BUCKET"] == bucket
-    assert config["MULTIPART_UPLOAD_SIGNER"] == f"crucible-mpu-signer-{'prod' if environment == 'main' else 'staging'}@mf-crucible.iam.gserviceaccount.com"
-    assert config["MULTIPART_UPLOAD_PROJECT"] == "mf-crucible"
-    if environment == "staging":
-        assert config["STORAGE_READ_BUCKETS"] == "mf-storage-prod"
-    else:
-        assert "STORAGE_READ_BUCKETS" not in config
 
 
 def test_multipart_config_reads_the_upload_bucket_from_settings(monkeypatch, tmp_path):

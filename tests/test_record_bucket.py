@@ -36,11 +36,3 @@ def test_writes_are_skipped_without_a_bucket(storage, monkeypatch, caplog, value
     gcs_record_utils.write_metadata("ds1", {"a": 1}, "actor", "create")
     storage.bucket.assert_not_called()
     assert "RECORD_BUCKET is not set" in caplog.text
-
-
-def test_each_environment_has_its_own_bucket():
-    from pathlib import Path
-    import yaml
-    root = Path(__file__).resolve().parents[1] / "k8s-conf"
-    buckets = {env: yaml.safe_load((root / f"configmap-{env}.yaml").read_text())["data"]["RECORD_BUCKET"] for env in ("main", "staging")}
-    assert buckets == {"main": "mf-record-prod", "staging": "mf-record-staging"}

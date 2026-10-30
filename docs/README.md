@@ -29,7 +29,6 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Hub authentication security review](hub_auth_security_review.md): dispositions and verified controls.
 - [API-key retrieval and rotation](api_key_lifecycle_followup.md): key deprecations and the authentication cache window.
 - [Database migration guidance](../migrations/README.md): schema and data migration safeguards.
-- [Kubernetes deployment notes](../k8s-conf/README.md): metrics and PodMonitoring setup.
 
 ## Reviews and open follow-ups
 

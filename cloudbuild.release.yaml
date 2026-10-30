@@ -1,8 +1,9 @@
-# Release images: one image per version tag (vX.Y.Z), the same for every environment, deployed by
-# mf-crucible-deploy. Environment values such as BRANCH_NAME come from each deployment's ConfigMap.
+# Release images: a vX.Y.Z tag copies the image built for that commit on main (the one staging ran) into
+# the release repository, keeping its digest, so production runs exactly what staging tested. No rebuild:
+# if main's build for the commit does not exist, the release fails. Deployed by mf-crucible-deploy.
 steps:
-  - id: build
-    name: gcr.io/cloud-builders/docker
+  - id: copy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
     args:
       - -euo
@@ -16,32 +17,22 @@ steps:
           echo "Tag $$tag does not match version $$declared in pyproject.toml" >&2
           exit 1
         fi
-        docker build \
-          --build-arg githash=${COMMIT_SHA} \
-          --build-arg api_version="$$version" \
-          --label org.opencontainers.image.title=crucible-api \
-          --label org.opencontainers.image.version="$$version" \
-          --label org.opencontainers.image.revision=${COMMIT_SHA} \
-          --label org.opencontainers.image.source=https://github.com/MolecularFoundryCrucible/crucible-api \
-          --tag "${_IMAGE}:$$version" \
-          --tag "${_IMAGE}:${COMMIT_SHA}" \
-          .
-  - id: push
-    name: gcr.io/cloud-builders/docker
-    args: [push, --all-tags, "${_IMAGE}"]
-  - id: digest
-    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: bash
-    args:
-      - -euo
-      - pipefail
-      - -c
-      - |
-        digest=$(gcloud artifacts docker images describe "${_IMAGE}:${COMMIT_SHA}" --format='value(image_summary.digest)')
+        source="${_BUILDS}:${COMMIT_SHA}"
+        digest=$(gcloud artifacts docker images describe "$$source" --format='value(image_summary.digest)') || {
+          echo "No image $$source: merge the commit to main and wait for its build before tagging" >&2
+          exit 1
+        }
+        gcloud container images add-tag --quiet "${_BUILDS}@$$digest" "${_IMAGE}:$$version" "${_IMAGE}:${COMMIT_SHA}"
+        copied=$(gcloud artifacts docker images describe "${_IMAGE}:$$version" --format='value(image_summary.digest)')
+        if [ "$$copied" != "$$digest" ]; then
+          echo "Copied digest $$copied differs from $$digest" >&2
+          exit 1
+        fi
         echo "Released ${_IMAGE}@$$digest (${TAG_NAME}, ${COMMIT_SHA})"
 substitutions:
+  _BUILDS: us-central1-docker.pkg.dev/${PROJECT_ID}/crucible-api/crucible-api
   _IMAGE: us-central1-docker.pkg.dev/${PROJECT_ID}/crucible-api-releases/crucible-api
 options:
   dynamicSubstitutions: true
   logging: CLOUD_LOGGING_ONLY
-timeout: 1200s
+timeout: 600s

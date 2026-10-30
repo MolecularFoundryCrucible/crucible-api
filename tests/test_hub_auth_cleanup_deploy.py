@@ -64,11 +64,14 @@ else:
         assert "suspend" not in spec
 
 
-def test_cloud_build_deploys_only_main_and_uses_same_release_image_for_cleanup():
+def test_cloud_build_only_builds_and_releases_copy_the_main_image():
     build = yaml.safe_load((ROOT / "cloudbuild.yaml").read_text())
-    step = next(step for step in build["steps"] if step.get("id") == "deploy-main")
-    assert "if [ '${BRANCH_NAME}' != main ]; then" in step["args"][-1]
-    assert [s for s in build["steps"] if "kubectl" in s["name"]] == [step]
-    assert step["entrypoint"] == "bash"
-    assert "gcloud container clusters get-credentials" in step["args"][-1]
-    assert "bash scripts/deploy_hub_auth_cleanup.sh '${BRANCH_NAME}' '${_IMAGE_PATH}:${SHORT_SHA}'" in step["args"][-1]
+    assert [step["id"] for step in build["steps"]] == ["build"]
+    assert not any("kubectl" in step["name"] for step in build["steps"])
+    script = build["steps"][0]["args"][-1]
+    assert "image=$$registry/crucible-api; tags=\"${COMMIT_SHA} main\"" in script
+    release = yaml.safe_load((ROOT / "cloudbuild.release.yaml").read_text())
+    copy = release["steps"][0]["args"][-1]
+    assert "docker build" not in copy
+    assert 'gcloud container images add-tag --quiet "${_BUILDS}@$$digest"' in copy
+    assert release["substitutions"]["_BUILDS"].endswith("/crucible-api/crucible-api")

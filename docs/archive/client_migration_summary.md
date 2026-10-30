@@ -75,7 +75,7 @@ The client should classify a supplied reference locally and issue one request.
 | Sample MFID | `GET /samples/{sample_mfid}` | Return the singleton response. |
 | Dataset MFID | `GET /datasets/{dataset_mfid}` | Return the singleton response. |
 | Person ORCID, service-account MFID, or username | `GET /users/{user_ref}` | Return the singleton response. |
-| Email | `GET /users?email={email}` | Return the only item, report not found for zero, and report an integrity error for more than one. Another user's public-safe response does not echo the email. Email lookups may match more than one user until uniqueness is enforced; see [email uniqueness follow-up](email_uniqueness_followup.md). |
+| Email | `GET /users?email={email}` | Return the only item, report not found for zero, and report an integrity error for more than one. Another user's public-safe response does not echo the email. Email lookups may match more than one user until uniqueness is enforced; see email uniqueness follow-up (in git history). |
 
 Singleton responses requested by slug or username include `Content-Location` pointing to the MFID or ORCID route. `GET /users/{email}` still resolves but email in paths is deprecated, as is `GET /users/by-username/{username}`. Exact collection filters (`GET /projects?project_id=`, `GET /instruments?instrument_id=`, `GET /users?username=`) remain available. See [resource identifier routes](../resource_identifier_routes.md) for the full convention.
 
@@ -252,7 +252,7 @@ Sample response models now expose the same nullable `ProjectReferenceRead` as `p
 - `POST /users/resolve` continues to accept emails and returns public-safe user records keyed by canonical identifier.
 - Email is returned only for the authenticated user's own profile, an exact self lookup, an exact platform-admin lookup, or an authorized user mutation response.
 - Service-account status alone does not grant email disclosure. A service account may resolve an email without receiving it back.
-- Email lookups may match more than one user until uniqueness is enforced; see [email uniqueness follow-up](email_uniqueness_followup.md).
+- Email lookups may match more than one user until uniqueness is enforced; see email uniqueness follow-up (in git history).
 
 ## User collection queries and capabilities
 
@@ -364,7 +364,5 @@ Use the returned `unique_id` MFID for canonical user routes. To authenticate as 
 - [Permission API changes](../permission_system_api_changes.md)
 - [Identifier route contract](../resource_identifier_routes.md)
 - [Remote file records](../remote_file_records.md)
-- [Historical permission migration runbook](permission_migration_runbook_2026-08.md)
-- [Repository OpenAPI artifact](../../openapi/crucible-api.json)
 - [Production OpenAPI](https://crucible.lbl.gov/api/v3/openapi.json)
-- [Staging OpenAPI](https://crucible.lbl.gov/testapi-staging/openapi.json)
+- [API docs](https://crucible.lbl.gov/api/v3/docs)

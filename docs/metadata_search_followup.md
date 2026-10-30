@@ -1,6 +1,6 @@
 # Metadata search performance
 
-Status: documented 2026-10-20, not scheduled. To be designed together with the broader search direction (including the pgvector embeddings in `ResourceEmbedding` and `docs/resource_embedding_review.md`).
+Status: documented 2026-10-20, not scheduled. To be designed together with the broader search direction (including the pgvector embeddings in `ResourceEmbedding` and `docs/archive/resource_embedding_review.md`).
 
 ## What the route does
 

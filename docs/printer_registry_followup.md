@@ -12,7 +12,7 @@ Follow the device-registry pattern used by AWS IoT Device Shadow, Azure IoT Hub 
 
 1. **`printer` table.** `printer_id` (unique), last reported `state`, `last_seen_at`, and room for admin-set fields (display name, location) if the Hub needs them. Optionally, admins can register printers that have never reported.
 2. **One status writer.** A subscriber keeps a single MQTT subscription to `crucible-printer/+/status` and upserts the row on every message, so the table is current within seconds. It ships in the API image and runs either:
-   - as its own process (`python -m app.workers.printer_status`): a one-replica Deployment on GKE, or another service in docker-compose; or
+   - as its own process (`python -m app.workers.printer_status`): a single-replica deployment, or another service in docker-compose; or
    - inside the API process for single-container installs, where each worker tries a Postgres advisory lock at startup and only the holder subscribes; if it dies the lock is released and another worker takes over.
 3. **API reads the database.** `GET /print/printers` gains `q` (case-insensitive substring on `printer_id`, and the display name if added), an `online` filter, sorting, and pagination like other collections. `online` is computed from `last_seen_at` with the existing 90 s rule. `POST /print/barcode` can reject an unknown `printer_id` before publishing. No request opens a broker connection just to list printers.
 4. **Errors.** If the registry is empty because the writer is down, the API should be able to tell (for example a writer heartbeat row) and return 503 rather than an empty list.

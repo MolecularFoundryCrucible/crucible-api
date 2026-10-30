@@ -2,9 +2,9 @@
 
 `POST /datasets/{dataset_mfid}/files` and multipart initiate reject a second record with an existing filename (409 `filename_exists`). Two gaps remain before the database can enforce it.
 
-## Legacy single-shot upload completion
+## Legacy upload completion
 
-`POST /datasets/{dataset_mfid}/upload/complete` (`app/api/routes/gcs_storage.py`) still inserts a new `AssociatedFile` on every completion without checking the filename, so a re-upload of the same name adds a duplicate record. This is the likely source of the existing duplicates. The file-replacement design updates the existing record in place for this path.
+The legacy `POST /datasets/{dataset_mfid}/upload/complete` (`app/api/routes/gcs_storage.py`) still inserts a new record on every completion without checking the filename, and is the likely source of the existing duplicates. It is deprecated and retires in 4.0.
 
 ## Existing duplicates
 

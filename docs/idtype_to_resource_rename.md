@@ -27,14 +27,11 @@ ALTER TABLE idtype RENAME TO resource;
 Metadata-only on Postgres (not a table rewrite), same cheap shape as the `role`→`permission` rename. Existing FK constraints on `resourceacl`, `scientific_metadata_new`, and `deletionrequest` are tracked by Postgres internally (not by name), so they keep working across the rename without needing to be dropped/recreated.
 
 **Docs to update for accuracy** (prose/SQL examples mentioning `idtype`):
-- `docs/archive/permission_migration_runbook_2026-08.md`
-- `docs/archive/schema_hygiene_pre_permission_migration.md`
 - `docs/remote_file_records.md`
 - `docs/permission_system_plan.md`
 
 **Tests to update:**
 - `tests/test_project_rename.py` — one docstring mention
-- `tests/test_migration_permission_roles.py` — one raw SQL query (`SELECT resource_type FROM idtype WHERE mfid = ...`)
 
 ## What NOT to touch
 

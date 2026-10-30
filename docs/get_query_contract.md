@@ -2,7 +2,7 @@
 
 Status: deployed to production on 2026-09-15 from `main` commit `24a24ab9ce74b01f841750df7003091ce4b57119` with database revision `3f2b6a9c1d84`.
 
-The generated OpenAPI document defines the complete parameter schemas. This document records shared behavior and compatibility decisions. Any contract change here must also be reflected in the API implementation, tests, generated OpenAPI, `docs/hub_api_handoff_review.md`, and the Hub handoff document before the Hub consumes it. Do not update the Hub repository without explicit authorization.
+The generated OpenAPI document defines the complete parameter schemas. This document records shared behavior and compatibility decisions. Any contract change here must also be reflected in the API implementation, tests, generated OpenAPI, and the Hub handoff document before the Hub consumes it. Do not update the Hub repository without explicit authorization.
 
 ## Common collection behavior
 

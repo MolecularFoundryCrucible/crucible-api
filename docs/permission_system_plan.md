@@ -1,6 +1,6 @@
 # Permission System Redesign
 
-Status: The permission model and production migration are implemented. This document preserves architecture decisions and deferred work; it is not an operational checklist. The rollout phases later in the document are historical design context and no longer describe the current environment. The completed procedure is retained in `docs/archive/permission_migration_runbook_2026-08.md`.
+Status: The permission model and production migration are implemented. This document preserves architecture decisions and deferred work; it is not an operational checklist. The rollout phases later in the document are historical design context and no longer describe the current environment. The completed procedure is in git history.
 
 ## Goals
 
@@ -677,7 +677,7 @@ Split by migration phase (see Migration path → Environments and rollout). Noth
 
 ### Indexing
 
-> Table-level schema issues found during this audit are retained in `docs/archive/schema_hygiene_pre_permission_migration.md`. Verify each item against the current schema before treating it as open work.
+> Table-level schema issues found during this audit are in git history. Verify each item against the current schema before treating it as open work.
 
 Row-count is not the scaling concern: ~4 ACL rows per resource over 10⁴–10⁵ resources is a few hundred thousand rows, a few million at 10× growth — a narrow table Postgres handles without effort. **Index design is the concern**, and there is a real gap today.
 
@@ -848,7 +848,7 @@ This is the second payoff from `Principal`: a principal is a plain frozen value,
 
 ### Historical migration design
 
-Do not execute the numbered phases in this section. They describe how the rollout was designed and preserve the reasoning behind expand, cutover, and contract stages. The completed procedure and its dated environment observations are retained in `docs/archive/permission_migration_runbook_2026-08.md`.
+Do not execute the numbered phases in this section. They describe how the rollout was designed and preserve the reasoning behind expand, cutover, and contract stages. The completed procedure and its dated environment observations are in git history.
 
 ~70 call sites use the four existing check helpers (`require_groups` 21, `require_write_access` 16, `require_admin` 12, `read_access_filter_list` 12, `require_read_access` 9). The risk in this project is the migration, not the model.
 

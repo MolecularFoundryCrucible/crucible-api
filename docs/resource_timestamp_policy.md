@@ -18,4 +18,4 @@ Legacy rows may retain null lifecycle values. The completed migration preserved 
 
 ## History
 
-The production conversion and enforcement migration completed on 2026-09-15 at Alembic revision `3f2b6a9c1d84`. See the [archived migration record](archive/resource_timestamp_migration_2026-09.md).
+The production conversion and enforcement migration completed on 2026-09-15 at Alembic revision `3f2b6a9c1d84`. The migration record is in git history.

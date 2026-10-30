@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented on the feature branch as an additive API contract. No database migration is required.
+Implemented as an additive API contract (`Crucible-Privilege-Mode` header). No database migration is required.
 
 The feature separates a platform administrator's assigned role from the authority applied to an individual request. Existing clients retain their current behavior when they omit the new header.
 

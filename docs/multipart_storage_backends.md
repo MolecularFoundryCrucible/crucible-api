@@ -1,14 +1,6 @@
 # S3-compatible storage backends
 
-Status: in progress as part of self-hosting (Phase 2, storage). Every byte the API stores now goes through one interface, `ObjectStore` in `app/storage/base.py`, with `GoogleStore` (`app/storage/gcs.py`) and `S3Store` (`app/storage/s3.py`, chosen with `STORAGE_BACKEND=s3`). This note records what S3-compatible backends (AWS S3, SeaweedFS, MinIO, Ceph RGW) need from that interface.
-
-## What is already portable
-
-- The multipart routes, session state machine, quotas, idempotency, and cleanup depend only on PostgreSQL and `ObjectStore` (`start_upload`, `open_uploads`, `list_parts`, `sign_part`, `finish_upload`, `abort_upload`, `head`, `delete`). Completion passes each part's authorized CRC32C to the store.
-- Signed downloads (`signed_download`), retiring a replaced object (`retire`, only on stores with `retires_by_lifecycle`), and the `record.json` and `metadata.json` files (`put_bytes`, `get_text`) go through the same interface. Object versions are strings everywhere (a GCS generation today).
-- The GCS XML multipart API mirrors S3 multipart: initiate, upload part, list parts, complete, abort, and list multipart uploads, with the same 10,000-part and 5 MiB minimum part limits. Fixed 64 MiB parts and the 500 GiB cap fit S3 limits.
-- Bucket CORS and lifecycle abort of incomplete multipart uploads exist on S3 and MinIO.
-- The public `upload_protocol` value `xml-multipart-signed-v1` is provider-neutral.
+Status: shipped in 3.3.0. Every byte the API stores goes through one interface, `ObjectStore` in `app/storage/base.py`, with `GoogleStore` (`app/storage/gcs.py`) and `S3Store` (`app/storage/s3.py`, chosen with `STORAGE_BACKEND=s3`); the multipart, download, retirement, and record-file paths are portable and the combined per-part CRC32C check is done. This note records what S3-compatible backends (AWS S3, SeaweedFS, MinIO, Ceph RGW) need from that interface and what is still open.
 
 ## GCS-specific pieces
 
@@ -24,17 +16,15 @@ Status: in progress as part of self-hosting (Phase 2, storage). Every byte the A
 
 Google's S3 interface is not used: it refuses per-part checksums in `CompleteMultipartUpload` and does not check a whole-object checksum there (tested 2026-10-29), so `STORAGE_BACKEND=s3` refuses a Google `S3_ENDPOINT_URL`.
 
-## Design changes needed
+## Open design changes
 
-1. Done: when the store reports no whole-object CRC32C (`ObjectInfo.crc32c` is `None`), the API combines the authorized per-part CRC32C values and part sizes (`app/storage/crc32c.py`, using `awscrt`) and compares the result with the completion claim. Part checksums a store reports in its part listing are compared with the authorized ones first; a store that reports none is relied on to enforce the signed per-part checksum, which `storage check` verifies.
-2. Generalize `storage_generation` into a backend-neutral object version (GCS generation or S3 `VersionId`) across file records, downloads, cleanup, and ingestion messages.
-3. Record the backend explicitly instead of inferring it from a bare `bucket/key` `storage_path`.
-4. Done: `get_store()` (`app/storage/__init__.py`) returns the adapter `STORAGE_BACKEND` names.
-5. Keep the client contract provider-neutral: clients must send every header returned for a signed part except `Content-Length`, never a hard-coded provider header.
+1. Generalize `storage_generation` into a backend-neutral object version (GCS generation or S3 `VersionId`) across file records, downloads, cleanup, and ingestion messages. The values are already strings; only the column and field names are GCS-specific.
+2. Record the backend explicitly instead of inferring it from a bare `bucket/key` `storage_path`.
+3. Keep the client contract provider-neutral: clients must send every header returned for a signed part except `Content-Length`, never a hard-coded provider header.
 
 ## Outside the multipart flow
 
-The legacy upload routes (`/datasets/{dataset_mfid}/upload/initiate*`, `/upload/complete`), the storage path backfill that lists objects under a dataset, and the ingestion consumers still assume GCS. Single-file deletion does not yet remove stored objects at all; see [stored objects left behind by file deletion](file_object_cleanup_followup.md). The multipart flow itself runs inside the API process and needs PostgreSQL row locks for reservations and idempotency.
+The legacy upload routes (`/datasets/{dataset_mfid}/upload/initiate*`, `/upload/complete`; deprecated, retiring in 4.0), the storage path backfill that lists objects under a dataset, and the ingestion consumers still assume GCS. Single-file deletion does not yet remove stored objects at all; see [stored objects left behind by file deletion](file_object_cleanup_followup.md). The multipart flow itself runs inside the API process and needs PostgreSQL row locks for reservations and idempotency.
 
 ## Open checks
 

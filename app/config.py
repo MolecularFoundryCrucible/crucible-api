@@ -220,7 +220,6 @@ class StorageSettings(SettingsGroup):
     backend: Literal["gcs", "s3"] = Field("gcs", validation_alias="STORAGE_BACKEND")
     upload_bucket: str | None = Field(None, validation_alias="UPLOAD_BUCKET")
     gcs_project: str | None = Field(None, validation_alias="GCS_PROJECT")
-    gcs_sa: SecretStr | None = Field(None, validation_alias="GCS_SA")
     record_bucket: str | None = Field(None, validation_alias="RECORD_BUCKET")
     read_buckets: str | None = Field(None, validation_alias="STORAGE_READ_BUCKETS")
     legacy_upload_token_downscope: bool = Field(True, validation_alias="LEGACY_UPLOAD_TOKEN_DOWNSCOPE")

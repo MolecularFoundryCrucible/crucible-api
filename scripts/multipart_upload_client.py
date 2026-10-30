@@ -84,8 +84,8 @@ def main():
     token = os.environ.get(args.token_env)
     if not token:
         parser.error(f"Set the API token in {args.token_env}")
-    if not args.file.is_file() or args.file.stat().st_size == 0:
-        parser.error("--file must be a nonempty regular file")
+    if not args.file.is_file():
+        parser.error("--file must be a regular file")
     client = Client(args.api, token)
     base = f"/datasets/{args.dataset}/upload/multipart"
     part_size = 64 * 1024 ** 2

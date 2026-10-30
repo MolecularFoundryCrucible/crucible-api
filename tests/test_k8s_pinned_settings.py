@@ -67,6 +67,8 @@ OUTSIDE_SETTINGS = {
     "ANTHROPIC_BASE_URL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "DB_AUTH", "DB_TYPE", "PORT", "PYTHONUNBUFFERED",
     "MULTIPART_UPLOAD_BUCKET", "MULTIPART_UPLOAD_ENABLED", "MULTIPART_UPLOAD_PROJECT", "MULTIPART_UPLOAD_SIGNER",
 }
+# Still in the Foundry manifests, which the deploy repository owns; the server ignores it.
+RETIRED = {"GCS_SA_VERSION"}
 
 
 def _api_environment(environment):
@@ -95,7 +97,7 @@ def _use_api_environment(environment, monkeypatch, tmp_path):
     for name, value in values.items():
         monkeypatch.setenv(name, value)
     config.get_settings.cache_clear()
-    assert set(values) - known - versions - OUTSIDE_SETTINGS == set()
+    assert set(values) - known - versions - OUTSIDE_SETTINGS - RETIRED == set()
     return data, values
 
 
@@ -125,7 +127,7 @@ def test_foundry_workers_read_every_secret_version_at_startup(environment, monke
     monkeypatch.setattr(config, "get_gcs_secret", lambda version: read.append(version) or "value")
     config.check_settings()
     config.read_secrets()
-    assert sorted(read) == sorted(value for name, value in values.items() if name.endswith("_VERSION"))
+    assert sorted(read) == sorted(value for name, value in values.items() if name.endswith("_VERSION") and name not in RETIRED)
     for name in config._SECRETS:
         config.optional_secret(name)
     assert len(read) == len(set(read))

@@ -328,6 +328,29 @@ def test_abort_during_completion_prevents_publication(flow):
     assert files(engine) == []
 
 
+@pytest.mark.parametrize("state", ["aborted", "expired"])
+def test_object_assembled_after_an_abort_saw_nothing_is_removed(flow, state):
+    """The abort (or the cleanup job) ran while the store was still assembling, so it found no object
+    to delete; completion must remove the object it then finds itself unable to publish."""
+    client, engine, storage = flow
+    identifier = start(flow)
+    put(flow, identifier)
+    key = row(engine, identifier).object_key
+
+    def give_up_before_the_object_is_visible():
+        assembled = storage.objects.pop(key)
+        if state == "aborted":
+            assert client.delete(BASE + f"/{identifier}").status_code == 204
+        else:
+            change(engine, identifier, state="expired")
+        storage.objects[key] = assembled
+    storage.complete_hook = give_up_before_the_object_is_visible
+    response = complete(flow, identifier)
+    assert response.status_code == 409, response.text
+    assert key not in storage.objects
+    assert files(engine) == []
+
+
 def test_expiry_and_disabled_initiation(flow, monkeypatch):
     client, engine, storage = flow
     identifier = start(flow)
@@ -390,7 +413,7 @@ def test_same_content_under_another_name_is_a_new_upload(flow):
     assert response.json()["upload_id"] is not None
 
 
-@pytest.mark.parametrize("body", [{"filename": "../x", "size": 1}, {"filename": "/x", "size": 1}, {"filename": "x", "size": True}, {"filename": "x", "size": -1}, {"filename": "x", "size": 1, "sha256_hash": "bad"}])
+@pytest.mark.parametrize("body", [{"filename": "../x", "size": 1}, {"filename": "/x", "size": 1}, {"filename": "x", "size": True}, {"filename": "x", "size": -1}, {"filename": "x", "size": 1, "sha256_hash": "bad"}, {"filename": "x", "size": 0, "sha256_hash": SHA}])
 def test_invalid_initiation_is_rejected(flow, body):
     assert flow[0].post(BASE + "/initiate", json=body).status_code == 422
 
@@ -1393,6 +1416,13 @@ def test_an_empty_file_with_wrong_checksums_is_refused_before_storing(flow, dige
     assert response.status_code in (409, 422), response.text
     assert row(engine, started["upload_id"]).object_key not in storage.objects
     assert files(engine) == []
+
+
+def test_an_empty_replacement_with_another_hash_is_refused_at_the_start(flow):
+    client, _, _ = flow
+    file = published_file(flow)
+    response = client.post(f"/files/{file['mfid']}/upload/multipart/initiate", json={"size": 0, "sha256_hash": SHA}, headers={"Idempotency-Key": "empty-wrong-hash"})
+    assert response.status_code == 422, response.text
 
 
 def test_a_file_can_be_replaced_with_empty_content(flow):

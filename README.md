@@ -72,6 +72,6 @@ Point an untracked environment file at that local port. Confirm the database nam
 
 To run your own Crucible on one machine with Docker Compose, follow [deploy/compose/README.md](deploy/compose/README.md).
 
-This repository builds the image (`Dockerfile`, `cloudbuild.yaml`; release images by `cloudbuild.release.yaml`). The Foundry's deployment configuration and its operations notes (cleanup CronJob, monitoring, autoscaling) live in the mf-crucible-deploy repository.
+This repository builds the image (`Dockerfile`, `cloudbuild.yaml`; release images by `cloudbuild.release.yaml`). The Foundry's deployment configuration and its operations notes (cleanup CronJob, monitoring, autoscaling) live in the mf-crucible-deploy repository (`foundry/RUNBOOK.md`).
 
 Changes reach `main`, the only long-lived branch, through a reviewed pull request. Do not push or force-push directly to `main`. Production deploys only from release tags through mf-crucible-deploy.

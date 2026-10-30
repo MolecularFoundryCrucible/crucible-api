@@ -81,7 +81,7 @@ The feature was tested locally against Nginx 1.25.3 with mock upstreams, but has
 
 ## Expired-record cleanup
 
-mf-crucible-deploy deploys the staging and main CronJobs with the API image, initially suspended, preserves their activation state on subsequent releases, and documents their approval-gated activation.
+mf-crucible-deploy deploys the staging and main CronJobs with the API image, initially suspended, preserves their activation state on subsequent releases, and documents their approval-gated activation in its `foundry/RUNBOOK.md`.
 
 Run `scripts/cleanup_hub_auth.py` from a scheduled maintenance job using the API deployment credentials. It defaults to a read-only preview and emits counts only. It deletes expired login transactions, handoff codes, and access tokens in bounded batches. It deletes refresh records and families only after absolute family expiry, including revoked families, retaining spent-token history for replay detection. It never revokes a live session.
 

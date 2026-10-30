@@ -1,69 +1,39 @@
 # Crucible API
 
-FastAPI service for Crucible scientific datasets, samples, projects, instruments, metadata, files, identity, and access control.
+FastAPI service for Crucible's scientific records: datasets, samples, projects, instruments, metadata, files, identity, and access control.
 
-## API documentation
+## API reference
 
-- [Staging Swagger UI](https://crucible.lbl.gov/testapi-staging/docs)
-- [Staging ReDoc](https://crucible.lbl.gov/testapi-staging/redoc)
-- [Staging OpenAPI JSON](https://crucible.lbl.gov/testapi-staging/openapi.json)
-- OpenAPI for a release: `crucible-api.json` on its [GitHub release](https://github.com/MolecularFoundryCrucible/crucible-api/releases); regenerate locally with `uv run python -m scripts.export_openapi`
-- [Client migration summary](docs/archive/client_migration_summary.md)
-- [Documentation index](docs/README.md)
-- [Changelog](CHANGELOG.md)
+- Production: [Swagger UI](https://crucible.lbl.gov/api/v3/docs), [ReDoc](https://crucible.lbl.gov/api/v3/redoc), [OpenAPI JSON](https://crucible.lbl.gov/api/v3/openapi.json)
+- Staging: [Swagger UI](https://crucible.lbl.gov/testapi-staging/docs), [OpenAPI JSON](https://crucible.lbl.gov/testapi-staging/openapi.json)
+- Each [GitHub release](https://github.com/MolecularFoundryCrucible/crucible-api/releases) carries its OpenAPI document (`crucible-api.json`) and digest.
+- [Documentation index](docs/README.md), [changelog](CHANGELOG.md), [client migration summary](docs/archive/client_migration_summary.md)
 
-The deployed OpenAPI document is authoritative for routes, request and response schemas, parameters, and deprecations. Check `GET /health/ready` for the deployed commit and database schema revisions before testing a deployment.
+The deployed OpenAPI document is authoritative for routes, schemas, parameters, and deprecations. `GET /health/ready` reports the running version, commit, and database revision.
 
 ## Local development
 
-Requirements:
-
-- Python 3.11 or newer
-- [`uv`](https://docs.astral.sh/uv/)
-- PostgreSQL
-- Credentials for any cloud services exercised locally
-
-Install the project dependencies:
+You need Python 3.11, [`uv`](https://docs.astral.sh/uv/), and PostgreSQL with the `vector` and `pg_trgm` extensions.
 
 ```bash
 uv sync
+cp .env.example-localdev .env.local    # then fill in the placeholders
+DB_CONF_FILE=.env.local uv run python -m app.cli db upgrade
+DB_CONF_FILE=.env.local uv run uvicorn app.api.main:app --reload --port 7777
 ```
 
-Copy `.env.example-localdev` to an untracked environment file and replace its placeholders. `DB_CONF_FILE` selects that file. `API_CONF_FILE` selects the API YAML configuration, including the configured root path.
-
-Start the API:
+`DB_CONF_FILE` names the environment file. `API_CONF_FILE` in it selects the YAML configuration; the local one serves the API under `/testapi`.
 
 ```bash
-DB_CONF_FILE=.env.local \
-API_CONF_FILE=app/conf/api_conf_local.yaml \
-uv run uvicorn app.api.main:app --reload --port 7777
+uv run pytest -q                           # PostgreSQL and S3 tests skip unless configured
+uv run python -m scripts.export_openapi    # writes openapi/crucible-api.json (untracked)
 ```
 
-The local configuration currently declares `/testapi` as its proxy root path. Production uses `/api/v3`; staging uses `/testapi-staging`.
-
-Run tests:
-
-```bash
-uv run pytest -q
-```
-
-## Database access and migrations
-
-For Cloud SQL access, authenticate with Google Application Default Credentials and run the Cloud SQL Auth Proxy against the intended instance on an unused local port:
-
-```bash
-cloud-sql-proxy \
-  --address 127.0.0.1 \
-  --port 5433 \
-  <project>:<region>:<instance>
-```
-
-Point an untracked environment file at that local port. Confirm the database name and environment before any write. See [migrations/README.md](migrations/README.md) for schema and data migration safeguards and [production migration data follow-ups](docs/production_migration_data_followups.md) for accepted legacy cleanup work.
+Migrations, the schema baseline, data scripts, and Cloud SQL access are described in [migrations/README.md](migrations/README.md).
 
 ## Deployment
 
-To run your own Crucible on one machine with Docker Compose, follow [deploy/compose/README.md](deploy/compose/README.md).
-
-This repository builds the image (`Dockerfile`, `cloudbuild.yaml`; release images by `cloudbuild.release.yaml`). The Foundry's deployment configuration and its operations notes (cleanup CronJob, monitoring, autoscaling) live in the mf-crucible-deploy repository (`foundry/RUNBOOK.md`).
-
-Changes reach `main`, the only long-lived branch, through a reviewed pull request. Do not push or force-push directly to `main`. Production deploys only from release tags through mf-crucible-deploy.
+- To run your own Crucible on one machine with Docker Compose, follow [deploy/compose/README.md](deploy/compose/README.md).
+- This repository builds the image. Each merge to `main` pushes `crucible-api/crucible-api:<commit>` (`cloudbuild.yaml`), and a `vX.Y.Z` tag copies that image into the release repository (`cloudbuild.release.yaml`).
+- The Foundry's deployment and runbook live in the mf-crucible-deploy repository (`foundry/RUNBOOK.md`). Staging follows `main`; production changes only through an approved pull request there that promotes a release image.
+- `main` is the only long-lived branch. Changes reach it through a reviewed pull request; do not push or force-push to it directly.

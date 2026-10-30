@@ -13,9 +13,9 @@ This document records the findings of a comprehensive static audit of `crucible-
 
 ## Architectural Strengths
 
-- **Unified Resource and RBAC Model**: The core [`Resource`](../app/models/core_models.py), [`AccessGroup`](../app/models/core_models.py), and [`ResourceACL`](../app/models/core_models.py) schema paired with centralized authorization helpers in [`app/utils/permissions.py`](../app/utils/permissions.py) (`load_principal`, `require_permission`, `permission_filter`) provides a composable RBAC foundation that avoids row-multiplying authorization joins via correlated `EXISTS` subqueries.
-- **Keyset Pagination and Search**: Deterministic keyset pagination with HMAC-SHA256-signed cursors in [`app/utils/cursor_utils.py`](../app/utils/cursor_utils.py) and PostgreSQL trigram plus full-text search ranking in [`app/utils/search_utils.py`](../app/utils/search_utils.py) are well-suited for high-volume dataset and sample collections.
-- **Migration Discipline**: [`migrations/env.py`](../migrations/env.py) enforces a single linear Alembic revision chain and guards against accidental production execution via `ALLOW_PRODUCTION_MIGRATION`.
+- **Unified Resource and RBAC Model**: The core [`Resource`](../../app/models/core_models.py), [`AccessGroup`](../../app/models/core_models.py), and [`ResourceACL`](../../app/models/core_models.py) schema paired with centralized authorization helpers in [`app/utils/permissions.py`](../../app/utils/permissions.py) (`load_principal`, `require_permission`, `permission_filter`) provides a composable RBAC foundation that avoids row-multiplying authorization joins via correlated `EXISTS` subqueries.
+- **Keyset Pagination and Search**: Deterministic keyset pagination with HMAC-SHA256-signed cursors in [`app/utils/cursor_utils.py`](../../app/utils/cursor_utils.py) and PostgreSQL trigram plus full-text search ranking in [`app/utils/search_utils.py`](../../app/utils/search_utils.py) are well-suited for high-volume dataset and sample collections.
+- **Migration Discipline**: [`migrations/env.py`](../../migrations/env.py) enforces a single linear Alembic revision chain and guards against accidental production execution via `ALLOW_PRODUCTION_MIGRATION`.
 
 ---
 

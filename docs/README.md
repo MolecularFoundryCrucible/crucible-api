@@ -1,6 +1,6 @@
 # Documentation index
 
-The deployed OpenAPI document is authoritative for the HTTP contract. `GET /health/ready` identifies the deployed source commit and database schema revisions. This index lists current guidance and open follow-ups; completed work lives in [`archive/`](archive/README.md).
+The deployed OpenAPI document is authoritative for the HTTP contract. This index lists current guidance, audits, and open follow-ups. Finished work is in git history; [`archive/`](archive/README.md) keeps the few dated records still cited.
 
 ## Current API and client guidance
 
@@ -13,10 +13,10 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Join requests](join_requests_design.md): requesting, reviewing, listing, and faceting project join requests.
 - [Resource timestamp policy](resource_timestamp_policy.md): database-owned creation and modification times and the separate producer timestamp field.
 - [Resource graph API](resource_graph_api.md) and [graph route migration](graph_routes_migration.md): graph security behavior and deferred route consolidation.
-- [Remote file records](remote_file_records.md): non-GCS file catalog behavior.
+- [Remote file records](remote_file_records.md): catalog records for files the API does not store.
 - [Signed multipart uploads](multipart_upload_api.md): the multipart upload contract and operator guide.
-- [Storage location confinement](storage_download_design.md): the location rule for GCS downloads and ingestion, download headers, and the multipart `_files` layout.
-- [File replacement](file_replace_design.md): replacing a GCS file's content, ETags, and retirement of the previous object.
+- [Storage location confinement](storage_download_design.md): the location rule for downloads and ingestion, download headers, and the multipart `_files` layout.
+- [File replacement](file_replace_design.md): replacing a stored file's content, ETags, and retirement of the previous object.
 - [Explicit privilege mode](explicit_privilege_mode_design.md): the `Crucible-Privilege-Mode` header and elevated requests.
 - [Route package conventions](../app/api/routes/readme.md): route module and shared dependency guidance.
 
@@ -25,27 +25,28 @@ The deployed OpenAPI document is authoritative for the HTTP contract. `GET /heal
 - [Installing with Docker Compose](../deploy/compose/README.md): running Crucible on one machine, secrets, the first administrator, backups, upgrades, and reverse proxies.
 - [Hub authentication overview](hub_auth_overview.md): sign-in, the API tables, refresh, logout, and cleanup.
 - [Hub login integration](hub_login_design.md): the implemented contract and integration requirements.
-- [Hub authentication operations](hub_auth_operations.md): secrets, logging, cleanup, and activation gates.
-- [Hub authentication security review](hub_auth_security_review.md): dispositions and verified controls.
+- [Hub authentication operations](hub_auth_operations.md): secrets, logging, the on/off switch, cleanup, and tests.
 - [API-key retrieval and rotation](api_key_lifecycle_followup.md): key deprecations and the authentication cache window.
 - [Database migration guidance](../migrations/README.md): schema and data migration safeguards.
 
-## Reviews and open follow-ups
+## Audits
 
-- [Codebase, query, and security review, October 2026](codebase_review_2026-10.md): the review and its disposition.
-- [Production migration data follow-ups](production_migration_data_followups.md): remaining ownership anomalies from the August 2026 migration.
+- [Routes audit, October 2026](routes_audit_2026-10.md): overlapping, untested, and inconsistent routes, and the 4.0 list.
+- [Structure audit, October 2026](structure_audit_2026-10.md): files to split or move, configuration, migrations, and tests.
+
+## Open follow-ups
+
 - [Sharing and access data](sharing_collections_followup.md): the collections idea, production access repairs, and records without any grant.
 - [Legacy slug columns](legacy_slug_columns_followup.md): dropping the columns the API no longer reads.
-- [File name uniqueness](file_name_uniqueness_followup.md): the legacy upload path and the existing duplicate records.
+- [File name uniqueness](file_name_uniqueness_followup.md): existing duplicate file records.
 - [Stored objects left behind by file deletion](file_object_cleanup_followup.md)
 - [Message queue publishing](message_queue_publishing_followup.md): ingestion and postprocessing publishing problems.
-- [Metadata search performance](metadata_search_followup.md) and [resource embeddings](resource_embedding_review.md)
+- [Metadata search performance](metadata_search_followup.md)
 - [S3-compatible storage backends](multipart_storage_backends.md)
 - [User representation and search](user_representation_and_search_followup.md): one user schema with null fields, the `/users/search` envelope, and a possible cross-type search.
 - [Printer registry](printer_registry_followup.md): a database-backed printer list with search, and printing as an optional integration.
 - [`/project_graph` performance](project_graph_performance_followup.md)
 - [Per-worker Prometheus counters](prometheus_multiprocess_followup.md) and [public `/metrics` endpoint](public_metrics_endpoint_followup.md)
-- [Unused Cloud SQL proxy sidecar](cloud_sql_proxy_sidecar_followup.md)
 - [Error responses](error_responses_followup.md): moving repeated route error documentation into `app/api/errors.py`.
 - [Database engine](database_engine_followup.md): moving routes to a FastAPI session dependency.
 - [Secret key separation](secret_key_separation_followup.md): deriving separate keys for the session cookie and cursors from `CRUCIBLE_SECRET_KEY`.

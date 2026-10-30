@@ -10,7 +10,7 @@ Scope: API-owned Hub login, token lifecycle, secret loading, authorization integ
 
 ## High-priority findings
 
-Disposition for findings 1 and 2, recorded 2026-09-28: infrastructure changes are deferred to preserve existing API access and performance. No sufficiently small, verified non-disruptive solution has been established. Private Tailscale testing may continue; public Hub authentication remains disabled pending mitigation or explicit acceptance of the residual risks. This deferral does not mark either finding as fixed. See [the release decision](archive/hub_auth_release_rollout.md#deferred-ingress-changes).
+Disposition for findings 1 and 2, recorded 2026-09-28: infrastructure changes are deferred to preserve existing API access and performance. No sufficiently small, verified non-disruptive solution has been established. Private Tailscale testing may continue; public Hub authentication remains disabled pending mitigation or explicit acceptance of the residual risks. This deferral does not mark either finding as fixed. See the release decision (in git history).
 
 ### 1. Public auth can bypass the proposed proxy limits
 
@@ -30,7 +30,7 @@ Disposition for findings 1 and 2, recorded 2026-09-28: infrastructure changes ar
 
 ### 3. A Hub access token can retrieve an existing long-lived API key
 
-Update 2026-10-12: mitigated for Hub sessions. Hub tokens can no longer read existing keys, and creating a key from a Hub session requires a recent ORCID sign-in; key reading is deprecated for API-key callers. See [API-key lifecycle](api_key_lifecycle_followup.md). Original disposition on 2026-09-28: the user deferred enforcement and retained current behavior. The intended direction is to retire existing-key retrieval and retain rotation. See [API-key lifecycle follow-up](api_key_lifecycle_followup.md), including the unresolved fresh-authentication requirement for rotation. This risk is documented, not remediated.
+Update 2026-10-12: mitigated for Hub sessions. Hub tokens can no longer read existing keys, and creating a key from a Hub session requires a recent ORCID sign-in; key reading is deprecated for API-key callers. See [API-key lifecycle](../api_key_lifecycle_followup.md). Original disposition on 2026-09-28: the user deferred enforcement and retained current behavior. The intended direction is to retire existing-key retrieval and retain rotation. See [API-key lifecycle follow-up](../api_key_lifecycle_followup.md), including the unresolved fresh-authentication requirement for rotation. This risk is documented, not remediated.
 
 - Rule: FASTAPI-AUTHZ-001, credential privilege restriction. Severity: High if Hub-token expiry/revocation is intended to bound compromise duration; requires an explicit product decision.
 - Evidence: `app/utils/auth_utils.py:234` accepts a Hub token and returns the same principal used by legacy clients. `app/api/routes/account.py:135` accepts that principal and returns `token.token` at line 150 without credential-type restrictions or fresh authentication. Legacy key validity is up to a year (`app/utils/auth_utils.py:97`).
@@ -52,7 +52,7 @@ Remediated in `b35c825`, released to `main` through PR #287 on 2026-09-28: HTML 
 
 ### 5. Dependency remediation remains outstanding
 
-Focused assessment completed on 2026-09-28: see [dependency security assessment](archive/dependency_security_assessment.md) for call-path mitigations, advisory fix floors, and separately tested upgrade batches. No dependencies were changed.
+Focused assessment completed on 2026-09-28: see dependency security assessment (in git history) for call-path mitigations, advisory fix floors, and separately tested upgrade batches. No dependencies were changed.
 
 - Rule: FASTAPI-SUPPLY-001. Severity: Medium review requirement, individual exploit severity depends on reachable features.
 - Evidence: `uv.lock:2144` pins Starlette 0.46.2; `pyproject.toml:12` pins FastAPI 0.115.14. Starlette is within the affected ranges for [Range parsing](https://github.com/Kludex/starlette/security/advisories/GHSA-7f5h-v6xp-fcq8) and [multipart rollover](https://github.com/Kludex/starlette/security/advisories/GHSA-2c2j-9gv5-cj73). No direct FileResponse, StaticFiles, UploadFile, or request.form use was found in `app`, so those specific exploit paths were not established.

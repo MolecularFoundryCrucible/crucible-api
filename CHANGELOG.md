@@ -22,6 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` must be one line.
 - On `gcs`, `GCS_SA`, `MULTIPART_UPLOAD_SIGNER`, and `MULTIPART_UPLOAD_PROJECT` are optional; without a key the server uses Application Default Credentials. Existing settings are unchanged.
 - `STORAGE_BACKEND=s3` refuses a Google `S3_ENDPOINT_URL`: use `gcs`.
+- The Compose bundle runs the hourly storage cleanup by default (`CRUCIBLE_STORAGE_CLEANUP_ENABLED=false` turns it off); the server setting `STORAGE_CLEANUP_ENABLED` stays off by default.
 
 ### Deprecated
 

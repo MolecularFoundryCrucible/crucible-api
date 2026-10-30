@@ -67,7 +67,7 @@ gcloud run services update crucible-hub --project mf-crucible --region us-centra
 
 This creates a new Hub revision while preserving other service settings. Keep all traffic on that revision. The pilot uses process-local sessions, so replacing the instance can discard browser sessions.
 
-An ordinary push to API `main` does not reactivate authentication: `cloudbuild.yaml` applies `k8s-conf/configmap-main.yaml`, which explicitly sets `HUB_AUTH_ENABLED: "false"`, before deploying the new API image. Staging has the same disabled default. An image-only Hub deployment preserves its existing `HUB_AUTH_PRODUCTION_ENABLED=false` environment setting. Re-enabling either gate requires an explicit configuration change; changing the checked-in flag, overriding deployment environment variables, or routing Hub traffic back to an enabled revision can change this behavior. Keep the disabled values until activation is authorized again.
+An ordinary API release does not reactivate authentication: the deployment configuration in mf-crucible-deploy explicitly sets `HUB_AUTH_ENABLED: "false"`. Staging has the same disabled default. An image-only Hub deployment preserves its existing `HUB_AUTH_PRODUCTION_ENABLED=false` environment setting. Re-enabling either gate requires an explicit configuration change; changing the checked-in flag, overriding deployment environment variables, or routing Hub traffic back to an enabled revision can change this behavior. Keep the disabled values until activation is authorized again.
 
 On 2026-09-28, production ORCID authentication was temporarily disabled at the user's request through both gates. Staging's API flag was already `false`. The API `main` ConfigMap on GitHub was verified to contain `false` before disabling the live service.
 
@@ -81,7 +81,7 @@ The feature was tested locally against Nginx 1.25.3 with mock upstreams, but has
 
 ## Expired-record cleanup
 
-Staging and main CronJobs and their approval-gated activation are documented in [Kubernetes deployment notes](../k8s-conf/README.md#hub-authentication-cleanup). Cloud Build deploys them with the API image SHA, initially suspended, and preserves their activation state on subsequent releases.
+Staging and main CronJobs and their approval-gated activation are documented in [Kubernetes deployment notes](../k8s-conf/README.md#hub-authentication-cleanup). mf-crucible-deploy deploys them with the API image, initially suspended, and preserves their activation state on subsequent releases.
 
 Run `scripts/cleanup_hub_auth.py` from a scheduled maintenance job using the API deployment credentials. It defaults to a read-only preview and emits counts only. It deletes expired login transactions, handoff codes, and access tokens in bounded batches. It deletes refresh records and families only after absolute family expiry, including revoked families, retaining spent-token history for replay detection. It never revokes a live session.
 

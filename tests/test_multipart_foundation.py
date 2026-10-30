@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -27,7 +27,7 @@ def test_legacy_completion_protocol_guard(protocol, owner, status):
         session = session_cls.return_value.__enter__.return_value
         session.exec.return_value.one_or_none.return_value = upload
         with pytest.raises(HTTPException) as error:
-            gcs_storage.complete_resumable_upload(dsid="ds", body=UploadComplete(upload_id=upload.upload_id, sha256_hash="claimed"), auth_res=Principal(user_id=owner, groups=()))
+            gcs_storage.complete_resumable_upload(dsid="ds", response=Response(), body=UploadComplete(upload_id=upload.upload_id, sha256_hash="claimed"), auth_res=Principal(user_id=owner, groups=()))
         assert error.value.status_code == status
         storage.assert_not_called()
         if protocol is None:

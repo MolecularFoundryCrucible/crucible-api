@@ -20,6 +20,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - On `s3`, the legacy upload routes answer 501 `legacy_upload_unavailable`, and a file without a stored location answers 404 instead of 500.
 - `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` must be one line.
 
+### Deprecated
+
+- The legacy upload routes `POST /datasets/{dataset_mfid}/upload/initiate`, `/upload/initiate/multipart`, and `/upload/complete` (with a `Deprecation` header; their request log lines name the client's User-Agent): use `/upload/multipart`. Self-hosted servers on S3 need nano-crucible 3.3.0 or later.
+
 ### Fixed
 
 - A Google storage error during multipart completion or abort answers 503 instead of 500.

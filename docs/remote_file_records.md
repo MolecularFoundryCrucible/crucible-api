@@ -20,6 +20,8 @@ Let a dataset's `AssociatedFile` entries catalog files that live outside GCS —
 
 Existing rows were migrated to `storage_backend='gcs'` through the column default, preserving their behavior.
 
+Despite its name, `"gcs"` means "stored by the API", in whichever store the server is configured with (`STORAGE_BACKEND`, Google Cloud Storage or S3-compatible). The value is kept for compatibility with existing records and clients; it is not rewritten when a server uses S3.
+
 ## Identity and filenames
 
 A file's identity in its dataset is its `filename` (from PR #335 by Peter Doak, extended to every backend):

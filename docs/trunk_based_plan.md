@@ -16,11 +16,11 @@ GitHub branch protection and rulesets are not available on this private reposito
 ## Steps
 
 1. Interim, now: #397 makes staging builds image-only, so `foundry/staging` has one owner.
-2. `cloudbuild.yaml`: on `main`, push `crucible-api/crucible-api:<sha>` and `:main` as well as today's `crucible-api-main:<short sha>` (production's trigger still deploys the latter until step 6). Staging's automation in mf-crucible-deploy switches to the new name.
+2. `cloudbuild.yaml`: on `main`, push `crucible-api/crucible-api:<sha>` and `:main` as well as today's `crucible-api-main:<short sha>` (production's trigger still deploys the latter until step 6). Staging's updater in mf-crucible-deploy keeps following `crucible-api-staging` until step 4.
 3. `cloudbuild.release.yaml`: copy `crucible-api/crucible-api:<tag commit sha>` to the release repository instead of building (fail if that image does not exist); check the copied image's labels and version as today.
-4. Retire `staging`: merge `staging` into `main` (they are equal after 3.3.0 apart from #397), point open pull requests at `main`, update `AGENTS.md` ("Changes reach `main` through a reviewed pull request; production deploys only from release tags through mf-crucible-deploy"), tell the nano-crucible, crucible-hub, and crucible-tests sessions, and archive the branch (rename to `archive/staging`, then delete after a month).
-5. Delete the `crucible-api-staging` trigger, and `crucible-api-deprecated-versions` (matches `v1` to `v9` branches; none exist).
-6. Production cut-over (mf-crucible-deploy): `foundry/main` pins the 3.3.x release digest; then the kubectl step in `cloudbuild.yaml` and the `crucible-api-main` trigger's deploy are removed, and `crucible-api-main:*` images stop being built.
+4. Retire `staging`: merge `staging` into `main` (they are equal after 3.3.0 apart from #397), point open pull requests at `main`, update `AGENTS.md` ("Changes reach `main` through a reviewed pull request; production deploys only from release tags through mf-crucible-deploy"), tell the nano-crucible, crucible-hub, and crucible-tests sessions, and archive the branch (rename to `archive/staging`, then delete after a month). The deploy updater flips to `crucible-api/crucible-api` with this step.
+5. After step 4 (so staging never loses its image source), delete the `crucible-api-staging` trigger, and `crucible-api-deprecated-versions` (matches `v1` to `v9` branches; none exist).
+6. Production cut-over, with one deployer at every moment: (a) remove the kubectl step from `cloudbuild.yaml` (from then on a merge to `main` deploys nothing to production); (b) mf-crucible-deploy deploys `foundry/main`, already pinned to the 3.3.0 release digest, through its approved trigger and verifies it. No merges to `main` between (a) and (b) need production. Then `crucible-api-main:*` images stop being built.
 7. Remove `k8s-conf/`, `scripts/deploy_hub_auth_cleanup.sh`, `tests/test_k8s_pinned_settings.py`, and the Foundry manifest cases in `tests/test_settings_check.py` (the deploy repository runs `settings check` on its manifests).
 
 ## Rollback

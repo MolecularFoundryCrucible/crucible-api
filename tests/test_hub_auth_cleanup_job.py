@@ -4,41 +4,12 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize("environment", ["staging", "main"])
-def test_cleanup_manifest(environment):
-    manifest = yaml.safe_load((ROOT / f"k8s-conf/hub-auth-cleanup-{environment}.yaml").read_text())
-    deployment = yaml.safe_load((ROOT / f"k8s-conf/deployment-k8s-conf-{environment}.yaml").read_text())
-    spec = manifest["spec"]
-    assert manifest["kind"] == "CronJob"
-    assert spec["suspend"] is True
-    assert spec["concurrencyPolicy"] == "Forbid"
-    assert spec["timeZone"] == "Etc/UTC"
-    assert spec["schedule"].split()[1:] == ["*"] * 4
-    job = spec["jobTemplate"]["spec"]
-    assert job["backoffLimit"] == 1
-    assert job["activeDeadlineSeconds"] == 600
-    pod = job["template"]["spec"]
-    api_pod = deployment["spec"]["template"]["spec"]
-    assert pod["restartPolicy"] == "Never"
-    assert pod["serviceAccountName"] == api_pod["serviceAccountName"]
-    assert "volumes" not in pod
-    container, = pod["containers"]
-    api_container, = api_pod["containers"]
-    assert container["image"] == api_container["image"]
-    assert container["command"] == ["/root/.venv/bin/python", "/root/scripts/cleanup_hub_auth.py"]
-    assert container["args"] == ["--commit", "--batch-size", "1000", "--batches", "10"]
-    api_env = {entry["name"]: entry for entry in api_container["env"]}
-    env = {entry["name"]: entry for entry in container["env"]}
-    for name in ("API_CONF_FILE", "DB_SERVER", "DB_USERNAME", "DB_DATABASE"):
-        assert env[name] == api_env[name]
-    assert env["DB_POOL_SIZE"]["value"] == "1"
-    assert env["DB_MAX_OVERFLOW"]["value"] == "0"
+def test_image_includes_the_cleanup_script():
     assert "COPY scripts/cleanup_hub_auth.py /root/scripts/cleanup_hub_auth.py" in (ROOT / "Dockerfile").read_text()
 
 

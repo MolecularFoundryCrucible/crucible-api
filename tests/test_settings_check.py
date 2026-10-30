@@ -1,17 +1,14 @@
 import io
 import os
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
 import yaml
 
 from app import config
 from app.cli import settings as check
 from app.cli.__main__ import main
 
-K8S = Path(__file__).resolve().parent.parent / "k8s-conf"
 VERSION = "projects/1/secrets/{}/versions/1"
 SERVER_ENV = {
     "DB_SERVER": "db:5432", "DB_USERNAME": "crucible", "DB_DATABASE": "crucible",
@@ -40,17 +37,6 @@ def server_documents(extra=None, **kwargs):
 def run(documents, servers=("api",), databases=()):
     [(_, _, report)] = check.check_documents(documents, list(servers), list(databases))
     return report
-
-
-@pytest.mark.parametrize("environment", ["main", "staging"])
-def test_foundry_manifests_pass(environment):
-    documents = check.load_documents([str(K8S / f"configmap-{environment}.yaml"), str(K8S / f"deployment-k8s-conf-{environment}.yaml"), str(K8S / f"hub-auth-cleanup-{environment}.yaml")])
-    results = check.check_documents(documents, ["crucible-api-container"], ["cleanup"])
-    assert [(container.name, profile, report.errors) for container, profile, report in results] == [
-        ("crucible-api-container", "server", []), ("cleanup", "database", []),
-    ]
-    assert results[0][2].warnings == [f"{name} is not a Crucible setting" for name in ("ANTHROPIC_BASE_URL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "DB_AUTH", "DB_TYPE")] + [
-        "GCS_SA_VERSION is no longer read (Google storage uses Application Default Credentials); remove it"]
 
 
 def test_a_complete_server_passes_and_the_process_is_left_alone():

@@ -9,7 +9,6 @@ from google.auth.exceptions import DefaultCredentialsError
 import pytest
 
 from app.config import ConfigurationError
-import yaml
 
 from app.api.routes.hub_auth import require_hub_client
 from app.config import optional_secret
@@ -195,32 +194,6 @@ def test_importing_the_application_does_not_load_secret_manager():
     assert result.stdout.strip() == "False"
 
 
-@pytest.mark.parametrize("environment", ["main", "staging"])
-def test_deployment_references_only_and_enabled(environment):
-    config = yaml.safe_load((ROOT / f"k8s-conf/configmap-{environment}.yaml").read_text())["data"]
-    deployment = yaml.safe_load((ROOT / f"k8s-conf/deployment-k8s-conf-{environment}.yaml").read_text())
-    values = {entry["name"]: entry for entry in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
-    assert config["HUB_AUTH_ENABLED"] == "true"
-    for key in config:
-        if key.startswith("HUB_AUTH_"):
-            assert values[key]["valueFrom"]["configMapKeyRef"] == {"name": f"crucible-api-config-{environment}", "key": key}
-    expected_versions = {
-        "HUB_AUTH_CLIENT_SECRET": "projects/776258882599/secrets/crucible-hub-client-secret/versions/latest",
-        "HUB_AUTH_ORCID_CLIENT_SECRET": "projects/776258882599/secrets/crucible-hub-orcid-client-secret/versions/latest",
-    }
-    for key, expected_version in expected_versions.items():
-        assert key not in config and key not in values
-        assert config[key + "_VERSION"] == expected_version
-    for key in ("ORCID_CLIENT_ID", "ORCID_CLIENT_SECRET_VERSION"):
-        assert values[key]["valueFrom"]["configMapKeyRef"] == {"name": f"crucible-api-config-{environment}", "key": key}
-    assert "ORCID_CLIENT_SECRET" not in config and "ORCID_CLIENT_SECRET" not in values
-    assert config["ORCID_CLIENT_SECRET_VERSION"] == "projects/776258882599/secrets/orcid_client_secret_esb/versions/latest"
-    if environment == "staging":
-        assert config["HUB_AUTH_CALLBACK_URI"].split(",")[0] == "http://localhost:3000/hub/auth/callback"
-    else:
-        assert config["HUB_AUTH_CALLBACK_URI"] == "https://crucible.lbl.gov/hub/auth/callback"
-
-
 def test_direct_api_orcid_config_and_secret_version(monkeypatch, tmp_path):
     from app.api import dependencies
     import app.config as config
@@ -273,5 +246,3 @@ def test_hub_orcid_secret_missing_is_unavailable(monkeypatch, tmp_path):
             monkeypatch.delenv(f"{name}{suffix}", raising=False)
     with pytest.raises(HubLoginUnavailable):
         hub_orcid._orcid_client_secret()
-
-

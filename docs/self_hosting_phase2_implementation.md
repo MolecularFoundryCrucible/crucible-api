@@ -171,9 +171,9 @@ Clients refuse 0-byte files on the signed path today, which keeps the legacy rou
 - [ ] **Step 3:** Measure before setting a retirement date: from production's request logs (read-only), how often the three routes are called and by which clients (nano-crucible sends its version in the User-Agent). Known callers from the local repositories (2026-10-29): crucible-hub uses only the signed routes; nano-crucible 3.3.0 uses them by default and falls back to the token route only when the server has multipart switched off, 3.2.1 and earlier only the token routes; the crucible-ingestion environment carries an older nano-crucible that calls the token routes; the upload UIs call neither directly and depend on the nano-crucible version they pin.
   - Measured 2026-10-29: production keeps request logs 3 days (kept so, decided by the user). In that window 85 uploads used the legacy routes (two accounts, known to the user) and 3 the signed routes; `POST /datasets/{dataset_mfid}/files` had no calls. Since #390 the log lines of deprecated routes carry the User-Agent, so later samples show client versions. The routes are retired later, once the clients have been migrated (user's decision); `POST /datasets/{dataset_mfid}/files` stays for catalog records.
 
-### Before the Foundry switch (decided 2026-10-29)
+### Before the Foundry switch (decided 2026-10-29; superseded by Task 7)
 
-The Foundry moves to `S3Store` only after all of these:
+Task 7 showed Google's S3 interface cannot complete our uploads, and the Foundry stays on `GoogleStore`. Items 1 and 2 are still worth doing on their own (they remove the location guessing and the overwrite-in-place routes); item 3 passed. The list as decided:
 
 1. **Backfill file locations, then remove the lookup.** Some older records have no `storage_path`; today `_determine_storage_path` lists the dataset's prefix in Google on first use and fills it in, which only works on `gcs` (on `s3` such records answer 404 since #386). Run a one-off, reviewed, dry-run-first backfill that sets every such record's `storage_path` (reads storage, writes the database, needs the user's authorization), then remove `_determine_storage_path`, `_ensure_storage_path`, and their four callers (single and dataset download links, ingest, replace).
 2. **Retire the token-based upload routes** (Task 5, once Step 3 shows no remaining callers). They are the only way an object is overwritten in place, and `S3Store` does not pin downloads to an object version (GCS through the S3 API may not support it), so the routes go before the switch, not after.
@@ -193,11 +193,11 @@ Status 2026-10-29: built and tested, PR after #386. Differences from the steps b
 
 ### Task 7: Proving GCS through its S3 API (gate for the Foundry)
 
-No code unless the check finds a gap.
+Done 2026-10-29: results in `docs/self_hosting_phase2_research.md` ("Tested 2026-10-29"). Completion fails on Google's S3 interface, so the Foundry stays on `GoogleStore`; #391 made `GoogleStore` work without a key for other institutions and refuses a Google `S3_ENDPOINT_URL`.
 
-- [ ] **Step 1 (user):** Confirm in the console that the LBL organization does not enforce `iam.disableServiceAccountKeyCreation` (or its managed form) or `storage.restrictAuthTypes`; create a disposable bucket, a dedicated service account with Storage Object Admin on that bucket only, and an HMAC key for it.
-- [ ] **Step 2:** Run `python -m app.cli storage check` with `STORAGE_BACKEND=s3`, `S3_ENDPOINT_URL=https://storage.googleapis.com`, `S3_REGION=auto`, the bucket, and the HMAC key, from a workstation; record each step's result in `docs/self_hosting_phase2_research.md` (part checksum enforcement including the changed and missing header cases, completion, head, signed download with filename, delete). Also download a presigned URL with an `Authorization: Bearer x` header added, as released clients do (see "Before the Foundry switch", item 3).
-- [ ] **Step 3:** If every step passes, propose the staging switch to the user and the deploy session (settings and secrets in mf-crucible-deploy, staging first, crucible-tests run, then production); after production runs on `S3Store`, remove `GoogleStore`, `google-cloud-storage`, and the legacy routes in a later release. If a step fails, `GoogleStore` stays, and the result is recorded with the reason.
+- [x] **Step 1 (user):** Confirm in the console that the LBL organization does not enforce `iam.disableServiceAccountKeyCreation` (or its managed form) or `storage.restrictAuthTypes`; create a disposable bucket, a dedicated service account with Storage Object Admin on that bucket only, and an HMAC key for it.
+- [x] **Step 2:** Run `python -m app.cli storage check` with `STORAGE_BACKEND=s3`, `S3_ENDPOINT_URL=https://storage.googleapis.com`, `S3_REGION=auto`, the bucket, and the HMAC key, from a workstation; record each step's result in `docs/self_hosting_phase2_research.md` (part checksum enforcement including the changed and missing header cases, completion, head, signed download with filename, delete). Also download a presigned URL with an `Authorization: Bearer x` header added, as released clients do (see "Before the Foundry switch", item 3).
+- [x] **Step 3 (a step failed; `GoogleStore` stays):** If every step passes, propose the staging switch to the user and the deploy session (settings and secrets in mf-crucible-deploy, staging first, crucible-tests run, then production); after production runs on `S3Store`, remove `GoogleStore`, `google-cloud-storage`, and the legacy routes in a later release. If a step fails, `GoogleStore` stays, and the result is recorded with the reason.
 
 ## Open questions
 
@@ -208,6 +208,7 @@ No code unless the check finds a gap.
 ## Later items
 
 1. **`storage_backend` naming a store.** With several stores connected, `storage_backend` could say which store holds a file, with `"gcs"` kept as the name of the default store for existing records. Today every value other than `"gcs"` means catalog only, and catalog records already use free text (`"nersc-perlmutter"`, `"globus"`), so a store ID must not be confusable with them: use a reserved form such as `store:<id>`, or a table of registered stores the value must match. No change until a second store is needed.
+2. **Drop `GCS_SA` from the Foundry** once the legacy upload routes are retired (they still use it): give the pod's Workload Identity storage access, sign downloads as `MULTIPART_UPLOAD_SIGNER`, remove the secret from the deployment. Production IAM and deploy change, for the user and the deploy session.
 
 ## Done when
 

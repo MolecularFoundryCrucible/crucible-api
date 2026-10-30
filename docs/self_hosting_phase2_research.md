@@ -17,6 +17,15 @@ Research before planning Phase 2 (one storage layer; an object store in the Comp
 - HMAC keys are long-lived secrets (the current multipart signer needs none); the organization policy that disables service account key creation also blocks HMAC keys, and `storage.restrictAuthTypes` can block HMAC requests ([hmackeys](https://docs.cloud.google.com/storage/docs/authentication/hmackeys), [restrict-service-accounts](https://docs.cloud.google.com/organization-policy/restrict-service-accounts)).
 - Projects with many GCS users keep a native GCS adapter beside S3 (GitLab, Sentry, Label Studio, DVC); projects relying on the interoperability layer reported multipart, copy, header and precondition breakages (Nextcloud, ClickHouse, Mastodon).
 
+### Tested 2026-10-29 (Task 7)
+
+`storage check` through `S3Store`, with an HMAC key on a disposable bucket in `mf-crucible`:
+
+- Passed: start, upload a part and re-upload it, refuse a part with the wrong checksum (400), other bytes with the header changed to match (403) or left out (400), list parts (no per-part checksums reported), head (no version IDs; the ETag stands in), signed download with the file name, signed download with `Authorization: Bearer` added (200), record files, empty object, delete, abort.
+- Failed: `CompleteMultipartUpload` with a `ChecksumCRC32C` per part, which `S3Store` sends (and AWS requires for uploads started with a checksum algorithm): 400 `MalformedCompleteMultipartUploadRequest`; Google's schema allows only `PartNumber` and `ETag` ([complete](https://docs.cloud.google.com/storage/docs/xml-api/post-object-complete)). Without them completion works and the object's CRC32C matches the combined part checksums, but a wrong whole-object `ChecksumCRC32C` is accepted unchecked.
+- Decision (user, 2026-10-29): the Foundry stays on `GoogleStore`, the native adapter; Google's S3 interface is not used, and `STORAGE_BACKEND=s3` refuses a Google endpoint (#391). Clients see the same routes on every backend.
+- `GoogleStore` was then made usable by any institution (#391): `GCS_SA` and `MULTIPART_UPLOAD_SIGNER` are optional, the server uses Application Default Credentials, and URLs are signed with a key, by impersonation, or through IAM signBlob. `storage check` passed with the Foundry's settings, impersonation, a key file, and a keyless attached account; the Compose bundle passed on `gcs` with a key file.
+
 ## Object store for the bundle
 
 - MinIO's community edition is no longer maintained: console removed in 2025, no binaries or images since October 2025, repository archived in 2026, `minio/minio` gone from Docker Hub ([minio/minio](https://github.com/minio/minio)).

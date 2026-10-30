@@ -89,6 +89,24 @@ def test_unstorable_json_is_rejected(dataset, db_engine, body, location, kind):
         assert session.exec(select(ScientificMetadataBinary)).all() == []
 
 
+@pytest.mark.parametrize("size, offloaded", [(100, False), (200_000, True)], ids=["small", "large"])
+def test_large_bodies_are_checked_off_the_event_loop(dataset, db_engine, monkeypatch, size, offloaded):
+    import app.api.main as main
+    calls = []
+    real = main.run_in_threadpool
+
+    async def recording(func, *args):
+        calls.append(func)
+        return await real(func, *args)
+
+    monkeypatch.setattr(main, "run_in_threadpool", recording)
+    body = {"pad": "x" * size, "bad": "a\u0000"}
+    response = dataset.post("/resources/ds-nul/metadata", json=body)
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"][0]["loc"] == ["body", "bad"]
+    assert (main._unstorable_body_response in calls) is offloaded
+
+
 def test_valid_unicode_and_numbers_are_accepted(dataset, db_engine):
     body = '{"emoji": "\\ud83d\\ude00", "cjk": "結晶", "ctrl": "tab\\there\\u0001", "big": 12345678901234567890, "f": 1.5e300}'
     response = dataset.post("/resources/ds-nul/metadata", content=body, headers={"Content-Type": "application/json"})

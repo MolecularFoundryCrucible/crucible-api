@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_fastapi_instrumentator import Instrumentator
+from starlette.concurrency import run_in_threadpool
 
 from app.api.routes import multipart
 from app.build_info import api_version
@@ -155,6 +156,8 @@ def _audit_privileged_request(
 
 
 UNSTORABLE_ERROR_LIMIT = 20
+# Bodies above this are checked in the threadpool so parsing them does not stall the event loop.
+UNSTORABLE_INLINE_LIMIT = 64 * 1024
 
 
 class _NonFiniteNumber:
@@ -208,25 +211,35 @@ def _unstorable(value, location=("body",)):
     return found
 
 
+def _unstorable_body_response(body: bytes):
+    try:
+        problems = _unstorable(json.loads(body, parse_constant=_NonFiniteNumber))
+    except ValueError:
+        problems = []
+    except RecursionError:
+        return JSONResponse(status_code=422, content={"detail": [
+            {"type": "json_too_deep", "loc": ["body"], "msg": "JSON nesting is too deep"}
+        ]})
+    if problems:
+        return JSONResponse(status_code=422, content={"detail": [
+            {"type": kind, "loc": list(location), "msg": message}
+            for location, kind, message in problems[:UNSTORABLE_ERROR_LIMIT]
+        ]})
+    return None
+
+
 @app.middleware("http")
 async def reject_unstorable_json(request: Request, call_next):
     content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
     if content_type == "application/json" or content_type.endswith("+json"):
         body = await request.body()
         if body:
-            try:
-                problems = _unstorable(json.loads(body, parse_constant=_NonFiniteNumber))
-            except ValueError:
-                problems = []
-            except RecursionError:
-                return JSONResponse(status_code=422, content={"detail": [
-                    {"type": "json_too_deep", "loc": ["body"], "msg": "JSON nesting is too deep"}
-                ]})
-            if problems:
-                return JSONResponse(status_code=422, content={"detail": [
-                    {"type": kind, "loc": list(location), "msg": message}
-                    for location, kind, message in problems[:UNSTORABLE_ERROR_LIMIT]
-                ]})
+            if len(body) > UNSTORABLE_INLINE_LIMIT:
+                rejection = await run_in_threadpool(_unstorable_body_response, body)
+            else:
+                rejection = _unstorable_body_response(body)
+            if rejection is not None:
+                return rejection
     return await call_next(request)
 
 

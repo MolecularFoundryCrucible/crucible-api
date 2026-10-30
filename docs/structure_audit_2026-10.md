@@ -21,6 +21,7 @@ Split routes by sub-resource (for example datasets: files, thumbnails, keywords,
 - `app/api/routes/datasets.py` imports `start_postprocessing_run` from `routes/pipelines.py`. Move it to `app/services`.
 - `app/utils/gcs_record_utils.py` already writes through `app.storage`; only its name says GCS. Rename it (for example `record_store.py`).
 - `app/general_utils.py` belongs in `app/utils/`. `app/utils` also holds service-like code (`user_utils`, `project_utils`, `deletion_utils`) that fits `app/services`.
+- `app/models/response_schemas.py` mixes shared replies (`MessageResponse`, `DetailResponse`) with area models. Move the area ones next to their resource, as datasets, samples and instruments already do: API keys and `AccountInfo` to users or a new `account.py`, `DownloadLinkRead` to files, `EntityGraph*` to `resource_graph.py`, `DatasetSampleLinkResponse` to `links.py`, `ProjectSyncResult` to `projects.py`; keep the rest as `models/common.py`. The OpenAPI document must come out identical.
 - `app/api/routes/gcs_storage.py` holds the legacy upload routes, the only Google-specific code outside `app/storage`. It goes with 4.0.
 
 ## Configuration
@@ -29,7 +30,7 @@ Split routes by sub-resource (for example datasets: files, thumbnails, keywords,
 - The Secret Manager `NAME_VERSION` form stays while the Foundry uses it; mounted files (`NAME` in the secrets directory) are the portable form.
 - The image runs as root under `/root`. A non-root user needs the deploy repository's CronJob command and paths changed at the same time.
 - The `uv` version is pinned twice: the Dockerfile and `.github/workflows/*.yml`.
-- Dependabot does not watch the Compose images (`deploy/compose/compose.yaml`) or the CI service images. Add a `docker` entry for `/deploy/compose`.
+- Dependabot watches the Compose images (`docker-compose` entry) but not the CI service images or the Hub release pinned in `tests.yml`; bump those by hand.
 - `.gitignore` is mostly a generic Python template (Django, Flask, Sphinx and others). Trim it to what this repository produces.
 
 ## Migrations

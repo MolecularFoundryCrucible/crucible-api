@@ -1,11 +1,11 @@
 [project]
 name = "crucible-api"
-version = "3.3.0"
+version = "3.3.1"
 description = "Crucible API: scientific records service for the Molecular Foundry"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "cachetools>=5.5.2",
+    "cachetools>=7.2.8",
     "fastapi==0.162.0",
     "google-api-core==2.24.0",
     "google-auth==2.62.0",

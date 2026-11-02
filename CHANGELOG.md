@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- SQLAlchemy 2.1, which makes psycopg 3 the default for `postgresql://` URLs; the server names `postgresql+psycopg2://`, and test database URLs (`CRUCIBLE_TEST_PG_URL` and the others) must too.
 - The image builds on `python:3.11-slim-trixie` without unused libraries (cloudevents, h5py, imageio, networkx, numpy, pg8000, pytz, nano-crucible): about 330 MB instead of 1.4 GB.
 - The OpenAPI document is no longer tracked; CI generates it on each merge to `main` (workflow artifact) and attaches `crucible-api.json` and its digest to each GitHub release.
 - The image no longer takes a `BRANCH_NAME` build argument; `/health` still reports `BRANCH_NAME` when set at runtime.

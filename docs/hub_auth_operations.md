@@ -40,7 +40,7 @@ Run the commit form hourly with no overlapping runs, and watch its counts and du
 PostgreSQL tests need an isolated local database named `crucible_hub_auth_test`; they refuse other names and non-loopback hosts. Never point them at a shared database.
 
 ```bash
-HUB_AUTH_TEST_DATABASE_URL=postgresql://localhost/crucible_hub_auth_test \
+HUB_AUTH_TEST_DATABASE_URL=postgresql+psycopg2://localhost/crucible_hub_auth_test \
   .venv/bin/pytest -q tests/test_hub_auth_postgres.py tests/test_hub_tokens.py
 ```
 

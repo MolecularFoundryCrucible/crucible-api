@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Removed
+
+- `GET /regenerate_apikey`, deprecated since June 2026: it rotated the key on a GET with the session cookie, so any page could trigger it. Use `POST /auth/apikey/regenerate` (browser) or `POST /account/apikey/regenerate` (Hub).
+
 ### Changed
 
 - The image builds on `python:3.11-slim-trixie` without unused libraries (cloudevents, h5py, imageio, networkx, numpy, pg8000, pytz, nano-crucible): about 330 MB instead of 1.4 GB.

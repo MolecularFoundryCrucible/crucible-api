@@ -431,7 +431,7 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
 - `void_links(session, user: User) -> None`.
 - Routes per the spec's API routes section. `GET` and `POST /auth/hub/password-link`; `GET` and `POST /auth/hub/register`; `POST /account/password`; `POST /users/{user_ref}/password-link`; `DELETE /users/{user_ref}/password`.
 - `require_credential_change(principal, *, target: User)` in `auth_utils.py`, implementing the spec's table of who may do what.
-- Refusals carry a stable `detail.code`: `api_key_not_allowed` and `admin_target_not_allowed` (403), `current_password_invalid` (422, never 401). New admin routes accept `X-Crucible-Privilege-Mode` through `authorize_user`, like the others; confirm the header name in `PRIVILEGE_MODE_HEADER`.
+- Refusals carry a stable `detail.code`: `api_key_not_allowed` and `admin_target_not_allowed` (403), `current_password_invalid` (422, never 401). New admin routes accept the `Crucible-Privilege-Mode` header through `authorize_user`, like the others.
 - CLI: `admin password-link --user REF`, `admin create` prints a link when passwords are on, `auth revoke-passwords [--commit]`, `auth rewrite-issuer --from URL --to URL [--commit]`.
 
 - [ ] **Step 1: Write failing tests:**

@@ -12,6 +12,7 @@ from joserfc.jwk import OctKey, RSAKey
 
 import app.utils.auth_utils as auth_utils
 from app.api.main import app
+from app.auth import browser_login
 from app.auth.providers import get_oauth
 
 ISSUER = "https://orcid.org"
@@ -113,9 +114,10 @@ def test_callback_only_returns_to_local_paths(browser, orcid, cookie, target):
     assert response.headers["location"] == target
 
 
-def test_login_sends_a_fresh_state_and_nonce(browser):
+def test_each_browser_gets_a_random_state_and_nonce(browser):
+    other = TestClient(app, base_url=BROWSER_URL, follow_redirects=False)
     first = parse_qs(urlparse(browser.get("/auth/login").headers["location"]).query)
-    second = parse_qs(urlparse(browser.get("/auth/login").headers["location"]).query)
+    second = parse_qs(urlparse(other.get("/auth/login").headers["location"]).query)
     assert first["state"][0] != second["state"][0]
     assert first["nonce"][0] != second["nonce"][0]
     assert first["nonce"][0] != "whatever"
@@ -196,11 +198,66 @@ def test_provider_error_is_400_without_calling_orcid(browser, orcid):
     assert not orcid.token_calls
 
 
-def test_starting_again_replaces_the_earlier_sign_in(browser, orcid):
+def login_redirect_query(browser):
+    return parse_qs(urlparse(browser.get("/auth/login").headers["location"]).query)
+
+
+def test_loading_login_twice_can_still_finish_signing_in(browser, orcid):
+    first = login_redirect_query(browser)
+    second = login_redirect_query(browser)
+    assert first["state"] == second["state"]
+    assert first["nonce"] == second["nonce"]
+    orcid.nonce = first["nonce"][0]
+    assert browser.get("/auth", params={"code": "abc", "state": first["state"][0]}).status_code == 307
+
+
+def test_repeated_login_state_still_works_only_once(browser, orcid):
+    state = start_login(browser, orcid)
+    start_login(browser, orcid)
+    assert browser.get("/auth", params={"code": "abc", "state": state}).status_code == 307
+    assert browser.get("/auth", params={"code": "abc", "state": state}).status_code == 400
+
+
+def test_a_new_sign_in_after_finishing_gets_fresh_values(browser, orcid):
     first = start_login(browser, orcid)
-    second = start_login(browser, orcid)
-    assert browser.get("/auth", params={"code": "abc", "state": first}).status_code == 400
-    assert browser.get("/auth", params={"code": "abc", "state": second}).status_code == 307
+    first_nonce = orcid.nonce
+    browser.get("/auth", params={"code": "abc", "state": first})
+    assert start_login(browser, orcid) != first
+    assert orcid.nonce != first_nonce
+
+
+def test_a_new_sign_in_after_a_failed_exchange_gets_fresh_values(browser, orcid):
+    first = start_login(browser, orcid)
+    orcid.claims = {"aud": "someone-else"}
+    assert browser.get("/auth", params={"code": "abc", "state": first}).status_code == 502
+    assert start_login(browser, orcid) != first
+
+
+def test_other_browsers_do_not_share_a_sign_in(browser, orcid):
+    other = TestClient(app, base_url=BROWSER_URL, follow_redirects=False)
+    assert start_login(browser, orcid) != start_login(other, orcid)
+
+
+def test_pending_sign_in_older_than_its_lifetime_is_not_reused(browser, orcid, monkeypatch):
+    first = start_login(browser, orcid)
+    later = time.time() + 601
+    monkeypatch.setattr(browser_login.time, "time", lambda: later)
+    assert start_login(browser, orcid) != first
+
+
+def test_forged_callback_does_not_disturb_a_sign_in_in_progress(browser, orcid):
+    state = start_login(browser, orcid)
+    assert browser.get("/auth", params={"code": "abc", "state": "forged"}).status_code == 400
+    assert start_login(browser, orcid) == state
+    assert browser.get("/auth", params={"code": "abc", "state": state}).status_code == 307
+
+
+def test_rejected_callback_is_logged_without_its_values(browser, orcid, caplog):
+    start_login(browser, orcid)
+    with caplog.at_level("WARNING", logger="app.auth.browser_login"):
+        browser.get("/auth", params={"code": "secret-code", "state": "secret-state"})
+    assert "rejected" in caplog.text
+    assert "secret-code" not in caplog.text and "secret-state" not in caplog.text
 
 
 def test_session_cookie_is_cleared_after_signing_in(browser, orcid):

@@ -53,7 +53,7 @@ from app.models.core_models import (
     AssociatedFile, IngestionRequest, Project, Sample,
     DeletionRequest, Instrument, AccessGroupJoinRequest, DatasetSampleLink, SampleLink,
     DatasetLink, ApiToken, UploadSession, DeletionAuditLog, DatasetKeywordLink, Thumbnail,
-    ResourceEmbedding, UserPreferences, UserRecentResource, PostprocessingRun, FileVersion,
+    ResourceEmbedding, UserPreferences, UserRecentResource, PostprocessingRun, FileVersion, UserIdentity,
 )
 from app.utils.auth_utils import authenticate_user
 from app.utils.permissions import GroupMembership, PlatformRole, Principal, Role
@@ -68,7 +68,7 @@ TEST_TABLES = [
     Instrument.__table__, AccessGroupJoinRequest.__table__, DatasetSampleLink.__table__,
     SampleLink.__table__, DatasetLink.__table__, ApiToken.__table__, UploadSession.__table__,
     DeletionAuditLog.__table__, DatasetKeywordLink.__table__, Thumbnail.__table__,
-    ResourceEmbedding.__table__, UserPreferences.__table__, UserRecentResource.__table__,
+    ResourceEmbedding.__table__, UserPreferences.__table__, UserRecentResource.__table__, UserIdentity.__table__,
     PostprocessingRun.__table__, FileVersion.__table__,
 ]
 

@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `user_identity` table and `python -m app.cli auth backfill-identities`, recording how each person signs in; sign-in still looks people up as before.
+
 ### Security
 
 - The older browser ORCID sign-in (`/login`, `/auth`, `/user_apikey`) now uses Authlib's OIDC client, which checks `state` and `nonce` and verifies ORCID's ID token.

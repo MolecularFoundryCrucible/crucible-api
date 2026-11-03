@@ -8,6 +8,7 @@ from urllib.parse import urlencode, urlparse
 
 from sqlmodel import Session, select
 
+from app.auth.identity import ensure_identity
 from app.config import ConfigurationError, get_settings, optional_secret
 from app.models.core_models import HubLoginCode, HubLoginTransaction, User
 from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens_in_session
@@ -155,6 +156,7 @@ def create_handoff_code(engine, transaction: HubLoginTransaction, orcid: str, gi
         if not user.last_name and family_name:
             user.last_name = family_name
         sql_add_user_to_access_group(orcid, orcid, session, role=Role.OWNER, group_type=AccessGroupType.IDENTITY)
+        ensure_identity(session, user, get_settings().hub.orcid_issuer, orcid)
         session.add(HubLoginCode(
             code_hash=_digest(code),
             user_unique_id=orcid,

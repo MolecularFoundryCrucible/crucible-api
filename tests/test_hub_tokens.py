@@ -20,6 +20,7 @@ from app.models.core_models import (
     HubTokenFamily,
     User,
     UserAccessGroupLink,
+    UserIdentity,
 )
 import app.utils.auth_utils as auth_utils
 from app.utils.hub_tokens import (
@@ -74,7 +75,7 @@ def engine():
         tables=[
             User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__,
             HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__,
-            HubLoginTransaction.__table__, HubLoginCode.__table__,
+            HubLoginTransaction.__table__, HubLoginCode.__table__, UserIdentity.__table__,
         ],
     )
     with Session(engine) as session:

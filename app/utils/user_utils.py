@@ -8,6 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from app.config import get_secret, get_settings
+from app.auth.identity import default_orcid_issuer, ensure_identity
 from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
@@ -138,6 +139,8 @@ def provision_user(session, *, unique_id: str, first_name: str, last_name: str, 
         UserAccessGroupLink(user_id=user.id, accessgroup_id=group.id, role=Role.CONTRIBUTOR.db_value)
         for group in project_groups
     ])
+    if is_orcid(unique_id):
+        ensure_identity(session, user, default_orcid_issuer(), unique_id)
     return user
 
 

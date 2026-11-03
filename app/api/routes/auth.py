@@ -10,6 +10,8 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_api_root_path
 from app.auth import browser_login
+from app.auth.identity import ensure_identity
+from app.config import get_settings
 from app.models.core_models import User
 from app.models.response_schemas import ApiKeyRead, LegacyApiKeyRead
 from app.utils.permissions import AccessGroupType, Role
@@ -101,6 +103,7 @@ def get_apikey(request: Request):
             role=Role.OWNER,
             group_type=AccessGroupType.IDENTITY,
         )
+        ensure_identity(session, user, get_settings().api.orcid_issuer, orcid)
         session.commit()
 
         user_email = user.email

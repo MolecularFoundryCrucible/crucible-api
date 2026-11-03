@@ -196,7 +196,7 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 - Argon2id through `pwdlib[argon2]` (0.3.1, August 2026), which wraps `argon2-cffi`. `pwdlib` is maintained but small, so it is pinned, and its only job is a thin wrapper over the PHC string. No custom hash format.
 - Parameters above OWASP's floor of m=19 MiB, t=2, p=1, chosen by measurement on a small machine and stated in settings, with a test that fails if they fall below the floor. Salts come from the library.
 - When parameters change, rehash at the next successful sign-in.
-- Pepper: HMAC-SHA256 of the normalized password with a secret key held outside the database, base64-encoded, then Argon2id. This is the form OWASP accepts for pre-hashing, and NIST says SHOULD add a keyed step. It protects against a leak of the database alone, so its backup is kept apart from database backups, and the install guide says so, unlike the current advice to back up `secrets/` together with the database. `pepper_id` allows routine rotation at next sign-in. A stolen pepper needs everyone to reset, as OWASP notes. Losing it invalidates every password, but API keys keep working and an administrator can issue new links, so it is recoverable.
+- Pepper: HMAC-SHA256 of the normalized password with a secret key held outside the database, base64-encoded, then Argon2id. This is the form OWASP accepts for pre-hashing, and NIST says SHOULD add a keyed step. It protects against a leak of the database alone, so its backup is kept apart from database backups, and the install guide says so, unlike the current advice to back up `secrets/` together with the database. `pepper_id` allows routine rotation at next sign-in. An empty pepper counts as missing, and startup refuses it when passwords are on. A stolen pepper needs everyone to reset, as OWASP notes. Losing it invalidates every password, but API keys keep working and an administrator can issue new links, so it is recoverable.
 
 ### Password rules
 
@@ -206,6 +206,7 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 - Compare the whole password, case-insensitively, against a list shipped in the image, plus context values: the username, email, names and the service name. Say why it was rejected, and give short guidance on choosing a good one (NIST SHALL). Since few common passwords reach 15 characters, the list is built from a licensed public source and filtered to that length. No online check, so it works offline.
 - Password managers, autofill and paste work: correct `autocomplete` values, no blocking script, and a show-password control.
 - No hints or security questions.
+- An empty submitted password or a missing stored hash never verifies.
 
 ### Attempts
 
@@ -213,8 +214,8 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 - The first 4 failures have no delay, then 2, 4, 8 seconds and so on, up to 15 minutes. A success resets the count.
 - During a delay, the same work is done against a dummy hash, the submitted password is not checked, and the attempt does not count. So the response and timing match a wrong password.
 - Hard limit: at 100 counted failures the password is disabled, as NIST requires. With the delays this takes about a day of constant guessing. NIST also requires rebinding, so clearing it means an administrator issuing a new link, not a switch that re-enables the old password. Other sign-in methods and API keys are unaffected.
-- **Keeping attackers from locking people out.** A single guess every 15 minutes would otherwise keep a person out indefinitely, since account holders can list usernames. A browser that has signed in successfully gets a signed cookie for that user (OWASP's device cookie), which bypasses the delay. Attempts with that cookie count separately and have their own small limit. Without it, a legitimate user in a browser they have never used waits out the delay or asks an administrator.
-- Per address: a wider limit, to slow one source trying many accounts. The address comes from the header the bundle's Caddy sets, trusted only when configured.
+- **Keeping attackers from locking people out.** A single guess every 15 minutes would otherwise keep a person out indefinitely, since account holders can list usernames. A browser that has signed in successfully gets a signed cookie for that user (OWASP's device cookie), which bypasses the delay. It is signed with `itsdangerous` under its own salt, so no other signed value can pass as one. Attempts with that cookie count separately and have their own small limit. Without it, a legitimate user in a browser they have never used waits out the delay or asks an administrator.
+- Per address: a wider limit, to slow one source trying many accounts, also covering registration and opening or submitting password links. The address comes from the header the bundle's Caddy sets, trusted only when configured.
 - `POST /account/password` uses the same account counter, so a stolen session cannot guess the current password freely.
 - A limit on simultaneous hash checks in each worker, so a burst cannot exhaust memory.
 
@@ -225,7 +226,7 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 
 ### The form
 
-- Served by the API under `/auth/hub/`, over HTTPS whenever it crosses a network. It refuses to show when the public address is plain HTTP on anything but `localhost`, the same rule as `_trusted_public_url`.
+- Served by the API under `/auth/hub/`, over HTTPS whenever it crosses a network. Startup refuses passwords on when the public address is plain HTTP on anything but `localhost`, the same rule as `_trusted_public_url`.
 - POST only, tied to the login record: the state value plus the browser cookie, which is also the CSRF protection. A failed attempt does not use up the record, unlike `consume_login` (`hub_login.py:133`), so a typo does not restart sign-in. It is consumed on success.
 - Headers: `Cache-Control: no-store`, a strict Content-Security-Policy with `frame-ancestors 'none'`, and `Referrer-Policy: no-referrer`.
 - A password must never reach logs. A test submits a marker password through each failure path and asserts it appears in no log or response.
@@ -288,12 +289,14 @@ Each is one or more small PRs to `main`, off by default until the last step. Mer
 5. **Linking and registration.** User and admin routes, `disabled_at`, `pending_at`, the registration setting, then the Hub's sign-in methods page through the Hub session.
 6. **API key hashing.** Clients first. Must be finished before password sign-in is on by default anywhere.
 7. **Local passwords.** Everything in that section, behind `CRUCIBLE_AUTH_PASSWORD_ENABLED`, off by default in code.
-8. **Independent security review** of steps 1 to 7 before release, with the test list below. A professional review is worth considering if labs outside LBL will run it.
+8. **Independent security review** of steps 1 to 7 before release, with the test list below, checking each requirement here separately. A professional review is worth considering if labs outside LBL will run it.
 9. **Compose default.** Passwords on in the bundle, `admin create` prints a link, cleanup job added, install guide rewritten around HTTPS, and a release.
 
 Changes to staging and production databases need the user's approval, as always; steps 3, 4, 5 and 6 involve them.
 
 ## Tests that must exist
+
+Settings: zero or negative link, cookie and retention lifetimes refused; an empty pepper refused; passwords on a plain HTTP public address refused.
 
 Password: floor on hash parameters; NFC round trip; 15 and 256 boundaries; blocklist reason; parallel guesses cannot exceed the counter; delay and lock schedule; delayed attempts not counted; device cookie bypass, and its own limit; lock leaves other methods working; only a new link clears a lock; rename keeps the lock and does not pass it on; timing comparison across all failure cases; marker password in no log or response; rehash on parameter change; pepper rotation; service accounts refused.
 

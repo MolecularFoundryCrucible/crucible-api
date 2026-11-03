@@ -230,7 +230,7 @@ All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved f
 - Modify: `app/utils/hub_auth_maintenance.py:11-40`, `deploy/compose/compose.yaml`, `deploy/compose/README.md`
 - Test: `tests/test_hub_auth_cleanup_job.py`
 
-- [ ] **Step 1: Write failing tests:** `test_cleanup_removes_expired_password_tokens`, `test_cleanup_removes_address_rows_after_30_days`, `test_cleanup_purges_auth_event_addresses_and_failures_after_90_days`, `test_cleanup_purges_other_events_after_a_year`, `test_cleanup_keeps_credential_locks`. Tables and rows not yet present from later tasks are added to this list by the task that creates them.
+- [ ] **Step 1: Write failing tests:** `test_cleanup_removes_expired_password_tokens`, `test_cleanup_removes_address_rows_after_30_days`, `test_cleanup_purges_auth_event_addresses_and_failures_after_90_days`, `test_cleanup_purges_other_events_after_a_year`, `test_cleanup_keeps_credential_locks`, `test_zero_or_negative_retention_fails_settings_check`. Tables and rows not yet present from later tasks are added to this list by the task that creates them.
 - [ ] **Step 2: Run to verify they fail, then implement.** Retention values come from settings, defaulting as above.
 - [ ] **Step 3: Add an `auth-cleanup` service** beside `storage-cleanup`, with the same hourly pattern and the same hardening. CI's Compose smoke test checks it stays up.
 - [ ] **Step 4: Run the full suite, commit, PR.** Tell the deployment session the Foundry's CronJob now covers more tables, with no command change.
@@ -286,7 +286,8 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
   - `test_spaces_preserved`: `"  pass phrase here long  "` does not verify with the spaces removed
   - `test_15_code_points_accepted_14_refused`, `test_emoji_count_as_one_each`, `test_256_accepted_257_refused`
   - `test_no_composition_rule`, `test_blocklist_whole_match_case_insensitive`, `test_blocklist_reason_given`, `test_context_username_email_names_service_refused`
-  - `test_rehash_returned_when_parameters_raised`, `test_rehash_returned_when_pepper_rotated`, `test_old_pepper_verifies_during_rotation`, `test_wrong_pepper_fails`, `test_missing_pepper_refuses_startup_when_passwords_enabled`
+  - `test_rehash_returned_when_parameters_raised`, `test_rehash_returned_when_pepper_rotated`, `test_old_pepper_verifies_during_rotation`, `test_wrong_pepper_fails`, `test_missing_pepper_refuses_startup_when_passwords_enabled`, `test_empty_pepper_refuses_startup_when_passwords_enabled`
+  - `test_empty_password_never_verifies`, `test_missing_or_empty_stored_hash_never_verifies`
   - `test_verify_dummy_takes_comparable_time`
   - `test_hash_not_in_user_read_or_any_response_schema`
 - [ ] **Step 2: Run to verify they fail.**
@@ -305,7 +306,7 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
 - Model `LoginThrottle`, and the failure columns on `LocalCredential`, as in the spec.
 - `begin_attempt(engine, credential_user_id: int | None, client_address: str | None, *, device_cookie: DeviceCookie | None, now: datetime) -> AttemptDecision`: one short committed update, returning `check_password: bool`. No lock or connection is held afterwards.
 - `finish_attempt(engine, decision: AttemptDecision, *, success: bool, now: datetime) -> None`.
-- `issue_device_cookie(user_id: int) -> str`, `read_device_cookie(value: str | None, user_id: int) -> DeviceCookie | None`: `user_id,nonce,HMAC`, signed with the secret key, following OWASP's device cookie design. Lifetime 90 days by default.
+- `issue_device_cookie(user_id: int) -> str`, `read_device_cookie(value: str | None, user_id: int) -> DeviceCookie | None`: following OWASP's device cookie design, signed with `itsdangerous.URLSafeTimedSerializer` under its own salt (`crucible.device-cookie`), not a hand-written HMAC. Lifetime 90 days by default.
 - `hash_slot()`: a per-worker semaphore around hashing.
 - `client_address(request) -> str | None`: reads the rightmost address appended by the trusted proxy, using `CRUCIBLE_AUTH_TRUSTED_PROXY_HOPS` (default 0, the bundle sets 1).
 
@@ -313,7 +314,7 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
   - Schedule: `test_first_four_failures_no_delay`, `test_delay_doubles_from_2_seconds`, `test_delay_caps_at_900_seconds`, `test_success_resets`
   - `test_attempt_during_delay_not_counted_and_password_not_checked`, `test_correct_password_during_delay_fails`
   - `test_lock_at_100_counted_failures`, `test_100_failures_take_about_a_day_at_the_cap` (simulated clock), `test_locked_refuses_correct_password`
-  - Device cookie: `test_cookie_bypasses_account_delay`, `test_cookie_for_other_user_ignored`, `test_tampered_cookie_ignored`, `test_cookie_has_own_failure_limit`, `test_locked_credential_refuses_even_with_cookie`
+  - Device cookie: `test_cookie_bypasses_account_delay`, `test_cookie_for_other_user_ignored`, `test_tampered_cookie_ignored`, `test_cookie_has_own_failure_limit`, `test_locked_credential_refuses_even_with_cookie`, `test_session_or_user_token_signature_is_not_a_device_cookie`, `test_zero_or_negative_cookie_lifetime_fails_settings_check`
   - Address: `test_address_limit_applies_across_accounts`, `test_unknown_usernames_count_against_address`, `test_spoofed_forwarded_header_does_not_change_address`, `test_address_row_removed_after_30_days`
   - Postgres: `test_parallel_guesses_cannot_exceed_counter` (20 threads, exact count), `test_no_connection_held_during_hash`
   - `test_rename_keeps_lock_and_does_not_pass_it_on`, `test_freed_username_gets_no_counters`
@@ -336,7 +337,7 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
   - `test_marker_password_in_no_log_or_response`, through every failure path, including malformed requests, capturing logs
   - `test_typo_keeps_login_record`, `test_success_consumes_login_record`, `test_form_past_login_lifetime_says_expired_and_is_not_counted`
   - `test_post_without_browser_cookie_refused` (CSRF), `test_get_never_authenticates`
-  - `test_plain_http_public_address_refuses_form`, `test_localhost_http_allowed`
+  - `test_passwords_with_plain_http_public_address_refuse_startup`, `test_localhost_http_allowed`, `test_trusted_proxy_hops_below_zero_refuses_startup`
   - `test_uppercase_and_spaced_username_finds_account`, `test_password_never_altered`
   - `test_password_disabled_route_is_404`, `test_rehash_applied_on_success`, `test_auth_time_is_set_so_step_up_works`, `test_step_up_with_max_age_shows_form_again`
   - `test_device_cookie_set_on_success`, `test_form_has_autocomplete_and_allows_paste`, `test_show_password_works_under_csp`
@@ -368,6 +369,8 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
   - Service accounts: `test_service_account_refused_everywhere`
   - Credential table, one test per row, with `@pytest.mark.parametrize` over API key and Hub session: admin key can issue a link and it is logged; admin key refused on another admin; own key plus correct current password can change; own key alone refused; wrong current password counts on the account counter; key refused for first password, link and unlink; Hub session needs a recent sign-in
   - Change: `test_change_ends_other_sessions`, `test_change_applies_password_rules`, `test_first_password_needs_recent_sign_in_and_generates_username`, `test_password_events_never_touch_api_keys`
+  - Lifetimes: `test_zero_or_negative_link_lifetime_fails_settings_check`
+  - Address limit: `test_address_limit_applies_to_opening_and_submitting_links`
   - Registration: `test_password_register_creates_pending`, `test_register_refused_unless_approval`, `test_register_applies_rules_and_address_limit`, `test_pending_sees_waiting_only_with_correct_password`
   - Contract: `test_wrong_current_password_is_422_with_code`, `test_refusals_have_stable_codes`, `test_elevated_header_accepted_on_new_admin_routes`, `test_link_response_is_no_store`
   - CLI: `test_admin_create_prints_link`, `test_admin_password_link_recovers_locked_sole_admin`, `test_revoke_passwords_dry_run_by_default`, `test_rewrite_issuer_dry_run_by_default`
@@ -378,7 +381,7 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
 
 A gate, not code.
 
-- [ ] **Step 1: Run an independent review** of Tasks 1 to 13 by a fresh reviewer given the code and the spec, without my conclusions, plus `/security-review`. The user decides whether to add `/code-review ultra` or an outside professional, which is worth considering if labs outside LBL will run it.
+- [ ] **Step 1: Run an independent review** of Tasks 1 to 13 by a fresh reviewer given the code and the spec, without my conclusions, plus `/security-review`. It checks each requirement in the spec separately, and tries to disprove each mismatch before reporting it, with evidence to the line (method borrowed from Trail of Bits' `spec-to-code-compliance`, which is not installed). The user decides whether to add `/code-review ultra` or an outside professional, which is worth considering if labs outside LBL will run it.
 - [ ] **Step 2: Fix or record every finding,** with the user deciding anything left open.
 - [ ] **Step 3: Check the spec's "Tests that must exist" list** against the suite, line by line.
 

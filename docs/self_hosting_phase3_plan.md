@@ -275,9 +275,9 @@ Several keys per user, shown once, through `POST`, `GET` and `DELETE /account/ap
 
 ## Order of work
 
-Each is one or more small PRs to `main`, shippable alone, and off by default until the last step.
+Each is one or more small PRs to `main`, off by default until the last step. Merges reach staging; nothing is released to production until all of them are ready, as the user decided on 2026-11-03.
 
-1. **Older ORCID flow onto Authlib (3.3.2).** Move `/auth/login` and `/auth/callback` onto the shared code, which adds `state` and a real `nonce`. Needed regardless.
+1. **Older ORCID flow onto Authlib.** Move `/auth/login` and `/auth/callback` onto the shared code, which adds `state` and a real `nonce`. Needed regardless.
 2. **Confirm with clients.** Ask the Hub session whether it handles MFID users and checks that a re-login returned the same person; ask the nano-crucible session what it relies on. Their answers may add work.
 3. **Identity table and one resolver.** Empty table, double writes, backfill with approval, then lookups switch, while ORCID is still the only provider.
 4. **Generic OIDC.** Provider list, discovery, callbacks, changed login tables, chooser page, Dex in CI. Foundry behaviour is checked unchanged on staging with crucible-tests.

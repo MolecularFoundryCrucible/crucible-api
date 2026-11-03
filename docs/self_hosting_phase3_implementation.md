@@ -38,7 +38,7 @@ Status: written 2026-11-02 for review; not started. The Hub and nano-crucible an
 
 ## Order
 
-Task 1 ships alone as 3.3.2. Tasks 3 to 8 build the provider side while ORCID stays the only provider at the Foundry. Task 9 (API keys) must finish before Task 15 turns passwords on anywhere by default, as the user decided. Tasks 10 to 13 are passwords behind the off switch. Task 14 is the review gate.
+The user decided on 2026-11-03 that nothing is released until all of Phase 3 is ready: merges reach staging, and production stays on its release. Each task is proposed to the user first and built only after they agree. Tasks 3 to 8 build the provider side while ORCID stays the only provider at the Foundry. Task 9 (API keys) must finish before Task 15 turns passwords on anywhere by default, as the user decided. Tasks 10 to 13 are passwords behind the off switch. Task 14 is the review gate.
 
 ## File map
 
@@ -60,14 +60,14 @@ Task 1 ships alone as 3.3.2. Tasks 3 to 8 build the provider side while ORCID st
 
 ---
 
-## Task 1: Older ORCID flow onto Authlib (3.3.2)
+## Task 1: Older ORCID flow onto Authlib
 
-Today `/auth/login` builds its URL by hand with `nonce=whatever` and no `state`, and the callback never checks one, so an attacker could sign a victim's browser into the attacker's account. No migration; ships alone.
+Today `/auth/login` builds its URL by hand with `nonce=whatever` and no `state`, and the callback never checks one, so an attacker could sign a victim's browser into the attacker's account. No migration. No version bump.
 
 **Files:**
 - Create: `app/auth/__init__.py`, `app/auth/oidc.py`
 - Modify: `app/utils/hub_orcid.py` (thin wrappers over `oidc.py`), `app/api/routes/auth.py:43-97,285-288`, `app/utils/auth_utils.py:130-153` (remove `code_for_token_exchange`, `ORCID_TIMEOUT`)
-- Modify: `CHANGELOG.md`, the version file used by the 3.3.1 release (see PR #410)
+- Modify: `CHANGELOG.md`
 - Test: `tests/test_legacy_orcid_login.py`, `tests/test_auth_oidc.py`
 
 **Interfaces:**
@@ -135,9 +135,9 @@ def test_expired_state_cookie_is_refused(client, monkeypatch): ...
 
 - [ ] **Step 6: Run the full suite.** `uv run pytest -q`. Expected: all pass.
 
-- [ ] **Step 7: Bump to 3.3.2, add the changelog line, commit, push a branch, open a PR to `main`.**
+- [ ] **Step 7: Add the changelog line, commit, push a branch, open a PR to `main`.**
 
-- [ ] **Step 8: After merge, the user signs in through `https://crucible.lbl.gov/testapi-staging/user_apikey` in a browser.** Only a person can do this. Expected: it reaches ORCID, returns, and shows their key. Then ask the deployment session for the production PR once the user tags 3.3.2.
+- [ ] **Step 8: After merge, the user signs in through `https://crucible.lbl.gov/testapi-staging/user_apikey` in a browser.** Only a person can do this. Expected: it reaches ORCID, returns, and shows their key.
 
 ## Task 2: Client answers and remaining check
 

@@ -1,5 +1,7 @@
+import importlib.util
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,7 +13,6 @@ from sqlmodel import Session, SQLModel, select
 from app.api.main import app
 from app.api.routes import users as users_routes
 from app.auth.identity import IdentityTaken, ensure_identity
-from app.cli.__main__ import build_parser
 from app.models.core_models import User, UserIdentity
 from app.utils.auth_utils import encode_token
 from app.utils.permissions import PlatformRole
@@ -211,8 +212,16 @@ def seed_for_backfill(engine):
         add_user(session, unique_id="1111-2222-3333-4444", is_service_account=True)
 
 
+def load_backfill():
+    path = Path(__file__).resolve().parents[1] / "migrations/data/20261103_backfill_user_identity.py"
+    spec = importlib.util.spec_from_file_location("backfill_user_identity", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def run_backfill(*args):
-    return build_parser().parse_args(["auth", "backfill-identities", *args])
+    return load_backfill().main(list(args))
 
 
 def test_backfill_requires_the_issuer():
@@ -221,14 +230,12 @@ def test_backfill_requires_the_issuer():
 
 
 def test_backfill_refuses_an_unknown_issuer(db_engine):
-    args = run_backfill("--issuer", "https://example.org")
-    assert args.handler(args) == 1
+    assert run_backfill("--issuer", "https://example.org") == 1
 
 
 def test_backfill_dry_run_writes_nothing(db_engine, capsys):
     seed_for_backfill(db_engine)
-    args = run_backfill("--issuer", ISSUER)
-    assert args.handler(args) == 0
+    assert run_backfill("--issuer", ISSUER) == 0
     assert identities(db_engine) == [(ISSUER, OTHER_ORCID)]
     out = capsys.readouterr().out
     assert "dry run" in out and "would add: 1" in out
@@ -236,8 +243,7 @@ def test_backfill_dry_run_writes_nothing(db_engine, capsys):
 
 def test_backfill_inserts_only_orcid_humans(db_engine, capsys):
     seed_for_backfill(db_engine)
-    args = run_backfill("--issuer", ISSUER, "--commit")
-    assert args.handler(args) == 0
+    assert run_backfill("--issuer", ISSUER, "--commit") == 0
     assert sorted(identities(db_engine)) == sorted([(ISSUER, OTHER_ORCID), (ISSUER, ORCID)])
     out = capsys.readouterr().out
     assert "added: 1" in out and "already linked: 1" in out and "not an ORCID: 1" in out and "service accounts: 1" in out
@@ -245,10 +251,9 @@ def test_backfill_inserts_only_orcid_humans(db_engine, capsys):
 
 def test_backfill_can_run_twice(db_engine, capsys):
     seed_for_backfill(db_engine)
-    args = run_backfill("--issuer", ISSUER, "--commit")
-    args.handler(args)
+    run_backfill("--issuer", ISSUER, "--commit")
     capsys.readouterr()
-    assert args.handler(args) == 0
+    assert run_backfill("--issuer", ISSUER, "--commit") == 0
     assert "added: 0" in capsys.readouterr().out
     assert len(identities(db_engine)) == 2
 
@@ -258,8 +263,7 @@ def test_backfill_reports_an_orcid_linked_to_someone_else_and_leaves_it(db_engin
         holder = add_user(session, unique_id=MFID)
         session.add(UserIdentity(user_id=holder.id, issuer=ISSUER, subject=ORCID))
         add_user(session)
-    args = run_backfill("--issuer", ISSUER, "--commit")
-    assert args.handler(args) == 1
+    assert run_backfill("--issuer", ISSUER, "--commit") == 1
     assert "conflicts: 1" in capsys.readouterr().out
     assert identities(db_engine) == [(ISSUER, ORCID)]
 
@@ -268,8 +272,7 @@ def test_backfill_never_changes_a_user(db_engine):
     seed_for_backfill(db_engine)
     with Session(db_engine) as session:
         before = [(u.unique_id, u.first_name, u.email, u.username) for u in session.exec(select(User).order_by(User.id)).all()]
-    args = run_backfill("--issuer", ISSUER, "--commit")
-    args.handler(args)
+    run_backfill("--issuer", ISSUER, "--commit")
     with Session(db_engine) as session:
         assert before == [(u.unique_id, u.first_name, u.email, u.username) for u in session.exec(select(User).order_by(User.id)).all()]
 

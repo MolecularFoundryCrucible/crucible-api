@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
-- `user_identity` table and `python -m app.cli auth backfill-identities`, recording how each person signs in; sign-in still looks people up as before.
+- `user_identity` table and backfill script (`migrations/data/20261103_backfill_user_identity.py`), recording how each person signs in; sign-in still looks people up as before.
 
 ### Security
 

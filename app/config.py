@@ -190,6 +190,7 @@ class ApiSettings(SettingsGroup):
     conf_file: str | None = None
     trgm_search_threshold: float | None = Field(None, validation_alias="TRGM_SEARCH_THRESHOLD")
     orcid_client_id: str | None = Field(None, validation_alias="ORCID_CLIENT_ID")
+    orcid_issuer: str = Field("https://orcid.org", validation_alias="ORCID_ISSUER")
     orcid_client_secret: SecretStr | None = Field(None, validation_alias="ORCID_CLIENT_SECRET")
 
 

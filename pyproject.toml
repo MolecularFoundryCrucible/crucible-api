@@ -32,6 +32,8 @@ dependencies = [
     "alembic>=1.19.1",
     "protobuf>=5.29.6,<6",
     "authlib>=1.8,<2",
+    "httpx>=0.28.1",
+    "itsdangerous>=2.2.0",
     "python-dotenv>=1.0.1",
     "pydantic-settings==2.16.2",
     "boto3==1.43.123",

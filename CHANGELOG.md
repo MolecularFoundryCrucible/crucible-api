@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Security
+
+- The older browser ORCID sign-in (`/login`, `/auth`, `/user_apikey`) now uses Authlib's OIDC client, which checks `state` and `nonce` and verifies ORCID's ID token.
+
 ## [3.3.1] - 2026-11-02
 
 Maintenance: a much smaller image, SQLAlchemy 2.1, and the removal of a route that rotated API keys on a GET. No migration.

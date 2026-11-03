@@ -278,6 +278,12 @@ def test_orcid_unreachable_at_login_is_502_and_recovers(browser, orcid):
     assert browser.get("/auth/login").status_code == 302
 
 
+def test_failure_message_names_no_provider(browser, orcid):
+    state = start_login(browser, orcid)
+    orcid.down = True
+    assert browser.get("/auth", params={"code": "abc", "state": state}).json()["detail"] == "Sign-in failed; try again."
+
+
 def test_orcid_unreachable_at_token_exchange_is_502(browser, orcid):
     state = start_login(browser, orcid)
     orcid.down = True

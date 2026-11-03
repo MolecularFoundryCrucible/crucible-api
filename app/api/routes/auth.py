@@ -21,7 +21,7 @@ from app.utils.user_utils import sql_add_user_to_access_group
 
 router = APIRouter(tags=["auth"])
 
-SIGN_IN_FAILED = "ORCID sign-in failed; try again"
+SIGN_IN_FAILED = "Sign-in failed; try again."
 
 
 def _local_path(value) -> str:

@@ -70,7 +70,7 @@ The Hub (at 3f63bfc, v1.7.2) and nano-crucible sessions answered on 2026-11-02, 
 
 **Hub:**
 - MFIDs should work. IDs are opaque strings, and no orcid.org link is built from one. Only labels mention ORCID.
-- **A re-login has no same-user check.** `finishHubLogin` replaces the session with whoever came back, and the dialog then says "Signed in again", so a retried action runs as the other account. Several sign-in methods make this easier to hit. A Hub fix is needed before Task 4 ships; Task 4 also adds a check on the API side.
+- **A re-login has no same-user check.** `finishHubLogin` replaces the session with whoever came back, and the dialog then says "Signed in again", so a retried action runs as the other account. Several sign-in methods make this easier to hit. A Hub fix is needed before Task 4 ships (crucible-hub PR #11, awaiting merge); Task 4 also adds a check on the API side.
 - Keep unchanged: `/auth/hub/login`, `/token`, `/refresh`, `/revoke`, the token response shape, including `user_unique_id`, and the exact token `insufficient_user_authentication`.
 - Linking cannot reuse `/hub/auth/callback`, because any valid return replaces the session. It needs its own path, `/hub/auth/link/callback`, also in the API's allowlist, returning by top-level GET. The confirmation page lives under `/hub/account/`.
 - The chooser and form must work at 520x720 in a popup, full page, never framed. With `max_age=0` the chosen method must force fresh sign-in. The Hub's transaction cookie lasts 10 minutes, matching the API's.
@@ -133,8 +133,8 @@ Empty tables, no change in behaviour. Every path that creates or signs in an ORC
 - The Hub flow's provider leg moves onto the registry. `hub_orcid.py` is removed; its API-to-Hub transaction table stays.
 - The older flow keeps its own registered client, `ORCID_CLIENT_ID`, with its own redirect address.
 - `hub_login.create_login(..., provider_key: str, purpose: str = "sign_in", user_id: int | None = None)`.
-- `GET /auth/hub/login` gains optional `required_user` (a `unique_id`). If a different account authenticates, no code is issued and the API redirects to the Hub with `error=login_required` and `state` (OIDC Core 3.1.2.1 leaves `login_hint` to the server's discretion, so an enforced rule needs its own name). Old Hubs omit it and behave as today.
-- `POST /auth/hub/token` adds nullable `auth_time`, once the Hub's stored-session schema accepts it.
+- `GET /auth/hub/login` gains optional `required_user` (a `unique_id`). If a different account authenticates, no code is issued and the API redirects to the Hub with `error=login_required` and `state` (OIDC Core 3.1.2.1 leaves `login_hint` to the server's discretion, so an enforced rule needs its own name). Old Hubs omit it and behave as today. It passes through the browser unsigned, so it is a second check, and the Hub's own comparison remains the enforcing one.
+- `POST /auth/hub/token` adds nullable `auth_time`; current Hubs ignore unknown fields, so no Hub change has to go first.
 - After a valid login record exists, failures redirect to the Hub with `state` and RFC 6749 4.1.2.1 errors: `access_denied`, `login_required`, `temporarily_unavailable`, `server_error`. An invalid or expired record gets the API's own page, because its redirect target cannot be trusted.
 - `GET /auth/methods` returns `[{key, display_name, kind}]`, so the Hub can stop saying ORCID.
 - `resolve_sign_in(session, provider: Provider, identity: VerifiedIdentity, *, invite: InviteContext | None = None) -> SignInOutcome` lands in Task 5; here the flow still calls `ensure_identity` for ORCID only.

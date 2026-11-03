@@ -52,7 +52,7 @@ New tables reference `user.id`, the integer key, as `UserPreferences` already do
 | `created_by_user_id` | int, null, FK `user.id`, on delete set null | set when an administrator made the link |
 | `last_used_at` | timestamptz, null | |
 
-Constraints: unique (`issuer`, `subject`), so one provider account belongs to one person. A partial unique index on `user_id` for the ORCID issuers, so a person has at most one ORCID. Other issuers can have several, because one CILogon issuer can front two institutions.
+Constraints: unique (`issuer`, `subject`), so one provider account belongs to one person. A partial unique index on `user_id` for the ORCID issuers, so a person has at most one ORCID; it may change later, as the user expects. Other issuers can have several, because one CILogon issuer can front two institutions.
 
 Why these columns: OIDC Core section 5.7 says `iss` and `sub` together are the only stable identifier, and the OWASP Authentication cheat sheet says the same. Email and names are not stored here and never used to match. Provider tokens are not stored, because Crucible only uses the provider to sign in. Config names are not stored either, so renaming a provider in settings changes nothing; a provider's issuer changing does need a rewrite, which gets its own command (`auth rewrite-issuer`).
 
@@ -151,7 +151,7 @@ Rules, each with a test:
 **Existing users get rows up front.** My first draft added rows at each person's next sign-in to avoid a production write, but the review showed that rule could re-arm after an unlink and leave an ORCID unbound. So the identity table becomes the only source of truth, in the standard order:
 
 1. Ship the empty table. Every path that creates a user or signs one in also writes the row, while lookups still use `unique_id`. That includes `POST /users` with an ORCID and `admin create --orcid`.
-2. Run `python -m app.cli auth backfill-identities`, idempotent, on staging and then production. It only inserts, and it covers every non-service user whose `unique_id` is an ORCID, with the configured ORCID issuer. This is a production data write and needs the user's approval.
+2. Run the one-time script `migrations/data/20261103_backfill_user_identity.py`, idempotent, on staging and then production. New installations do not need it. It only inserts, and it covers every non-service user whose `unique_id` is an ORCID, with the configured ORCID issuer. This is a production data write and needs the user's approval.
 3. Switch lookups to the table.
 
 `POST /users` and linking check both `user_identity` and `unique_id`, so the two can never disagree about who holds an ORCID.

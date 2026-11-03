@@ -56,7 +56,8 @@ The user decided on 2026-11-03 that nothing is released until all of Phase 3 is 
 | `app/api/routes/hub_auth.py` | sign-in routes, callbacks, chooser, form | modified throughout |
 | `app/api/routes/identities.py` | `/account/identities`, admin identity routes | Task 6 |
 | `app/api/routes/passwords.py` | `/account/password`, admin password routes | Task 13 |
-| `app/cli/auth.py` | `auth` command group | Task 3 |
+| `app/cli/auth.py` | `auth` command group | Task 13 |
+| `migrations/data/20261103_backfill_user_identity.py` | one-time identity backfill | Task 3 |
 
 ---
 
@@ -93,8 +94,8 @@ The Hub (at 3f63bfc, v1.7.2) and nano-crucible sessions answered on 2026-11-02, 
 Empty tables, no change in behaviour. Every path that creates or signs in an ORCID user also writes the identity row.
 
 **Files:**
-- Create: `app/auth/identity.py`, `app/cli/auth.py`, a migration
-- Modify: `app/models/core_models.py`, `app/cli/__main__.py`, `app/cli/admin.py`, `app/api/routes/users.py:535-615`, `app/api/routes/auth.py:117-145`, `app/utils/hub_login.py:140-173`
+- Create: `app/auth/identity.py`, `migrations/data/20261103_backfill_user_identity.py`, a migration
+- Modify: `app/models/core_models.py`, `app/cli/admin.py`, `app/api/routes/users.py:535-615`, `app/api/routes/auth.py:117-145`, `app/utils/hub_login.py:140-173`
 - Test: `tests/test_auth_identity.py`, `tests/test_auth_identity_migration.py`
 
 **Interfaces:**
@@ -113,7 +114,7 @@ Empty tables, no change in behaviour. Every path that creates or signs in an ORC
 - [ ] **Step 2: Run to verify they fail.** `uv run pytest -q tests/test_auth_identity.py`.
 - [ ] **Step 3: Add models and migration.** `user_id` foreign keys use `ondelete="CASCADE"`. Partial unique index: `ux_user_identity_one_orcid` on `user_id` where `issuer IN ('https://orcid.org', 'https://sandbox.orcid.org')`.
 - [ ] **Step 4: Implement helpers and double writes.** Each writer calls `ensure_identity` with the issuer of the flow it belongs to, in its existing transaction; `provision_user` covers `POST /users` and `admin create --orcid`. Lookups still use `unique_id`.
-- [ ] **Step 5: Implement `python -m app.cli auth backfill-identities --issuer URL [--commit]`,** dry run by default, insert-only, batches of 1000, printing counts.
+- [ ] **Step 5: Implement the one-time script `migrations/data/20261103_backfill_user_identity.py --issuer URL [--commit]`,** following `migrations/README.md`: dry run by default, insert-only, batches of 1000, printing counts. New installations do not need it.
 - [ ] **Step 6: Run the full suite, commit, PR to `main`.**
 - [ ] **Step 7: With the user's approval at that moment,** run the migration on staging before merging, because sign-in writes to the new table. After merging, run the backfill on staging with `--issuer https://orcid.org`. Expected: row count equals non-service users whose `unique_id` is an ORCID. Production follows at the release, in the order under Task 5.
 
@@ -242,6 +243,7 @@ All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved f
 Clients first. Do not start until Task 2 has the answers and any client release has shipped; the user sets the date.
 
 **Files:**
+- Create: `migrations/data/`, one-time `backfill_api_keys` script
 - Modify: `app/models/core_models.py`, migrations, `app/utils/auth_utils.py:89-127,169-198`, `app/api/routes/auth.py`, `app/api/routes/account.py:149-205`, `app/api/routes/users.py:62,305,468,690-714`, `app/api/routes/service_accounts.py:31-56`, `app/services/activity.py:47`, `app/cli/admin.py`, `deploy/compose/README.md:259`
 - Test: `tests/test_api_key_hashing.py`, and existing key tests
 
@@ -253,7 +255,7 @@ Clients first. Do not start until Task 2 has the answers and any client release 
 
 Three pull requests, each deployable alone:
 
-- [ ] **Step 1: Expand.** Failing tests: `test_new_key_is_written_to_both_tables`, `test_hash_is_sha256_of_key`, `test_plain_key_not_in_new_table`. Then the table, double writes, and `python -m app.cli auth backfill-api-keys [--commit]`, which sets `expires_at = token_created + 365 days`, so no key's life changes. With the user's approval, migrate and backfill on staging and then production.
+- [ ] **Step 1: Expand.** Failing tests: `test_new_key_is_written_to_both_tables`, `test_hash_is_sha256_of_key`, `test_plain_key_not_in_new_table`. Then the table, double writes, and a one-time script in `migrations/data/`, which sets `expires_at = token_created + 365 days`, so no key's life changes. With the user's approval, migrate and backfill on staging and then production.
 - [ ] **Step 2: Switch reads.** Failing tests: `test_existing_key_still_authenticates_after_backfill`, `test_expired_key_refused_identically`, `test_revoked_key_refused_within_cache_ttl`, `test_service_account_key_works`, `test_several_keys_per_user`, `test_named_key_listed_with_prefix_only`, `test_last_used_updates_new_table`. Then lookups, `/account/verify`, key status, activity tracking and the cache use `ApiKey`. `test_invalid_key_is_401_never_a_redirect`. Add `POST /account/apikeys` (body `name`, optional `expires_at`; returns `id`, `key_prefix`, `api_key` once, `no-store`), `GET /account/apikeys` (without the key), `DELETE /account/apikeys/{id}`. `/account/verify` describes the presented key, and with a Hub session the newest active key, as documented today. `api_key_status` keeps its shape and describes the newest active key. Send these shapes to the nano-crucible session before merging.
 - [ ] **Step 3: Stop showing keys again.** Only after the agreed client release. `/auth/apikey` and `/user_apikey` stay, and offer "create a new key" by POST, which adds a key and never replaces one; `GET /account/apikey` answers 404 with instructions in `detail`. Tests: `test_apikey_page_never_shows_an_existing_key`, `test_post_adds_a_key_and_shows_it_once`, `test_post_leaves_existing_keys_working`, `test_account_apikey_is_404_with_instructions`, `test_email_prompt_page_still_works`.
 - [ ] **Step 4: Contract.** A later release, with the user's approval: drop `apitoken`. Update the backup note at `README.md:259`, since backups no longer contain usable keys.
@@ -352,7 +354,7 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
 ## Task 13: Links, changes, admin routes, password registration and CLI
 
 **Files:**
-- Create: `app/auth/password_links.py`, `app/api/routes/passwords.py`, a migration
+- Create: `app/auth/password_links.py`, `app/api/routes/passwords.py`, `app/cli/auth.py`, a migration
 - Modify: `app/auth/identity.py` (invite step), `app/cli/admin.py`, `app/cli/auth.py`, `app/utils/hub_auth_maintenance.py`
 - Test: `tests/test_auth_password_links.py`, `tests/test_auth_credential_routes.py`, `tests/test_auth_password_registration.py`
 

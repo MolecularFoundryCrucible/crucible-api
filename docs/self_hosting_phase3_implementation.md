@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-Status: written 2026-11-02 for review; not started. Task 2 may add work once the Hub and nano-crucible sessions answer.
+Status: written 2026-11-02 for review; not started. The Hub and nano-crucible answers are recorded in Task 2 and applied to the tasks below.
 
 **Goal:** Crucible speaks OIDC to any number of providers and has its own password sign-in, with one person able to link several logins to one account, while the Foundry keeps signing in with ORCID unchanged.
 
@@ -139,14 +139,28 @@ def test_expired_state_cookie_is_refused(client, monkeypatch): ...
 
 - [ ] **Step 8: After merge, the user signs in through `https://crucible.lbl.gov/testapi-staging/user_apikey` in a browser.** Only a person can do this. Expected: it reaches ORCID, returns, and shows their key. Then ask the deployment session for the production PR once the user tags 3.3.2.
 
-## Task 2: Confirm with client sessions
+## Task 2: Client answers and remaining check
 
-No code. Questions were sent on 2026-11-02.
+The Hub (at 3f63bfc, v1.7.2) and nano-crucible sessions answered on 2026-11-02, from reading their code; nano-crucible also ran an offline mocked probe. Nothing has been changed on their side, and their changes need the user's approval.
 
-- [ ] **Step 1: Record the answers from `crucible-hub`** in this document: assumptions that `unique_id` is an ORCID, whether a re-login checks for the same user, wording, API key reads, and anything blocking the link confirmation.
-- [ ] **Step 2: Record the answers from `nano-crucible`:** what reads an existing key, ORCID assumptions, request handling, and handling of revoked keys.
-- [ ] **Step 3: Add any resulting work to the owning task.** If the Hub does not check that a re-login returned the same user, that is a Hub change required before Task 4 ships and is raised with the user.
-- [ ] **Step 4: Ask the deployment session** which `ORCID_*` and `HUB_AUTH_*` values staging and production set, and whether staging's ORCID issuer is the sandbox, since the backfill in Task 3 and the implicit provider in Task 4 depend on it.
+**Hub:**
+- MFIDs should work. IDs are opaque strings, and no orcid.org link is built from one. Only labels mention ORCID.
+- **A re-login has no same-user check.** `finishHubLogin` replaces the session with whoever came back, and the dialog then says "Signed in again", so a retried action runs as the other account. Several sign-in methods make this easier to hit. A Hub fix is needed before Task 4 ships; Task 4 also adds a check on the API side.
+- Keep unchanged: `/auth/hub/login`, `/token`, `/refresh`, `/revoke`, the token response shape, including `user_unique_id`, and the exact token `insufficient_user_authentication`.
+- Linking cannot reuse `/hub/auth/callback`, because any valid return replaces the session. It needs its own path, `/hub/auth/link/callback`, also in the API's allowlist, returning by top-level GET. The confirmation page lives under `/hub/account/`.
+- The chooser and form must work at 520x720 in a popup, full page, never framed. With `max_age=0` the chosen method must force fresh sign-in. The Hub's transaction cookie lasts 10 minutes, matching the API's.
+- The Hub never reads an existing API key, so show-once needs no Hub change.
+
+**nano-crucible:**
+- `GET /account/apikey` and `account api-key` are in every release since v3.0.0. Once keys are hashed, the route must answer 404 with create-a-key instructions in `detail`; a 200 without `api_key` raises KeyError.
+- `/user_apikey` must stay, as a page that adds a key and never replaces one, or following setup on a second machine would break the first.
+- A wrong current password must not be 401, which the client reports as "Your API key was not accepted". New refusals need a stable `code`, because every 403 otherwise suggests `-E/--elevate`.
+- v3.0 and v3.1 cannot look up a user by MFID, so a provider-created user with no username could be referred to only by email.
+- `project add-user --user <MFID>` fails in every release (`cli/project.py:663`). This is a client bug, and it needs the user's approval to fix.
+- The client will use no retry and no body logging on the new credential routes, and it needs the key route shapes (Task 9).
+
+- [ ] **Step 1: Ask the deployment session** which `ORCID_*` and `HUB_AUTH_*` values staging and production set, and whether staging's ORCID issuer is the sandbox, since the backfill in Task 3 and the implicit provider in Task 4 depend on it.
+- [ ] **Step 2: Once the user approves,** the Hub session makes the same-user fix, and the nano-crucible session fixes `cli/project.py:663`.
 
 ## Task 3: Identity table, event log and double writes
 
@@ -195,14 +209,18 @@ Empty tables, no change in behaviour. Every path that creates or signs in an ORC
 - `oidc.discover(provider_issuer: str, discovery_url: str | None = None) -> ProviderMetadata`, cached per worker for one hour, with stale data used if a refresh fails.
 - `oidc.exchange_code` also takes the provider's advertised algorithms; keys are refetched once on an unknown `kid`.
 - `hub_login.create_login(..., provider_key: str, purpose: str = "sign_in", user_id: int | None = None)`.
+- `GET /auth/hub/login` gains optional `login_hint` (a `unique_id`). When set, the handoff is refused unless the resolved user matches, so the API backs up the Hub's same-user check. Old Hubs omit it and behave as today.
+- `GET /auth/methods` returns `[{key, display_name, kind}]`, so the Hub can stop saying ORCID.
 - `resolve_sign_in(session, provider: Provider, identity: VerifiedIdentity, *, invite: InviteContext | None = None) -> SignInOutcome` lands in Task 5; here the flow still calls `ensure_identity` for ORCID only.
+- The chooser and every sign-in page fit a 520x720 window and send `frame-ancestors 'none'`.
 
 - [ ] **Step 1: Write failing tests:**
   - Settings: `test_no_list_gives_implicit_orcid_provider`, `test_implicit_uses_orcid_client_id_fallback`, `test_subject_is_orcid_refused_on_other_issuer`, `test_issuer_must_be_https_or_localhost`, `test_invalid_provider_json_fails_settings_check`, `test_foundry_environment_snapshot_produces_same_provider` (values from Task 2)
   - Discovery: `test_issuer_mismatch_marks_provider_unavailable`, `test_unreachable_discovery_does_not_stop_startup`, `test_other_providers_work_while_one_is_down`, `test_provider_recovers_after_discovery_returns`, `test_trailing_slash_in_issuer_is_compared_exactly`
   - Tokens: `test_unknown_kid_refetches_keys_once`, `test_algorithm_not_advertised_refused`, `test_none_and_hs256_always_refused`
   - Flow: `test_one_method_redirects_directly`, `test_several_methods_show_chooser`, `test_chooser_escapes_display_name`, `test_callback_for_other_provider_refused`, `test_state_from_other_browser_refused`, `test_legacy_callback_only_serves_implicit_orcid`, `test_pkce_sent_when_advertised`, `test_pkce_omitted_for_orcid`, `test_mfid_user_can_finish_handoff`
-  - Recent sign-in: `test_step_up_sends_prompt_login_with_max_age`, `test_missing_auth_time_is_not_recent`
+  - Recent sign-in: `test_step_up_sends_prompt_login_with_max_age`, `test_missing_auth_time_is_not_recent`, `test_login_hint_of_other_user_refuses_handoff`, `test_chooser_with_max_age_zero_forces_fresh_sign_in_for_each_method`, `test_challenge_token_is_exactly_insufficient_user_authentication`
+  - Contract: `test_token_response_shape_unchanged`
   - Check: `test_settings_check_names_users_stranded_by_removed_provider`
   - Integration, against Dex in CI: full code flow, same `sub` on a second sign-in, and a second issuer's identical `sub` kept separate
 - [ ] **Step 2: Run to verify they fail.**
@@ -226,7 +244,7 @@ All sign-in paths use `resolve_sign_in`. Requires Task 3's backfill to have run 
 - `assert_active(user: User) -> None`, raising the existing generic failure when `disabled_at` or `pending_at` is set.
 
 - [ ] **Step 1: Write failing tests:**
-  - Resolver: `test_known_identity_signs_in`, `test_unlinked_orcid_is_refused_with_message`, `test_unlinked_orcid_stays_refused_after_password_removed`, `test_no_match_by_email_when_emails_equal`, `test_orcid_shaped_sub_from_other_provider_gets_mfid`, `test_new_orcid_user_unique_id_is_the_orcid`, `test_new_other_provider_user_unique_id_is_mfid`, `test_concurrent_first_sign_in_creates_one_user` (Postgres), `test_identity_write_rolls_back_with_user`
+  - Resolver: `test_known_identity_signs_in`, `test_unlinked_orcid_is_refused_with_message`, `test_unlinked_orcid_stays_refused_after_password_removed`, `test_no_match_by_email_when_emails_equal`, `test_orcid_shaped_sub_from_other_provider_gets_mfid`, `test_new_orcid_user_unique_id_is_the_orcid`, `test_new_other_provider_user_unique_id_is_mfid`, `test_new_mfid_user_gets_generated_username`, `test_concurrent_first_sign_in_creates_one_user` (Postgres), `test_identity_write_rolls_back_with_user`
   - Entry points, parametrized over the Hub callback and `/auth/apikey`: `test_all_entry_points_refuse_disabled`, `test_all_entry_points_refuse_pending`, `test_all_entry_points_use_resolver`
   - Disable: `test_disabled_refused_on_handoff_redemption`, `..._on_hub_refresh`, `..._on_hub_access_token`, `..._on_api_key_after_cache_clear`
   - `test_foundry_user_signs_in_and_keeps_unique_id_after_backfill`
@@ -261,7 +279,7 @@ All sign-in paths use `resolve_sign_in`. Requires Task 3's backfill to have run 
 - [ ] **Step 2: Run to verify they fail.**
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run the full suite, commit, PR.**
-- [ ] **Step 5: Ask the Hub session** for the sign-in methods page and confirmation page, sending it the OpenAPI diff. The user merges both sides.
+- [ ] **Step 5: Ask the Hub session** for the sign-in methods page, the confirmation page under `/hub/account/`, and `/hub/auth/link/callback`, sending it the OpenAPI diff. Add that path to `HUB_AUTH_CALLBACK_URI` in the bundle and through the deployment session. The user merges both sides.
 
 ## Task 7: Registration setting
 
@@ -306,8 +324,8 @@ Clients first. Do not start until Task 2 has the answers and any client release 
 Three pull requests, each deployable alone:
 
 - [ ] **Step 1: Expand.** Failing tests: `test_new_key_is_written_to_both_tables`, `test_hash_is_sha256_of_key`, `test_plain_key_not_in_new_table`. Then the table, double writes, and `python -m app.cli auth backfill-api-keys [--commit]`, which sets `expires_at = token_created + 365 days`, so no key's life changes. With the user's approval, migrate and backfill on staging and then production.
-- [ ] **Step 2: Switch reads.** Failing tests: `test_existing_key_still_authenticates_after_backfill`, `test_expired_key_refused_identically`, `test_revoked_key_refused_within_cache_ttl`, `test_service_account_key_works`, `test_several_keys_per_user`, `test_named_key_listed_with_prefix_only`, `test_last_used_updates_new_table`. Then lookups, `/account/verify`, key status, activity tracking and the cache use `ApiKey`. Add `POST /account/apikeys`, `GET /account/apikeys`, `DELETE /account/apikeys/{id}`.
-- [ ] **Step 3: Stop showing keys again.** Only after the agreed client release. `/auth/apikey` and `/user_apikey` offer "create a new key" by POST instead of showing one; `GET /account/apikey` returns its documented successor response. Tests: `test_apikey_page_never_shows_an_existing_key`, `test_post_creates_and_shows_once`, `test_email_prompt_page_still_works`.
+- [ ] **Step 2: Switch reads.** Failing tests: `test_existing_key_still_authenticates_after_backfill`, `test_expired_key_refused_identically`, `test_revoked_key_refused_within_cache_ttl`, `test_service_account_key_works`, `test_several_keys_per_user`, `test_named_key_listed_with_prefix_only`, `test_last_used_updates_new_table`. Then lookups, `/account/verify`, key status, activity tracking and the cache use `ApiKey`. `test_invalid_key_is_401_never_a_redirect`. Add `POST /account/apikeys` (body `name`, optional `expires_at`; returns `id`, `key_prefix`, `api_key` once, `no-store`), `GET /account/apikeys` (without the key), `DELETE /account/apikeys/{id}`. `/account/verify` describes the presented key, and with a Hub session the newest active key, as documented today. `api_key_status` keeps its shape and describes the newest active key. Send these shapes to the nano-crucible session before merging.
+- [ ] **Step 3: Stop showing keys again.** Only after the agreed client release. `/auth/apikey` and `/user_apikey` stay, and offer "create a new key" by POST, which adds a key and never replaces one; `GET /account/apikey` answers 404 with instructions in `detail`. Tests: `test_apikey_page_never_shows_an_existing_key`, `test_post_adds_a_key_and_shows_it_once`, `test_post_leaves_existing_keys_working`, `test_account_apikey_is_404_with_instructions`, `test_email_prompt_page_still_works`.
 - [ ] **Step 4: Contract.** A later release, with the user's approval: drop `apitoken`. Update the backup note at `README.md:259`, since backups no longer contain usable keys.
 - [ ] **Step 5: crucible-tests on staging at each step, then a production check** through the deployment session.
 
@@ -413,6 +431,7 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
 - `void_links(session, user: User) -> None`.
 - Routes per the spec's API routes section. `GET` and `POST /auth/hub/password-link`; `GET` and `POST /auth/hub/register`; `POST /account/password`; `POST /users/{user_ref}/password-link`; `DELETE /users/{user_ref}/password`.
 - `require_credential_change(principal, *, target: User)` in `auth_utils.py`, implementing the spec's table of who may do what.
+- Refusals carry a stable `detail.code`: `api_key_not_allowed` and `admin_target_not_allowed` (403), `current_password_invalid` (422, never 401). New admin routes accept `X-Crucible-Privilege-Mode` through `authorize_user`, like the others; confirm the header name in `PRIVILEGE_MODE_HEADER`.
 - CLI: `admin password-link --user REF`, `admin create` prints a link when passwords are on, `auth revoke-passwords [--commit]`, `auth rewrite-issuer --from URL --to URL [--commit]`.
 
 - [ ] **Step 1: Write failing tests:**
@@ -423,6 +442,7 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
   - Credential table, one test per row, with `@pytest.mark.parametrize` over API key and Hub session: admin key can issue a link and it is logged; admin key refused on another admin; own key plus correct current password can change; own key alone refused; wrong current password counts on the account counter; key refused for first password, link and unlink; Hub session needs a recent sign-in
   - Change: `test_change_ends_other_sessions`, `test_change_applies_password_rules`, `test_first_password_needs_recent_sign_in_and_generates_username`, `test_password_events_never_touch_api_keys`
   - Registration: `test_password_register_creates_pending`, `test_register_refused_unless_approval`, `test_register_applies_rules_and_address_limit`, `test_pending_sees_waiting_only_with_correct_password`
+  - Contract: `test_wrong_current_password_is_422_with_code`, `test_refusals_have_stable_codes`, `test_elevated_header_accepted_on_new_admin_routes`, `test_link_response_is_no_store`
   - CLI: `test_admin_create_prints_link`, `test_admin_password_link_recovers_locked_sole_admin`, `test_revoke_passwords_dry_run_by_default`, `test_rewrite_issuer_dry_run_by_default`
 - [ ] **Step 2: Run to verify they fail, implement, run the full suite, commit, PR.**
 - [ ] **Step 3: Ask the nano-crucible session** for `user invite`, `user reset-link`, `user approve`, `user disable`, and `account password`, and the Hub session for its password and admin screens, sending the OpenAPI diff.

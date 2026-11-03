@@ -108,6 +108,7 @@ Never holds a password, token or hash, and never what was typed in the username 
 ### Changes to existing tables
 
 - `user.pending_at`, a nullable timestamp, set on an account waiting for approval. Existing users stay null, so nothing is written to them. A pending user gets no session or API key, on any path.
+- A provider-created user with an MFID gets a generated username, because nano-crucible v3.0 and v3.1 cannot look a user up by MFID.
 - `user.disabled_at`, a nullable timestamp. There is no way today to switch an account off. It is checked on sign-in by any method, handoff code redemption, Hub refresh, Hub access token use (`app/utils/hub_tokens.py:174`), and API keys, within the auth cache lifetime.
 - `HubLoginTransaction` gains `purpose` (`sign_in`, `link`), `provider_key`, and a nullable `user_id` for linking. `HubLoginCode` gains `purpose` and the identity being linked.
 - `username` becomes required for anyone with a password, and for them a change needs a recent sign-in. Clearing it is refused. ORCID-created users have none today; one is generated when they add a password.
@@ -240,13 +241,14 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 
 | Action | With an API key (CLI) | Hub session |
 |---|---|---|
-| Invite someone, issue a reset link, approve, disable, enable, revoke keys | Admin key works, and is logged | Admin, recent sign-in |
+| Invite someone, issue a reset link, approve, disable, enable | Admin key works, and is logged | Admin, recent sign-in |
 | The same, on another administrator's account | Refused | Admin, recent sign-in |
+| Revoke someone's API keys | Admin key works, on anyone, as today | Admin |
 | Change own password | Key plus the current password, on the same attempt counter | Recent sign-in plus the current password |
 | Set a first password | Refused; the CLI prints a browser link | Recent sign-in |
 | Link or unlink a login | Refused; the CLI prints a browser link | Recent sign-in |
 
-Admin keys may issue reset links because they can already regenerate any user's API key (`POST /users/{user_ref}/apikey/regenerate`), so refusing would add little and would break the CLI. Refusing for other administrators keeps one leaked admin key from taking over the others by this route. Later, sign-in from a terminal (browser or device code, RFC 8628) and scoped keys can narrow what an admin key must do.
+Admin keys may issue reset links because they can already regenerate any user's API key (`POST /users/{user_ref}/apikey/regenerate`), so refusing would add little and would break the CLI. Refusing for other administrators keeps one leaked admin key from taking over the others by this route. Revoking keys stays open, since it removes access rather than granting it, and nano-crucible already relies on it. Later, sign-in from a terminal (browser or device code, RFC 8628) and scoped keys can narrow what an admin key must do.
 
 ## API routes
 
@@ -269,7 +271,7 @@ These sit beside passwords, so plain text keys undo much of this work. The targe
 | `name` | what it is for |
 | `created_at`, `last_used_at`, `expires_at`, `revoked_at` | expiry is optional |
 
-Several keys per user, shown once. Existing keys keep working because their hashes can be computed from the stored values, then the plain column is dropped. This is a production data change and goes through the usual approval. Clients first: nano-crucible still reads `GET /account/apikey`, and tells people to fetch a key from `/user_apikey`; `/auth/apikey` must become create-a-new-key. The nano-crucible and Hub sessions confirm before anything is removed.
+Several keys per user, shown once, through `POST`, `GET` and `DELETE /account/apikeys`. Existing keys keep working because their hashes can be computed from the stored values, then the plain column is dropped. This is a production data change and goes through the usual approval. Clients first: nano-crucible still reads `GET /account/apikey`, and tells people to fetch a key from `/user_apikey`; `/auth/apikey` and `/user_apikey` must become pages that add a new key and never replace one, and `GET /account/apikey` answers 404 with instructions. The nano-crucible and Hub sessions confirm before anything is removed.
 
 ## Order of work
 

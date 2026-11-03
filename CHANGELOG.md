@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
-- The older browser ORCID sign-in (`/login`, `/auth`, `/user_apikey`) now checks `state` and `nonce` and verifies ORCID's ID token, which prevents signing someone's browser into another account.
+- The older browser ORCID sign-in (`/login`, `/auth`, `/user_apikey`) now uses Authlib's OIDC client, which checks `state` and `nonce` and verifies ORCID's ID token.
 
 ## [3.3.1] - 2026-11-02
 

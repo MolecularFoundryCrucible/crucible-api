@@ -8,7 +8,6 @@ from urllib.parse import urlencode, urlparse
 
 from sqlmodel import Session, select
 
-from app.auth.oidc import InvalidSignIn as InvalidHubLogin
 from app.config import ConfigurationError, get_settings, optional_secret
 from app.models.core_models import HubLoginCode, HubLoginTransaction, User
 from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens_in_session
@@ -24,6 +23,10 @@ ORCID_PATTERN = re.compile(r"\d{4}-\d{4}-\d{4}-\d{3}[\dX]\Z")
 
 def hub_auth_enabled() -> bool:
     return get_settings().hub.enabled
+
+
+class InvalidHubLogin(Exception):
+    pass
 
 
 class HubLoginUnavailable(Exception):

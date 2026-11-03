@@ -6,9 +6,9 @@ Status: written 2026-11-02 for review; not started. The Hub and nano-crucible an
 
 **Goal:** Crucible speaks OIDC to any number of providers and has its own password sign-in, with one person able to link several logins to one account, while the Foundry keeps signing in with ORCID unchanged.
 
-**Architecture:** A new `app/auth/` package holds the provider client, the single sign-in resolver, passwords, links, throttling and the event log. Every sign-in path ends in the resolver and then the existing Hub handoff. New tables reference `user.id`; `user.unique_id` never changes.
+**Architecture:** A new `app/auth/` package holds the Authlib registry, and becomes the one home for sign-in code, with routes kept thin and the `hub_*` files and `auth_utils.py` moved in as tasks touch them. It also holds the single sign-in resolver, passwords, links, throttling and the event log. Every sign-in path ends in the resolver and then the existing Hub handoff. New tables reference `user.id`; `user.unique_id` never changes.
 
-**Tech Stack:** Python 3.11, FastAPI, SQLModel and Alembic on PostgreSQL 17, Authlib and joserfc (already dependencies), `pwdlib[argon2]` (new, pinned), Dex in CI, Caddy, Docker Compose.
+**Tech Stack:** Python 3.11, FastAPI, SQLModel and Alembic on PostgreSQL 17, Authlib's FastAPI integration (`authlib.integrations.starlette_client.OAuth`, with `SessionMiddleware`, `httpx` and `itsdangerous`), joserfc, `pwdlib[argon2]` (new, pinned), Dex in CI, Caddy, Docker Compose.
 
 **Spec:** `docs/self_hosting_phase3_plan.md` (approved decisions; read it, it holds the table definitions and the reasons). Background: `docs/self_hosting_design.md`, `docs/self_hosting_secrets.md`, `docs/hub_auth_operations.md`.
 
@@ -44,8 +44,8 @@ The user decided on 2026-11-03 that nothing is released until all of Phase 3 is 
 
 | File | Responsibility | From |
 |---|---|---|
-| `app/auth/oidc.py` | provider client: URLs, code exchange, token checks, discovery | Task 1, Task 4 |
-| `app/auth/providers.py` | builds the provider list from settings | Task 4 |
+| `app/auth/providers.py` | Authlib registry, issuer and algorithm checks; provider list from settings | Task 1, Task 4 |
+| `app/auth/browser_login.py` | the older browser flow | Task 1 |
 | `app/auth/events.py` | `record_event` | Task 3 |
 | `app/auth/identity.py` | the resolver, ORCID helper | Task 3 |
 | `app/auth/linking.py` | link, unlink | Task 6 |
@@ -62,82 +62,7 @@ The user decided on 2026-11-03 that nothing is released until all of Phase 3 is 
 
 ## Task 1: Older ORCID flow onto Authlib
 
-Today `/auth/login` builds its URL by hand with `nonce=whatever` and no `state`, and the callback never checks one, so an attacker could sign a victim's browser into the attacker's account. No migration. No version bump.
-
-**Files:**
-- Create: `app/auth/__init__.py`, `app/auth/oidc.py`
-- Modify: `app/utils/hub_orcid.py` (thin wrappers over `oidc.py`), `app/api/routes/auth.py:43-97,285-288`, `app/utils/auth_utils.py:130-153` (remove `code_for_token_exchange`, `ORCID_TIMEOUT`)
-- Modify: `CHANGELOG.md`
-- Test: `tests/test_legacy_orcid_login.py`, `tests/test_auth_oidc.py`
-
-**Interfaces:**
-- Produces, in `app/auth/oidc.py`:
-  - `@dataclass(frozen=True) class OidcEndpoints: authorization: str; token: str; jwks: str`
-  - `@dataclass(frozen=True) class OidcClient: issuer: str; client_id: str; client_secret: str; redirect_uri: str; scope: str; endpoints: OidcEndpoints; token_auth_method: str`
-  - `@dataclass(frozen=True) class VerifiedIdentity: issuer: str; subject: str; given_name: str | None; family_name: str | None; auth_time: datetime | None`
-  - `authorization_url(client: OidcClient, state: str, nonce: str, *, max_age: int | None = None, code_verifier: str | None = None) -> str`
-  - `exchange_code(client: OidcClient, code: str, nonce: str, *, code_verifier: str | None = None) -> VerifiedIdentity`
-  - `verify_id_token(client: OidcClient, id_token: str, jwks: dict, nonce: str, access_token: str | None = None) -> VerifiedIdentity`
-  - `orcid_endpoints(issuer: str) -> OidcEndpoints`, returning `{issuer}/oauth/authorize`, `/oauth/token`, `/oauth/jwks`
-- `InvalidHubLogin` moves to `oidc.py` as `InvalidSignIn`, re-exported from `hub_login.py` under the old name so nothing else changes.
-
-- [ ] **Step 1: Write the failing tests** in `tests/test_legacy_orcid_login.py`. Replace the monkeypatched `code_for_token_exchange` and `requests.get` with a patched `oidc.exchange_code` returning a `VerifiedIdentity`. `test_callback_only_returns_to_local_paths` and `test_callback_sets_a_session_cookie_that_decodes` first call `/auth/login` to obtain the state cookie and pass its state. Add:
-
-```python
-def test_login_sends_state_and_a_random_nonce(client):
-    first = client.get("/auth/login", follow_redirects=False)
-    query = parse_qs(urlparse(first.headers["location"]).query)
-    assert query["state"][0] and query["nonce"][0] != "whatever"
-    assert query["redirect_uri"][0].endswith("/auth")
-    second = parse_qs(urlparse(client.get("/auth/login", follow_redirects=False).headers["location"]).query)
-    assert query["state"] != second["state"] and query["nonce"] != second["nonce"]
-
-def test_login_state_cookie_is_protected(client):
-    cookie = client.get("/auth/login", follow_redirects=False).headers["set-cookie"]
-    assert "crucible_login_state=" in cookie and "HttpOnly" in cookie and "Secure" in cookie and "SameSite=lax" in cookie
-
-@pytest.mark.parametrize("path", ["/auth/callback", "/auth"])
-def test_callback_without_state_or_cookie_is_refused(client, path, monkeypatch):
-    called = []
-    monkeypatch.setattr(oidc, "exchange_code", lambda *a, **k: called.append(1))
-    assert client.get(path, params={"code": "abc"}, follow_redirects=False).status_code == 400
-    assert client.get(path, params={"code": "abc", "state": "forged"}, follow_redirects=False).status_code == 400
-    assert not called
-
-def test_callback_with_another_browsers_state_is_refused(client, other_client):
-    """The attack: a state from the attacker's browser, used in the victim's."""
-    state = start_login(other_client)
-    start_login(client)
-    assert client.get("/auth", params={"code": "abc", "state": state}, follow_redirects=False).status_code == 400
-
-def test_provider_error_redirect_is_400_not_422(client):
-    state = start_login(client)
-    assert client.get("/auth", params={"error": "access_denied", "state": state}, follow_redirects=False).status_code == 400
-
-def test_state_cookie_is_cleared_after_callback(client, monkeypatch): ...
-def test_nonce_from_the_cookie_reaches_token_verification(client, monkeypatch): ...
-def test_expired_state_cookie_is_refused(client, monkeypatch): ...
-```
-
-`tests/test_auth_oidc.py` moves the token checks from the Hub tests onto `verify_id_token`, adding: wrong `iss`, wrong `aud`, wrong `nonce`, expired, `alg: none`, HS256 signed with the client secret, and missing `sub`, each raising.
-
-- [ ] **Step 2: Run them to verify they fail.** `uv run pytest -q tests/test_legacy_orcid_login.py tests/test_auth_oidc.py`. Expected: import error on `app.auth.oidc`.
-
-- [ ] **Step 3: Implement `app/auth/oidc.py`** by moving the logic from `hub_orcid.py`: `OAuth2Session` for the URL and token call, joserfc for decoding, `CodeIDToken` for claims, RS256 only for now. `hub_orcid.py` keeps its public functions as wrappers, so the Hub code and tests do not change in this PR.
-
-- [ ] **Step 4: Change the older routes** in `app/api/routes/auth.py`.
-  - The client is `OidcClient(issuer="https://orcid.org", client_id=get_orcid_client_id(), client_secret=get_orcid_client_secret(), redirect_uri=urllib.parse.unquote_plus(get_redirect_uri()), scope="openid", endpoints=orcid_endpoints("https://orcid.org"), token_auth_method="client_secret_post")`. The issuer stays fixed, as today, so a sandbox Hub setting cannot change this flow's behaviour.
-  - `/auth/login`: generate `state` and `nonce` with `secrets.token_urlsafe(32)`, set cookie `crucible_login_state` to `encode_token({"state": state, "nonce": nonce, "exp": now + 600})`, with `httponly=True, secure=True, samesite="lax", max_age=600, path=get_api_root_path() or "/"`, and redirect. The token already has the signing helpers this flow uses; no new table.
-  - Callback signature: `code: str | None = None, state: str | None = None, error: str | None = None`. Decode the cookie, compare with `secrets.compare_digest`, and return 400 ("Sign-in failed. Start again from the page you came from.") on anything missing or mismatched, before any call to ORCID. Provider failures stay 502. Always delete the cookie.
-  - The `crucible_user_token` payload stays the same shape, keys `sub`, `orcid`, `given_name`, `family_name`, `exp`, built from `VerifiedIdentity`, so `/auth/apikey` is untouched.
-
-- [ ] **Step 5: Remove** `code_for_token_exchange` and `ORCID_TIMEOUT` once nothing refers to them.
-
-- [ ] **Step 6: Run the full suite.** `uv run pytest -q`. Expected: all pass.
-
-- [ ] **Step 7: Add the changelog line, commit, push a branch, open a PR to `main`.**
-
-- [ ] **Step 8: After merge, the user signs in through `https://crucible.lbl.gov/testapi-staging/user_apikey` in a browser.** Only a person can do this. Expected: it reaches ORCID, returns, and shows their key.
+Done in PR #411. After review the user asked for routes without ORCID specifics, and for established tools: a first version wrapping Authlib's low-level parts was replaced by its FastAPI integration, which provides `state`, `nonce`, discovery, signing key refetch and ID token checks. `app/auth/providers.py` adds what Authlib does not: the discovered issuer must match the configured one exactly, and only asymmetric signing algorithms are accepted. The Hub flow moves onto the same registry in Task 4. Checked against a fake ORCID in tests, a real Dex server, and ORCID's real discovery document; after merge, the user signs in through `https://crucible.lbl.gov/testapi-staging/user_apikey`.
 
 ## Task 2: Client answers and remaining check
 
@@ -159,21 +84,21 @@ The Hub (at 3f63bfc, v1.7.2) and nano-crucible sessions answered on 2026-11-02, 
 - `project add-user --user <MFID>` fails in every release (`cli/project.py:663`). This is a client bug, and it needs the user's approval to fix.
 - The client will use no retry and no body logging on the new credential routes, and it needs the key route shapes (Task 9).
 
-- [ ] **Step 1: Ask the deployment session** which `ORCID_*` and `HUB_AUTH_*` values staging and production set, and whether staging's ORCID issuer is the sandbox, since the backfill in Task 3 and the implicit provider in Task 4 depend on it.
-- [ ] **Step 2: Once the user approves,** the Hub session makes the same-user fix, and the nano-crucible session fixes `cli/project.py:663`.
+**Deployment (2026-11-03):** staging and production both use issuer `https://orcid.org`, so the backfill is the same for both. They use two ORCID apps: `HUB_AUTH_ORCID_CLIENT_ID` for the Hub and `ORCID_CLIENT_ID` for the older flow. ORCID iDs do not depend on the app, so identities are unaffected, but Task 4 keeps two registered clients, because each app has its own registered redirect address.
 
-## Task 3: Identity table, event log and double writes
+- [ ] **Step 1: The user approved both fixes on 2026-11-03,** the Hub session makes the same-user fix, and the nano-crucible session fixes `cli/project.py:663`.
+
+## Task 3: Identity table and double writes
 
 Empty tables, no change in behaviour. Every path that creates or signs in an ORCID user also writes the identity row.
 
 **Files:**
-- Create: `app/auth/events.py`, `app/auth/identity.py`, `app/cli/auth.py`, a migration
+- Create: `app/auth/identity.py`, `app/cli/auth.py`, a migration
 - Modify: `app/models/core_models.py`, `app/cli/__main__.py`, `app/cli/admin.py`, `app/api/routes/users.py:535-615`, `app/api/routes/auth.py:117-145`, `app/utils/hub_login.py:140-173`
 - Test: `tests/test_auth_identity.py`, `tests/test_auth_identity_migration.py`
 
 **Interfaces:**
-- Produces: models `UserIdentity`, `AuthEvent`, columns as in the spec.
-- `record_event(session, event: AuthEventType, *, user: User | None = None, actor: User | None = None, issuer: str | None = None, client_address: str | None = None) -> None`, in the caller's transaction, also logging. `AuthEventType` is a `str` enum.
+- Produces: model `UserIdentity`, columns as in the spec.
 - `ensure_identity(session, user: User, issuer: str, subject: str, *, label: str | None = None, created_by: User | None = None) -> UserIdentity`, idempotent, raising `IdentityTaken` if another user holds it.
 - `orcid_of(session, user: User) -> str | None`: the `user_identity` subject on an ORCID issuer, else `unique_id` if `is_orcid`. Used by proposal sync from Task 5 on.
 
@@ -185,11 +110,10 @@ Empty tables, no change in behaviour. Every path that creates or signs in an ORC
   - `test_hub_sign_in_writes_identity_row`, `test_apikey_page_writes_identity_row`, `test_post_users_with_orcid_writes_identity_row`, `test_admin_create_with_orcid_writes_identity_row`
   - `test_service_account_gets_no_identity_row`
   - `test_backfill_inserts_only_orcid_humans`, `test_backfill_is_idempotent`, `test_backfill_dry_run_writes_nothing`, `test_backfill_requires_issuer_flag`
-  - `test_auth_event_never_stores_secrets_by_signature` (the function has no parameter for them)
   - `test_migration_adds_empty_tables_and_downgrades`
 - [ ] **Step 2: Run to verify they fail.** `uv run pytest -q tests/test_auth_identity.py`.
-- [ ] **Step 3: Add models and migration.** `user_id` foreign keys use `ondelete="CASCADE"`. Partial unique index: `ux_user_identity_one_orcid` on `user_id` where `issuer IN ('https://orcid.org', 'https://sandbox.orcid.org')`. `AuthEvent` has an index on (`user_id`, `at`).
-- [ ] **Step 4: Implement helpers and double writes.** Each writer calls `ensure_identity` with the ORCID issuer from `get_settings().hub.orcid_issuer`, in its existing transaction. Lookups still use `unique_id`.
+- [ ] **Step 3: Add models and migration.** `user_id` foreign keys use `ondelete="CASCADE"`. Partial unique index: `ux_user_identity_one_orcid` on `user_id` where `issuer IN ('https://orcid.org', 'https://sandbox.orcid.org')`.
+- [ ] **Step 4: Implement helpers and double writes.** Each writer calls `ensure_identity` with the issuer of the flow it belongs to, in its existing transaction; `provision_user` covers `POST /users` and `admin create --orcid`. Lookups still use `unique_id`.
 - [ ] **Step 5: Implement `python -m app.cli auth backfill-identities --issuer URL [--commit]`,** dry run by default, insert-only, batches of 1000, printing counts.
 - [ ] **Step 6: Run the full suite, commit, PR to `main`.**
 - [ ] **Step 7: With the user's approval at that moment,** the user runs the migration and backfill on staging, then production, after the deployment session confirms the issuer. Expected: row count equals non-service users whose `unique_id` is an ORCID.
@@ -206,8 +130,9 @@ Empty tables, no change in behaviour. Every path that creates or signs in an ORC
 - `AuthSettings` (env prefix `CRUCIBLE_AUTH_`): `password_enabled: bool = False`, `registration: Literal["closed", "approval", "open"] = "closed"`, `providers: str | None` (JSON list; secrets read as `OIDC_{KEY}_CLIENT_SECRET` through the existing secret helpers).
 - `@dataclass(frozen=True) class Provider: key: str; display_name: str; client: OidcClient | None; issuer: str; registration: str; subject_is_orcid: bool; legacy_callback: bool`
 - `get_providers() -> dict[str, Provider]`. With no list and `hub.enabled`, returns one implicit provider: key `orcid`, `registration="open"`, `subject_is_orcid=True`, `legacy_callback=True`, client ID from `hub.orcid_client_id or api.orcid_client_id`.
-- `oidc.discover(provider_issuer: str, discovery_url: str | None = None) -> ProviderMetadata`, cached per worker for one hour, with stale data used if a refresh fails.
-- `oidc.exchange_code` also takes the provider's advertised algorithms; keys are refetched once on an unknown `kid`.
+- Each provider is registered on the Authlib registry with `server_metadata_url`, and `code_challenge_method="S256"` when advertised. Discovery is lazy, so an unreachable provider does not stop startup.
+- The Hub flow's provider leg moves onto the registry. `hub_orcid.py` is removed; its API-to-Hub transaction table stays.
+- The older flow keeps its own registered client, `ORCID_CLIENT_ID`, with its own redirect address.
 - `hub_login.create_login(..., provider_key: str, purpose: str = "sign_in", user_id: int | None = None)`.
 - `GET /auth/hub/login` gains optional `login_hint` (a `unique_id`). When set, the handoff is refused unless the resolved user matches, so the API backs up the Hub's same-user check. Old Hubs omit it and behave as today.
 - `GET /auth/methods` returns `[{key, display_name, kind}]`, so the Hub can stop saying ORCID.
@@ -232,22 +157,24 @@ Empty tables, no change in behaviour. Every path that creates or signs in an ORC
 
 ## Task 5: One resolver, lookups switch, disable and pending
 
-All sign-in paths use `resolve_sign_in`. Requires Task 3's backfill to have run in the environment; the switch is a code release, so the user decides when.
+All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved from Task 3 on the user's decision. Lookups switch behind `CRUCIBLE_AUTH_IDENTITY_LOOKUP`, off by default, so one release can go out safely: migrate, deploy (rows start being written), backfill, then turn the setting on. Off is the rollback. The flag is temporary and is removed in a later release, as the user decided on 2026-11-03.
 
 **Files:**
+- Create: `app/auth/events.py`
 - Modify: `app/auth/identity.py`, `app/models/core_models.py`, a migration, `app/api/routes/auth.py`, `app/utils/hub_login.py`, `app/utils/hub_tokens.py:174-182`, `app/utils/auth_utils.py`, `app/utils/user_utils.py:207,297`, `app/api/routes/account.py:127`, `app/api/routes/users.py:441,554`
 - Test: `tests/test_auth_resolver.py`, `tests/test_auth_disable.py`
 
 **Interfaces:**
 - `@dataclass class SignInOutcome: user: User | None; status: Literal["ok", "pending", "refused"]; reason: str | None`
 - `resolve_sign_in(session, provider: Provider, identity: VerifiedIdentity, *, invite: InviteContext | None = None) -> SignInOutcome`, following the spec's "Who is this person" order, steps 1 to 5, with the invite step raising until Task 13.
+- Model `AuthEvent` as in the spec, indexed on (`user_id`, `at`). `record_event(session, event: AuthEventType, *, user: User | None = None, actor: User | None = None, issuer: str | None = None, client_address: str | None = None) -> None`, in the caller's transaction, also logging. `AuthEventType` is a `str` enum.
 - `assert_active(user: User) -> None`, raising the existing generic failure when `disabled_at` or `pending_at` is set.
 
 - [ ] **Step 1: Write failing tests:**
   - Resolver: `test_known_identity_signs_in`, `test_unlinked_orcid_is_refused_with_message`, `test_unlinked_orcid_stays_refused_after_password_removed`, `test_no_match_by_email_when_emails_equal`, `test_orcid_shaped_sub_from_other_provider_gets_mfid`, `test_new_orcid_user_unique_id_is_the_orcid`, `test_new_other_provider_user_unique_id_is_mfid`, `test_new_mfid_user_gets_generated_username`, `test_concurrent_first_sign_in_creates_one_user` (Postgres), `test_identity_write_rolls_back_with_user`
   - Entry points, parametrized over the Hub callback and `/auth/apikey`: `test_all_entry_points_refuse_disabled`, `test_all_entry_points_refuse_pending`, `test_all_entry_points_use_resolver`
   - Disable: `test_disabled_refused_on_handoff_redemption`, `..._on_hub_refresh`, `..._on_hub_access_token`, `..._on_api_key_after_cache_clear`
-  - `test_foundry_user_signs_in_and_keeps_unique_id_after_backfill`
+  - `test_foundry_user_signs_in_and_keeps_unique_id_after_backfill`, `test_flag_off_keeps_looking_up_unique_id`, `test_flag_on_refuses_user_without_row_only_when_unlinked`, `test_auth_event_never_stores_secrets_by_signature`
   - ORCID helper: `test_proposal_sync_uses_linked_orcid_for_mfid_user`, `test_resolve_user_by_orcid_finds_linked_user`, `test_post_users_refuses_orcid_linked_elsewhere`
 - [ ] **Step 2: Run to verify they fail.**
 - [ ] **Step 3: Migration** adds nullable `user.disabled_at` and `user.pending_at`.

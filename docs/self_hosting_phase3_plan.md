@@ -31,6 +31,10 @@ Most comparable software builds in passwords and adds providers as an option: In
 
 `create_handoff_code` currently refuses anything that is not an ORCID (`hub_login.py:141`), and `load_login_config` requires ORCID issuers and Hub secrets (`hub_login.py:63`); both change. The login routes stay under `/auth/`, and the existing protections move with them: the login cookie's path, the safe validation errors (`_is_hub_auth_request`, `app/api/main.py:65`), and Caddy's request size and timeout limits, which cover only `/auth/hub/*` today.
 
+## Code organization
+
+Everything to do with sign-in lives in `app/auth/`, with one module per concern. Routes in `app/api/routes/` stay thin, as in FastAPI's full-stack template, and settings live in `app/config.py` (Twelve-Factor: strict separation of config from code). Domain packages follow the layout used by Polar and Netflix Dispatch. The `hub_*` files and `auth_utils.py` move out of `app/utils/` as later tasks touch them.
+
 ## Data model
 
 New tables reference `user.id`, the integer key, as `UserPreferences` already does, and never `user.orcid`. `user.unique_id` stays as the public identifier and never changes. Moving the older foreign keys to `user.id` and renaming `orcid` API fields waits for 4.0.
@@ -128,9 +132,9 @@ When no list is set and `hub.enabled` is on, the existing ORCID settings become 
 
 Rules, each with a test:
 
-- Use Authlib for the client and joserfc for tokens, extending `hub_orcid.py`. No hand-written URL building or token parsing.
-- Read endpoints from the provider's discovery document at startup and refresh periodically. Refuse to start the provider if the document's `issuer` is not an exact match for the configured one. Issuers must be HTTPS, except `localhost`.
-- Refetch signing keys when a token names an unknown key. Accept only asymmetric signature algorithms the provider advertises; never `none` or HS256.
+- Use Authlib's FastAPI integration: the `OAuth` registry with `server_metadata_url`, as its documentation describes. No hand-written URL building or token parsing. It provides `state`, `nonce`, discovery, PKCE, signing key refetch and ID token checks; Crucible adds only an exact issuer match and a filter to asymmetric algorithms.
+- Read endpoints from the provider's discovery document on first use. Refuse the provider if the document's `issuer` is not an exact match for the configured one. Issuers must be HTTPS, except `localhost`.
+- Accept only asymmetric signature algorithms the provider advertises; never `none` or HS256.
 - Check signature, `iss`, `aud`, `exp` and `nonce` on every token. A token missing `sub` is refused.
 - Always send `state` and `nonce`. Send PKCE (S256) when the provider advertises it. ORCID's discovery document does not list it, so `nonce` carries that protection there.
 - **Mix-up defence.** With more than one provider, RFC 9700 section 4.4.2 requires one. ORCID does not advertise the `iss` response parameter, so each provider gets its own callback address (`/auth/hub/oidc/{key}/callback`), and the login record stores which provider it started with; a callback for any other provider is refused. Endpoints always come from that provider's own discovery document. The existing `/auth/hub/callback` stays as the callback for the implicit ORCID provider only, because ORCID matches redirect addresses exactly and the Foundry's is registered.

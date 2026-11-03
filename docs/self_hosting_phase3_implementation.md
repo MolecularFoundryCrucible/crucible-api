@@ -100,7 +100,6 @@ Empty tables, no change in behaviour. Every path that creates or signs in an ORC
 **Interfaces:**
 - Produces: model `UserIdentity`, columns as in the spec.
 - `ensure_identity(session, user: User, issuer: str, subject: str, *, label: str | None = None, created_by: User | None = None) -> UserIdentity`, idempotent, raising `IdentityTaken` if another user holds it.
-- `orcid_of(session, user: User) -> str | None`: the `user_identity` subject on an ORCID issuer, else `unique_id` if `is_orcid`. Used by proposal sync from Task 5 on.
 
 - [ ] **Step 1: Write failing tests:**
   - `test_identity_is_unique_on_issuer_and_subject`
@@ -116,7 +115,7 @@ Empty tables, no change in behaviour. Every path that creates or signs in an ORC
 - [ ] **Step 4: Implement helpers and double writes.** Each writer calls `ensure_identity` with the issuer of the flow it belongs to, in its existing transaction; `provision_user` covers `POST /users` and `admin create --orcid`. Lookups still use `unique_id`.
 - [ ] **Step 5: Implement `python -m app.cli auth backfill-identities --issuer URL [--commit]`,** dry run by default, insert-only, batches of 1000, printing counts.
 - [ ] **Step 6: Run the full suite, commit, PR to `main`.**
-- [ ] **Step 7: With the user's approval at that moment,** the user runs the migration and backfill on staging, then production, after the deployment session confirms the issuer. Expected: row count equals non-service users whose `unique_id` is an ORCID.
+- [ ] **Step 7: With the user's approval at that moment,** run the migration on staging before merging, because sign-in writes to the new table. After merging, run the backfill on staging with `--issuer https://orcid.org`. Expected: row count equals non-service users whose `unique_id` is an ORCID. Production follows at the release, in the order under Task 5.
 
 ## Task 4: Generic OIDC
 
@@ -168,6 +167,7 @@ All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved f
 - `@dataclass class SignInOutcome: user: User | None; status: Literal["ok", "pending", "refused"]; reason: str | None`
 - `resolve_sign_in(session, provider: Provider, identity: VerifiedIdentity, *, invite: InviteContext | None = None) -> SignInOutcome`, following the spec's "Who is this person" order, steps 1 to 5, with the invite step raising until Task 13.
 - Model `AuthEvent` as in the spec, indexed on (`user_id`, `at`). `record_event(session, event: AuthEventType, *, user: User | None = None, actor: User | None = None, issuer: str | None = None, client_address: str | None = None) -> None`, in the caller's transaction, also logging. `AuthEventType` is a `str` enum.
+- `orcid_of(session, user: User) -> str | None`, moved from Task 3 because nothing uses it before this task: the `user_identity` subject on an ORCID issuer, else `unique_id` if `is_orcid`.
 - `assert_active(user: User) -> None`, raising the existing generic failure when `disabled_at` or `pending_at` is set.
 
 - [ ] **Step 1: Write failing tests:**

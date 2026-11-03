@@ -100,7 +100,7 @@ In PostgreSQL because the API runs several workers. Unknown usernames need no co
 |---|---|---|
 | `id` | bigint, primary key | |
 | `at` | timestamptz, not null, indexed | |
-| `event` | varchar(32), not null | sign-in, failure, lock, password set, changed or reset, link issued, identity linked or unlinked, provider refused, disabled, enabled |
+| `event` | varchar(32), not null | sign-in, failure, lock, password set, changed or reset, link issued, identity linked or unlinked, API key created or revoked, provider refused, disabled, enabled |
 | `user_id` | int, null, FK `user.id`, on delete set null, indexed with `at` | |
 | `user_unique_id` | varchar, null | a snapshot, so the record survives removal of the user |
 | `actor_user_id` | int, null, FK `user.id`, on delete set null | the administrator, when different |
@@ -334,6 +334,9 @@ Decided by the user on 2026-11-02:
 7. API keys follow the table under API keys and credential routes: administrators can use keys from the CLI, and a user's own key cannot change how they sign in without their current password.
 8. New accounts' default permissions stay as they are for now.
 9. One-time links replace temporary passwords, and `user.disabled_at` is added.
+10. From the Hub's standards review on 2026-11-03: an enforced `required_user` replaces the planned `login_hint`, the token response gains `auth_time`, sign-in failures reach the Hub as standard OAuth errors, and API key creation and revocation are logged.
+11. No multi-factor sign-in in this phase, knowing that a password account can get an API key with only a recent password sign-in. Groups that need it use a provider.
+12. An API key can still regenerate itself for now. Revisit when keys gain scopes.
 
 ## Left to the builder
 

@@ -133,7 +133,9 @@ Empty tables, no change in behaviour. Every path that creates or signs in an ORC
 - The Hub flow's provider leg moves onto the registry. `hub_orcid.py` is removed; its API-to-Hub transaction table stays.
 - The older flow keeps its own registered client, `ORCID_CLIENT_ID`, with its own redirect address.
 - `hub_login.create_login(..., provider_key: str, purpose: str = "sign_in", user_id: int | None = None)`.
-- `GET /auth/hub/login` gains optional `login_hint` (a `unique_id`). When set, the handoff is refused unless the resolved user matches, so the API backs up the Hub's same-user check. Old Hubs omit it and behave as today.
+- `GET /auth/hub/login` gains optional `required_user` (a `unique_id`). If a different account authenticates, no code is issued and the API redirects to the Hub with `error=login_required` and `state` (OIDC Core 3.1.2.1 leaves `login_hint` to the server's discretion, so an enforced rule needs its own name). Old Hubs omit it and behave as today.
+- `POST /auth/hub/token` adds nullable `auth_time`, once the Hub's stored-session schema accepts it.
+- After a valid login record exists, failures redirect to the Hub with `state` and RFC 6749 4.1.2.1 errors: `access_denied`, `login_required`, `temporarily_unavailable`, `server_error`. An invalid or expired record gets the API's own page, because its redirect target cannot be trusted.
 - `GET /auth/methods` returns `[{key, display_name, kind}]`, so the Hub can stop saying ORCID.
 - `resolve_sign_in(session, provider: Provider, identity: VerifiedIdentity, *, invite: InviteContext | None = None) -> SignInOutcome` lands in Task 5; here the flow still calls `ensure_identity` for ORCID only.
 - The chooser and every sign-in page fit a 520x720 window and send `frame-ancestors 'none'`.
@@ -143,7 +145,7 @@ Empty tables, no change in behaviour. Every path that creates or signs in an ORC
   - Discovery: `test_issuer_mismatch_marks_provider_unavailable`, `test_unreachable_discovery_does_not_stop_startup`, `test_other_providers_work_while_one_is_down`, `test_provider_recovers_after_discovery_returns`, `test_trailing_slash_in_issuer_is_compared_exactly`
   - Tokens: `test_unknown_kid_refetches_keys_once`, `test_algorithm_not_advertised_refused`, `test_none_and_hs256_always_refused`
   - Flow: `test_one_method_redirects_directly`, `test_several_methods_show_chooser`, `test_chooser_escapes_display_name`, `test_callback_for_other_provider_refused`, `test_state_from_other_browser_refused`, `test_legacy_callback_only_serves_implicit_orcid`, `test_pkce_sent_when_advertised`, `test_pkce_omitted_for_orcid`, `test_mfid_user_can_finish_handoff`
-  - Recent sign-in: `test_step_up_sends_prompt_login_with_max_age`, `test_missing_auth_time_is_not_recent`, `test_login_hint_of_other_user_refuses_handoff`, `test_chooser_with_max_age_zero_forces_fresh_sign_in_for_each_method`, `test_challenge_token_is_exactly_insufficient_user_authentication`
+  - Recent sign-in: `test_step_up_sends_prompt_login_with_max_age`, `test_missing_auth_time_is_not_recent`, `test_required_user_mismatch_issues_no_code_and_returns_login_required`, `test_token_response_includes_auth_time`, `test_upstream_failures_redirect_with_standard_errors`, `test_invalid_login_record_never_redirects`, `test_chooser_with_max_age_zero_forces_fresh_sign_in_for_each_method`, `test_challenge_token_is_exactly_insufficient_user_authentication`
   - Contract: `test_token_response_shape_unchanged`
   - Check: `test_settings_check_names_users_stranded_by_removed_provider`
   - Integration, against Dex in CI: full code flow, same `sub` on a second sign-in, and a second issuer's identical `sub` kept separate
@@ -244,6 +246,7 @@ Clients first. Do not start until Task 2 has the answers and any client release 
 - Test: `tests/test_api_key_hashing.py`, and existing key tests
 
 **Interfaces:**
+- `create_api_key` and revocation write `auth_event` records.
 - Model `ApiKey`: columns as in the spec, plus `access_group_id`, kept from `ApiToken`.
 - `create_api_key(session, user: User, *, name: str | None = None, expires_at: datetime | None = ...) -> str`; default expiry 365 days, matching today's one-year rule in `find_key`.
 - `find_api_key(session, presented: str) -> ApiKey | None`, by `sha256(presented)`.

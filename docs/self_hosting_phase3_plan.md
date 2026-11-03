@@ -1,6 +1,6 @@
 # Self-hosting Phase 3: sign-in plan
 
-Status: proposal, written 2026-11-02, not yet approved as a whole. An independent review against the code was applied the same day, and the user's decisions so far are recorded at the end. It replaces the Sign-in section of `docs/self_hosting_design.md` once approved. Decisions waiting on the user are listed at the end.
+Status: approved by the user on 2026-11-02, after an independent review against the code. It replaces the Sign-in section of `docs/self_hosting_design.md`. The user's decisions are recorded at the end.
 
 ## Goal
 
@@ -14,6 +14,7 @@ The Foundry keeps ORCID with passwords off. Nobody at the Foundry notices a chan
 - Administrators no longer hand out temporary passwords. They issue a one-time link, so no administrator ever knows a user's password.
 - A pepper was optional, then deferred; it is now proposed on by default.
 - Local sign-in is one method among several, not a special lab mode.
+- Registration is a setting (`closed`, `approval`, `open`), not left for later.
 
 ## Why this shape
 
@@ -106,6 +107,7 @@ Never holds a password, token or hash, and never what was typed in the username 
 
 ### Changes to existing tables
 
+- `user.pending_at`, a nullable timestamp, set on an account waiting for approval. Existing users stay null, so nothing is written to them. A pending user gets no session or API key, on any path.
 - `user.disabled_at`, a nullable timestamp. There is no way today to switch an account off. It is checked on sign-in by any method, handoff code redemption, Hub refresh, Hub access token use (`app/utils/hub_tokens.py:174`), and API keys, within the auth cache lifetime.
 - `HubLoginTransaction` gains `purpose` (`sign_in`, `link`), `provider_key`, and a nullable `user_id` for linking. `HubLoginCode` gains `purpose` and the identity being linked.
 - `username` becomes required for anyone with a password, and for them a change needs a recent sign-in. Clearing it is refused. ORCID-created users have none today; one is generated when they add a password.
@@ -116,9 +118,9 @@ The bundle has no job for Hub sign-in rows today: `cleanup_hub_auth` runs only a
 
 ## OIDC providers
 
-Providers are a list in settings. Each has a key, issuer, client ID, client secret from the secrets folder, scopes, a display name, and two flags:
+Providers are a list in settings. Each has a key, issuer, client ID, client secret from the secrets folder, scopes, a display name, and these options:
 
-- `create_accounts`: whether a first sign-in by an unknown person creates an account. Off by default; the Foundry's ORCID provider sets it on, which is today's behaviour.
+- `registration`: overrides the deployment's registration setting for this provider (see Registration).
 - `subject_is_orcid`: the subject is an ORCID iD. Allowed only for `https://orcid.org` and `https://sandbox.orcid.org`, and startup fails on anything else. ORCID status always comes from this flag, never from what a value looks like, because another provider could issue a `sub` shaped like someone's ORCID and claim their account or their proposals.
 
 When no list is set and `hub.enabled` is on, the existing ORCID settings become one implicit provider, including the `ORCID_CLIENT_ID` fallback in `app/utils/hub_orcid.py:15`. The Foundry's actual environment gets checked before this ships, so its configuration does not have to change.
@@ -137,8 +139,8 @@ Rules, each with a test:
 
 1. Look up (`issuer`, `subject`) in `user_identity`. If found and not disabled, that is the user.
 2. If not found and the provider has `subject_is_orcid`, and a user already has that ORCID as `unique_id`, refuse with a message saying an administrator can help. This is the case of an ORCID unlinked from its account: it stays unlinked, and no duplicate is attempted against the unique column.
-3. If not found and `create_accounts` is on, create the account and the identity row in one transaction. `unique_id` is the ORCID if `subject_is_orcid`, otherwise an MFID.
-4. If the person arrived through an invite link for an account (see Setup, change and reset), attach this identity to that account, after a page naming the account, and consume the invite. Refuse if the identity already belongs to someone.
+3. If the person arrived through an invite link for an account (see Setup, change and reset), attach this identity to that account, after a page naming the account, and consume the invite. Refuse if the identity already belongs to someone.
+4. If registration for this provider is `open` or `approval`, create the account and the identity row in one transaction, pending when `approval`. `unique_id` is the ORCID if `subject_is_orcid`, otherwise an MFID.
 5. Otherwise refuse and record it. Never match by email, username or name.
 
 **Existing users get rows up front.** My first draft added rows at each person's next sign-in to avoid a production write, but the review showed that rule could re-arm after an unlink and leave an ORCID unbound. So the identity table becomes the only source of truth, in the standard order:
@@ -151,11 +153,27 @@ Rules, each with a test:
 
 A second provider in CI (Dex) keeps the code from quietly depending on ORCID or on any one provider. A periodic job runs the same checks against Authentik.
 
+## Registration
+
+`CRUCIBLE_AUTH_REGISTRATION` sets the deployment's default, and each provider can override it. An administrator can change it at any time.
+
+| Setting | First sign-in by someone new |
+|---|---|
+| `closed` (default) | Invite link or an account an administrator created |
+| `approval` | Anyone can register; the account waits until an administrator approves it |
+| `open` | The account works immediately |
+
+- The implicit ORCID provider defaults to `open`, which is today's behaviour at the Foundry and in the bundle's Hub setup.
+- Password registration is allowed only with `approval`, because without email nothing verifies an address, and startup refuses `open` for passwords. The form takes a username, names and a password, under the same password rules, with the per-address limit.
+- A person with a pending account sees that it is waiting only after proving who they are: a correct password or a valid provider sign-in. Otherwise pending looks like any other sign-in failure.
+- Administrators see pending accounts and approve or reject them; rejecting deletes the account. Pending accounts not acted on go after 30 days, through the cleanup job.
+- What a new account can do once active is unchanged. The user reviewed this on 2026-11-02 and is content for now that any signed-in user can create projects and datasets and look up users.
+
 ## Linking and unlinking
 
 Following the OWASP Authentication cheat sheet and the pre-hijacking research (Sudhodanan and Paverd, 2022):
 
-- **Credential routes need a Hub session and a recent sign-in.** `require_recent_authentication` exempts API keys today (`app/utils/auth_utils.py:705`), so a leaked key could otherwise add a password, unlink ORCID and end the owner's sessions, turning a leaked key into a lost account. Routes that change how someone proves who they are refuse API keys, including the admin ones; see decision 7.
+- **A user's API key cannot change how that user signs in.** `require_recent_authentication` exempts API keys today (`app/utils/auth_utils.py:705`), so a leaked key could otherwise add a password, unlink ORCID and end the owner's sessions, turning a leaked key into a lost account. See API keys and credential routes below.
 - **The link is written only after the Hub confirms it.** The API has no browser session, only a cookie set when a browser visits the start address, so an attacker could start a link and send a victim the address, attaching the victim's ORCID to the attacker's account. So the callback does not write anything. It returns to the Hub with a one-time code, as sign-in does, and the row is written only when the Hub redeems that code with PKCE, using the session of the user who started it, after a page naming the account being linked.
 - The provider's token is fully validated first.
 - If that identity already belongs to someone else, or is someone else's `unique_id`, refuse. No merging in this phase. Accounts are never joined automatically.
@@ -218,13 +236,25 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 - A user with no password who wants one (an ORCID user, say) needs a recent sign-in, then sets it.
 - Password events and API key events are separate. A password change or reset never touches API keys, and revoking keys is its own action, through the existing `DELETE /users/{user_ref}/apikey`. An administrator handling a compromise does both.
 
+## API keys and credential routes
+
+| Action | With an API key (CLI) | Hub session |
+|---|---|---|
+| Invite someone, issue a reset link, approve, disable, enable, revoke keys | Admin key works, and is logged | Admin, recent sign-in |
+| The same, on another administrator's account | Refused | Admin, recent sign-in |
+| Change own password | Key plus the current password, on the same attempt counter | Recent sign-in plus the current password |
+| Set a first password | Refused; the CLI prints a browser link | Recent sign-in |
+| Link or unlink a login | Refused; the CLI prints a browser link | Recent sign-in |
+
+Admin keys may issue reset links because they can already regenerate any user's API key (`POST /users/{user_ref}/apikey/regenerate`), so refusing would add little and would break the CLI. Refusing for other administrators keeps one leaked admin key from taking over the others by this route. Later, sign-in from a terminal (browser or device code, RFC 8628) and scoped keys can narrow what an admin key must do.
+
 ## API routes
 
-All are listed in the OpenAPI snapshot for client review. Credential routes need a Hub session and a recent sign-in.
+All are listed in the OpenAPI snapshot for client review.
 
 - User: `GET /account/identities`, `POST /account/identities/{provider}/link`, `POST /auth/hub/link/confirm`, `DELETE /account/identities/{id}`, `POST /account/password`.
-- Admin: `POST /users/{user}/password-link`, `DELETE /users/{user}/password`, `POST /users/{user}/disable`, `POST /users/{user}/enable`, `POST /users/{user}/identities`, `DELETE /users/{user}/identities/{id}`, `GET /users/{user}/auth-events`.
-- Public, for signing in: `GET /auth/methods`, `GET` and `POST /auth/hub/password`, `GET` and `POST /auth/hub/password-link`, `GET /auth/hub/oidc/{key}/callback`.
+- Admin: `POST /users/{user}/password-link`, `DELETE /users/{user}/password`, `POST /users/{user}/approve`, `POST /users/{user}/reject`, `POST /users/{user}/disable`, `POST /users/{user}/enable`, `POST /users/{user}/identities`, `DELETE /users/{user}/identities/{id}`, `GET /users/{user}/auth-events`.
+- Public, for signing in: `GET /auth/methods`, `GET` and `POST /auth/hub/password`, `GET` and `POST /auth/hub/password-link`, `GET` and `POST /auth/hub/register`, `GET /auth/hub/oidc/{key}/callback`.
 
 ## API keys
 
@@ -249,7 +279,7 @@ Each is one or more small PRs to `main`, shippable alone, and off by default unt
 2. **Confirm with clients.** Ask the Hub session whether it handles MFID users and checks that a re-login returned the same person; ask the nano-crucible session what it relies on. Their answers may add work.
 3. **Identity table and one resolver.** Empty table, double writes, backfill with approval, then lookups switch, while ORCID is still the only provider.
 4. **Generic OIDC.** Provider list, discovery, callbacks, changed login tables, chooser page, Dex in CI. Foundry behaviour is checked unchanged on staging with crucible-tests.
-5. **Linking.** User and admin routes, `disabled_at`, then the Hub's sign-in methods page through the Hub session.
+5. **Linking and registration.** User and admin routes, `disabled_at`, `pending_at`, the registration setting, then the Hub's sign-in methods page through the Hub session.
 6. **API key hashing.** Clients first. Must be finished before password sign-in is on by default anywhere.
 7. **Local passwords.** Everything in that section, behind `CRUCIBLE_AUTH_PASSWORD_ENABLED`, off by default in code.
 8. **Independent security review** of steps 1 to 7 before release, with the test list below. A professional review is worth considering if labs outside LBL will run it.
@@ -269,6 +299,8 @@ Linking: identity already taken, by a row or by `unique_id`; no email matching e
 
 Disable: every method, handoff codes, Hub refresh, Hub access tokens and API keys are refused.
 
+Registration: each setting and provider override; `open` for passwords refused at startup; a pending account gets no session or key on any path; the waiting message appears only after proof of identity; invite links work with `closed`; pending accounts expire. Credential routes: every row of the table above.
+
 Foundry: existing ORCID user signs in, keeps `unique_id`, and `/auth/apikey` still works, before and after the backfill.
 
 ## HTTPS on a lab network
@@ -277,7 +309,7 @@ This remains the hardest part of a local install, whichever sign-in is used: pas
 
 ## Not in this phase
 
-Self-registration, email reset, multi-factor, passkeys, account merging, and SAML inside Crucible. A group needing these sooner uses Authentik or Keycloak through OIDC, or CILogon for institutional login. The tables leave room for them: email reset reuses `password_token`, and a future factor gets its own table keyed by `user.id`.
+Email reset, multi-factor, passkeys, account merging, and SAML inside Crucible. A group needing these sooner uses Authentik or Keycloak through OIDC, or CILogon for institutional login. The tables leave room for them: email reset reuses `password_token`, and a future factor gets its own table keyed by `user.id`.
 
 ## Decisions
 
@@ -289,12 +321,10 @@ Decided by the user on 2026-11-02:
 4. Password resets and API key resets are separate events.
 5. API keys are hashed before passwords ship.
 
-Still open, with recommendations:
-
-6. **`create_accounts` off by default for new providers.** First sign-in then goes through an invite link or an account an administrator created in advance. The Foundry's ORCID provider keeps it on. Recommended yes.
-7. **Which routes refuse API keys.** Recommended: only those that change how someone proves who they are (setting, changing or removing a password, issuing setup or reset links, linking and unlinking). API keys have no scopes yet, so every key can do whatever its owner can, and it cannot prove a recent sign-in. Other admin routes, including `POST /users` as nano-crucible uses it, keep accepting keys. When keys gain scopes, a dedicated scope can open these up for automation.
-
-Also proposed, without needing a separate answer unless the user disagrees: one-time links in place of temporary passwords, and `user.disabled_at`.
+6. Registration is one setting, `closed`, `approval` or `open`, with provider overrides, replacing the `create_accounts` flag.
+7. API keys follow the table under API keys and credential routes: administrators can use keys from the CLI, and a user's own key cannot change how they sign in without their current password.
+8. New accounts' default permissions stay as they are for now.
+9. One-time links replace temporary passwords, and `user.disabled_at` is added.
 
 ## Left to the builder
 

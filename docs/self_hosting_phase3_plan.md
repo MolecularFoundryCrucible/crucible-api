@@ -337,6 +337,7 @@ Decided by the user on 2026-11-02:
 10. From the Hub's standards review on 2026-11-03: an enforced `required_user` replaces the planned `login_hint`, the token response gains `auth_time`, sign-in failures reach the Hub as standard OAuth errors, and API key creation and revocation are logged.
 11. No multi-factor sign-in in this phase, knowing that a password account can get an API key with only a recent password sign-in. Groups that need it use a provider.
 12. An API key can still regenerate itself for now. Revisit when keys gain scopes.
+13. The Hub stays a backend-for-frontend, the pattern RFC 10017 ranks most secure, and talks to the API through first-party OAuth 2.0 with PKCE. It is documented as that, not as OIDC; only the API's sign-in with upstream providers is OIDC. Authlib's provider support covers only Flask and Django, so a full OIDC provider waits until an outside app needs one.
 
 ## Left to the builder
 

@@ -1,6 +1,6 @@
 # Self-hosting Phase 3: sign-in plan
 
-Status: proposal, written 2026-11-02, not approved. An independent review against the code was applied the same day. It replaces the Sign-in section of `docs/self_hosting_design.md` once approved. Decisions waiting on the user are listed at the end.
+Status: proposal, written 2026-11-02, not yet approved as a whole. An independent review against the code was applied the same day, and the user's decisions so far are recorded at the end. It replaces the Sign-in section of `docs/self_hosting_design.md` once approved. Decisions waiting on the user are listed at the end.
 
 ## Goal
 
@@ -71,7 +71,7 @@ Separate from `user`, so ordinary user queries and API responses cannot touch th
 |---|---|---|
 | `token_hash` | varchar(64), primary key | SHA-256 of a 256-bit random token; the token itself is never stored |
 | `user_id` | int, not null, FK `user.id`, on delete cascade | |
-| `purpose` | varchar(16), not null | `setup` or `reset` |
+| `purpose` | varchar(16), not null | `invite` or `reset` |
 | `created_by_user_id` | int, null, FK `user.id`, on delete set null | |
 | `created_at`, `expires_at` | timestamptz, not null | |
 | `consumed_at`, `voided_at` | timestamptz, null | |
@@ -138,7 +138,8 @@ Rules, each with a test:
 1. Look up (`issuer`, `subject`) in `user_identity`. If found and not disabled, that is the user.
 2. If not found and the provider has `subject_is_orcid`, and a user already has that ORCID as `unique_id`, refuse with a message saying an administrator can help. This is the case of an ORCID unlinked from its account: it stays unlinked, and no duplicate is attempted against the unique column.
 3. If not found and `create_accounts` is on, create the account and the identity row in one transaction. `unique_id` is the ORCID if `subject_is_orcid`, otherwise an MFID.
-4. Otherwise refuse and record it. Never match by email, username or name.
+4. If the person arrived through an invite link for an account (see Setup, change and reset), attach this identity to that account, after a page naming the account, and consume the invite. Refuse if the identity already belongs to someone.
+5. Otherwise refuse and record it. Never match by email, username or name.
 
 **Existing users get rows up front.** My first draft added rows at each person's next sign-in to avoid a production write, but the review showed that rule could re-arm after an unlink and leave an ORCID unbound. So the identity table becomes the only source of truth, in the standard order:
 
@@ -154,7 +155,7 @@ A second provider in CI (Dex) keeps the code from quietly depending on ORCID or 
 
 Following the OWASP Authentication cheat sheet and the pre-hijacking research (Sudhodanan and Paverd, 2022):
 
-- **Credential routes need a Hub session and a recent sign-in.** `require_recent_authentication` exempts API keys today (`app/utils/auth_utils.py:705`), so a leaked key could otherwise add a password, unlink ORCID and end the owner's sessions, turning a leaked key into a lost account. These routes refuse API keys outright, including the admin ones; scripts use the server command.
+- **Credential routes need a Hub session and a recent sign-in.** `require_recent_authentication` exempts API keys today (`app/utils/auth_utils.py:705`), so a leaked key could otherwise add a password, unlink ORCID and end the owner's sessions, turning a leaked key into a lost account. Routes that change how someone proves who they are refuse API keys, including the admin ones; see decision 7.
 - **The link is written only after the Hub confirms it.** The API has no browser session, only a cookie set when a browser visits the start address, so an attacker could start a link and send a victim the address, attaching the victim's ORCID to the attacker's account. So the callback does not write anything. It returns to the Hub with a one-time code, as sign-in does, and the row is written only when the Hub redeems that code with PKCE, using the session of the user who started it, after a page naming the account being linked.
 - The provider's token is fully validated first.
 - If that identity already belongs to someone else, or is someone else's `unique_id`, refuse. No merging in this phase. Accounts are never joined automatically.
@@ -208,13 +209,14 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 
 ### Setup, change and reset
 
-- An administrator creates a user, then gets a one-time link valid for 24 hours by default, and passes it on however they like. The person sets their own password through it. No temporary password exists.
+- An administrator creates a user, then gets a one-time invite link valid for 24 hours by default, and passes it on however they like. The link offers every enabled method: the person sets a password, or signs in with a provider, which attaches that login to the account. This is how someone first signs in when `create_accounts` is off, and it works for providers whose `sub` an administrator cannot know in advance. No temporary password exists.
+- An administrator who knows someone's ORCID can instead create the account with it, which writes the identity row, and no link is needed.
 - Opening the link never consumes it, because mail scanners follow links; only submitting the form does. On first open the token moves into a short-lived cookie and the browser is redirected to an address without it, so the token does not linger in proxy logs or history.
 - `python -m app.cli admin create` prints a link as well as the API key when passwords are on, and `admin password-link` issues one, so a locked-out sole administrator can recover from the server. No default password and no open setup page.
 - Using a link writes the password, consumes the link, clears any lock, ends all of that user's Hub sessions, refuses handoff codes issued before it, and sends them to the normal sign-in (OWASP: do not sign in automatically).
 - Changing a password needs the current password and a recent sign-in, and ends the user's other Hub sessions.
 - A user with no password who wants one (an ORCID user, say) needs a recent sign-in, then sets it.
-- API keys are separate credentials. See open decision 4 for what a reset does to them.
+- Password events and API key events are separate. A password change or reset never touches API keys, and revoking keys is its own action, through the existing `DELETE /users/{user_ref}/apikey`. An administrator handling a compromise does both.
 
 ## API routes
 
@@ -277,17 +279,22 @@ This remains the hardest part of a local install, whichever sign-in is used: pas
 
 Self-registration, email reset, multi-factor, passkeys, account merging, and SAML inside Crucible. A group needing these sooner uses Authentik or Keycloak through OIDC, or CILogon for institutional login. The tables leave room for them: email reset reuses `password_token`, and a future factor gets its own table keyed by `user.id`.
 
-## Open decisions for the user
+## Decisions
 
-1. **Backfill identity rows for existing ORCID users.** Recommended yes. It is a production data write, insert-only, tested on staging first. It replaces the earlier idea of adding rows at next sign-in, which the review showed was unsound.
-2. **Pepper on by default.** Recommended yes. It costs one more secret, kept apart from database backups, and helps only if the database leaks alone. Losing it means re-issuing links to everyone.
-3. **Hard lock at 100 failures, cleared only by a new link.** NIST 3.2.2 says SHALL, which replaces my earlier advice of delays only. With the device cookie, deliberately locking someone out takes about a day and does not stop them signing in on their own browser until the lock lands.
-4. **What a password reset does to API keys.** Recommended: a change leaves them alone; an administrator's reset asks whether to revoke them, defaulting to yes, since a reset may follow a compromise.
-5. **`create_accounts` off by default for new providers.** Recommended yes: a lab enabling ORCID should not admit every ORCID holder without choosing to. The Foundry keeps it on.
-6. **API key hashing before passwords.** Recommended yes, even though it delays passwords, because of the client work involved.
-7. **Credential routes refuse API keys, including for administrators.** Recommended yes. It changes how a script could manage users; those tasks move to the server command.
+Decided by the user on 2026-11-02:
 
-Also proposed, without needing a separate answer unless you disagree: one-time links in place of temporary passwords, and `user.disabled_at`.
+1. Existing ORCID users get identity rows up front. An insert-only production write, tested on staging first, run only with the user's go-ahead at that step.
+2. A pepper is on by default, kept apart from database backups.
+3. A password locks at 100 failures, cleared only by a new link.
+4. Password resets and API key resets are separate events.
+5. API keys are hashed before passwords ship.
+
+Still open, with recommendations:
+
+6. **`create_accounts` off by default for new providers.** First sign-in then goes through an invite link or an account an administrator created in advance. The Foundry's ORCID provider keeps it on. Recommended yes.
+7. **Which routes refuse API keys.** Recommended: only those that change how someone proves who they are (setting, changing or removing a password, issuing setup or reset links, linking and unlinking). API keys have no scopes yet, so every key can do whatever its owner can, and it cannot prove a recent sign-in. Other admin routes, including `POST /users` as nano-crucible uses it, keep accepting keys. When keys gain scopes, a dedicated scope can open these up for automation.
+
+Also proposed, without needing a separate answer unless the user disagrees: one-time links in place of temporary passwords, and `user.disabled_at`.
 
 ## Left to the builder
 

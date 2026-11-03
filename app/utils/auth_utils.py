@@ -127,28 +127,6 @@ def delete_apikey(orcid, session):
     session.commit()
 
 
-ORCID_TIMEOUT = 10
-
-
-def code_for_token_exchange(code: str, client_id, client_secret, redirect_uri):
-    token_req = requests.post(url = "https://orcid.org/oauth/token", timeout = ORCID_TIMEOUT,
-                              data = {  "client_id": client_id,
-                                        "client_secret": client_secret, 
-                                        "grant_type":"authorization_code", 
-                                        "code":code, 
-                                        "redirect_uri":redirect_uri
-                                     }, 
-                              headers = {'Accept': 'application/json'})   
-    
-    response_data = token_req.json()
-    if 'access_token' not in response_data:
-        raise HTTPException(
-            status_code=401,
-            detail=f"ORCID authentication failed: {response_data.get('error_description', response_data)}",
-        )
-    return response_data['access_token']
-
-
 def get_secret_key() -> str:
     return get_secret("CRUCIBLE_SECRET_KEY")
 

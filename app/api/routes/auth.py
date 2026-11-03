@@ -1,29 +1,39 @@
 import datetime
 import logging
+import secrets
+import urllib.parse
 from html import escape
 from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
 import requests
+from authlib.integrations.base_client.errors import OAuthError
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from joserfc.errors import JoseError
 from sqlmodel import Session, select
 
 from app.api.dependencies import (
     get_engine, get_api_root_path,
     get_orcid_client_id, get_orcid_client_secret, get_redirect_uri,
 )
+from app.auth import oidc
 from app.models.core_models import User
 from app.models.response_schemas import ApiKeyRead, LegacyApiKeyRead
 from app.utils.permissions import AccessGroupType, Role
-from app.utils.auth_utils import find_or_add_api_access
+from app.utils.auth_utils import decode_token, encode_token, find_or_add_api_access
 from app.utils.sql_utils import add_or_update
 from app.utils.user_utils import sql_add_user_to_access_group
 
 # Note: /account/* routes live in account.py
 
 router = APIRouter(tags=["auth"])
+
+ORCID_ISSUER = "https://orcid.org"
+LOGIN_STATE_COOKIE = "crucible_login_state"
+LOGIN_STATE_LIFETIME = 600
+SIGN_IN_RESTART = "Sign-in failed. Start again from the page you came from."
 
 
 def _local_path(value) -> str:
@@ -40,55 +50,74 @@ def _login_redirect(login_path: str, return_to: str) -> RedirectResponse:
 
 # ── Canonical routes ─────────────────────────────────────────────────────────
 
+def _orcid_client(client_secret: str = "") -> oidc.OidcClient:
+    return oidc.OidcClient(
+        issuer=ORCID_ISSUER,
+        client_id=get_orcid_client_id(),
+        client_secret=client_secret,
+        redirect_uri=urllib.parse.unquote_plus(get_redirect_uri()),
+        scope="openid",
+        endpoints=oidc.orcid_endpoints(ORCID_ISSUER),
+        token_auth_method="client_secret_post",
+    )
+
+
+def _login_state_cookie_path() -> str:
+    return get_api_root_path() or "/"
+
+
 @router.get("/auth/login", response_class=RedirectResponse, status_code=307, responses={307: {"description": "Redirect to the ORCID sign-in page"}})
 def orcid_login() -> RedirectResponse:
     """Redirect the user to the ORCID login page to begin authentication."""
-    redirect_uri = get_redirect_uri()
-    orcid_client_id = get_orcid_client_id()
-    orcid_auth_url = f"https://orcid.org/oauth/authorize?response_type=code&redirect_uri={redirect_uri}&client_id={orcid_client_id}&scope=openid&nonce=whatever"
-    return RedirectResponse(orcid_auth_url)
+    state = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(32)
+    expires = int(datetime.datetime.now(datetime.timezone.utc).timestamp()) + LOGIN_STATE_LIFETIME
+    response = RedirectResponse(oidc.authorization_url(_orcid_client(), state, nonce))
+    response.set_cookie(
+        LOGIN_STATE_COOKIE,
+        value=encode_token({"state": state, "nonce": nonce, "exp": expires}),
+        max_age=LOGIN_STATE_LIFETIME,
+        path=_login_state_cookie_path(),
+        secure=True,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
 
 
-@router.get("/auth/callback", response_class=RedirectResponse, status_code=307, responses={307: {"description": "Redirect back to the page that started sign-in, with a short-lived session cookie"}, 502: {"description": "ORCID sign-in failed"}})
-def redirect_exchange(request: Request, code: str, state: str = None):
-    """
-    Exchange the ORCID authorization code for an access token and user information.
+@router.get("/auth/callback", response_class=RedirectResponse, status_code=307, responses={307: {"description": "Redirect back to the page that started sign-in, with a short-lived session cookie"}, 400: {"description": "Sign-in could not be matched to this browser, or ORCID reported an error"}, 502: {"description": "ORCID sign-in failed"}})
+def redirect_exchange(request: Request, code: str | None = None, state: str | None = None, error: str | None = None):
+    """Check that this browser started the sign-in, then verify ORCID's ID token and set a short-lived session cookie."""
+    login_state = decode_token(request.cookies.get(LOGIN_STATE_COOKIE) or "")
+    if not state or not login_state or not secrets.compare_digest(state.encode(), str(login_state.get("state")).encode()):
+        raise HTTPException(status_code=400, detail=SIGN_IN_RESTART)
 
-    Args:
-        request: Request object containing the HTTP request
-        code: ORCID authorization code
-        state: Optional state parameter (default is None)
-
-    Returns:
-        RedirectResponse to the appropriate page after successful authentication
-    """
-    import urllib.parse
-    from app.utils.auth_utils import ORCID_TIMEOUT, code_for_token_exchange, encode_token
-
-    orcid_client_id = get_orcid_client_id()
-    orcid_client_secret = get_orcid_client_secret()
-    redirect_uri = urllib.parse.unquote_plus(get_redirect_uri())
+    if error is not None or code is None:
+        response = JSONResponse(status_code=400, content={"detail": SIGN_IN_RESTART})
+        response.delete_cookie(LOGIN_STATE_COOKIE, path=_login_state_cookie_path())
+        return response
 
     try:
-        token = code_for_token_exchange(code, orcid_client_id, orcid_client_secret, redirect_uri)
-        user_from_orcid = requests.get(
-            url="https://orcid.org/oauth/userinfo",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=ORCID_TIMEOUT,
-        )
-        user_info_payload = user_from_orcid.json()
-        user_info_payload['orcid'] = user_info_payload['sub']
-    except (requests.RequestException, ValueError, KeyError) as err:
+        identity = oidc.exchange_code(_orcid_client(get_orcid_client_secret()), code, login_state["nonce"])
+    except (oidc.InvalidSignIn, OAuthError, JoseError, requests.RequestException, ValueError, KeyError) as err:
         logger.warning("ORCID sign-in failed: %s", type(err).__name__)
-        raise HTTPException(status_code=502, detail="ORCID sign-in failed; try again") from None
-    user_info_payload['exp'] = int((datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=1)).timestamp())
-    user_info_jwt = encode_token(user_info_payload)
+        response = JSONResponse(status_code=502, content={"detail": "ORCID sign-in failed; try again"})
+        response.delete_cookie(LOGIN_STATE_COOKIE, path=_login_state_cookie_path())
+        return response
+
+    user_info = {"sub": identity.subject, "orcid": identity.subject}
+    if identity.given_name is not None:
+        user_info["given_name"] = identity.given_name
+    if identity.family_name is not None:
+        user_info["family_name"] = identity.family_name
+    user_info["exp"] = int((datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=1)).timestamp())
 
     response = RedirectResponse(_local_path(request.cookies.get("after_login_return_to_page")))
     response.delete_cookie("after_login_return_to_page")
+    response.delete_cookie(LOGIN_STATE_COOKIE, path=_login_state_cookie_path())
     response.set_cookie(
         "crucible_user_token",
-        value=user_info_jwt,
+        value=encode_token(user_info),
         httponly=True,
         secure=True,
         max_age=60
@@ -99,8 +128,6 @@ def redirect_exchange(request: Request, code: str, state: str = None):
 @router.get("/auth/apikey", response_model=LegacyApiKeyRead, responses={200: {"description": "The API key as JSON, or an HTML page asking for an email when the profile has none", "content": {"text/html": {}}}, 307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}})
 def get_apikey(request: Request):
     """Exchange a valid ORCID browser session cookie for a Crucible API key."""
-    from app.utils.auth_utils import decode_token, find_or_add_api_access
-
     root = get_api_root_path()
     user_info_jwt = request.cookies.get("crucible_user_token")
 
@@ -261,8 +288,6 @@ document.getElementById('email').addEventListener('keydown', function(e) {{
 @router.post("/auth/apikey/regenerate", response_model=ApiKeyRead, responses={307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}})
 def regenerate_apikey(request: Request):
     """Regenerate the caller's API key via browser ORCID session. Requires cookie auth."""
-    from app.utils.auth_utils import decode_token
-
     root = get_api_root_path()
     user_info_jwt = request.cookies.get("crucible_user_token")
 
@@ -282,10 +307,10 @@ def orcid_login_deprecated() -> RedirectResponse:
     return orcid_login()
 
 
-@router.get("/auth", deprecated=True, response_class=RedirectResponse, status_code=307, responses={307: {"description": "Redirect back to the page that started sign-in, with a short-lived session cookie"}, 502: {"description": "ORCID sign-in failed"}})
-def redirect_exchange_deprecated(request: Request, code: str, state: str = None):
+@router.get("/auth", deprecated=True, response_class=RedirectResponse, status_code=307, responses={307: {"description": "Redirect back to the page that started sign-in, with a short-lived session cookie"}, 400: {"description": "Sign-in could not be matched to this browser, or ORCID reported an error"}, 502: {"description": "ORCID sign-in failed"}})
+def redirect_exchange_deprecated(request: Request, code: str | None = None, state: str | None = None, error: str | None = None):
     """Deprecated: use GET /auth/callback."""
-    return redirect_exchange(request, code, state)
+    return redirect_exchange(request, code, state, error)
 
 
 @router.get("/user_apikey", deprecated=True, response_model=LegacyApiKeyRead, responses={200: {"description": "The API key as JSON, or an HTML page asking for an email when the profile has none", "content": {"text/html": {}}}, 307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}})

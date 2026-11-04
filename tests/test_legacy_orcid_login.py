@@ -418,6 +418,40 @@ def test_discovery_is_refreshed_after_twelve_hours(browser, orcid):
     assert orcid.discovery_calls == 2
 
 
+def test_missing_client_secret_refuses_sign_in_without_a_crash(browser, orcid, monkeypatch):
+    from app import config
+    from app.auth import providers
+
+    def missing():
+        raise config.ConfigurationError("ORCID_CLIENT_SECRET is not set")
+
+    monkeypatch.setattr(providers, "get_orcid_client_secret", missing)
+    get_oauth.cache_clear()
+    assert browser.get("/auth/login").status_code == 502
+
+
+def test_state_cannot_be_used_after_orcid_reports_an_error(browser, orcid):
+    state = start_login(browser, orcid)
+    assert browser.get("/auth", params={"error": "access_denied", "state": state}).status_code == 400
+    response = browser.get("/auth", params={"code": "abc", "state": state})
+    assert response.status_code == 400
+    assert "crucible_user_token" not in response.cookies
+    assert orcid.token_calls == []
+
+
+def test_a_new_sign_in_after_an_orcid_error_gets_fresh_values(browser, orcid):
+    first = start_login(browser, orcid)
+    browser.get("/auth", params={"error": "access_denied", "state": first})
+    assert start_login(browser, orcid) != first
+
+
+def test_an_error_with_another_state_leaves_the_sign_in_running(browser, orcid):
+    state = start_login(browser, orcid)
+    assert browser.get("/auth", params={"error": "access_denied", "state": "someone-elses"}).status_code == 400
+    assert browser.get("/auth", params={"error": "access_denied"}).status_code == 400
+    assert browser.get("/auth", params={"code": "abc", "state": state}).status_code == 307
+
+
 def test_orcid_unreachable_at_login_is_502_and_recovers(browser, orcid):
     orcid.down = True
     assert browser.get("/auth/login").status_code == 502

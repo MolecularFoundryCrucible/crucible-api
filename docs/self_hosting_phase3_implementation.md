@@ -6,7 +6,7 @@ Status: written 2026-11-02 for review; not started. The Hub and nano-crucible an
 
 **Goal:** Crucible speaks OIDC to any number of providers and has its own password sign-in, with one person able to link several logins to one account, while the Foundry keeps signing in with ORCID unchanged.
 
-**Architecture:** A new `app/auth/` package holds the Authlib registry, and becomes the one home for sign-in code, with routes kept thin and the `hub_*` files and `auth_utils.py` moved in as tasks touch them. It also holds the single sign-in resolver, passwords, links, throttling and the event log. Every sign-in path ends in the resolver and then the existing Hub handoff. New tables reference `user.id`; `user.unique_id` never changes.
+**Architecture:** A new `app/auth/` package holds the Authlib registry, and becomes the one home for sign-in code, with routes kept thin and the `hub_*` files and `auth_utils.py` moved in as tasks touch them. It also holds the single sign-in resolver, passwords, links, throttling and the event log. Every sign-in path ends in the resolver and then the existing Hub handoff. New tables reference `user.id`. `user.unique_id` becomes an MFID for everyone (Task 5a); ORCID is a linked login, not an ID.
 
 **Tech Stack:** Python 3.11, FastAPI, SQLModel and Alembic on PostgreSQL 17, Authlib's FastAPI integration (`authlib.integrations.starlette_client.OAuth`, with `SessionMiddleware`, `httpx` and `itsdangerous`), joserfc, `pwdlib[argon2]` (new, pinned), Dex in CI, Caddy, Docker Compose.
 
@@ -14,7 +14,7 @@ Status: written 2026-11-02 for review; not started. The Hub and nano-crucible an
 
 ## Global Constraints
 
-- The Foundry signs in unchanged at every step, after adding its explicit provider list: same ORCID clients, same registered redirect addresses (`{api}/auth` for the older flow, `{api}/auth/hub/callback` for the Hub), same `unique_id` values. crucible-tests runs on staging before each merge that touches sign-in.
+- The Foundry signs in unchanged at every step, after adding its explicit provider list: same ORCID clients, same registered redirect addresses (`{api}/auth` for the older flow, `{api}/auth/hub/callback` for the Hub). crucible-tests runs on staging before each merge that touches sign-in.
 - Password sign-in is `CRUCIBLE_AUTH_PASSWORD_ENABLED`, off by default in code, until Task 15.
 - `CRUCIBLE_AUTH_REGISTRATION` defaults to `closed`; the Foundry's and the bundle's ORCID entries state `open`; `open` for passwords is refused at startup.
 - Match identities only on exact `issuer` plus `subject`. Never on email, username, name, or what a value looks like. ORCID status comes only from `subject_is_orcid`, allowed only for `https://orcid.org` and `https://sandbox.orcid.org`.
@@ -123,7 +123,7 @@ Empty tables, no change in behaviour. Every path that creates or signs in an ORC
 Decisions on 2026-11-04, which override the text below where they differ:
 
 - Three pull requests: (1) explicit provider list and the Hub's provider step on Authlib, (2) multiple providers, (3) Dex in CI, then the periodic Authentik job.
-- No implicit provider. `AuthSettings.providers` is a typed list of `OidcProvider` (`app/config.py`), with all fields required and unknown fields refused. Fields: `key`, `display_name`, `issuer`, `client_id`, `scopes`, `token_endpoint_auth_method`, `registration`, `subject_is_orcid`, `legacy_callback`. There is no separate `Provider` dataclass, and `HUB_AUTH_ORCID_*` is retired. The Foundry snapshot test becomes a deploy change on staging, made before the first pull request merges, and in production with the release.
+- No implicit provider. `AuthSettings.providers` is a typed list of `OidcProvider` (`app/config.py`), with all fields required and unknown fields refused. Fields: `key`, `display_name`, `issuer`, `client_id`, `scopes`, `token_endpoint_auth_method`, `registration`, `legacy_callback`. `subject_is_orcid` is dropped: a read-only `is_orcid` property compares the exact issuer, and only one ORCID provider may be listed. There is no separate `Provider` dataclass, and `HUB_AUTH_ORCID_*` is retired. The Foundry snapshot test becomes a deploy change on staging, made before the first pull request merges, and in production with the release.
 - Until Task 5, a non-ORCID provider signs in only people already in `user_identity`; everyone else gets `access_denied`, and no account is created.
 - Pull request 2's migration also adds nullable `provider_code_verifier` to `hublogintransaction`, because the Hub flow keeps its state in the database.
 - Clients are cached per provider, so a missing secret or bad discovery on one leaves the others working. A failed discovery waits 30 seconds before the next try.
@@ -168,6 +168,22 @@ From the review: while a provider's discovery document is bad, each `/auth/login
 - [ ] **Step 5: Add Dex to the CI job** using the image version pinned in the workflow, static password users, one client.
 - [ ] **Step 6: Run the full suite, commit, PR.** Staging check with crucible-tests after merge, and the user signs in to the Hub once. Expected: same `unique_id`.
 - [ ] **Step 7: Add a periodic CI job** running the integration tests against Authentik with the blueprint from the 2026-11-02 trial (`server` and `worker` without the Docker socket).
+
+## Task 5a: Every person's unique_id becomes an MFID
+
+Decided by the user on 2026-11-04. This replaces earlier text saying `unique_id` never changes and that ORCID sign-ins set it. Existing ORCIDs count as linked, verified or not, so people keep signing in. To be proposed in detail before it is built.
+
+Order, each step needing the one before it:
+
+1. Sign-in, token and key paths find people through `user_identity` (Task 5). Until then, a rewritten person signing in with ORCID would get a duplicate account.
+2. Every new person gets an MFID, from the one account-creation function. No provider setting decides this.
+3. The API accepts an ORCID wherever it accepts a person, through `user_identity`, for clients not yet updated; old `owner_orcid` filters too.
+4. Columns that reference people move to `user.id`: `user_unique_id` on `ApiToken`, `HubTokenFamily` and `HubLoginCode`, `project_lead_orcid`, `requester_id`, `reviewer_id`, `requested_by`, in stages because old pods run during a rollout.
+5. nano-crucible and the Hub change to treat `unique_id` as opaque and show ORCID as a linked login.
+6. Production backfill of `user_identity` with approval, then counts: no person with an ORCID-shaped `unique_id` may lack a row.
+7. One-time rewrite of existing people: `user.orcid`, identity group names, `owner_orcid`. Dry run first; staging before production; needs explicit approval and a backup.
+
+To settle in the proposal: stored dataset and sample records that keep the old `owner_orcid`, Hub sessions and addresses holding an old ID, crucible-tests, the ingestion consumer, and how long ORCID input stays accepted.
 
 ## Task 5: One resolver, lookups switch, disable and pending
 

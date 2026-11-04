@@ -130,7 +130,7 @@ The bundle has no job for Hub sign-in rows today: `cleanup_hub_auth` runs only a
 Providers are a list in settings. Each has a key, issuer, client ID, client secret from the secrets folder, scopes, a display name, and these options:
 
 - `registration`: overrides the deployment's registration setting for this provider (see Registration).
-- `subject_is_orcid`: the subject is an ORCID iD. Allowed only for `https://orcid.org` and `https://sandbox.orcid.org`, and startup fails on anything else. ORCID status always comes from this flag, never from what a value looks like, because another provider could issue a `sub` shaped like someone's ORCID and claim their account or their proposals.
+- ORCID status comes only from the exact issuer, a read-only check rather than a setting (user's decision, 2026-11-04). Earlier wording: `subject_is_orcid`: the subject is an ORCID iD. Allowed only for `https://orcid.org` and `https://sandbox.orcid.org`, and startup fails on anything else. ORCID status always comes from this flag, never from what a value looks like, because another provider could issue a `sub` shaped like someone's ORCID and claim their account or their proposals.
 
 There is no implicit provider (user's decision, 2026-11-04). Every deployment lists its providers in `CRUCIBLE_AUTH_PROVIDERS`, every field is required, and the repo ships a complete example, `deploy/compose/auth-providers.example.json`. With the Hub on and no list, the settings check fails and Hub sign-in answers 503. This replaces the earlier promise that the Foundry's configuration would not change: the Foundry adds the list and `OIDC_ORCID_CLIENT_SECRET`, using the same ORCID client as today. The Hub and the older flow use different ORCID clients, and the older flow keeps its own `ORCID_*` settings.
 
@@ -390,3 +390,7 @@ Exact Argon2id parameters above the floor, the source and size of the blocklist,
 - [Pre-hijacked accounts (Sudhodanan and Paverd, 2022)](https://arxiv.org/pdf/2205.10174)
 - [ORCID discovery document](https://orcid.org/.well-known/openid-configuration)
 - Comparison sources are in the logbook entry of 2026-11-02 and in the Phase 3 discussion.
+
+## Update, 2026-11-04: ORCID is a linked login
+
+The user decided that `unique_id` becomes an MFID for every person, existing ones included, and ORCID is something linked to a person. Existing ORCIDs are treated as linked even if unverified, so people keep signing in. Where earlier sections say a provider's subject becomes `unique_id`, or that `unique_id` never changes, this replaces them. The steps are in Task 5a of the implementation plan.

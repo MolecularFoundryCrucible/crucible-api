@@ -150,6 +150,8 @@ Rules, each with a test:
 3. If registration for this provider is `open` or `approval`, create the account and the identity row in one transaction, pending when `approval`. `unique_id` is the ORCID if `subject_is_orcid`, otherwise an MFID.
 4. Otherwise refuse and record it. Never match by email, username or name.
 
+When a step-up sign-in names a `required_user`, these steps only look people up and never create anyone, so signing in with the wrong login leaves no stray account.
+
 **Existing users get rows up front.** My first draft added rows at each person's next sign-in to avoid a production write, but the review showed that rule could re-arm after an unlink and leave an ORCID unbound. So the identity table becomes the only source of truth, in the standard order:
 
 1. Ship the empty table. Every path that creates a user or signs one in also writes the row, while lookups still use `unique_id`. That includes `POST /users` with an ORCID and `admin create --orcid`.

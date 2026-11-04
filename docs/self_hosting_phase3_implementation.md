@@ -148,7 +148,7 @@ From the review: while a provider's discovery document is bad, each `/auth/login
   - Discovery: `test_issuer_mismatch_marks_provider_unavailable`, `test_unreachable_discovery_does_not_stop_startup`, `test_other_providers_work_while_one_is_down`, `test_provider_recovers_after_discovery_returns`, `test_trailing_slash_in_issuer_is_compared_exactly`
   - Tokens: `test_unknown_kid_refetches_keys_once`, `test_algorithm_not_advertised_refused`, `test_none_and_hs256_always_refused`
   - Flow: `test_one_method_redirects_directly`, `test_several_methods_show_chooser`, `test_chooser_escapes_display_name`, `test_callback_for_other_provider_refused`, `test_state_from_other_browser_refused`, `test_legacy_callback_only_serves_implicit_orcid`, `test_pkce_sent_when_advertised`, `test_pkce_omitted_for_orcid`, `test_mfid_user_can_finish_handoff`
-  - Recent sign-in: `test_step_up_sends_prompt_login_with_max_age`, `test_missing_auth_time_is_not_recent`, `test_required_user_mismatch_issues_no_code_and_returns_login_required`, `test_token_response_includes_auth_time`, `test_upstream_failures_redirect_with_standard_errors`, `test_invalid_login_record_never_redirects`, `test_chooser_with_max_age_zero_forces_fresh_sign_in_for_each_method`, `test_challenge_token_is_exactly_insufficient_user_authentication`
+  - Recent sign-in: `test_step_up_sends_prompt_login_with_max_age`, `test_missing_auth_time_is_not_recent`, `test_required_user_mismatch_issues_no_code_and_returns_login_required`, `test_step_up_with_unknown_login_creates_nothing`, `test_token_response_includes_auth_time`, `test_upstream_failures_redirect_with_standard_errors`, `test_invalid_login_record_never_redirects`, `test_chooser_with_max_age_zero_forces_fresh_sign_in_for_each_method`, `test_challenge_token_is_exactly_insufficient_user_authentication`
   - Contract: `test_token_response_shape_unchanged`
   - Check: `test_settings_check_names_users_stranded_by_removed_provider`
   - Integration, against Dex in CI: full code flow, same `sub` on a second sign-in, and a second issuer's identical `sub` kept separate
@@ -170,7 +170,7 @@ All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved f
 
 **Interfaces:**
 - `@dataclass class SignInOutcome: user: User | None; status: Literal["ok", "pending", "refused"]; reason: str | None`
-- `resolve_sign_in(session, provider: Provider, identity: VerifiedIdentity) -> SignInOutcome`, following the spec's "Who is this person" order, steps 1 to 4.
+- `resolve_sign_in(session, provider: Provider, identity: VerifiedIdentity, *, required_user: str | None = None) -> SignInOutcome`, following the spec's "Who is this person" order, steps 1 to 4. With `required_user`, it only looks people up and never reaches the registration step: a different or unknown login writes nothing and issues no code, and an `auth_event` records the refusal.
 - Model `AuthEvent` as in the spec, indexed on (`user_id`, `at`). `record_event(session, event: AuthEventType, *, user: User | None = None, actor: User | None = None, issuer: str | None = None, client_address: str | None = None) -> None`, in the caller's transaction, also logging. `AuthEventType` is a `str` enum.
 - `orcid_of(session, user: User) -> str | None`, moved from Task 3 because nothing uses it before this task: the `user_identity` subject on an ORCID issuer, else `unique_id` if `is_orcid`.
 - `assert_active(user: User) -> None`, raising the existing generic failure when `disabled_at` or `pending_at` is set.

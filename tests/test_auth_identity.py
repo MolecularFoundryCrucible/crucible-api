@@ -451,6 +451,79 @@ def test_backfill_reports_an_orcid_linked_to_someone_else_and_leaves_it(db_engin
     assert identities(db_engine) == [(ISSUER, ORCID)]
 
 
+def count_statements(engine, action):
+    from sqlalchemy import event
+
+    statements = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        action()
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    return len(statements)
+
+
+def add_orcid_users(engine, first, last):
+    with Session(engine) as session, session.begin():
+        for number in range(first, last):
+            add_user(session, unique_id=f"0000-0000-0000-{number:04d}")
+
+
+@pytest.mark.parametrize("flags", [(), ("--commit",)], ids=["dry-run", "commit"])
+def test_backfill_queries_do_not_grow_with_the_number_of_users(db_engine, flags):
+    add_orcid_users(db_engine, 0, 3)
+    few = count_statements(db_engine, lambda: run_backfill("--issuer", ISSUER, *flags))
+    add_orcid_users(db_engine, 3, 60)
+    many = count_statements(db_engine, lambda: run_backfill("--issuer", ISSUER, *flags))
+    assert many <= few
+
+
+def test_backfill_covers_every_batch(db_engine, capsys, monkeypatch):
+    add_orcid_users(db_engine, 0, 7)
+    module = load_backfill()
+    monkeypatch.setattr(module, "BATCH_SIZE", 3)
+    assert module.main(["--issuer", ISSUER, "--commit"]) == 0
+    assert "added: 7" in capsys.readouterr().out
+    assert len(identities(db_engine)) == 7
+
+
+@pytest.mark.parametrize("flags", [(), ("--commit",)], ids=["dry-run", "commit"])
+def test_backfill_reports_a_person_who_has_an_orcid_at_another_issuer(db_engine, capsys, flags):
+    with Session(db_engine) as session, session.begin():
+        user = add_user(session)
+        session.add(UserIdentity(user_id=user.id, issuer=SANDBOX, subject=ORCID))
+    assert run_backfill("--issuer", ISSUER, *flags) == 1
+    assert "conflicts: 1" in capsys.readouterr().out
+    assert identities(db_engine) == [(SANDBOX, ORCID)]
+
+
+def test_backfill_retries_a_batch_when_a_sign_in_wrote_the_row_first(db_engine, capsys, monkeypatch):
+    from sqlalchemy import event
+
+    add_orcid_users(db_engine, 0, 2)
+    subject = "0000-0000-0000-0000"
+
+    signed_in = []
+
+    def sign_in_first(conn, clauseelement, multiparams, params, execution_options):
+        if not signed_in and clauseelement.is_insert:
+            signed_in.append(True)
+            conn.exec_driver_sql("INSERT INTO user_identity (user_id, issuer, subject, created_at) VALUES (1, ?, ?, '2026-01-01')", (ISSUER, subject))
+            conn.connection.commit()
+
+    event.listen(db_engine, "before_execute", sign_in_first)
+    try:
+        assert run_backfill("--issuer", ISSUER, "--commit") == 0
+    finally:
+        event.remove(db_engine, "before_execute", sign_in_first)
+    assert signed_in
+    assert "added: 1" in capsys.readouterr().out and len(identities(db_engine)) == 2
+
+
 def test_backfill_never_changes_a_user(db_engine):
     seed_for_backfill(db_engine)
     with Session(db_engine) as session:

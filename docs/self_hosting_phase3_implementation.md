@@ -246,6 +246,10 @@ Refuse with an API key, and keep for a Hub session with a recent sign-in: changi
 - [ ] **Step 3: Implement.** The pending page is served by the API, with no session issued.
 - [ ] **Step 4: Run the full suite, commit, PR.** Tell the Hub session about the pending filter for its admin area.
 
+Also in this task: `reject_pending_user(session, user: User, *, actor: User | None) -> None`, used by the route and by expiry, and `RESTRICTED_USERNAMES` in `app/utils/user_utils.py`.
+
+- Tests: `test_reject_removes_user_identity_group_and_link`, `test_reject_frees_username_and_login`, `test_reject_refuses_an_approved_user`, `test_approve_and_reject_cannot_both_win` (Postgres), `test_reject_with_unexpected_references_changes_nothing`, `test_expiry_uses_the_same_function`, `test_registration_refuses_a_restricted_username`, `test_restricted_check_catches_lookalikes`, `test_admin_can_set_a_restricted_username`, `test_generated_username_avoids_the_list`, `test_existing_holder_can_save_their_profile`
+
 ## Task 8: Cleanup job in the bundle
 
 **Files:**

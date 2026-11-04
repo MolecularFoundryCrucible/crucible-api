@@ -161,7 +161,7 @@ From the review: while a provider's discovery document is bad, each `/auth/login
 
 ## Task 5: One resolver, lookups switch, disable and pending
 
-All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved from Task 3 on the user's decision. Lookups switch behind `CRUCIBLE_AUTH_IDENTITY_LOOKUP`, off by default, so one release can go out safely: migrate, deploy (rows start being written), backfill, then turn the setting on. Off is the rollback. The flag is temporary and is removed in a later release, as the user decided on 2026-11-03.
+All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved from Task 3 on the user's decision. Lookups switch behind `CRUCIBLE_AUTH_IDENTITY_LOOKUP`, off by default, so one release can go out safely: migrate, deploy (rows start being written), backfill, then turn the setting on. Off is the rollback only until someone links a login, so linking, unlinking and administrator linking are refused with 409 while it is off, and `settings check` warns if it is off while linked rows exist. Changing it needs a pod restart, like any setting. The flag is temporary and is removed in a later release, as the user decided on 2026-11-03. Tests: `test_linking_refused_while_lookup_flag_is_off`, `test_unlinking_refused_while_lookup_flag_is_off`, `test_flag_on_finds_a_linked_login`.
 
 **Files:**
 - Create: `app/auth/events.py`

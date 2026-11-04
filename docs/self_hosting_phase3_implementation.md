@@ -183,6 +183,14 @@ Order, each step needing the one before it:
 6. Production backfill of `user_identity` with approval, then counts: no person with an ORCID-shaped `unique_id` may lack a row.
 7. One-time rewrite of existing people: `user.orcid`, identity group names, `owner_orcid`. Dry run first; staging before production; needs explicit approval and a backup.
 
+Owner safety: `dataset.owner_user_id` and `sample.owner_user_id` are real foreign keys to `user.id` and stay the source of truth; a `unique_id` change does not touch them. `owner_orcid` has no foreign key and drives owner display, filters and facets, so a missed row fails silently. The rewrite updates it through `owner_user_id` in one transaction, and a reconciliation query must then show zero mismatches. Staging on 2026-11-04: 3401 of 3401 datasets match; of 9348 samples, 9346 match, 1 has `owner_orcid` but no `owner_user_id`, and 1 has neither. Those two get resolved first; production is not counted yet.
+
+Other person columns with no foreign key, which also fail silently: `instrument.owner`, `upload_sessions.owner_user_id`, `deletionrequest.requester_id` and `reviewer_id`, `deletionauditlog.requester_id` and `reviewer_id`.
+
+Project sync (user's decision, 2026-11-04, replacing the earlier verified-only rule): a person's own sync uses their linked ORCID whether verified or not, so expectations do not change. Only a provider sign-in or an administrator can write that link; no route lets a person type their own ORCID in. The response reports the linked ORCID, not `unique_id`.
+
+Hub addresses: the goal is `/users/{username}`, with old addresses, including ORCIDs through `user_identity`, still resolving during the transition. Depends on every person having a username.
+
 To settle in the proposal: stored dataset and sample records that keep the old `owner_orcid`, Hub sessions and addresses holding an old ID, crucible-tests, the ingestion consumer, and how long ORCID input stays accepted.
 
 ## Task 5: One resolver, lookups switch, disable and pending

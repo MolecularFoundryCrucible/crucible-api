@@ -197,7 +197,8 @@ Following the OWASP Authentication cheat sheet and the pre-hijacking research (S
 - Unlinking is refused if it would leave no way to sign in, and ends the user's other Hub sessions.
 - Every link and unlink writes an `auth_event`, and the Hub shows the list under the user's sign-in methods. Email notification waits until mail exists.
 - Administrators can link on someone's behalf by exact issuer and subject, for moving a lab to a new provider, and it is recorded with their ID. Service accounts are refused.
-- Places that treat `unique_id` as the ORCID get a helper that finds a user's ORCID through either route: proposal sync (`app/api/routes/account.py:127`, `app/api/routes/users.py:554`) and looking up a person by ORCID (`resolve_user`).
+- A person's ORCID is read only from `user_identity`, through `orcid_of`, with no fallback to `unique_id`. So an unlinked ORCID stops working for proposal sync, and the same person can link it back. Unlinking does not remove existing project memberships. This relies on the backfill having run before lookups switch. ORCID is the canonical researcher identifier when a person has one, but it is not the database key and not required.
+- Proposal sync (`POST /account/sync-projects`) stays where it is, with its code in `app/services/proposals.py`. No plugin system, since there is one source. A proposal service outage returns 502 from sync, while `POST /users` carries on without the lookup. The response's `orcid` comes from `orcid_of`, and sync and `POST /users` share one function that applies the stricter project checks.
 
 ## Local passwords
 

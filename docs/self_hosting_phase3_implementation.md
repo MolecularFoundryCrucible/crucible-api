@@ -265,6 +265,14 @@ Also in this task: `reject_pending_user(session, user: User, *, actor: User | No
 
 `POST /users` stops creating a key nobody receives, since it cannot be read back once keys are hashed.
 
+From the Phase 3 review:
+- Replace `find_or_add_api_access`, which assumes one key, with separate functions to create and list keys.
+- Clear the auth cache by hash, since the plain key is no longer available.
+- While both tables exist, revoking and regenerating update both: `test_revoked_key_is_gone_from_both_tables`, `test_regenerated_key_is_gone_from_both_tables`.
+- The backfill script parses both `token_created` formats and reports anything unreadable. Keys already past a year are copied with their past `expires_at`. Staging has 11 keys, all `YYYY-MM-DD`, and one past a year; count production before Step 1.
+- Before Step 1, check what reads `access_group_id`, and the one staging key where it differs from the owner. If nothing does, drop it instead of copying it.
+- New tests: `test_key_cap_of_ten`, `test_new_key_has_prefix`, `test_older_key_without_prefix_still_works`, `test_api_key_cannot_create_a_key`, `test_list_never_contains_the_key`, `test_list_is_active_only_by_default`, `test_expired_and_revoked_keys_are_kept`.
+
 Clients first. Do not start until Task 2 has the answers and any client release has shipped; the user sets the date.
 
 **Files:**
@@ -274,7 +282,7 @@ Clients first. Do not start until Task 2 has the answers and any client release 
 
 **Interfaces:**
 - `create_api_key` and revocation write `auth_event` records.
-- Model `ApiKey`: columns as in the spec, plus `access_group_id`, kept from `ApiToken`.
+- Model `ApiKey`: columns as in the spec. `access_group_id` only if the check above finds it is needed.
 - `create_api_key(session, user: User, *, name: str | None = None, expires_at: datetime | None = ...) -> str`; default expiry 365 days, matching today's one-year rule in `find_key`.
 - `find_api_key(session, presented: str) -> ApiKey | None`, by `sha256(presented)`.
 

@@ -298,11 +298,21 @@ These sit beside passwords, so plain text keys undo much of this work. The targe
 | `id` | primary key |
 | `user_id` | not null, FK `user.id` |
 | `key_hash` | unique; SHA-256 is enough because keys are 256-bit random values (`secrets.token_hex(32)` today) |
-| `key_prefix` | first characters, to identify a key in lists and logs |
+| `key_last4` | last four characters, to identify a key in lists without revealing it |
 | `name` | what it is for |
 | `created_at`, `last_used_at`, `expires_at`, `revoked_at` | expiry is optional |
 
-Several keys per user, shown once, through `POST`, `GET` and `DELETE /account/apikeys`. Existing keys keep working because their hashes can be computed from the stored values, then the plain column is dropped. This is a production data change and goes through the usual approval. Clients first: nano-crucible still reads `GET /account/apikey`, and tells people to fetch a key from `/user_apikey`; `/auth/apikey` and `/user_apikey` must become pages that add a new key and never replace one, and `GET /account/apikey` answers 404 with instructions. The nano-crucible and Hub sessions confirm before anything is removed.
+Several keys per user, because a hashed key cannot be read back, so with one key a second machine would mean copying it or breaking the first. The cap is 10 active keys per person. New keys start with `crucible_`, so secret scanners can recognize a leaked one, as GitHub's prefixes do. Older keys keep working. A key is shown once.
+
+| Action | Route | With an API key |
+|---|---|---|
+| Create (name, optional expiry) | `POST /account/apikeys` | Refused: browser or Hub with a recent sign-in. To relax when the Python client gains sign-in |
+| List | `GET /account/apikeys`, active only, `?state=inactive` for the rest | Yes |
+| Revoke one | `DELETE /account/apikeys/{id}` | Yes |
+| Administrator: list or revoke one | `GET /users/{ref}/apikeys`, `DELETE /users/{ref}/apikeys/{id}` | Yes |
+| Administrator: revoke all | `DELETE /users/{ref}/apikey`, as today | Yes |
+
+A list entry has `id`, `name`, `last4`, `status`, `created_at`, `last_used_at` and `expires_at`, and never the key. Expiry is 365 days by default, as GitLab's is. Expired and revoked keys stay in the table for audit, and are never deleted. `auth_event` records which key by `api_key_id`. `/account/apikey/regenerate` and `/auth/apikey/regenerate` stay for older clients and replace all a person's keys with one. Existing keys keep working because their hashes can be computed from the stored values, then the plain column is dropped. This is a production data change and goes through the usual approval. Clients first: nano-crucible still reads `GET /account/apikey`, and tells people to fetch a key from `/user_apikey`; `/auth/apikey` and `/user_apikey` must become pages that add a new key and never replace one, and `GET /account/apikey` answers 404 with instructions. The nano-crucible and Hub sessions confirm before anything is removed.
 
 ## Order of work
 

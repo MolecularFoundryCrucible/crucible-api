@@ -6,8 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `user_identity` table and backfill script (`migrations/data/20261103_backfill_user_identity.py`), recording how each person signs in; sign-in still looks people up as before.
+
+### Fixed
+
+- `GET /auth/apikey`, `POST /auth/apikey/regenerate` and `POST /users` return 409, and `admin create` refuses cleanly, when an ORCID is already linked to another user, instead of failing with a 500.
+- Simultaneous first sign-ins through `/auth/apikey` or the Hub no longer fail, and simultaneous `POST /users` requests get a 409.
+- Simultaneous API key requests no longer leave one user with several keys, which broke their key routes.
+- `POST /users` checks for duplicates before calling the proposal service.
+- Browser ORCID sign-in recovers without a restart after a bad discovery document, and refreshes discovery every 12 hours.
+
+### Changed
+
+- `settings check` warns when `HUB_AUTH_ORCID_ISSUER` and `ORCID_ISSUER` differ.
+
 ### Security
 
+- `GET /auth/apikey`, `GET /user_apikey` and `POST /auth/apikey/regenerate` send `Cache-Control: no-store`.
+- `GET /auth/callback` and Hub sign-in refuse ID tokens that list any audience other than Crucible.
+- `GET /auth/callback` refuses token responses with no valid ID token.
+- Authlib minimum raised to 1.9.1.
 - The older browser ORCID sign-in (`/login`, `/auth`, `/user_apikey`) now uses Authlib's OIDC client, which checks `state` and `nonce` and verifies ORCID's ID token.
 
 ## [3.3.1] - 2026-11-02

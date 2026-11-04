@@ -4,12 +4,14 @@ from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_api_root_path
 from app.auth import browser_login
+from app.auth.identity import IdentityTaken, ensure_identity, retry_after_concurrent_first_write
+from app.config import get_settings
 from app.models.core_models import User
 from app.models.response_schemas import ApiKeyRead, LegacyApiKeyRead
 from app.utils.permissions import AccessGroupType, Role
@@ -22,6 +24,7 @@ from app.utils.user_utils import sql_add_user_to_access_group
 router = APIRouter(tags=["auth"])
 
 SIGN_IN_FAILED = "Sign-in failed; try again."
+IDENTITY_CONFLICT = "This ORCID can't be used with this account; contact an administrator."
 
 
 def _local_path(value) -> str:
@@ -63,19 +66,8 @@ async def redirect_exchange(request: Request, code: str | None = None, state: st
     return response
 
 
-@router.get("/auth/apikey", response_model=LegacyApiKeyRead, responses={200: {"description": "The API key as JSON, or an HTML page asking for an email when the profile has none", "content": {"text/html": {}}}, 307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}})
-def get_apikey(request: Request):
-    """Exchange a valid ORCID browser session cookie for a Crucible API key."""
-    root = get_api_root_path()
-    user_info_jwt = request.cookies.get("crucible_user_token")
-
-    user_info = decode_token(user_info_jwt) if user_info_jwt else None
-    if user_info is None:
-        return _login_redirect(f"{root}/login", f"{root}/user_apikey")
-    orcid = user_info["orcid"]
-
+def _record_signed_in_user(orcid: str, user_info: dict) -> tuple[str | None, str, str]:
     with Session(get_engine()) as session:
-        # add the user
         key_map = {'orcid': 'unique_id', 'given_name': 'first_name', 'family_name': 'last_name'}
         user_updates = {key_map[k]: user_info[k] for k in key_map if user_info.get(k) is not None}
 
@@ -93,7 +85,6 @@ def get_apikey(request: Request):
             **user_updates
         )
 
-        # add the user to their orcid access group
         sql_add_user_to_access_group(
             orcid,
             orcid,
@@ -101,17 +92,37 @@ def get_apikey(request: Request):
             role=Role.OWNER,
             group_type=AccessGroupType.IDENTITY,
         )
+        ensure_identity(session, user, get_settings().api.orcid_issuer, orcid)
         session.commit()
+        return user.email, user.first_name, user.last_name
 
-        user_email = user.email
-        user_first_name = user.first_name
-        user_last_name = user.last_name
+
+def _signed_in_user_or_conflict(orcid: str, user_info: dict) -> tuple[str | None, str, str]:
+    try:
+        return retry_after_concurrent_first_write(lambda: _record_signed_in_user(orcid, user_info))
+    except IdentityTaken:
+        raise HTTPException(status_code=409, detail=IDENTITY_CONFLICT) from None
+
+
+@router.get("/auth/apikey", response_model=LegacyApiKeyRead, responses={200: {"description": "The API key as JSON, or an HTML page asking for an email when the profile has none", "content": {"text/html": {}}}, 307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}, 409: {"description": "This ORCID cannot be used with this account"}})
+def get_apikey(request: Request, response: Response):
+    """Exchange a valid ORCID browser session cookie for a Crucible API key."""
+    root = get_api_root_path()
+    user_info_jwt = request.cookies.get("crucible_user_token")
+
+    user_info = decode_token(user_info_jwt) if user_info_jwt else None
+    if user_info is None:
+        return _login_redirect(f"{root}/login", f"{root}/user_apikey")
+    orcid = user_info["orcid"]
+
+    user_email, user_first_name, user_last_name = _signed_in_user_or_conflict(orcid, user_info)
 
     crucible_token = find_or_add_api_access(orcid, get_engine(), regenerate=False)
 
     if not user_email:
-        return HTMLResponse(content=_email_prompt_html(root, orcid, crucible_token, user_first_name, user_last_name))
+        return HTMLResponse(content=_email_prompt_html(root, orcid, crucible_token, user_first_name, user_last_name), headers={"Cache-Control": "no-store"})
 
+    response.headers["Cache-Control"] = "no-store"
     return {'crucible_apikey': crucible_token}
 
 
@@ -223,8 +234,8 @@ document.getElementById('email').addEventListener('keydown', function(e) {{
 </html>"""
 
 
-@router.post("/auth/apikey/regenerate", response_model=ApiKeyRead, responses={307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}})
-def regenerate_apikey(request: Request):
+@router.post("/auth/apikey/regenerate", response_model=ApiKeyRead, responses={307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}, 409: {"description": "This ORCID cannot be used with this account"}})
+def regenerate_apikey(request: Request, response: Response):
     """Regenerate the caller's API key via browser ORCID session. Requires cookie auth."""
     root = get_api_root_path()
     user_info_jwt = request.cookies.get("crucible_user_token")
@@ -233,7 +244,9 @@ def regenerate_apikey(request: Request):
     if user_info is None:
         return _login_redirect(f"{root}/auth/login", f"{root}/auth/apikey")
     orcid = user_info["orcid"]
+    _signed_in_user_or_conflict(orcid, user_info)
     crucible_token = find_or_add_api_access(orcid, get_engine(), regenerate=True)
+    response.headers["Cache-Control"] = "no-store"
     return {"api_key": crucible_token}
 
 
@@ -251,7 +264,7 @@ async def redirect_exchange_deprecated(request: Request, code: str | None = None
     return await redirect_exchange(request, code, state, error)
 
 
-@router.get("/user_apikey", deprecated=True, response_model=LegacyApiKeyRead, responses={200: {"description": "The API key as JSON, or an HTML page asking for an email when the profile has none", "content": {"text/html": {}}}, 307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}})
-def get_apikey_deprecated(request: Request):
+@router.get("/user_apikey", deprecated=True, response_model=LegacyApiKeyRead, responses={200: {"description": "The API key as JSON, or an HTML page asking for an email when the profile has none", "content": {"text/html": {}}}, 307: {"description": "Redirect to sign-in when there is no ORCID session cookie"}, 409: {"description": "This ORCID cannot be used with this account"}})
+def get_apikey_deprecated(request: Request, response: Response):
     """Deprecated: use GET /auth/apikey."""
-    return get_apikey(request)
+    return get_apikey(request, response)

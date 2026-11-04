@@ -8,6 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from app.config import get_secret, get_settings
+from app.auth.identity import default_orcid_issuer, ensure_identity
 from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
@@ -111,14 +112,25 @@ def assert_profile_fields_available(session, *, username: Optional[str] = None, 
         raise fields_in_use(conflicts)
 
 
+def profile_conflict(error: IntegrityError) -> Optional[HTTPException]:
+    """The 409 for a username or email that a concurrent request took first, or None for any other constraint."""
+    message = str(error.orig)
+    if "ux_user_email_lower" in message or "uq_user_email" in message:
+        return fields_in_use(["email"])
+    if "ix_user_username" in message or "user.username" in message:
+        return fields_in_use(["username"])
+    return None
+
+
 def commit_user(session) -> None:
-    """Commit, turning a concurrent email uniqueness conflict into the same 409."""
+    """Commit, turning a concurrent username or email uniqueness conflict into the same 409."""
     try:
         session.commit()
     except IntegrityError as error:
         session.rollback()
-        if "ux_user_email_lower" in str(error.orig):
-            raise fields_in_use(["email"]) from None
+        conflict = profile_conflict(error)
+        if conflict is not None:
+            raise conflict from None
         raise
 
 
@@ -138,6 +150,8 @@ def provision_user(session, *, unique_id: str, first_name: str, last_name: str, 
         UserAccessGroupLink(user_id=user.id, accessgroup_id=group.id, role=Role.CONTRIBUTOR.db_value)
         for group in project_groups
     ])
+    if is_orcid(unique_id):
+        ensure_identity(session, user, default_orcid_issuer(), unique_id)
     return user
 
 

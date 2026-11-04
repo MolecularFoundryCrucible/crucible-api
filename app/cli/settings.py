@@ -272,6 +272,8 @@ def check_container(container: Container, profile: str, verify_secrets: bool = F
             settings = config.get_settings()
             if profile == "server":
                 config.check_settings()
+                if settings.hub.enabled and settings.hub.orcid_issuer != settings.api.orcid_issuer:
+                    report.warnings.append(f"HUB_AUTH_ORCID_ISSUER ({settings.hub.orcid_issuer}) and ORCID_ISSUER ({settings.api.orcid_issuer}) differ, so a person signing in through both is refused")
                 names = config.secrets_in_use()
             else:
                 missing = settings.db.missing("server", "username", "database", "password")

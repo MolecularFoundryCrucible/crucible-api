@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import and_, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
@@ -29,7 +30,8 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, get_active_deletion_request, select_active
-from app.utils.user_utils import assert_profile_fields_available, commit_user, find_mf_user_proposals, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
+from app.auth.identity import IdentityTaken, default_orcid_issuer, find_identity
+from app.utils.user_utils import assert_profile_fields_available, commit_user, find_mf_user_proposals, profile_conflict, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import resolve_project_reference
 from app.models.pagination import PaginatedResponse
 from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
@@ -49,6 +51,7 @@ from app.models.users import (
 router = APIRouter(tags=["users"])
 USER_PROJECT_PAGINATION = replace(PROJECT_PAGINATION, kind="user_project")
 
+IDENTITY_LINKED_ELSEWHERE = "This ORCID is already linked to another user"
 USER_COLLECTION_DEPRECATION = "@1799280000"
 API_KEY_VERIFY_DEPRECATION = "@1792368000"
 USER_RESOLVE_DEPRECATION = "@1792540800"
@@ -550,17 +553,20 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
         )
 
     unique_id = user_info.unique_id.strip() if user_info.unique_id else get_mfid_value()
-    explicit_project_ids = set(project_ids or [])
-    discovered_project_ids = set(find_mf_user_proposals(unique_id)) if is_orcid(unique_id) else set()
-    requested_project_ids = explicit_project_ids | discovered_project_ids
-
     with Session(get_engine()) as session:
         if session.exec(select(User).where(User.unique_id == unique_id)).one_or_none() is not None:
             raise HTTPException(status_code=409, detail=f"unique_id '{unique_id}' already exists")
         if session.exec(select(AccessGroup).where(AccessGroup.group_name == unique_id)).one_or_none() is not None:
             raise HTTPException(status_code=409, detail=f"Identity group '{unique_id}' already exists")
+        if is_orcid(unique_id) and find_identity(session, default_orcid_issuer(), unique_id) is not None:
+            raise HTTPException(status_code=409, detail=IDENTITY_LINKED_ELSEWHERE)
         assert_profile_fields_available(session, username=user_info.username or None, email=user_info.email)
 
+    explicit_project_ids = set(project_ids or [])
+    discovered_project_ids = set(find_mf_user_proposals(unique_id)) if is_orcid(unique_id) else set()
+    requested_project_ids = explicit_project_ids | discovered_project_ids
+
+    with Session(get_engine()) as session:
         projects_by_mfid = {}
         missing_explicit = []
         for ref in sorted(requested_project_ids):
@@ -600,12 +606,23 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
             )
 
         email = user_info.email.lower().strip() if user_info.email is not None else None
-        user = provision_user(
-            session, unique_id=unique_id, first_name=user_info.first_name, last_name=user_info.last_name,
-            email=email, username=user_info.username,
-            project_groups=[groups_by_name[project.unique_id] for project in projects],
-        )
-        session.commit()
+        assert_profile_fields_available(session, username=user_info.username or None, email=user_info.email)
+        try:
+            user = provision_user(
+                session, unique_id=unique_id, first_name=user_info.first_name, last_name=user_info.last_name,
+                email=email, username=user_info.username,
+                project_groups=[groups_by_name[project.unique_id] for project in projects],
+            )
+            session.commit()
+        except IdentityTaken:
+            raise HTTPException(status_code=409, detail=IDENTITY_LINKED_ELSEWHERE) from None
+        except IntegrityError as error:
+            conflict = profile_conflict(error)
+            if conflict is None and "unique constraint" in str(error.orig).lower():
+                conflict = HTTPException(status_code=409, detail="Another request created this user at the same time; nothing created")
+            if conflict is None:
+                raise
+            raise conflict from None
         session.refresh(user)
 
     # Mirror the canonical /auth/apikey flow: provisioning a user also mints

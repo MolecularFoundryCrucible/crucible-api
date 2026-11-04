@@ -20,6 +20,7 @@ from app.models.core_models import (
     HubTokenFamily,
     User,
     UserAccessGroupLink,
+    UserIdentity,
 )
 import app.utils.auth_utils as auth_utils
 from app.utils.hub_tokens import (
@@ -74,7 +75,7 @@ def engine():
         tables=[
             User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__,
             HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__,
-            HubLoginTransaction.__table__, HubLoginCode.__table__,
+            HubLoginTransaction.__table__, HubLoginCode.__table__, UserIdentity.__table__,
         ],
     )
     with Session(engine) as session:
@@ -371,6 +372,11 @@ def test_orcid_id_token_verification_rejects_wrong_identity_context(monkeypatch)
         rejected = jwt.encode({"alg": "RS256", "kid": key.kid}, {**claims, field: bad}, key)
         with pytest.raises(JoseError):
             verify_orcid_id_token(config, rejected, jwks, "expected-nonce")
+    single = jwt.encode({"alg": "RS256", "kid": key.kid}, {**claims, "aud": ["test-orcid-client"]}, key)
+    assert verify_orcid_id_token(config, single, jwks, "expected-nonce")[0] == claims["sub"]
+    extra = jwt.encode({"alg": "RS256", "kid": key.kid}, {**claims, "aud": ["test-orcid-client", "other-client"], "azp": "test-orcid-client"}, key)
+    with pytest.raises(InvalidHubLogin):
+        verify_orcid_id_token(config, extra, jwks, "expected-nonce")
 
 
 def test_orcid_authorization_request_has_state_nonce_and_exact_callback(monkeypatch):

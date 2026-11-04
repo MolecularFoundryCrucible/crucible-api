@@ -99,6 +99,7 @@ def _detail(error: HTTPException) -> str:
 def _create(values: dict, allow_additional: bool) -> tuple[str, str, str]:
     """Create the administrator and their API key in one transaction."""
     from app.api.dependencies import get_engine
+    from app.auth.identity import IdentityTaken
     from app.models.core_models import AccessGroup, User, get_mfid_value
     from app.utils.auth_utils import add_apikey
     from app.utils.user_utils import assert_profile_fields_available, commit_user, generate_unique_username, provision_user
@@ -118,13 +119,15 @@ def _create(values: dict, allow_additional: bool) -> tuple[str, str, str]:
         except HTTPException as error:
             raise Refused(f"Already in use: {_detail(error)}") from None
         username = values["username"] or generate_unique_username(session, values["first_name"], values["last_name"])
-        provision_user(
-            session, unique_id=unique_id, first_name=values["first_name"], last_name=values["last_name"],
-            email=values["email"], username=username, platform_role=PlatformRole.ADMIN,
-        )
-        api_key = add_apikey(unique_id, session)
         try:
+            provision_user(
+                session, unique_id=unique_id, first_name=values["first_name"], last_name=values["last_name"],
+                email=values["email"], username=username, platform_role=PlatformRole.ADMIN,
+            )
+            api_key = add_apikey(unique_id, session)
             commit_user(session)
+        except IdentityTaken:
+            raise Refused(f"ORCID {unique_id} is already linked to another user; nothing created") from None
         except HTTPException as error:
             raise Refused(f"Already in use: {_detail(error)}") from None
         except IntegrityError:

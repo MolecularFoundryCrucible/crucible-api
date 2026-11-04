@@ -7,6 +7,7 @@ from joserfc import jwt
 from joserfc.jwk import KeySet
 
 from app.api.dependencies import get_orcid_client_id, get_orcid_client_secret
+from app.auth.providers import audience_is_only
 from app.config import ConfigurationError, get_settings, optional_secret
 from app.utils.hub_login import HubLoginConfig, HubLoginUnavailable, InvalidHubLogin
 
@@ -82,6 +83,8 @@ def verify_orcid_id_token(config: HubLoginConfig, id_token: str, jwks: dict, non
         },
     )
     claims.validate(leeway=30)
+    if not audience_is_only(claims["aud"], _orcid_client_id()):
+        raise InvalidHubLogin
     return claims["sub"], claims.get("given_name"), claims.get("family_name"), authentication_time(claims.get("auth_time"))
 
 

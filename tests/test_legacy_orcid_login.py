@@ -37,6 +37,8 @@ class FakeOrcid:
         self.claims = {}
         self.signing = None
         self.token_calls = []
+        self.token_response = None
+        self.discovery_calls = 0
         self.down = False
 
     def id_token(self):
@@ -53,11 +55,14 @@ class FakeOrcid:
             raise httpx.ConnectError("unreachable")
         path = request.url.path
         if path == "/.well-known/openid-configuration":
+            self.discovery_calls += 1
             return httpx.Response(200, json=self.metadata)
         if path == "/oauth/jwks":
             return httpx.Response(200, json={"keys": [k.as_dict(private=False) for k in self.published_keys]})
         if path == "/oauth/token":
             self.token_calls.append(parse_qs(request.content.decode()))
+            if self.token_response is not None:
+                return httpx.Response(200, json=self.token_response)
             return httpx.Response(200, json={"access_token": "access", "token_type": "bearer", "id_token": self.id_token()})
         return httpx.Response(404)
 
@@ -269,18 +274,45 @@ def test_session_cookie_is_cleared_after_signing_in(browser, orcid):
     {"iss": "https://other.example"},
     {"iss": None},
     {"aud": "someone-else"},
+    {"aud": None},
+    {"aud": "someone-else", "azp": "test-client"},
+    {"aud": ["someone-else"], "azp": "test-client"},
+    {"aud": ["test-client", "someone-else"], "azp": "test-client"},
     {"nonce": "another-nonce"},
     {"nonce": None},
     {"exp": int(time.time()) - 3600},
     {"sub": None},
     {"sub": ""},
-], ids=["wrong-iss", "no-iss", "wrong-aud", "wrong-nonce", "no-nonce", "expired", "no-sub", "empty-sub"])
+], ids=["wrong-iss", "no-iss", "wrong-aud", "no-aud", "other-aud-with-azp", "other-aud-list-with-azp", "extra-aud-with-azp", "wrong-nonce", "no-nonce", "expired", "no-sub", "empty-sub"])
 def test_bad_id_token_claims_are_refused(browser, orcid, claims):
     orcid.claims = claims
     state = start_login(browser, orcid)
     response = browser.get("/auth", params={"code": "abc", "state": state})
     assert response.status_code == 502
     assert "crucible_user_token" not in response.cookies
+
+
+def test_unsigned_identity_without_an_id_token_is_refused(browser, orcid):
+    orcid.token_response = {"access_token": "access", "token_type": "bearer", "userinfo": {"sub": ORCID, "aud": "test-client"}}
+    state = start_login(browser, orcid)
+    response = browser.get("/auth", params={"code": "abc", "state": state})
+    assert response.status_code == 502
+    assert "crucible_user_token" not in response.cookies
+
+
+@pytest.mark.parametrize("id_token", [None, 7, ["x"]], ids=["null", "number", "list"])
+def test_malformed_id_token_is_refused(browser, orcid, id_token):
+    orcid.token_response = {"access_token": "access", "token_type": "bearer", "id_token": id_token}
+    state = start_login(browser, orcid)
+    response = browser.get("/auth", params={"code": "abc", "state": state})
+    assert response.status_code == 502
+    assert "crucible_user_token" not in response.cookies
+
+
+def test_a_single_audience_list_is_accepted(browser, orcid):
+    orcid.claims = {"aud": ["test-client"]}
+    state = start_login(browser, orcid)
+    assert browser.get("/auth", params={"code": "abc", "state": state}).status_code == 307
 
 
 def _unsigned(values):
@@ -326,6 +358,64 @@ def test_discovery_with_another_issuer_refuses_sign_in(browser, orcid):
 def test_only_unsafe_algorithms_refuses_sign_in(browser, orcid):
     orcid.metadata["id_token_signing_alg_values_supported"] = ["HS256"]
     assert browser.get("/auth/login").status_code == 502
+
+
+@pytest.mark.parametrize("field", ["issuer", "authorization_endpoint", "token_endpoint", "jwks_uri"])
+@pytest.mark.parametrize("bad", ["missing", None, "", 7])
+def test_discovery_without_a_required_field_refuses_sign_in_and_recovers(browser, orcid, field, bad):
+    good = orcid.metadata[field]
+    if bad == "missing":
+        del orcid.metadata[field]
+    else:
+        orcid.metadata[field] = bad
+    assert browser.get("/auth/login").status_code == 502
+    orcid.metadata[field] = good
+    assert browser.get("/auth/login").status_code == 302
+
+
+def test_discovery_with_another_issuer_recovers_without_a_restart(browser, orcid):
+    orcid.metadata["issuer"] = "https://orcid.org/"
+    assert browser.get("/auth/login").status_code == 502
+    orcid.metadata["issuer"] = ISSUER
+    assert browser.get("/auth/login").status_code == 302
+
+
+def test_discovery_with_only_unsafe_algorithms_recovers_without_a_restart(browser, orcid):
+    orcid.metadata["id_token_signing_alg_values_supported"] = ["HS256"]
+    assert browser.get("/auth/login").status_code == 502
+    orcid.metadata["id_token_signing_alg_values_supported"] = ["RS256"]
+    assert browser.get("/auth/login").status_code == 302
+
+
+@pytest.mark.parametrize("algorithms", ["RS256", [7], {"alg": "RS256"}])
+def test_discovery_with_malformed_algorithms_refuses_sign_in(browser, orcid, algorithms):
+    orcid.metadata["id_token_signing_alg_values_supported"] = algorithms
+    assert browser.get("/auth/login").status_code == 502
+
+
+def test_discovery_that_is_not_an_object_refuses_sign_in_and_recovers(browser, orcid):
+    good = orcid.metadata
+    orcid.metadata = ["not", "metadata"]
+    assert browser.get("/auth/login").status_code == 502
+    orcid.metadata = good
+    assert browser.get("/auth/login").status_code == 302
+
+
+def test_a_good_discovery_document_is_fetched_once(browser, orcid):
+    assert browser.get("/auth/login").status_code == 302
+    assert browser.get("/auth/login").status_code == 302
+    assert orcid.discovery_calls == 1
+
+
+def test_discovery_is_refreshed_after_twelve_hours(browser, orcid):
+    twelve_hours = 12 * 60 * 60
+    assert browser.get("/auth/login").status_code == 302
+    get_oauth.cache.expire(time.monotonic() + twelve_hours - 60)
+    assert browser.get("/auth/login").status_code == 302
+    assert orcid.discovery_calls == 1
+    get_oauth.cache.expire(time.monotonic() + twelve_hours + 60)
+    assert browser.get("/auth/login").status_code == 302
+    assert orcid.discovery_calls == 2
 
 
 def test_orcid_unreachable_at_login_is_502_and_recovers(browser, orcid):

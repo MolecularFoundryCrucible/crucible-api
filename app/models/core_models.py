@@ -270,6 +270,27 @@ class User(SQLModel, table=True):
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
 
 
+ORCID_ISSUERS = ("https://orcid.org", "https://sandbox.orcid.org")
+_IS_ORCID_ISSUER = "issuer IN ({})".format(", ".join(f"'{issuer}'" for issuer in ORCID_ISSUERS))
+
+
+class UserIdentity(SQLModel, table=True):
+    __tablename__ = "user_identity"
+    __table_args__ = (
+        UniqueConstraint("issuer", "subject", name="uq_user_identity_issuer_subject"),
+        Index("ux_user_identity_one_orcid", "user_id", unique=True, postgresql_where=text(_IS_ORCID_ISSUER), sqlite_where=text(_IS_ORCID_ISSUER)),
+    )
+
+    id: Optional[int] = Field(default=None, sa_column=Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True))
+    user_id: int = Field(sa_column=Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True))
+    issuer: str = Field(sa_column=Column(Text, nullable=False))
+    subject: str = Field(sa_column=Column(String(255), nullable=False))
+    label: Optional[str] = Field(default=None, sa_column=Column(String(255)))
+    created_at: datetime = Field(default_factory=get_utc_datetime, sa_type=DateTime(timezone=True))
+    created_by_user_id: Optional[int] = Field(default=None, sa_column=Column(Integer, ForeignKey("user.id", ondelete="SET NULL")))
+    last_used_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+
+
 class ApiToken(SQLModel, table = True):
     access_group_id: str= Field(default = None)
     user_unique_id: str = Field(default = None, foreign_key = "user.orcid", index = True)

@@ -19,7 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import get_secret
 from app.api.dependencies import get_engine
-from app.models.core_models import ApiToken
+from app.models.core_models import ApiToken, User
 from app.models.resource import ResourceCapabilities
 from app.utils.hub_tokens import ACCESS_PREFIX, InvalidHubGrant, hub_access_family
 from app.services.activity import record_caller_activity
@@ -91,6 +91,8 @@ def find_or_add_api_access(orcid: str, engine, regenerate = False):
     # query the database for orcid
     one_year_ago = (date.today()-timedelta(365)).isoformat()
     with Session(engine) as session:
+        # The row lock is what keeps simultaneous requests from each adding a key.
+        session.exec(select(User.id).where(User.unique_id == orcid).with_for_update()).first()
         api_acct = session.exec(select(ApiToken).where(and_(ApiToken.user_unique_id == orcid,
                                                             ApiToken.token_created > one_year_ago))).one_or_none()
 
@@ -99,7 +101,7 @@ def find_or_add_api_access(orcid: str, engine, regenerate = False):
 
         elif api_acct is not None and regenerate == True:
             old_token = api_acct.token
-            delete_apikey(orcid, session)
+            session.query(ApiToken).filter(ApiToken.user_unique_id == orcid).delete(synchronize_session=False)
             new_token = generate_apikey(orcid, session)
             _invalidate_auth_cache(old_token)
             return(new_token)
@@ -122,11 +124,6 @@ def generate_apikey(orcid: str, session):
     return(new_token)
 
     
-def delete_apikey(orcid, session):
-    session.query(ApiToken).filter(ApiToken.user_unique_id == orcid).delete(synchronize_session=False)
-    session.commit()
-
-
 def get_secret_key() -> str:
     return get_secret("CRUCIBLE_SECRET_KEY")
 

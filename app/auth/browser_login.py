@@ -12,7 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
 
 from app.api.dependencies import get_api_root_path, get_redirect_uri
-from app.auth.providers import ProviderUnavailable, orcid_browser_client
+from app.auth.providers import ProviderUnavailable, audience_is_only, orcid_browser_client, orcid_id_token_claims
 from app.utils.auth_utils import encode_token, get_secret_key
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ LOGIN_SESSION_LIFETIME = 600
 PENDING_SIGN_IN = "pending_sign_in"
 ID_TOKEN_LEEWAY = 30
 USER_TOKEN_LIFETIME = datetime.timedelta(minutes=1)
-_FAILURES = (ProviderUnavailable, OAuthError, JoseError, httpx.HTTPError, ValueError, KeyError)
+_FAILURES = (ProviderUnavailable, OAuthError, JoseError, httpx.HTTPError, TypeError, ValueError, KeyError)
 
 
 class SignInRejected(Exception):
@@ -75,7 +75,7 @@ async def finish_sign_in(request: Request) -> str:
         raise SignInRejected
     try:
         client = await orcid_browser_client()
-        token = await client.authorize_access_token(request, leeway=ID_TOKEN_LEEWAY)
+        token = await client.authorize_access_token(request, claims_options=orcid_id_token_claims(), leeway=ID_TOKEN_LEEWAY)
     except MismatchingStateError:
         logger.warning("ORCID sign-in rejected: state does not match this browser")
         raise SignInRejected from None
@@ -84,7 +84,13 @@ async def finish_sign_in(request: Request) -> str:
         logger.warning("ORCID sign-in failed: %s", type(err).__name__)
         raise SignInFailed from None
     request.session.pop(PENDING_SIGN_IN, None)
+    if "id_token" not in token:
+        logger.warning("ORCID sign-in failed: token response has no ID token")
+        raise SignInFailed
     identity = token.get("userinfo") or {}
+    if not audience_is_only(identity.get("aud"), client.client_id):
+        logger.warning("ORCID sign-in failed: ID token lists another audience")
+        raise SignInFailed
     subject = identity.get("sub")
     if not isinstance(subject, str) or not subject:
         logger.warning("ORCID sign-in failed: ID token has no subject")

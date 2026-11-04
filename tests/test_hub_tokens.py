@@ -372,6 +372,11 @@ def test_orcid_id_token_verification_rejects_wrong_identity_context(monkeypatch)
         rejected = jwt.encode({"alg": "RS256", "kid": key.kid}, {**claims, field: bad}, key)
         with pytest.raises(JoseError):
             verify_orcid_id_token(config, rejected, jwks, "expected-nonce")
+    single = jwt.encode({"alg": "RS256", "kid": key.kid}, {**claims, "aud": ["test-orcid-client"]}, key)
+    assert verify_orcid_id_token(config, single, jwks, "expected-nonce")[0] == claims["sub"]
+    extra = jwt.encode({"alg": "RS256", "kid": key.kid}, {**claims, "aud": ["test-orcid-client", "other-client"], "azp": "test-orcid-client"}, key)
+    with pytest.raises(InvalidHubLogin):
+        verify_orcid_id_token(config, extra, jwks, "expected-nonce")
 
 
 def test_orcid_authorization_request_has_state_nonce_and_exact_callback(monkeypatch):

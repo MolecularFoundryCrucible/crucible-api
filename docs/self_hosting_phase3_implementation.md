@@ -220,6 +220,13 @@ All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved f
 - [ ] **Step 4: Run the full suite, commit, PR.**
 - [ ] **Step 5: Ask the Hub session** for the sign-in methods page, the confirmation page under `/hub/account/`, and `/hub/auth/link/callback`, sending it the OpenAPI diff. Add that path to `HUB_AUTH_CALLBACK_URI` in the bundle and through the deployment session. The user merges both sides.
 
+## Task 6b: Protect human administrators from API keys
+
+Refuse with an API key, and keep for a Hub session with a recent sign-in: changing a human's admin status (`PATCH /users/{user_ref}/platform_role`), and reading or regenerating another administrator's key (`POST /users/{user_ref}/apikey`, `/apikey/regenerate`). Add the same check to the admin identity routes from Task 6 and the password links from Task 13. Add `python -m app.cli admin set-role`. Service account roles and revoking keys stay as they are.
+
+- Tests: `test_api_key_cannot_change_a_humans_admin_status`, `test_api_key_cannot_regenerate_or_read_another_admins_key`, `test_api_key_can_still_regenerate_an_ordinary_users_key`, `test_api_key_can_still_revoke_an_admins_keys`, `test_api_key_can_still_set_a_service_account_role`, `test_recent_hub_session_can_do_all_of_these`, `test_cli_set_role_keeps_the_last_admin_rule`
+- Tell the Hub and nano-crucible sessions, and add a changelog line, since scripts using these routes with a key will get 403.
+
 ## Task 7: Registration setting
 
 **Files:**

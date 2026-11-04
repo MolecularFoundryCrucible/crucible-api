@@ -258,13 +258,16 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 | Action | With an API key (CLI) | Hub session |
 |---|---|---|
 | Issue a setup or reset link, approve, disable, enable | Admin key works, and is logged | Admin, recent sign-in |
-| The same, on another administrator's account | Refused | Admin, recent sign-in |
+| The same, on another human administrator's account | Refused | Admin, recent sign-in |
+| Change any human's admin status, promoting or demoting | Refused | Admin, recent sign-in |
+| Regenerate or read another administrator's API key | Refused | Admin, recent sign-in |
+| Link or unlink another administrator's login | Refused | Admin, recent sign-in |
 | Revoke someone's API keys | Admin key works, on anyone, as today | Admin |
 | Change own password | Key plus the current password, on the same attempt counter | Recent sign-in plus the current password |
 | Set a first password | Refused; the CLI prints a browser link | Recent sign-in |
 | Link or unlink a login | Refused; the CLI prints a browser link | Recent sign-in |
 
-Admin keys may issue reset links because they can already regenerate any user's API key (`POST /users/{user_ref}/apikey/regenerate`), so refusing would add little and would break the CLI. Refusing for other administrators keeps one leaked admin key from taking over the others by this route. Revoking keys stays open, since it removes access rather than granting it, and nano-crucible already relies on it. Later, sign-in from a terminal (browser or device code, RFC 8628) and scoped keys can narrow what an admin key must do.
+Admin keys may issue reset links for ordinary users, for the CLI. For human administrators, the rule is broader, decided by the user after the Phase 3 review: the earlier rule could be bypassed by demoting the administrator first or regenerating their key. No rule makes a leaked admin key safe, since it can read and change all data and can make a service account an administrator (nano-crucible's `set_platform_role` relies on that route). The goal is that other human administrators keep control of their own accounts, so someone can respond. A lab with no Hub uses the server command line: `python -m app.cli admin set-role` and `admin password-link`. Revoking keys stays open, since it removes access rather than granting it, and nano-crucible already relies on it. Later, sign-in from a terminal (browser or device code, RFC 8628) and scoped keys can narrow what an admin key must do.
 
 ## API routes
 

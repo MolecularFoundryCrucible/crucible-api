@@ -52,6 +52,7 @@ New code never treats `unique_id` as an ORCID and never uses it to decide who so
 | `label` | varchar(255), null | shown to the user, such as a username at the provider; never used to decide anything |
 | `created_at` | timestamptz, not null | |
 | `created_by_user_id` | int, null, FK `user.id`, on delete set null | set when an administrator made the link |
+| `verified_at` | timestamptz, null | when the provider itself confirmed this login, at sign-in or linking. Empty for logins an administrator entered and for backfilled rows until the person next signs in. Any provider can use it |
 | `last_used_at` | timestamptz, null | |
 
 Constraints: unique (`issuer`, `subject`), so one provider account belongs to one person. A partial unique index on `user_id` for the ORCID issuers, so a person has at most one ORCID; it may change later, as the user expects. Other issuers can have several, because one CILogon issuer can front two institutions.
@@ -198,6 +199,9 @@ Following the OWASP Authentication cheat sheet and the pre-hijacking research (S
 - Every link and unlink writes an `auth_event`, and the Hub shows the list under the user's sign-in methods. Email notification waits until mail exists.
 - Administrators can link on someone's behalf by exact issuer and subject, for moving a lab to a new provider, and it is recorded with their ID. Service accounts are refused.
 - A person's ORCID is read only from `user_identity`, through `orcid_of`, with no fallback to `unique_id`. So an unlinked ORCID stops working for proposal sync, and the same person can link it back. Unlinking does not remove existing project memberships. This relies on the backfill having run before lookups switch. ORCID is the canonical researcher identifier when a person has one, but it is not the database key and not required.
+- **ORCID's rules.** The Foundry is not an ORCID member, so ORCID's member requirements do not bind it, but Crucible follows them where it can, by the user's decision. An iD is collected by signing in. An administrator can still enter one, because the Foundry creates users from its user database, and it shows as unauthenticated, as ORCID's repository criteria allow. Crucible does not call ORCID's search API. Looking up an existing Crucible user by ORCID is not collecting an iD. The Hub shows iDs per ORCID's display guidelines, with the unauthenticated icon and suffix when `verified_at` is empty, and explains why it asks for one.
+- **Verifying.** Signing in with ORCID sets `verified_at`. Someone with an entered ORCID and another way in uses "Verify your ORCID", which runs the linking flow: the same iD sets `verified_at`, and a different one is refused and changes nothing.
+- Self-service proposal sync requires a verified ORCID, so a mistyped iD cannot grant someone another researcher's projects by their own action. `POST /users` keeps discovering projects from an entered ORCID, because the Foundry relies on it, and that is an administrator's logged decision: the row records them in `created_by_user_id`.
 - Proposal sync (`POST /account/sync-projects`) stays where it is, with its code in `app/services/proposals.py`. No plugin system, since there is one source. A proposal service outage returns 502 from sync, while `POST /users` carries on without the lookup. The response's `orcid` comes from `orcid_of`, and sync and `POST /users` share one function that applies the stricter project checks.
 
 ## Local passwords

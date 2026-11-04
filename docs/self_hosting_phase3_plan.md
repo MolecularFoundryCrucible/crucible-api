@@ -66,7 +66,8 @@ Why these columns: OIDC Core section 5.7 says `iss` and `sub` together are the o
 | `password_hash` | text, not null | PHC-format Argon2id string |
 | `pepper_id` | varchar(32), null | which pepper was applied |
 | `password_changed_at` | timestamptz, not null | |
-| `failed_attempts` | int, not null, default 0 | consecutive failures |
+| `failed_attempts` | int, not null, default 0 | consecutive failures from unknown browsers |
+| `trusted_failed_attempts` | int, not null, default 0 | consecutive failures from a known browser or a signed-in session |
 | `blocked_until` | timestamptz, null | |
 | `locked_at` | timestamptz, null | set at the hard limit |
 
@@ -219,13 +220,15 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 
 ### Attempts
 
-- Counted on the account. Each attempt first reserves itself with one short committed update, then hashes, then records the result, so parallel guesses cannot slip past the counter, and no database lock or connection is held during hashing.
-- The first 4 failures have no delay, then 2, 4, 8 seconds and so on, up to 15 minutes. A success resets the count.
+- Counted on the account. Each attempt first counts itself and checks the limits in one atomic `UPDATE ... RETURNING`, then hashes, so parallel guesses cannot slip past the counter, no database lock or connection is held during hashing, and a crash counts as a failure. A success is accepted only if `password_changed_at` has not changed since the attempt began, so a guess at an old password cannot succeed during a reset.
+- For unknown browsers, the first 4 failures have no delay, then 2, 4, 8 seconds and so on, up to 15 minutes. A success resets both counters.
 - During a delay, the same work is done against a dummy hash, the submitted password is not checked, and the attempt does not count. So the response and timing match a wrong password.
-- Hard limit: at 100 counted failures the password is disabled, as NIST requires. With the delays this takes about a day of constant guessing. NIST also requires rebinding, so clearing it means an administrator issuing a new link, not a switch that re-enables the old password. Other sign-in methods and API keys are unaffected.
-- **Keeping attackers from locking people out.** A single guess every 15 minutes would otherwise keep a person out indefinitely, since account holders can list usernames. A browser that has signed in successfully gets a signed cookie for that user (OWASP's device cookie), which bypasses the delay. It is signed with `itsdangerous` under its own salt, so no other signed value can pass as one. Attempts with that cookie count separately and have their own small limit. Without it, a legitimate user in a browser they have never used waits out the delay or asks an administrator.
+- Two counters, decided by the user after the Phase 3 review, combining NIST and OWASP. Unknown browsers have a limit of 90, after which only they are locked out. A known browser or a signed-in session has its own limit of 10 and no delays, after which the password is disabled until an administrator issues a new link, the rebinding NIST requires. The total can never pass NIST's 100. The 90 and 10 split is this project's design, not from either source.
+- Attackers cannot reach the second counter without a valid cookie or session, so they can delay a person but not lock them out of a browser they have used. A correct password from a known browser clears the lockout on unknown browsers.
+- A browser that signs in successfully gets a signed cookie (OWASP's device cookie), signed with `itsdangerous` under its own salt, so no other signed value can pass as one. Each sign-in issues a new one. It carries `password_changed_at`, so any password change or reset cancels all cookies. Failures are counted per account, not per cookie as OWASP does, which needs no extra table and stops a stolen cookie adding guesses.
+- What this does not solve: someone with no known browser can be locked out by a persistent attacker in about 20 hours of guessing, and then needs a known browser or an administrator's link. Closing that needs email or a second factor, out of scope here.
 - Per address: a wider limit, to slow one source trying many accounts, also covering registration and opening or submitting password links. The address comes from the header the bundle's Caddy sets, trusted only when configured.
-- `POST /account/password` uses the same account counter, so a stolen session cannot guess the current password freely.
+- `POST /account/password` uses the known-browser counter, so a stolen session cannot guess the current password freely, and an attacker's guesses cannot block a signed-in person from changing it.
 - A limit on simultaneous hash checks in each worker, so a burst cannot exhaust memory.
 
 ### Responses

@@ -327,8 +327,8 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
 
 **Interfaces:**
 - Model `LoginThrottle`, and the failure columns on `LocalCredential`, as in the spec.
-- `begin_attempt(engine, credential_user_id: int | None, client_address: str | None, *, device_cookie: DeviceCookie | None, now: datetime) -> AttemptDecision`: one short committed update, returning `check_password: bool`. No lock or connection is held afterwards.
-- `finish_attempt(engine, decision: AttemptDecision, *, success: bool, now: datetime) -> None`.
+- `begin_attempt(engine, credential_user_id: int | None, client_address: str | None, *, device_cookie: DeviceCookie | None, session_authenticated: bool = False, now: datetime) -> AttemptDecision`: one atomic `UPDATE ... RETURNING` that counts the attempt and applies the limits, returning `check_password: bool` and the `password_changed_at` it saw. No lock or connection is held afterwards.
+- `finish_attempt(engine, decision: AttemptDecision, *, success: bool, now: datetime) -> bool`: returns whether the success stands, refusing it if `password_changed_at` has changed.
 - `issue_device_cookie(user_id: int) -> str`, `read_device_cookie(value: str | None, user_id: int) -> DeviceCookie | None`: following OWASP's device cookie design, signed with `itsdangerous.URLSafeTimedSerializer` under its own salt (`crucible.device-cookie`), not a hand-written HMAC. Lifetime 90 days by default.
 - `hash_slot()`: a per-worker semaphore around hashing.
 - `client_address(request) -> str | None`: reads the rightmost address appended by the trusted proxy, using `CRUCIBLE_AUTH_TRUSTED_PROXY_HOPS` (default 0, the bundle sets 1).
@@ -336,8 +336,8 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
 - [ ] **Step 1: Write failing tests:**
   - Schedule: `test_first_four_failures_no_delay`, `test_delay_doubles_from_2_seconds`, `test_delay_caps_at_900_seconds`, `test_success_resets`
   - `test_attempt_during_delay_not_counted_and_password_not_checked`, `test_correct_password_during_delay_fails`
-  - `test_lock_at_100_counted_failures`, `test_100_failures_take_about_a_day_at_the_cap` (simulated clock), `test_locked_refuses_correct_password`
-  - Device cookie: `test_cookie_bypasses_account_delay`, `test_cookie_for_other_user_ignored`, `test_tampered_cookie_ignored`, `test_cookie_has_own_failure_limit`, `test_locked_credential_refuses_even_with_cookie`, `test_session_or_user_token_signature_is_not_a_device_cookie`, `test_zero_or_negative_cookie_lifetime_fails_settings_check`
+  - `test_unknown_browsers_locked_at_90`, `test_90_failures_take_about_20_hours_at_the_cap` (simulated clock), `test_locked_unknown_browser_refuses_correct_password`, `test_total_guesses_never_pass_100`
+  - Device cookie: `test_cookie_bypasses_account_delay`, `test_cookie_for_other_user_ignored`, `test_tampered_cookie_ignored`, `test_cookie_works_while_unknown_browsers_are_locked`, `test_correct_password_with_cookie_clears_the_lockout`, `test_ten_known_browser_failures_disable_the_password`, `test_disabled_password_refuses_even_with_cookie`, `test_password_change_cancels_cookies`, `test_each_sign_in_issues_a_new_cookie`, `test_attackers_guesses_do_not_block_password_change`, `test_guess_at_old_password_cannot_succeed_during_a_reset`, `test_crash_during_hash_counts_as_a_failure`, `test_session_or_user_token_signature_is_not_a_device_cookie`, `test_zero_or_negative_cookie_lifetime_fails_settings_check`
   - Address: `test_address_limit_applies_across_accounts`, `test_unknown_usernames_count_against_address`, `test_spoofed_forwarded_header_does_not_change_address`, `test_address_row_removed_after_30_days`
   - Postgres: `test_parallel_guesses_cannot_exceed_counter` (20 threads, exact count), `test_no_connection_held_during_hash`
   - `test_rename_keeps_lock_and_does_not_pass_it_on`, `test_freed_username_gets_no_counters`

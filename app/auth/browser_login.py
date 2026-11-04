@@ -12,7 +12,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
 
 from app.api.dependencies import get_api_root_path, get_redirect_uri
-from app.auth.providers import ProviderUnavailable, audience_is_only, orcid_browser_client, orcid_id_token_claims
+from app.auth.providers import ORCID_BROWSER, ProviderUnavailable, audience_is_only, get_oauth, orcid_browser_client, orcid_id_token_claims
+from app.config import ConfigurationError
 from app.utils.auth_utils import encode_token, get_secret_key
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ LOGIN_SESSION_LIFETIME = 600
 PENDING_SIGN_IN = "pending_sign_in"
 ID_TOKEN_LEEWAY = 30
 USER_TOKEN_LIFETIME = datetime.timedelta(minutes=1)
-_FAILURES = (ProviderUnavailable, OAuthError, JoseError, httpx.HTTPError, TypeError, ValueError, KeyError)
+_FAILURES = (ProviderUnavailable, ConfigurationError, OAuthError, JoseError, httpx.HTTPError, TypeError, ValueError, KeyError)
 
 
 class SignInRejected(Exception):
@@ -54,6 +55,15 @@ def _pending_sign_in(request: Request) -> dict:
     return pending
 
 
+def _abandon_sign_in(request: Request) -> None:
+    """End this browser's sign-in when the callback names its state, so the state is single use. Another state leaves it running, because any site can send a browser to this callback."""
+    pending = request.session.get(PENDING_SIGN_IN)
+    if not pending or request.query_params.get("state") != pending["state"]:
+        return
+    request.session.pop(PENDING_SIGN_IN)
+    get_oauth().create_client(ORCID_BROWSER).framework.clear_state_data(request.session, pending["state"])
+
+
 async def start_sign_in(request: Request) -> Response:
     try:
         client = await orcid_browser_client()
@@ -72,6 +82,7 @@ async def finish_sign_in(request: Request) -> str:
     ORCID cannot be reached or its answer does not verify."""
     if request.query_params.get("error") or not request.query_params.get("code"):
         logger.warning("ORCID sign-in rejected: provider error or no code")
+        _abandon_sign_in(request)
         raise SignInRejected
     try:
         client = await orcid_browser_client()

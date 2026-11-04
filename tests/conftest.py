@@ -114,9 +114,10 @@ def fresh_settings(monkeypatch):
     test starts from an empty settings cache, no secrets already fetched, and no engine."""
     from app import config, storage
     from app.api import dependencies
+    from app.auth import providers
     from app.storage import gcs
 
-    caches = (config.get_settings, dependencies.get_engine, storage.get_store, gcs.server_credentials, gcs.server_client)
+    caches = (config.get_settings, dependencies.get_engine, storage.get_store, gcs.server_credentials, gcs.server_client, providers.get_oauth)
     monkeypatch.setattr(config, "_fetched_secrets", {})
     monkeypatch.setattr(config, "_loaded_env_files", set())
     for cached in caches:

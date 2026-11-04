@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Simultaneous API key requests no longer leave one user with several keys, which broke their key routes.
 - `POST /users` checks for duplicates before calling the proposal service.
 - Browser ORCID sign-in recovers without a restart after a bad discovery document, and refreshes discovery every 12 hours.
+- `GET /auth/login` and `GET /auth/callback` return 502 instead of 500 when the ORCID client secret is missing.
 
 ### Changed
 
@@ -28,6 +29,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `GET /auth/callback` and Hub sign-in refuse ID tokens that list any audience other than Crucible.
 - `GET /auth/callback` refuses token responses with no valid ID token.
 - Authlib minimum raised to 1.9.1.
+- `GET /auth/callback` ends the sign-in when ORCID reports an error, so its `state` cannot be used again.
 - The older browser ORCID sign-in (`/login`, `/auth`, `/user_apikey`) now uses Authlib's OIDC client, which checks `state` and `nonce` and verifies ORCID's ID token.
 
 ## [3.3.1] - 2026-11-02

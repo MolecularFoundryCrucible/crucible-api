@@ -137,6 +137,7 @@ From the review: while a provider's discovery document is bad, each `/auth/login
 - The older flow keeps its own registered client, `ORCID_CLIENT_ID`, with its own redirect address.
 - `hub_login.create_login(..., provider_key: str, purpose: str = "sign_in", user_id: int | None = None)`.
 - `GET /auth/hub/login` gains optional `required_user` (a `unique_id`). If a different account authenticates, no code is issued and the API redirects to the Hub with `error=login_required` and `state` (OIDC Core 3.1.2.1 leaves `login_hint` to the server's discretion, so an enforced rule needs its own name). Old Hubs omit it and behave as today. It passes through the browser unsigned, so it is a second check, and the Hub's own comparison remains the enforcing one.
+- From the Phase 3 review: each provider redirect from the chooser gets its own `state` and `nonce` (`test_chooser_gives_each_method_its_own_state`); `auth_time` is also on the refresh response (`test_refresh_response_includes_auth_time`); the migration defaults `provider_key` for existing rows, so sign-ins in progress during a deploy still finish (`test_in_flight_login_without_provider_key_finishes`); new pages use Jinja2 templates, a new dependency.
 - `POST /auth/hub/token` adds nullable `auth_time`; current Hubs ignore unknown fields, so no Hub change has to go first.
 - After a valid login record exists, failures redirect to the Hub with `state` and RFC 6749 4.1.2.1 errors: `access_denied`, `login_required`, `temporarily_unavailable`, `server_error`. An invalid or expired record gets the API's own page, because its redirect target cannot be trusted.
 - `GET /auth/methods` returns `[{key, display_name, kind}]`, so the Hub can stop saying ORCID.
@@ -161,7 +162,7 @@ From the review: while a provider's discovery document is bad, each `/auth/login
 
 ## Task 5: One resolver, lookups switch, disable and pending
 
-All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved from Task 3 on the user's decision. Lookups switch behind `CRUCIBLE_AUTH_IDENTITY_LOOKUP`, off by default, so one release can go out safely: migrate, deploy (rows start being written), backfill, then turn the setting on. Off is the rollback only until someone links a login, so linking, unlinking and administrator linking are refused with 409 while it is off, and `settings check` warns if it is off while linked rows exist. Changing it needs a pod restart, like any setting. The flag is temporary and is removed in a later release, as the user decided on 2026-11-03. Tests: `test_linking_refused_while_lookup_flag_is_off`, `test_unlinking_refused_while_lookup_flag_is_off`, `test_flag_on_finds_a_linked_login`.
+All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved from Task 3 on the user's decision. Until Task 7 adds registration, the resolver's registration step keeps ORCID behaving as today and refuses other providers. Lookups switch behind `CRUCIBLE_AUTH_IDENTITY_LOOKUP`, off by default, so one release can go out safely: migrate, deploy (rows start being written), backfill, then turn the setting on. Off is the rollback only until someone links a login, so linking, unlinking and administrator linking are refused with 409 while it is off, and `settings check` warns if it is off while linked rows exist. Changing it needs a pod restart, like any setting. The flag is temporary and is removed in a later release, as the user decided on 2026-11-03. Tests: `test_linking_refused_while_lookup_flag_is_off`, `test_unlinking_refused_while_lookup_flag_is_off`, `test_flag_on_finds_a_linked_login`.
 
 **Files:**
 - Create: `app/auth/events.py`
@@ -251,6 +252,8 @@ Also in this task: `reject_pending_user(session, user: User, *, actor: User | No
 - Tests: `test_reject_removes_user_identity_group_and_link`, `test_reject_frees_username_and_login`, `test_reject_refuses_an_approved_user`, `test_approve_and_reject_cannot_both_win` (Postgres), `test_reject_with_unexpected_references_changes_nothing`, `test_expiry_uses_the_same_function`, `test_registration_refuses_a_restricted_username`, `test_restricted_check_catches_lookalikes`, `test_admin_can_set_a_restricted_username`, `test_generated_username_avoids_the_list`, `test_existing_holder_can_save_their_profile`
 
 ## Task 8: Cleanup job in the bundle
+
+Each cleanup test belongs to the task that creates its table: password tokens to Task 13a, address rows to Task 11, and `auth_event` to Task 5. This task adds the job to the bundle.
 
 **Files:**
 - Modify: `app/utils/hub_auth_maintenance.py:11-40`, `deploy/compose/compose.yaml`, `deploy/compose/README.md`
@@ -385,6 +388,8 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
 - [ ] **Step 4: Run the full suite, commit, PR.**
 
 ## Task 13: Links, changes, admin routes, password registration and CLI
+
+Three pull requests, each reviewed alone: 13a password links, 13b credential routes and password change, 13c password registration and the CLI. `issue_link` locks the user row.
 
 **Files:**
 - Create: `app/auth/password_links.py`, `app/api/routes/passwords.py`, `app/cli/auth.py`, a migration

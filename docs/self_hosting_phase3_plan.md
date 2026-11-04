@@ -119,7 +119,7 @@ Never holds a password, token or hash, and never what was typed in the username 
 - A provider-created user with an MFID gets a generated username, because nano-crucible v3.0 and v3.1 cannot look a user up by MFID.
 - `user.disabled_at`, a nullable timestamp. There is no way today to switch an account off. It is checked on sign-in by any method, handoff code redemption, Hub refresh, Hub access token use (`app/utils/hub_tokens.py:174`), and API keys, within the auth cache lifetime.
 - `HubLoginTransaction` gains `purpose` (`sign_in`, `link`), `provider_key`, and a nullable `user_id` for linking. `HubLoginCode` gains `purpose` and the identity being linked.
-- `username` becomes required for anyone with a password, and for them a change needs a recent sign-in. Clearing it is refused. ORCID-created users have none today; one is generated when they add a password.
+- `username` becomes required for anyone with a password, and for them a change needs a recent sign-in, and is refused with an API key, because it is their sign-in name. Clearing it is refused. ORCID-created users have none today; one is generated when they add a password.
 
 ### Cleanup
 
@@ -197,7 +197,7 @@ Following the OWASP Authentication cheat sheet and the pre-hijacking research (S
   This keeps `HubLoginTransaction` and `HubLoginCode`, so the Hub does not move to Authlib's session, and parallel tabs and the step-up popup keep working. Keycloak's client-initiated linking starts in the browser the same way; ours adds the confirm step and session match.
 - The provider's token is fully validated first.
 - If that identity already belongs to someone else, or is someone else's `unique_id`, refuse. No merging in this phase. Accounts are never joined automatically.
-- Unlinking is refused if it would leave no way to sign in, and ends the user's other Hub sessions.
+- Unlinking locks the user row, so two at once cannot remove the last two methods. It is refused if it would leave no way to sign in, and ends the user's other Hub sessions.
 - Every link and unlink writes an `auth_event`, and the Hub shows the list under the user's sign-in methods. Email notification waits until mail exists.
 - Administrators can link on someone's behalf by exact issuer and subject, for moving a lab to a new provider, and it is recorded with their ID. Service accounts are refused.
 - A person's ORCID is read only from `user_identity`, through `orcid_of`, with no fallback to `unique_id`. So an unlinked ORCID stops working for proposal sync, and the same person can link it back. Unlinking does not remove existing project memberships. This relies on the backfill having run before lookups switch. ORCID is the canonical researcher identifier when a person has one, but it is not the database key and not required.
@@ -247,6 +247,7 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 
 ### The form
 
+- New pages are Jinja2 templates through Starlette's `Jinja2Templates`, which turns on autoescaping, not hand-written HTML strings.
 - Served by the API under `/auth/hub/`, over HTTPS whenever it crosses a network. Startup refuses passwords on when the public address is plain HTTP on anything but `localhost`, the same rule as `_trusted_public_url`.
 - POST only, tied to the login record: the state value plus the browser cookie, which is also the CSRF protection. A failed attempt does not use up the record, unlike `consume_login` (`hub_login.py:133`), so a typo does not restart sign-in. It is consumed on success.
 - Headers: `Cache-Control: no-store`, a strict Content-Security-Policy with `frame-ancestors 'none'`, and `Referrer-Policy: no-referrer`.

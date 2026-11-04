@@ -151,6 +151,22 @@ def test_unknown_container_is_an_error():
     assert run(server_documents(), servers=("nope",)).errors == ["no container named nope in the input (found: api)"]
 
 
+ISSUER_WARNING = "HUB_AUTH_ORCID_ISSUER (https://sandbox.orcid.org) and ORCID_ISSUER (https://orcid.org) differ, so a person signing in through both is refused"
+HUB_ON = {"HUB_AUTH_ENABLED": "true", "HUB_AUTH_CALLBACK_URI": "https://hub.example/callback", "HUB_AUTH_CLIENT_SECRET": "s", "HUB_AUTH_ORCID_CLIENT_SECRET": "s", "HUB_AUTH_PUBLIC_API_URL": "https://api.example"}
+
+
+def test_differing_orcid_issuers_warn_but_do_not_fail():
+    report = run(server_documents({**HUB_ON, "HUB_AUTH_ORCID_ISSUER": "https://sandbox.orcid.org"}))
+    assert ISSUER_WARNING in report.warnings
+    assert report.errors == []
+
+
+def test_matching_orcid_issuers_do_not_warn():
+    report = run(server_documents(HUB_ON))
+    assert ISSUER_WARNING not in report.warnings
+    assert report.errors == []
+
+
 def test_verify_secrets_reads_metadata_only(monkeypatch):
     from google.cloud import secretmanager
 

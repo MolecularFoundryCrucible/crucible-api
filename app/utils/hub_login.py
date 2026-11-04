@@ -8,7 +8,7 @@ from urllib.parse import urlencode, urlparse
 
 from sqlmodel import Session, select
 
-from app.auth.identity import ensure_identity
+from app.auth.identity import ensure_identity, retry_after_concurrent_first_write
 from app.config import ConfigurationError, get_settings, optional_secret
 from app.models.core_models import HubLoginCode, HubLoginTransaction, User
 from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens_in_session
@@ -143,30 +143,34 @@ def create_handoff_code(engine, transaction: HubLoginTransaction, orcid: str, gi
         raise InvalidHubLogin
     current = _now(now)
     code = secrets.token_urlsafe(48)
-    with Session(engine) as session, session.begin():
-        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
-        if user is None:
-            user = User(unique_id=orcid, first_name=given_name or "", last_name=family_name or "")
-            session.add(user)
-            session.flush()
-        if user.is_service_account:
-            raise InvalidHubLogin
-        if not user.first_name and given_name:
-            user.first_name = given_name
-        if not user.last_name and family_name:
-            user.last_name = family_name
-        sql_add_user_to_access_group(orcid, orcid, session, role=Role.OWNER, group_type=AccessGroupType.IDENTITY)
-        ensure_identity(session, user, get_settings().hub.orcid_issuer, orcid)
-        session.add(HubLoginCode(
-            code_hash=_digest(code),
-            user_unique_id=orcid,
-            client_id=transaction.client_id,
-            callback_uri=transaction.callback_uri,
-            code_challenge=transaction.code_challenge,
-            created_at=current,
-            expires_at=current + CODE_LIFETIME,
-            auth_time=auth_time,
-        ))
+
+    def write() -> None:
+        with Session(engine) as session, session.begin():
+            user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
+            if user is None:
+                user = User(unique_id=orcid, first_name=given_name or "", last_name=family_name or "")
+                session.add(user)
+                session.flush()
+            if user.is_service_account:
+                raise InvalidHubLogin
+            if not user.first_name and given_name:
+                user.first_name = given_name
+            if not user.last_name and family_name:
+                user.last_name = family_name
+            sql_add_user_to_access_group(orcid, orcid, session, role=Role.OWNER, group_type=AccessGroupType.IDENTITY)
+            ensure_identity(session, user, get_settings().hub.orcid_issuer, orcid)
+            session.add(HubLoginCode(
+                code_hash=_digest(code),
+                user_unique_id=orcid,
+                client_id=transaction.client_id,
+                callback_uri=transaction.callback_uri,
+                code_challenge=transaction.code_challenge,
+                created_at=current,
+                expires_at=current + CODE_LIFETIME,
+                auth_time=auth_time,
+            ))
+
+    retry_after_concurrent_first_write(write)
     return code, f"{transaction.callback_uri}?{urlencode({'code': code, 'state': transaction.hub_state})}"
 
 

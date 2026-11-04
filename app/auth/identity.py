@@ -1,12 +1,26 @@
+from collections.abc import Callable
+from typing import TypeVar
+
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.config import get_settings
 from app.models.core_models import User, UserIdentity
 
+T = TypeVar("T")
+
 
 class IdentityTaken(ValueError):
     pass
+
+
+def retry_after_concurrent_first_write(write: Callable[[], T]) -> T:
+    """Run `write`, which opens its own transaction, once more if a unique constraint stops it:
+    a simultaneous first sign-in created the rows first, and the second run finds them."""
+    try:
+        return write()
+    except IntegrityError:
+        return write()
 
 
 def default_orcid_issuer() -> str:

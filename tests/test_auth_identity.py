@@ -169,6 +169,189 @@ def test_post_users_with_orcid_writes_the_identity_row(client, db_engine, auth_a
     assert identities(db_engine) == [(ISSUER, ORCID)]
 
 
+@pytest.mark.parametrize("path", ["/auth/apikey", "/user_apikey"])
+@pytest.mark.parametrize("email", [None, "ada@example.org"], ids=["html-page", "json"])
+def test_apikey_page_is_never_stored(db_engine, path, email):
+    with Session(db_engine) as session, session.begin():
+        add_user(session).email = email
+    response = signed_in_browser().get(path)
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html" if email is None else "application/json")
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_regenerated_apikey_is_never_stored(db_engine):
+    with Session(db_engine) as session, session.begin():
+        add_user(session)
+    response = signed_in_browser().post("/auth/apikey/regenerate")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+
+
+def signed_in_browser(orcid=ORCID):
+    import time
+
+    browser = TestClient(app, base_url="https://testserver", follow_redirects=False)
+    browser.cookies.set("crucible_user_token", encode_token({"sub": orcid, "orcid": orcid, "given_name": "Ada", "exp": int(time.time()) + 60}))
+    return browser
+
+
+def link(engine, unique_id, subject, issuer=ISSUER):
+    with Session(engine) as session, session.begin():
+        ensure_identity(session, add_user(session, unique_id=unique_id), issuer, subject)
+
+
+def users(engine):
+    with Session(engine) as session:
+        return sorted(session.exec(select(User.unique_id)).all())
+
+
+def test_apikey_page_refuses_an_orcid_linked_to_another_user(db_engine):
+    link(db_engine, MFID, ORCID)
+    response = signed_in_browser().get("/auth/apikey")
+    assert response.status_code == 409
+    assert response.json()["detail"] == "This ORCID can't be used with this account; contact an administrator."
+    assert users(db_engine) == [MFID]
+
+
+def test_apikey_page_refuses_a_second_orcid_issuer_for_the_same_person(db_engine, monkeypatch):
+    link(db_engine, ORCID, ORCID, issuer=SANDBOX)
+    assert signed_in_browser().get("/auth/apikey").status_code == 409
+    assert identities(db_engine) == [(SANDBOX, ORCID)]
+
+
+def test_regenerate_refuses_an_orcid_linked_to_another_user(db_engine):
+    link(db_engine, MFID, ORCID)
+    assert signed_in_browser().post("/auth/apikey/regenerate").status_code == 409
+    assert users(db_engine) == [MFID]
+
+
+def test_regenerate_refuses_a_second_orcid_issuer_for_the_same_person(db_engine):
+    link(db_engine, ORCID, ORCID, issuer=SANDBOX)
+    assert signed_in_browser().post("/auth/apikey/regenerate").status_code == 409
+
+
+def test_apikey_page_retries_when_a_simultaneous_sign_in_got_there_first(db_engine, monkeypatch):
+    from app.api.routes import auth as auth_routes
+
+    calls = []
+    real = auth_routes.ensure_identity
+
+    def lose_once(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise IntegrityError("insert", {}, Exception("duplicate key"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(auth_routes, "ensure_identity", lose_once)
+    assert signed_in_browser().get("/auth/apikey").status_code == 200
+    assert len(calls) == 2
+    assert identities(db_engine) == [(ISSUER, ORCID)]
+
+
+def test_a_retry_that_fails_again_is_not_hidden(db_engine):
+    from app.auth.identity import retry_after_concurrent_first_write
+
+    calls = []
+
+    def always_fails():
+        calls.append(1)
+        raise IntegrityError("insert", {}, Exception("duplicate key"))
+
+    with pytest.raises(IntegrityError):
+        retry_after_concurrent_first_write(always_fails)
+    assert len(calls) == 2
+
+
+def new_user_body(**fields):
+    return {"user_info": {"first_name": "Ada", "last_name": "Lovelace", "username": "ada", "unique_id": ORCID, **fields}, "project_ids": []}
+
+
+def test_post_users_refuses_an_orcid_linked_to_another_user(client, db_engine, auth_as, monkeypatch):
+    monkeypatch.setattr(users_routes, "find_mf_user_proposals", lambda orcid: pytest.fail("looked up proposals for a request that is refused"))
+    link(db_engine, MFID, ORCID)
+    auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
+    response = client.post("/users", json=new_user_body())
+    assert response.status_code == 409
+    assert response.json()["detail"] == "This ORCID is already linked to another user"
+    assert ORCID not in users(db_engine)
+
+
+def test_post_users_refuses_an_identity_linked_between_the_check_and_the_write(client, db_engine, auth_as, monkeypatch):
+    monkeypatch.setattr(users_routes, "find_mf_user_proposals", lambda orcid: link(db_engine, MFID, ORCID) or [])
+    auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
+    assert client.post("/users", json=new_user_body()).status_code == 409
+    assert ORCID not in users(db_engine)
+
+
+@pytest.mark.parametrize("field", ["unique_id", "username"])
+def test_post_users_does_not_look_up_proposals_for_a_duplicate(client, db_engine, auth_as, monkeypatch, field):
+    monkeypatch.setattr(users_routes, "find_mf_user_proposals", lambda orcid: pytest.fail("looked up proposals for a duplicate"))
+    with Session(db_engine) as session, session.begin():
+        add_user(session, unique_id=ORCID if field == "unique_id" else OTHER_ORCID, username="ada")
+    auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
+    assert client.post("/users", json=new_user_body()).status_code == 409
+
+
+@pytest.mark.parametrize("constraint, expected", [
+    ('duplicate key value violates unique constraint "ix_user_username"', {"code": "already_in_use", "fields": ["username"], "message": "Username already taken"}),
+    ('duplicate key value violates unique constraint "ux_user_email_lower"', {"code": "already_in_use", "fields": ["email"], "message": "Email is already in use"}),
+    ('duplicate key value violates unique constraint "ix_user_orcid"', "Another request created this user at the same time; nothing created"),
+], ids=["username", "email", "identifier"])
+def test_post_users_reports_a_simultaneous_create_as_a_conflict(client, db_engine, auth_as, monkeypatch, constraint, expected):
+    def collides(*args, **kwargs):
+        raise IntegrityError("insert", {}, Exception(constraint))
+
+    monkeypatch.setattr(users_routes, "find_mf_user_proposals", lambda orcid: [])
+    monkeypatch.setattr(users_routes, "provision_user", collides)
+    auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
+    response = client.post("/users", json=new_user_body())
+    assert response.status_code == 409
+    assert response.json()["detail"] == expected
+
+
+def test_post_users_rechecks_the_username_after_the_proposal_lookup(client, db_engine, auth_as, monkeypatch):
+    def taken_during_lookup(orcid):
+        with Session(db_engine) as session, session.begin():
+            add_user(session, unique_id=OTHER_ORCID, username="a_da")
+        return []
+
+    monkeypatch.setattr(users_routes, "find_mf_user_proposals", taken_during_lookup)
+    auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
+    response = client.post("/users", json=new_user_body())
+    assert response.status_code == 409
+    assert response.json()["detail"]["fields"] == ["username"]
+    assert ORCID not in users(db_engine)
+
+
+def test_post_users_does_not_hide_a_failure_that_is_not_a_conflict(client, db_engine, auth_as, monkeypatch):
+    def fails(*args, **kwargs):
+        raise IntegrityError("insert", {}, Exception('insert violates foreign key constraint "fk_group"'))
+
+    monkeypatch.setattr(users_routes, "find_mf_user_proposals", lambda orcid: [])
+    monkeypatch.setattr(users_routes, "provision_user", fails)
+    auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
+    with pytest.raises(IntegrityError):
+        client.post("/users", json=new_user_body())
+
+
+def test_the_older_email_constraint_is_reported_as_an_email_conflict():
+    from app.utils.user_utils import profile_conflict
+
+    conflict = profile_conflict(IntegrityError("update", {}, Exception('duplicate key value violates unique constraint "uq_user_email"')))
+    assert conflict.status_code == 409
+    assert conflict.detail["fields"] == ["email"]
+
+
+def test_admin_create_refuses_an_orcid_linked_to_another_user(db_engine):
+    from app.cli.admin import Refused, _create
+
+    link(db_engine, MFID, ORCID)
+    with pytest.raises(Refused, match="already linked"):
+        _create({"orcid": ORCID, "first_name": "Ada", "last_name": "Lovelace", "email": None, "username": "ada"}, allow_additional=True)
+    assert users(db_engine) == [MFID]
+
+
 def test_post_users_without_orcid_writes_no_identity_row(client, db_engine, auth_as, monkeypatch):
     monkeypatch.setattr(users_routes, "find_or_add_api_access", lambda *args, **kwargs: "test-key")
     auth_as("platform-admin", platform_role=PlatformRole.ADMIN)
@@ -327,6 +510,106 @@ def test_concurrent_first_write_keeps_one_row_and_both_callers_succeed(pg_engine
     with ThreadPoolExecutor(4) as pool:
         assert list(pool.map(write, range(4))) == [user_id] * 4
     assert identities(pg_engine) == [(ISSUER, ORCID)]
+
+
+@pytest.fixture
+def pg_sign_in(pg_engine, monkeypatch):
+    from app.models.core_models import AccessGroup, ApiToken, HubLoginCode, UserAccessGroupLink
+
+    SQLModel.metadata.create_all(pg_engine, tables=[AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, HubLoginCode.__table__])
+    return pg_engine
+
+
+def race(count, sign_in):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    barrier = Barrier(count)
+
+    def run(_):
+        barrier.wait()
+        return sign_in()
+
+    with ThreadPoolExecutor(count) as pool:
+        return list(pool.map(run, range(count)))
+
+
+def assert_one_person(engine):
+    from app.models.core_models import AccessGroup, UserAccessGroupLink
+
+    with Session(engine) as session:
+        assert session.exec(select(User.unique_id)).all() == [ORCID]
+        assert session.exec(select(AccessGroup.group_name)).all() == [ORCID]
+        assert len(session.exec(select(UserAccessGroupLink)).all()) == 1
+    assert identities(engine) == [(ISSUER, ORCID)]
+
+
+def test_simultaneous_first_apikey_sign_ins_create_one_person_on_postgres(pg_sign_in, monkeypatch):
+    from threading import Barrier, BrokenBarrierError
+
+    from app.api.routes import auth as auth_routes
+    from app.auth.identity import retry_after_concurrent_first_write
+
+    real_add_or_update = auth_routes.add_or_update
+    all_found_no_user = Barrier(8)
+
+    def add_after_every_thread_has_looked(*args, **kwargs):
+        try:
+            all_found_no_user.wait(timeout=2)
+        except BrokenBarrierError:
+            pass
+        return real_add_or_update(*args, **kwargs)
+
+    monkeypatch.setattr(auth_routes, "add_or_update", add_after_every_thread_has_looked)
+    monkeypatch.setattr(auth_routes, "get_engine", lambda: pg_sign_in)
+    claims = {"orcid": ORCID, "given_name": "Ada"}
+    race(8, lambda: retry_after_concurrent_first_write(lambda: auth_routes._record_signed_in_user(ORCID, claims)))
+    assert_one_person(pg_sign_in)
+
+
+def test_simultaneous_first_hub_sign_ins_create_one_person_on_postgres(pg_sign_in):
+    from types import SimpleNamespace
+
+    from app.utils.hub_login import create_handoff_code
+
+    transaction = SimpleNamespace(client_id="crucible-hub", callback_uri="https://hub.example/callback", code_challenge="c", hub_state="s")
+    results = race(8, lambda: create_handoff_code(pg_sign_in, transaction, ORCID, "Ada", "Lovelace"))
+    assert len({code for code, _ in results}) == 8
+    assert_one_person(pg_sign_in)
+
+
+def tokens(engine):
+    from app.models.core_models import ApiToken
+
+    with Session(engine) as session:
+        return session.exec(select(ApiToken.token)).all()
+
+
+@pytest.mark.parametrize("regenerate", [False, True], ids=["first-key", "regenerate"])
+def test_simultaneous_key_requests_leave_one_key_on_postgres(pg_sign_in, monkeypatch, regenerate):
+    from threading import Barrier, BrokenBarrierError
+
+    from app.utils import auth_utils
+    from app.utils.auth_utils import find_or_add_api_access
+
+    with Session(pg_sign_in) as session, session.begin():
+        add_user(session)
+    if regenerate:
+        find_or_add_api_access(ORCID, pg_sign_in)
+    real_generate = auth_utils.generate_apikey
+    all_found_no_key = Barrier(8)
+
+    def generate_after_every_thread_has_looked(orcid, session):
+        try:
+            all_found_no_key.wait(timeout=1)
+        except BrokenBarrierError:
+            pass
+        return real_generate(orcid, session)
+
+    monkeypatch.setattr(auth_utils, "generate_apikey", generate_after_every_thread_has_looked)
+    race(8, lambda: find_or_add_api_access(ORCID, pg_sign_in, regenerate=regenerate))
+    assert len(tokens(pg_sign_in)) == 1
+    assert find_or_add_api_access(ORCID, pg_sign_in) == tokens(pg_sign_in)[0]
 
 
 def test_deleting_a_user_removes_their_identities_on_postgres(pg_engine):

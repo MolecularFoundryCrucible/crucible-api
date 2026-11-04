@@ -112,14 +112,25 @@ def assert_profile_fields_available(session, *, username: Optional[str] = None, 
         raise fields_in_use(conflicts)
 
 
+def profile_conflict(error: IntegrityError) -> Optional[HTTPException]:
+    """The 409 for a username or email that a concurrent request took first, or None for any other constraint."""
+    message = str(error.orig)
+    if "ux_user_email_lower" in message or "uq_user_email" in message:
+        return fields_in_use(["email"])
+    if "ix_user_username" in message or "user.username" in message:
+        return fields_in_use(["username"])
+    return None
+
+
 def commit_user(session) -> None:
-    """Commit, turning a concurrent email uniqueness conflict into the same 409."""
+    """Commit, turning a concurrent username or email uniqueness conflict into the same 409."""
     try:
         session.commit()
     except IntegrityError as error:
         session.rollback()
-        if "ux_user_email_lower" in str(error.orig):
-            raise fields_in_use(["email"]) from None
+        conflict = profile_conflict(error)
+        if conflict is not None:
+            raise conflict from None
         raise
 
 

@@ -120,6 +120,8 @@ Empty tables, no change in behaviour. Every path that creates or signs in an ORC
 
 ## Task 4: Generic OIDC
 
+From the review: while a provider's discovery document is bad, each `/auth/login` fetches it again with no backoff. Add a short pause between retries when generalizing the provider code.
+
 **Files:**
 - Create: `app/auth/providers.py`, a migration, `tests/fixtures/dex.yaml`
 - Modify: `app/auth/oidc.py`, `app/config.py` (new `AuthSettings` group), `app/utils/hub_login.py:21,63-72,140-173`, `app/api/routes/hub_auth.py`, `app/api/main.py:65-70`, `app/cli/settings.py`, `deploy/compose/Caddyfile:13-23`, `.github/workflows/tests.yml`, `docs/hub_auth_operations.md`

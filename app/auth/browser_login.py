@@ -55,13 +55,13 @@ def _pending_sign_in(request: Request) -> dict:
     return pending
 
 
-def _abandon_sign_in(request: Request) -> None:
+async def _abandon_sign_in(request: Request) -> None:
     """End this browser's sign-in when the callback names its state, so the state is single use. Another state leaves it running, because any site can send a browser to this callback."""
     pending = request.session.get(PENDING_SIGN_IN)
     if not pending or request.query_params.get("state") != pending["state"]:
         return
     request.session.pop(PENDING_SIGN_IN)
-    get_oauth().create_client(ORCID_BROWSER).framework.clear_state_data(request.session, pending["state"])
+    await get_oauth().create_client(ORCID_BROWSER).framework.clear_state_data(request.session, pending["state"])
 
 
 async def start_sign_in(request: Request) -> Response:
@@ -82,7 +82,7 @@ async def finish_sign_in(request: Request) -> str:
     ORCID cannot be reached or its answer does not verify."""
     if request.query_params.get("error") or not request.query_params.get("code"):
         logger.warning("ORCID sign-in rejected: provider error or no code")
-        _abandon_sign_in(request)
+        await _abandon_sign_in(request)
         raise SignInRejected
     try:
         client = await orcid_browser_client()

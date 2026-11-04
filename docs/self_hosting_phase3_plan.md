@@ -78,7 +78,7 @@ Separate from `user`, so ordinary user queries and API responses cannot touch th
 |---|---|---|
 | `token_hash` | varchar(64), primary key | SHA-256 of a 256-bit random token; the token itself is never stored |
 | `user_id` | int, not null, FK `user.id`, on delete cascade | |
-| `purpose` | varchar(16), not null | `invite` or `reset` |
+| `purpose` | varchar(16), not null | `setup` or `reset` |
 | `created_by_user_id` | int, null, FK `user.id`, on delete set null | |
 | `created_at`, `expires_at` | timestamptz, not null | |
 | `consumed_at`, `voided_at` | timestamptz, null | |
@@ -144,11 +144,10 @@ Rules, each with a test:
 
 ### Who is this person
 
-1. Look up (`issuer`, `subject`) in `user_identity`. If found and not disabled, that is the user.
+1. Look up (`issuer`, `subject`) in `user_identity`. If found, that is the user, unless they are disabled: then refuse and stop, and never continue to the later steps.
 2. If not found and the provider has `subject_is_orcid`, and a user already has that ORCID as `unique_id`, refuse with a message saying an administrator can help. This is the case of an ORCID unlinked from its account: it stays unlinked, and no duplicate is attempted against the unique column.
-3. If the person arrived through an invite link for an account (see Setup, change and reset), attach this identity to that account, after a page naming the account, and consume the invite. Refuse if the identity already belongs to someone.
-4. If registration for this provider is `open` or `approval`, create the account and the identity row in one transaction, pending when `approval`. `unique_id` is the ORCID if `subject_is_orcid`, otherwise an MFID.
-5. Otherwise refuse and record it. Never match by email, username or name.
+3. If registration for this provider is `open` or `approval`, create the account and the identity row in one transaction, pending when `approval`. `unique_id` is the ORCID if `subject_is_orcid`, otherwise an MFID.
+4. Otherwise refuse and record it. Never match by email, username or name.
 
 **Existing users get rows up front.** My first draft added rows at each person's next sign-in to avoid a production write, but the review showed that rule could re-arm after an unlink and leave an ORCID unbound. So the identity table becomes the only source of truth, in the standard order:
 
@@ -166,7 +165,7 @@ A second provider in CI (Dex) keeps the code from quietly depending on ORCID or 
 
 | Setting | First sign-in by someone new |
 |---|---|
-| `closed` (default) | Invite link or an account an administrator created |
+| `closed` (default) | Only an account an administrator created, or a login an administrator linked |
 | `approval` | Anyone can register; the account waits until an administrator approves it |
 | `open` | The account works immediately |
 
@@ -243,7 +242,9 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 
 ### Setup, change and reset
 
-- An administrator creates a user, then gets a one-time invite link valid for 24 hours by default, and passes it on however they like. The link offers every enabled method: the person sets a password, or signs in with a provider, which attaches that login to the account. This is how someone first signs in when `create_accounts` is off, and it works for providers whose `sub` an administrator cannot know in advance. No temporary password exists.
+- An administrator creates a user, then gets a one-time password link valid for 24 hours by default, and passes it on however they like. The person sets a password, and can add a provider afterwards through normal linking. No temporary password exists.
+- Invites do not attach a provider login (user's decision after the Phase 3 review, 2026-11-04). The other paths cover it: create the account with a known ORCID, link an exact issuer and subject, or set the provider to `approval` for people whose ID an administrator cannot know. This can be added later without changing `password_token`.
+- The form is a POST with CSRF protection, and using a link locks its row, so two tabs cannot both succeed.
 - An administrator who knows someone's ORCID can instead create the account with it, which writes the identity row, and no link is needed.
 - Opening the link never consumes it, because mail scanners follow links; only submitting the form does. On first open the token moves into a short-lived cookie and the browser is redirected to an address without it, so the token does not linger in proxy logs or history.
 - `python -m app.cli admin create` prints a link as well as the API key when passwords are on, and `admin password-link` issues one, so a locked-out sole administrator can recover from the server. No default password and no open setup page.
@@ -256,7 +257,7 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 
 | Action | With an API key (CLI) | Hub session |
 |---|---|---|
-| Invite someone, issue a reset link, approve, disable, enable | Admin key works, and is logged | Admin, recent sign-in |
+| Issue a setup or reset link, approve, disable, enable | Admin key works, and is logged | Admin, recent sign-in |
 | The same, on another administrator's account | Refused | Admin, recent sign-in |
 | Revoke someone's API keys | Admin key works, on anyone, as today | Admin |
 | Change own password | Key plus the current password, on the same attempt counter | Recent sign-in plus the current password |
@@ -318,7 +319,7 @@ Linking: identity already taken, by a row or by `unique_id`; no email matching e
 
 Disable: every method, handoff codes, Hub refresh, Hub access tokens and API keys are refused.
 
-Registration: each setting and provider override; `open` for passwords refused at startup; a pending account gets no session or key on any path; the waiting message appears only after proof of identity; invite links work with `closed`; pending accounts expire. Credential routes: every row of the table above.
+Registration: each setting and provider override; `open` for passwords refused at startup; a pending account gets no session or key on any path; the waiting message appears only after proof of identity; password links work with `closed`; pending accounts expire. Credential routes: every row of the table above.
 
 Foundry: existing ORCID user signs in, keeps `unique_id`, and `/auth/apikey` still works, before and after the backfill.
 

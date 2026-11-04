@@ -31,7 +31,7 @@ Status: written 2026-11-02 for review; not started. The Hub and nano-crucible an
 1. A provider's discovery document is unreachable when the API starts: the API still starts, other methods work, that provider reports unavailable and recovers by itself. Task 4 tests this; it matters most for the Foundry's ORCID.
 2. A client sending its own `X-Forwarded-For`: it must not change which address is throttled, or anyone could escape the limit. Task 11 tests this.
 3. A sign-in form left open longer than the 10 minute login lifetime: submitting it says the sign-in expired and offers a restart, not "sign-in failed", and does not count against the account. Task 12 tests this.
-4. A provider removed from settings while users have only that login: the settings check names how many are affected, and an administrator can issue them invite links. Task 4 tests the check.
+4. A provider removed from settings while users have only that login: the settings check names how many are affected, and an administrator can issue them password links. Task 4 tests the check.
 5. A username typed with capitals or stray spaces: `Ada` finds `ada`, and surrounding spaces in the username are removed, while the password is never altered. Task 12 tests this.
 
 ---
@@ -52,7 +52,7 @@ The user decided on 2026-11-03 that nothing is released until all of Phase 3 is 
 | `app/auth/registration.py` | registration setting, approve, reject | Task 7 |
 | `app/auth/passwords.py` | hash, verify, rules | Task 10 |
 | `app/auth/throttle.py` | account counters, address limit, device cookie | Task 11 |
-| `app/auth/password_links.py` | invite and reset links | Task 13 |
+| `app/auth/password_links.py` | setup and reset links | Task 13 |
 | `app/api/routes/hub_auth.py` | sign-in routes, callbacks, chooser, form | modified throughout |
 | `app/api/routes/identities.py` | `/account/identities`, admin identity routes | Task 6 |
 | `app/api/routes/passwords.py` | `/account/password`, admin password routes | Task 13 |
@@ -140,7 +140,7 @@ From the review: while a provider's discovery document is bad, each `/auth/login
 - `POST /auth/hub/token` adds nullable `auth_time`; current Hubs ignore unknown fields, so no Hub change has to go first.
 - After a valid login record exists, failures redirect to the Hub with `state` and RFC 6749 4.1.2.1 errors: `access_denied`, `login_required`, `temporarily_unavailable`, `server_error`. An invalid or expired record gets the API's own page, because its redirect target cannot be trusted.
 - `GET /auth/methods` returns `[{key, display_name, kind}]`, so the Hub can stop saying ORCID.
-- `resolve_sign_in(session, provider: Provider, identity: VerifiedIdentity, *, invite: InviteContext | None = None) -> SignInOutcome` lands in Task 5; here the flow still calls `ensure_identity` for ORCID only.
+- `resolve_sign_in(session, provider: Provider, identity: VerifiedIdentity) -> SignInOutcome` lands in Task 5; here the flow still calls `ensure_identity` for ORCID only.
 - The chooser and every sign-in page fit a 520x720 window and send `frame-ancestors 'none'`.
 
 - [ ] **Step 1: Write failing tests:**
@@ -170,7 +170,7 @@ All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved f
 
 **Interfaces:**
 - `@dataclass class SignInOutcome: user: User | None; status: Literal["ok", "pending", "refused"]; reason: str | None`
-- `resolve_sign_in(session, provider: Provider, identity: VerifiedIdentity, *, invite: InviteContext | None = None) -> SignInOutcome`, following the spec's "Who is this person" order, steps 1 to 5, with the invite step raising until Task 13.
+- `resolve_sign_in(session, provider: Provider, identity: VerifiedIdentity) -> SignInOutcome`, following the spec's "Who is this person" order, steps 1 to 4.
 - Model `AuthEvent` as in the spec, indexed on (`user_id`, `at`). `record_event(session, event: AuthEventType, *, user: User | None = None, actor: User | None = None, issuer: str | None = None, client_address: str | None = None) -> None`, in the caller's transaction, also logging. `AuthEventType` is a `str` enum.
 - `orcid_of(session, user: User) -> str | None`, moved from Task 3 because nothing uses it before this task: the `user_identity` subject on an ORCID issuer, else `unique_id` if `is_orcid`.
 - `assert_active(user: User) -> None`, raising the existing generic failure when `disabled_at` or `pending_at` is set.
@@ -366,12 +366,12 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
 
 **Files:**
 - Create: `app/auth/password_links.py`, `app/api/routes/passwords.py`, `app/cli/auth.py`, a migration
-- Modify: `app/auth/identity.py` (invite step), `app/cli/admin.py`, `app/cli/auth.py`, `app/utils/hub_auth_maintenance.py`
+- Modify: `app/cli/admin.py`, `app/cli/auth.py`, `app/utils/hub_auth_maintenance.py`
 - Test: `tests/test_auth_password_links.py`, `tests/test_auth_credential_routes.py`, `tests/test_auth_password_registration.py`
 
 **Interfaces:**
 - Model `PasswordToken`, columns as in the spec, with partial unique index on `user_id` where `consumed_at IS NULL AND voided_at IS NULL`.
-- `issue_link(session, user: User, purpose: Literal["invite", "reset"], *, actor: User | None, lifetime: timedelta = timedelta(hours=24)) -> str`, voiding any live link in the same transaction.
+- `issue_link(session, user: User, purpose: Literal["setup", "reset"], *, actor: User | None, lifetime: timedelta = timedelta(hours=24)) -> str`, voiding any live link in the same transaction.
 - `void_links(session, user: User) -> None`.
 - Routes per the spec's API routes section. `GET` and `POST /auth/hub/password-link`; `GET` and `POST /auth/hub/register`; `POST /account/password`; `POST /users/{user_ref}/password-link`; `DELETE /users/{user_ref}/password`.
 - `require_credential_change(principal, *, target: User)` in `auth_utils.py`, implementing the spec's table of who may do what.
@@ -381,7 +381,7 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
 - [ ] **Step 1: Write failing tests:**
   - Links: `test_opening_link_does_not_consume`, `test_first_open_moves_token_to_cookie_and_redirects`, `test_single_use`, `test_expired_refused`, `test_new_link_voids_old`, `test_one_live_link_under_concurrency` (Postgres), `test_only_hash_stored`, `test_link_token_absent_from_logs`
   - Effects: `test_use_sets_password_and_clears_lock`, `test_use_ends_all_hub_sessions`, `test_use_refuses_handoff_codes_issued_before`, `test_no_automatic_sign_in`, `test_voided_by_disable_password_change_and_identity_change`
-  - Invite: `test_invite_offers_all_enabled_methods`, `test_invite_with_provider_attaches_identity_after_naming_page`, `test_invite_with_taken_identity_refused`, `test_invite_works_when_registration_closed`, `test_invite_consumed_by_provider_path`
+  - Setup link: `test_setup_link_works_when_registration_closed`, `test_setup_link_form_needs_csrf_token`, `test_two_tabs_cannot_both_use_a_link`, `test_disabled_login_never_reaches_account_creation`
   - Service accounts: `test_service_account_refused_everywhere`
   - Credential table, one test per row, with `@pytest.mark.parametrize` over API key and Hub session: admin key can issue a link and it is logged; admin key refused on another admin; own key plus correct current password can change; own key alone refused; wrong current password counts on the account counter; key refused for first password, link and unlink; Hub session needs a recent sign-in
   - Change: `test_change_ends_other_sessions`, `test_change_applies_password_rules`, `test_first_password_needs_recent_sign_in_and_generates_username`, `test_password_events_never_touch_api_keys`
@@ -391,7 +391,7 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
   - Contract: `test_wrong_current_password_is_422_with_code`, `test_refusals_have_stable_codes`, `test_elevated_header_accepted_on_new_admin_routes`, `test_link_response_is_no_store`
   - CLI: `test_admin_create_prints_link`, `test_admin_password_link_recovers_locked_sole_admin`, `test_revoke_passwords_dry_run_by_default`, `test_rewrite_issuer_dry_run_by_default`
 - [ ] **Step 2: Run to verify they fail, implement, run the full suite, commit, PR.**
-- [ ] **Step 3: Ask the nano-crucible session** for `user invite`, `user reset-link`, `user approve`, `user disable`, and `account password`, and the Hub session for its password and admin screens, sending the OpenAPI diff.
+- [ ] **Step 3: Ask the nano-crucible session** for `user setup-link`, `user reset-link`, `user approve`, `user disable`, and `account password`, and the Hub session for its password and admin screens, sending the OpenAPI diff.
 
 ## Task 14: Independent security review
 

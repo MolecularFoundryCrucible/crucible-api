@@ -181,7 +181,15 @@ A second provider in CI (Dex) keeps the code from quietly depending on ORCID or 
 Following the OWASP Authentication cheat sheet and the pre-hijacking research (Sudhodanan and Paverd, 2022):
 
 - **A user's API key cannot change how that user signs in.** `require_recent_authentication` exempts API keys today (`app/utils/auth_utils.py:705`), so a leaked key could otherwise add a password, unlink ORCID and end the owner's sessions, turning a leaked key into a lost account. See API keys and credential routes below.
-- **The link is written only after the Hub confirms it.** The API has no browser session, only a cookie set when a browser visits the start address, so an attacker could start a link and send a victim the address, attaching the victim's ORCID to the attacker's account. So the callback does not write anything. It returns to the Hub with a one-time code, as sign-in does, and the row is written only when the Hub redeems that code with PKCE, using the session of the user who started it, after a page naming the account being linked.
+- **The link is written only after the Hub confirms it.** The flow, agreed with the user after the Phase 3 review:
+  1. The Hub's "Link" action is a POST with CSRF protection, never a plain link, so another site cannot start it (django-allauth strongly recommends the same).
+  2. The Hub's server calls the API with the user's session and gets a one-time start address. Nothing goes to the provider yet.
+  3. The browser goes to that address on the API, which sets the login cookie there and redirects to the provider. A server-to-server call could not set this cookie, and RFC 9700 requires the one-time values to be bound to the browser.
+  4. The provider returns to the API, which fully checks the token and writes nothing. It redirects to the Hub with a one-time code, as sign-in does.
+  5. The Hub shows a page naming the account being linked. On confirm it calls `POST /auth/hub/link/confirm`, with its client secret in the `Authorization` header and the user's session token in the body, the shape RFC 7662 uses for token introspection.
+  6. The API writes the row only if the code is valid and unused, PKCE matches, the session's user started this link, and the identity is free. So a victim opening an attacker's start address links nothing, and the reverse attack, attaching an attacker's login to a victim's account, fails as well.
+
+  This keeps `HubLoginTransaction` and `HubLoginCode`, so the Hub does not move to Authlib's session, and parallel tabs and the step-up popup keep working. Keycloak's client-initiated linking starts in the browser the same way; ours adds the confirm step and session match.
 - The provider's token is fully validated first.
 - If that identity already belongs to someone else, or is someone else's `unique_id`, refuse. No merging in this phase. Accounts are never joined automatically.
 - Unlinking is refused if it would leave no way to sign in, and ends the user's other Hub sessions.
@@ -261,7 +269,7 @@ Admin keys may issue reset links because they can already regenerate any user's 
 
 All are listed in the OpenAPI snapshot for client review.
 
-- User: `GET /account/identities`, `POST /account/identities/{provider}/link`, `POST /auth/hub/link/confirm`, `DELETE /account/identities/{id}`, `POST /account/password`.
+- User: `GET /account/identities`, `POST /account/identities/{provider}/link` (returns the start address), `GET /auth/hub/link/start` (browser, sets the cookie), `POST /auth/hub/link/confirm`, `DELETE /account/identities/{id}`, `POST /account/password`.
 - Admin: `POST /users/{user}/password-link`, `DELETE /users/{user}/password`, `POST /users/{user}/approve`, `POST /users/{user}/reject`, `POST /users/{user}/disable`, `POST /users/{user}/enable`, `POST /users/{user}/identities`, `DELETE /users/{user}/identities/{id}`, `GET /users/{user}/auth-events`.
 - Public, for signing in: `GET /auth/methods`, `GET` and `POST /auth/hub/password`, `GET` and `POST /auth/hub/password-link`, `GET` and `POST /auth/hub/register`, `GET /auth/hub/oidc/{key}/callback`.
 

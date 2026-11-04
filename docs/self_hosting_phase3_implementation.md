@@ -198,14 +198,18 @@ All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved f
 - Test: `tests/test_auth_linking.py`
 
 **Interfaces:**
-- `POST /account/identities/{provider}/link`, with a Hub session and recent sign-in; body: `callback_uri`, `state`, `code_challenge`. Returns `{authorization_url}`. API keys get 403.
-- The provider callback validates the token and issues a `HubLoginCode` with `purpose="link"` plus the identity, then returns to the Hub. It writes no identity.
-- `POST /auth/hub/link/confirm`, with the Hub's client authentication, the code, the verifier, and the user's Hub session. Writes the row only if the session's user is the transaction's user.
+- `POST /account/identities/{provider}/link`, with a Hub session and recent sign-in; body: `callback_uri`, `state`, `code_challenge`. Returns `{authorization_url}`, a one-time address on the API. API keys get 403.
+- `GET /auth/hub/link/start`, opened by the browser: sets the login cookie, then redirects to the provider.
+- The provider callback checks the cookie, validates the token and issues a `HubLoginCode` with `purpose="link"` plus the identity, then returns to the Hub. It writes no identity.
+- `POST /auth/hub/link/confirm`, with the Hub's client secret in the `Authorization` header, and the code, the verifier and the user's Hub session token in the body. Writes the row only if the session's user is the transaction's user.
+- The Hub's "Link" action is a POST with CSRF protection, and it shows a page naming the account before confirming. Send the Hub session this contract.
 - `GET /account/identities`, `DELETE /account/identities/{id}`; admin `POST /users/{user_ref}/identities` (body: `issuer`, `subject`), `DELETE /users/{user_ref}/identities/{id}`.
 - `unlink_identity(session, user: User, identity_id: int, *, actor: User) -> None`, raising `LastSignInMethod`.
 
 - [ ] **Step 1: Write failing tests:**
   - `test_victim_opening_attackers_link_address_writes_nothing` (the attacker's start address, the victim's browser and Hub session; no row for either)
+  - `test_attackers_login_cannot_be_linked_to_victims_account` (a link started in the victim's session, with the attacker's code and state)
+  - `test_link_callback_without_the_browser_cookie_refused`, `test_start_address_is_single_use`
   - `test_link_confirm_with_another_users_session_refused`, `test_link_code_is_single_use`, `test_sign_in_code_cannot_confirm_a_link`, `test_link_code_cannot_sign_in`
   - `test_api_key_refused_on_link_and_unlink`, `test_stale_hub_session_gets_step_up_challenge`
   - `test_identity_of_another_user_refused`, `test_orcid_that_is_another_users_unique_id_refused`, `test_no_merge_ever`

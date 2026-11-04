@@ -39,6 +39,8 @@ Everything to do with sign-in lives in `app/auth/`, with one module per concern.
 
 New tables reference `user.id`, the integer key, as `UserPreferences` already does, and never `user.orcid`. `user.unique_id` stays as the public identifier and never changes. Moving the older foreign keys to `user.id` and renaming `orcid` API fields waits for 4.0.
 
+New code never treats `unique_id` as an ORCID and never uses it to decide who someone is: sign-in goes from `user_identity` (`issuer`, `subject`) to `user.id`, and a person's ORCID is read from `user_identity`. The user expects every person to get an MFID eventually. That move is a separate project, but this rule keeps sign-in out of it.
+
 ### `user_identity`: which provider accounts belong to which user
 
 | Column | Type | Notes |

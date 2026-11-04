@@ -172,6 +172,9 @@ All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved f
 - Model `AuthEvent` as in the spec, indexed on (`user_id`, `at`). `record_event(session, event: AuthEventType, *, user: User | None = None, actor: User | None = None, issuer: str | None = None, client_address: str | None = None) -> None`, in the caller's transaction, also logging. `AuthEventType` is a `str` enum.
 - `orcid_of(session, user: User) -> str | None`, moved from Task 3 because nothing uses it before this task: the `user_identity` subject on an ORCID issuer, else `unique_id` if `is_orcid`.
 - `assert_active(user: User) -> None`, raising the existing generic failure when `disabled_at` or `pending_at` is set.
+- One function creates a person, replacing the separate code in `/auth/apikey` and `create_handoff_code` and shared with `POST /users` and `admin create` (user's decision, 2026-11-04). Every person it creates has a non-empty username, generated with `generate_unique_username` when none is given. Before any `NOT NULL` constraint, count existing users with no username and bring the numbers to the user.
+- `/auth/apikey` and the Hub find people through `user_identity`, so someone whose `unique_id` is an MFID and who has a linked ORCID gets in instead of being refused.
+- The `is_orcid(unique_id)` checks at `account.py:127`, `users.py:554` and `user_utils.py:142` read the ORCID from `user_identity`.
 
 - [ ] **Step 1: Write failing tests:**
   - Resolver: `test_known_identity_signs_in`, `test_unlinked_orcid_is_refused_with_message`, `test_unlinked_orcid_stays_refused_after_password_removed`, `test_no_match_by_email_when_emails_equal`, `test_orcid_shaped_sub_from_other_provider_gets_mfid`, `test_new_orcid_user_unique_id_is_the_orcid`, `test_new_other_provider_user_unique_id_is_mfid`, `test_new_mfid_user_gets_generated_username`, `test_concurrent_first_sign_in_creates_one_user` (Postgres), `test_identity_write_rolls_back_with_user`
@@ -239,6 +242,8 @@ All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved f
 - [ ] **Step 4: Run the full suite, commit, PR.** Tell the deployment session the Foundry's CronJob now covers more tables, with no command change.
 
 ## Task 9: API key hashing
+
+`POST /users` stops creating a key nobody receives, since it cannot be read back once keys are hashed.
 
 Clients first. Do not start until Task 2 has the answers and any client release has shipped; the user sets the date.
 

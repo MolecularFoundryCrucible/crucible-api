@@ -14,9 +14,9 @@ Status: written 2026-11-02 for review; not started. The Hub and nano-crucible an
 
 ## Global Constraints
 
-- The Foundry signs in unchanged at every step: same ORCID client, same registered redirect addresses (`{api}/auth` for the older flow, `{api}/auth/hub/callback` for the Hub), same `unique_id` values. crucible-tests runs on staging before each merge that touches sign-in.
+- The Foundry signs in unchanged at every step, after adding its explicit provider list: same ORCID clients, same registered redirect addresses (`{api}/auth` for the older flow, `{api}/auth/hub/callback` for the Hub), same `unique_id` values. crucible-tests runs on staging before each merge that touches sign-in.
 - Password sign-in is `CRUCIBLE_AUTH_PASSWORD_ENABLED`, off by default in code, until Task 15.
-- `CRUCIBLE_AUTH_REGISTRATION` defaults to `closed`; the implicit ORCID provider defaults to `open`; `open` for passwords is refused at startup.
+- `CRUCIBLE_AUTH_REGISTRATION` defaults to `closed`; the Foundry's and the bundle's ORCID entries state `open`; `open` for passwords is refused at startup.
 - Match identities only on exact `issuer` plus `subject`. Never on email, username, name, or what a value looks like. ORCID status comes only from `subject_is_orcid`, allowed only for `https://orcid.org` and `https://sandbox.orcid.org`.
 - Argon2id floor m=19 MiB, t=2, p=1. Passwords 15 to 256 Unicode code points, NFC-normalized, never trimmed or truncated.
 - Delays: failures 1 to 4 none, then 2, 4, 8 seconds and so on, up to 900 seconds. Hard lock at 100 counted failures. `STEP_UP_MAX_AGE` stays 600. Link lifetime 24 hours by default.
@@ -119,6 +119,15 @@ Empty tables, no change in behaviour. Every path that creates or signs in an ORC
 - [ ] **Step 7: With the user's approval at that moment,** run the migration on staging before merging, because sign-in writes to the new table. After merging, run the backfill on staging with `--issuer https://orcid.org`. Expected: row count equals non-service users whose `unique_id` is an ORCID. Production follows at the release, in the order under Task 5.
 
 ## Task 4: Generic OIDC
+
+Decisions on 2026-11-04, which override the text below where they differ:
+
+- Three pull requests: (1) explicit provider list and the Hub's provider step on Authlib, (2) multiple providers, (3) Dex in CI, then the periodic Authentik job.
+- No implicit provider. `AuthSettings.providers` is a typed list of `OidcProvider` (`app/config.py`), with all fields required and unknown fields refused. Fields: `key`, `display_name`, `issuer`, `client_id`, `scopes`, `token_endpoint_auth_method`, `registration`, `subject_is_orcid`, `legacy_callback`. There is no separate `Provider` dataclass, and `HUB_AUTH_ORCID_*` is retired. The Foundry snapshot test becomes a deploy change on staging, made before the first pull request merges, and in production with the release.
+- Until Task 5, a non-ORCID provider signs in only people already in `user_identity`; everyone else gets `access_denied`, and no account is created.
+- Pull request 2's migration also adds nullable `provider_code_verifier` to `hublogintransaction`, because the Hub flow keeps its state in the database.
+- Clients are cached per provider, so a missing secret or bad discovery on one leaves the others working. A failed discovery waits 30 seconds before the next try.
+- The Hub's `/login` and `/callback` routes are async, with database work in `run_in_threadpool`. They use Authlib's `create_authorization_url`, `fetch_access_token` and `parse_id_token`, and keep `HubLoginTransaction`.
 
 From the review: while a provider's discovery document is bad, each `/auth/login` fetches it again with no backoff. Add a short pause between retries when generalizing the provider code.
 

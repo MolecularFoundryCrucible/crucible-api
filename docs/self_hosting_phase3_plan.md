@@ -132,7 +132,7 @@ Providers are a list in settings. Each has a key, issuer, client ID, client secr
 - `registration`: overrides the deployment's registration setting for this provider (see Registration).
 - `subject_is_orcid`: the subject is an ORCID iD. Allowed only for `https://orcid.org` and `https://sandbox.orcid.org`, and startup fails on anything else. ORCID status always comes from this flag, never from what a value looks like, because another provider could issue a `sub` shaped like someone's ORCID and claim their account or their proposals.
 
-When no list is set and `hub.enabled` is on, the existing ORCID settings become one implicit provider, including the `ORCID_CLIENT_ID` fallback in `app/utils/hub_orcid.py:15`. The Foundry's actual environment gets checked before this ships, so its configuration does not have to change.
+There is no implicit provider (user's decision, 2026-11-04). Every deployment lists its providers in `CRUCIBLE_AUTH_PROVIDERS`, every field is required, and the repo ships a complete example, `deploy/compose/auth-providers.example.json`. With the Hub on and no list, the settings check fails and Hub sign-in answers 503. This replaces the earlier promise that the Foundry's configuration would not change: the Foundry adds the list and `OIDC_ORCID_CLIENT_SECRET`, using the same ORCID client as today. The Hub and the older flow use different ORCID clients, and the older flow keeps its own `ORCID_*` settings.
 
 Rules, each with a test:
 
@@ -173,7 +173,7 @@ A second provider in CI (Dex) keeps the code from quietly depending on ORCID or 
 | `approval` | Anyone can register; the account waits until an administrator approves it |
 | `open` | The account works immediately |
 
-- The implicit ORCID provider defaults to `open`, which is today's behaviour at the Foundry and in the bundle's Hub setup.
+- The Foundry's and the bundle's ORCID entries state `open`, which is today's behaviour.
 - Password registration is allowed only with `approval`, because without email nothing verifies an address, and startup refuses `open` for passwords. The form takes a username, names and a password, under the same password rules, with the per-address limit.
 - A person with a pending account sees that it is waiting only after proving who they are: a correct password or a valid provider sign-in. Otherwise pending looks like any other sign-in failure.
 - Administrators see pending accounts and approve or reject them; rejecting deletes the account. Pending accounts not acted on go after 30 days, through the cleanup job.

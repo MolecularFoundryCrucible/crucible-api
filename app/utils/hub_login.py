@@ -13,7 +13,7 @@ from app.config import ConfigurationError, OidcProvider, get_settings, optional_
 from app.models.core_models import HubLoginCode, HubLoginTransaction, User
 from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens_in_session
 from app.utils.permissions import AccessGroupType, Role
-from app.utils.user_utils import sql_add_user_to_access_group
+from app.utils.user_utils import provision_user, sql_add_user_to_access_group
 
 
 LOGIN_LIFETIME = timedelta(minutes=10)
@@ -159,18 +159,16 @@ def _orcid_user(session: Session, provider: OidcProvider, transaction: HubLoginT
     user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
     if transaction.required_user is not None and (user is None or user.unique_id != transaction.required_user):
         raise HubLoginRefused("login_required")
-    if user is None:
-        user = User(unique_id=orcid, first_name=given_name or "", last_name=family_name or "")
-        session.add(user)
-        session.flush()
-    if user.is_service_account:
+    if user is not None and user.is_service_account:
         raise HubLoginRefused("access_denied")
-    if not user.first_name and given_name:
-        user.first_name = given_name
-    if not user.last_name and family_name:
-        user.last_name = family_name
-    sql_add_user_to_access_group(orcid, orcid, session, role=Role.OWNER, group_type=AccessGroupType.IDENTITY)
     try:
+        if user is None:
+            user = provision_user(session, unique_id=orcid, first_name=given_name or "", last_name=family_name or "", email=None, username=None, orcid_issuer=provider.issuer)
+        if not user.first_name and given_name:
+            user.first_name = given_name
+        if not user.last_name and family_name:
+            user.last_name = family_name
+        sql_add_user_to_access_group(orcid, orcid, session, role=Role.OWNER, group_type=AccessGroupType.IDENTITY)
         ensure_identity(session, user, provider.issuer, orcid)
     except IdentityTaken:
         raise HubLoginRefused("access_denied") from None

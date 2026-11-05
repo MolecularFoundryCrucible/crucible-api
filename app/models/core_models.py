@@ -268,6 +268,7 @@ class User(SQLModel, table=True):
     # Platform-wide bypass, deliberately not a group. Postgres enum platform_role.
     platform_role: Optional[str] = Field(default="none")
     last_active_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
+    disabled_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
 
 
@@ -288,7 +289,25 @@ class UserIdentity(SQLModel, table=True):
     label: Optional[str] = Field(default=None, sa_column=Column(String(255)))
     created_at: datetime = Field(default_factory=get_utc_datetime, sa_type=DateTime(timezone=True))
     created_by_user_id: Optional[int] = Field(default=None, sa_column=Column(Integer, ForeignKey("user.id", ondelete="SET NULL")))
+    verified_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     last_used_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+
+
+class AuthEvent(SQLModel, table=True):
+    __tablename__ = "auth_event"
+    __table_args__ = (
+        Index("ix_auth_event_at", "at"),
+        Index("ix_auth_event_user_id_at", "user_id", "at"),
+    )
+
+    id: Optional[int] = Field(default=None, sa_column=Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True))
+    at: datetime = Field(default_factory=get_utc_datetime, sa_type=DateTime(timezone=True))
+    event: str = Field(max_length=32)
+    user_id: Optional[int] = Field(default=None, sa_column=Column(Integer, ForeignKey("user.id", ondelete="SET NULL")))
+    user_unique_id: Optional[str] = None
+    actor_user_id: Optional[int] = Field(default=None, sa_column=Column(Integer, ForeignKey("user.id", ondelete="SET NULL")))
+    issuer: Optional[str] = Field(default=None, sa_column=Column(Text))
+    client_address: Optional[str] = Field(default=None, sa_column=Column(Text))
 
 
 class ApiToken(SQLModel, table = True):

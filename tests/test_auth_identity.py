@@ -625,7 +625,7 @@ def test_simultaneous_first_apikey_sign_ins_create_one_person_on_postgres(pg_sig
     from app.api.routes import auth as auth_routes
     from app.auth.identity import retry_after_concurrent_first_write
 
-    real_add_or_update = auth_routes.add_or_update
+    real_provision_user = auth_routes.provision_user
     all_found_no_user = Barrier(8)
 
     def add_after_every_thread_has_looked(*args, **kwargs):
@@ -633,13 +633,42 @@ def test_simultaneous_first_apikey_sign_ins_create_one_person_on_postgres(pg_sig
             all_found_no_user.wait(timeout=2)
         except BrokenBarrierError:
             pass
-        return real_add_or_update(*args, **kwargs)
+        return real_provision_user(*args, **kwargs)
 
-    monkeypatch.setattr(auth_routes, "add_or_update", add_after_every_thread_has_looked)
+    monkeypatch.setattr(auth_routes, "provision_user", add_after_every_thread_has_looked)
     monkeypatch.setattr(auth_routes, "get_engine", lambda: pg_sign_in)
     claims = {"orcid": ORCID, "given_name": "Ada"}
     race(8, lambda: retry_after_concurrent_first_write(lambda: auth_routes._record_signed_in_user(ORCID, claims)))
     assert_one_person(pg_sign_in)
+
+
+def test_two_new_people_with_the_same_name_get_different_usernames_on_postgres(pg_sign_in, monkeypatch):
+    from threading import Barrier, BrokenBarrierError
+
+    from app.api.routes import auth as auth_routes
+    from app.auth.identity import retry_after_concurrent_first_write
+    from app.models.core_models import User
+
+    real_provision_user = auth_routes.provision_user
+    both_looked = Barrier(2)
+
+    def add_after_both_have_looked(*args, **kwargs):
+        try:
+            both_looked.wait(timeout=2)
+        except BrokenBarrierError:
+            pass
+        return real_provision_user(*args, **kwargs)
+
+    monkeypatch.setattr(auth_routes, "provision_user", add_after_both_have_looked)
+    monkeypatch.setattr(auth_routes, "get_engine", lambda: pg_sign_in)
+    people = iter((ORCID, OTHER_ORCID))
+    def sign_in():
+        orcid = next(people)
+        return retry_after_concurrent_first_write(lambda: auth_routes._record_signed_in_user(orcid, {"orcid": orcid, "given_name": "Ada", "family_name": "Lovelace"}))
+    race(2, sign_in)
+    with Session(pg_sign_in) as session:
+        usernames = session.exec(select(User.username)).all()
+    assert len(usernames) == 2 and len(set(usernames)) == 2 and all(usernames)
 
 
 def test_simultaneous_first_hub_sign_ins_create_one_person_on_postgres(pg_sign_in):

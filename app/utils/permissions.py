@@ -112,7 +112,10 @@ class Principal:
     def is_user(self, user) -> bool:
         """Whether `user`, a User row, is the caller. Compares the internal key, which never
         changes, rather than unique_id."""
-        return self.internal_user_id is not None and user is not None and user.id == self.internal_user_id
+        return user is not None and self.has_user_id(user.id)
+
+    def has_user_id(self, user_id) -> bool:
+        return self.internal_user_id is not None and user_id == self.internal_user_id
 
     @property
     def is_platform_admin(self) -> bool:

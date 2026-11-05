@@ -511,11 +511,13 @@ class DeletionRequest(SQLModel, table=True):
     )
     resource_name: Optional[str] = Field(default=None)
     requester_id: str = Field(index=True)
+    requester_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     reason: Optional[str] = Field(default=None)
     status: str = Field(default="pending", index=True)
     request_time: Optional[str] = Field(default_factory=get_utc_isoformat)
     review_time: Optional[str] = Field(default=None)
     reviewer_id: Optional[str] = Field(default=None)
+    reviewer_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     reviewer_notes: Optional[str] = Field(default=None)
 
 
@@ -558,9 +560,11 @@ class DeletionAuditLog(SQLModel, table=True):
     resource_type: Optional[str] = Field(default=None)
     resource_name: Optional[str] = Field(default=None)
     requester_id: str = Field(index=True)
+    requester_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     reason: Optional[str] = Field(default=None)
     request_time: Optional[str] = Field(default=None)
     reviewer_id: str = Field(index=True)
+    reviewer_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     reviewer_notes: Optional[str] = Field(default=None)
     review_time: Optional[str] = Field(default=None)
     deleted_at: str = Field(index=True)        # set by the API at deletion time

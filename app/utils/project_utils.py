@@ -174,7 +174,7 @@ def resolve_project_mfids_to_references(mfids, session) -> dict[str, ProjectRefe
     }
 
 
-def sql_add_user_to_project(user: User, proj_id: str, session, role=None, actor_id=None):
+def sql_add_user_to_project(user: User, proj_id: str, session, role=None, actor: User | None = None):
     """Add a user to a project's access group. Idempotent."""
     group_name = resolve_project_id_to_mfid(proj_id, session)
     if group_name is None:
@@ -185,7 +185,7 @@ def sql_add_user_to_project(user: User, proj_id: str, session, role=None, actor_
         session,
         role=role,
         group_type=AccessGroupType.PROJECT,
-        actor_id=actor_id,
+        actor=actor,
     )
     touch_resource_modification_time(session, group_name)
 
@@ -223,7 +223,7 @@ def is_project_member(user_id: int, proj_id: str, session) -> bool:
     ).first() is not None
 
 
-def is_project_owner(user_unique_id: str, proj_id: str, session) -> bool:
+def is_project_owner(user_id: int, proj_id: str, session) -> bool:
     """Whether the user holds `owner` standing in proj_id's own access group —
     the real definition of "project lead" (see docs/permission_system_plan.md,
     "Project lead becomes a role"). `Project.project_lead_orcid` is a
@@ -241,35 +241,33 @@ def is_project_owner(user_unique_id: str, proj_id: str, session) -> bool:
     return session.exec(
         select(UserAccessGroupLink)
         .join(AccessGroup, AccessGroup.id == UserAccessGroupLink.accessgroup_id)
-        .join(User, User.id == UserAccessGroupLink.user_id)
         .where(
             AccessGroup.group_name == group_name,
             AccessGroup.group_type == AccessGroupType.PROJECT.value,
-            User.unique_id == user_unique_id,
+            UserAccessGroupLink.user_id == user_id,
             UserAccessGroupLink.role == Role.OWNER.db_value,
         )
     ).first() is not None
 
 
-def project_standing_by_mfid(orcid: str, project_mfid: str, session) -> "Role | None":
+def project_standing_by_mfid(user_id: int, project_mfid: str, session) -> "Role | None":
     row = session.exec(
         select(UserAccessGroupLink.role)
         .join(AccessGroup, AccessGroup.id == UserAccessGroupLink.accessgroup_id)
-        .join(User, User.id == UserAccessGroupLink.user_id)
         .where(
             AccessGroup.group_name == project_mfid,
             AccessGroup.group_type == AccessGroupType.PROJECT.value,
-            User.unique_id == orcid,
+            UserAccessGroupLink.user_id == user_id,
         )
     ).one_or_none()
     return Role.from_db(row) if row else None
 
 
-def project_standing(orcid: str, proj_id: str, session) -> "Role | None":
+def project_standing(user_id: int, proj_id: str, session) -> "Role | None":
     project_mfid = resolve_project_id_to_mfid(proj_id, session)
     if project_mfid is None:
         return None
-    return project_standing_by_mfid(orcid, project_mfid, session)
+    return project_standing_by_mfid(user_id, project_mfid, session)
 
 
 def sql_get_projects_for_user(orcid, session, options=None):
@@ -290,3 +288,13 @@ def sql_get_projects_for_user(orcid, session, options=None):
     if options:
         query = query.options(*options)
     return session.exec(query).all()
+
+
+def project_leads(session, projects) -> dict[int, User]:
+    ids = {project.lead_user_id for project in projects if project.lead_user_id is not None}
+    return {user.id: user for user in session.exec(select(User).where(User.id.in_(ids))).all()} if ids else {}
+
+
+def project_fields(project, lead: User | None) -> dict:
+    """A project's stored fields for a response, with `project_lead_orcid` read from the lead's user row."""
+    return {**project.model_dump(), "project_lead_orcid": lead.unique_id if lead else None}

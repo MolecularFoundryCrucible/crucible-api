@@ -13,6 +13,7 @@ from app.models.core_models import (
 from app.services.resource_pagination import (
     ResourcePaginationSpec, execute_resource_page, prepare_resource_pagination)
 from app.utils.auth_utils import (
+    caller_row,
     access_selector_filter, authorize_user,
     load_principal, project_member_filter, project_owner_affiliation_filter,
     require_grant, require_permission, resolve_access_principal,
@@ -30,6 +31,7 @@ from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.sql_utils import assert_not_pending_deletion
 from app.utils.user_utils import resolve_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import (
+    project_fields, project_leads,
     assert_project_id_available, project_id_matches, sql_add_user_to_project,
     resolve_project_reference)
 from app.models.access_groups import AccessGroupMemberRead
@@ -108,6 +110,7 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
             status=P.status,
             title=P.title,
             project_lead_orcid=project_lead.unique_id,
+            lead_user_id=project_lead.id,
             project_lead_email=project_lead.email,
         )
         session.add(prop)
@@ -135,7 +138,7 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
             else load_principal(session, auth_res.internal_user_id)
         )
         return ProjectRead(
-            **prop.model_dump(),
+            **project_fields(prop, project_lead),
             capabilities=_project_capabilities(session, capability_principal, prop),
         )
 
@@ -232,18 +235,17 @@ def list_projects(
                 ).all()
             }
 
-        orcids = [p.project_lead_orcid for p in props if p.project_lead_orcid]
-        leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}
+        leads = project_leads(session, props)
 
         items = []
         for proj, resource in rows:
             caller_role = auth_res.role_in(proj.unique_id)
             may_see_private_fields = has_global_permission(auth_res, Permission.READ) or caller_role is not None
-            lead_user = leads.get(proj.project_lead_orcid)
+            lead_user = leads.get(proj.lead_user_id)
             lead = UserPublicRead.model_validate(lead_user) if lead_user else None
             members = _get_project_users(proj, session, auth_res) if include_members and may_see_private_fields else None
             items.append(ProjectWithLead(
-                **proj.model_dump(),
+                **project_fields(proj, lead_user),
                 lead=lead,
                 creation_time=resource.creation_time if resource else None,
                 modification_time=resource.modification_time if resource else None,
@@ -306,7 +308,8 @@ def search_projects(
         ).limit(params.limit)
 
         results = session.exec(query).all()
-        return PaginatedResponse(limit=params.limit, items=results)
+        leads = project_leads(session, results)
+        return PaginatedResponse(limit=params.limit, items=[ProjectRead(**project_fields(project, leads.get(project.lead_user_id))) for project in results])
 
 
 @router.get("/projects/{project_ref}", response_model=ProjectWithLead)
@@ -385,10 +388,10 @@ def update_project(project_ref: ProjectRef, auth_res: Annotated[Principal, Depen
         touch_resource_modification_time(session, project.unique_id)
         session.commit()
         session.refresh(project)
-        lead = session.exec(select(User).where(User.unique_id == project.project_lead_orcid)).one_or_none() if project.project_lead_orcid else None
+        lead = session.get(User, project.lead_user_id) if project.lead_user_id is not None else None
         resource = session.exec(select(Resource).where(Resource.mfid == project.unique_id)).one_or_none()
         return ProjectWithLead(
-            **project.model_dump(),
+            **project_fields(project, lead),
             lead=lead,
             creation_time=resource.creation_time if resource else None,
             modification_time=resource.modification_time if resource else None,
@@ -486,7 +489,7 @@ def add_users_to_project(
             floor=Role.EDITOR,
         )
 
-        sql_add_user_to_project(user, proj.project_id, session, role=internal_role, actor_id=auth_res.user_id)
+        sql_add_user_to_project(user, proj.project_id, session, role=internal_role, actor=caller_row(session, auth_res))
         session.commit()
 
         return _get_project_users(proj, session, auth_res)

@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType
 from app.utils.project_utils import is_project_owner
+from tests.people import internal_id
 
 
 def _engine():
@@ -55,7 +56,7 @@ def test_owner_standing_in_the_project_group_is_the_lead():
         session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=ag.id, role="owner"))
         session.commit()
 
-        assert is_project_owner("0000-0001", "proj_a", session) is True
+        assert is_project_owner(internal_id(session, "0000-0001"), "proj_a", session) is True
 
 
 def test_admin_standing_is_not_ownership():
@@ -71,7 +72,7 @@ def test_admin_standing_is_not_ownership():
         session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=ag.id, role="admin"))
         session.commit()
 
-        assert is_project_owner("0000-0003", "proj_b", session) is False
+        assert is_project_owner(internal_id(session, "0000-0003"), "proj_b", session) is False
 
 
 def test_owner_of_your_own_orcid_group_does_not_make_you_the_lead_of_an_unrelated_name():
@@ -90,7 +91,7 @@ def test_owner_of_your_own_orcid_group_does_not_make_you_the_lead_of_an_unrelate
         session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=ag.id, role="owner"))
         session.commit()
 
-        assert is_project_owner(orcid, orcid, session) is False
+        assert is_project_owner(internal_id(session, orcid), orcid, session) is False
 
 
 def test_no_standing_at_all_is_not_ownership():
@@ -103,4 +104,4 @@ def test_no_standing_at_all_is_not_ownership():
         ))
         session.commit()
 
-        assert is_project_owner("0000-0005", "proj_c", session) is False
+        assert is_project_owner(-1, "proj_c", session) is False

@@ -411,6 +411,7 @@ class Project(SQLModel, table=True):
     status: Optional[str]
     title: Optional[str]
     project_lead_orcid: str = Field(foreign_key="user.orcid", index=True)
+    lead_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     project_lead_email: Optional[str] = None  # stored for old-API backward compat; not exposed in new response schemas
     last_activity_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
     resource: Optional["Resource"] = Relationship(
@@ -539,11 +540,13 @@ class AccessGroupJoinRequest(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     accessgroup_id: int = Field(foreign_key="accessgroup.id", index=True)
     requester_id: str = Field(foreign_key="user.orcid", index=True)
+    requester_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     reason: Optional[str] = Field(default=None)
     status: str = Field(default="pending", index=True)
     request_time: datetime = Field(default_factory=get_utc_datetime, sa_column=Column(DateTime(timezone=True), nullable=False))
     review_time: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     reviewer_id: Optional[str] = Field(default=None, foreign_key="user.orcid")
+    reviewer_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     reviewer_notes: Optional[str] = Field(default=None)
     granted_role: Optional[str] = Field(default=None)
 

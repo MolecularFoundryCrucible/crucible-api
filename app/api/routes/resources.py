@@ -1031,9 +1031,10 @@ def _transfer_project_ownership(session, mfid: str, new_owner: User) -> Optional
     else:
         new_owner_link.role = Role.OWNER.db_value
         session.add(new_owner_link)
-    close_pending_join_requests(session, ag.id, new_owner.unique_id, Role.OWNER.db_value)
+    close_pending_join_requests(session, ag.id, new_owner, Role.OWNER.db_value)
 
     project.project_lead_orcid = new_owner.unique_id
+    project.lead_user_id = new_owner.id
     project.project_lead_email = new_owner.email
     session.add(project)
     return previous_owner

@@ -20,13 +20,15 @@ def _setup(db_engine):
             unique_id="0000-0002-2222-2222",
             username="project_outsider",
         )
+        session.add(lead)
+        session.add(outsider)
+        session.flush()
         project = Project(
             project_id="project-slug",
             organization="LBNL",
             project_lead_orcid=lead.unique_id,
+            lead_user_id=lead.id,
         )
-        session.add(lead)
-        session.add(outsider)
         session.add(project)
         session.commit()
         session.refresh(project)

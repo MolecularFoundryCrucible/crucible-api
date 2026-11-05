@@ -107,6 +107,7 @@ def _add_project(db_engine, slug):
             project_id=slug,
             organization="LBNL",
             project_lead_orcid=target.unique_id,
+            lead_user_id=target.id,
         )
         session.add(project)
         session.commit()

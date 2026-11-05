@@ -228,7 +228,7 @@ def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
             except InvalidHubGrant:
                 raise HTTPException(status_code=401, detail="Invalid or expired API credential.")
             authenticated_at = family.auth_time.replace(tzinfo=family.auth_time.tzinfo or datetime.timezone.utc) if family.auth_time else None
-            principal = replace(load_principal(session, family.user_id), credential="hub", authenticated_at=authenticated_at)
+            principal = replace(load_principal(session, family.user_id), credential="hub", authenticated_at=authenticated_at, session_family_id=family.id)
         record_caller_activity(engine, principal.user_id)
         return principal
 

@@ -90,7 +90,7 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.user_utils import resolve_create_owner
+from app.utils.user_utils import canonical_person_id, resolve_create_owner
 from app.utils.sql_utils import is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
@@ -541,7 +541,8 @@ def list_datasets(
     }
     owner_id = params.owner_id or param_values["owner_orcid"]
     if owner_id is not None:
-        exact_filters["owner_orcid"] = owner_id
+        with Session(get_engine()) as session:
+            exact_filters["owner_orcid"] = canonical_person_id(session, owner_id)
     result_filters = params.normalized_result_filters(
         exclude={
             "anchor_mfid", "cursor", "offset", "limit", "sort", "direction",
@@ -800,7 +801,7 @@ def search_datasets(
         if params.affiliation:
             query = query.where(resource_affiliation_filter(auth_res, Dataset, params.affiliation))
         if params.owner_id is not None:
-            query = query.where(Dataset.owner_orcid == params.owner_id)
+            query = query.where(Dataset.owner_orcid == canonical_person_id(session, params.owner_id))
         query = query.order_by(
             trigram_rank(normalized_q, (Dataset.dataset_name,)).desc(),
             Dataset.unique_id.desc(),

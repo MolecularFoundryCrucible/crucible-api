@@ -34,7 +34,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import add_or_update, create_standard_acls, touch_resource_modification_time, deletion_filter_for
-from app.utils.user_utils import resolve_create_owner, resolve_service_account_reference
+from app.utils.user_utils import canonical_person_id, resolve_create_owner, resolve_service_account_reference
 from app.utils.gcs_record_utils import write_record, instrument_record
 
 router = APIRouter(tags=["instruments"])
@@ -168,6 +168,9 @@ def list_instruments(
     cursor = params.cursor
     offset = params.offset
     param_values["owner"] = params.owner_id or param_values["owner"]
+    if param_values["owner"] is not None:
+        with Session(get_engine()) as session:
+            param_values["owner"] = canonical_person_id(session, param_values["owner"])
     if instrument_id is None and params.mfid is None and params.status is None:
         param_values["status"] = "active"
     filters = [
@@ -260,7 +263,7 @@ def search_instruments(
         if params.affiliation:
             base = base.where(_instrument_affiliation_filter(auth_res, params.affiliation))
         if params.owner_id is not None:
-            base = base.where(Instrument.owner == params.owner_id)
+            base = base.where(Instrument.owner == canonical_person_id(session, params.owner_id))
         fields = (
             Instrument.instrument_name,
             Instrument.instrument_type,

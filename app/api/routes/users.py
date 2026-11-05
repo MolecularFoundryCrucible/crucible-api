@@ -14,6 +14,7 @@ from app.api.dependencies import get_engine, get_trgm_search_threshold
 from app.api.path_params import DatasetMfid, UserRef
 from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import (
+    UserIdentity,
     AccessGroup, ApiToken, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
 )
 from app.utils.auth_utils import forget_cached_keys, API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
@@ -219,7 +220,10 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
 
     search_cmd = select(User)
     if params.unique_id is not None:
-        search_cmd = search_cmd.where(User.unique_id.in_(params.unique_id))
+        search_cmd = search_cmd.where(or_(
+            User.unique_id.in_(params.unique_id),
+            User.id.in_(select(UserIdentity.user_id).where(UserIdentity.issuer == default_orcid_issuer(), UserIdentity.subject.in_(params.unique_id))),
+        ))
     if params.username is not None:
         search_cmd = search_cmd.where(func.lower(User.username).in_([username.lower() for username in params.username]))
     if params.email is not None:
@@ -363,7 +367,8 @@ def resolve_users(
         results: Dict[str, UserPublicRead] = {}
 
         if orcids:
-            for user in session.exec(select(User).where(User.unique_id.in_(orcids))).all():
+            linked = select(UserIdentity.user_id).where(UserIdentity.issuer == default_orcid_issuer(), UserIdentity.subject.in_(orcids))
+            for user in session.exec(select(User).where(or_(User.unique_id.in_(orcids), User.id.in_(linked)))).all():
                 results[user.unique_id] = UserPublicRead.model_validate(user)
 
         if usernames:
@@ -441,10 +446,10 @@ def get_user_by_username(username: str, response: Response,
 
 
 def _canonical_user_id(user_ref: str) -> str:
-    """Map a username or email path segment to the user's unique_id. ORCIDs,
-    MFIDs, and unresolvable values pass through so the route's own exact
-    lookup and error handling apply unchanged."""
-    if is_orcid(user_ref) or is_valid_mfid(user_ref):
+    """Map a username, email or linked ORCID path segment to the user's unique_id. MFIDs and
+    unresolvable values pass through so the route's own exact lookup and error handling apply
+    unchanged."""
+    if is_valid_mfid(user_ref):
         return user_ref
     with Session(get_engine()) as session:
         try:

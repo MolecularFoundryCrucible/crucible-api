@@ -226,6 +226,8 @@ All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved f
 
 Pull requests, agreed 2026-11-05: (1) foundation: `verified_at`, `disabled_at`, `auth_event`, `record_event`, `orcid_of`, and `provision_user` as the one way to create a person, always with a username; (2) `resolve_sign_in` behind the flag; (3) disable and enable; (4) project sync. `pending_at` moves to Task 7. Two people with one name racing at first sign-in is handled by the retry; three or more at the same moment can fail once, and the person retries.
 
+Pull request 2 as built: `resolve_sign_in(session, issuer, subject, given_name, family_name, *, required_user=None) -> User` in `app/auth/sign_in.py`, raising `SignInRefused`, instead of a `SignInOutcome` with a pending status, because pending waits for Task 7. It takes the issuer rather than a provider, so the older browser flow, which has its own client, uses it too. Refusals get their history in a separate transaction. It bundles the username transliteration (`anyascii`), as the user asked. The settings-check warning about linked rows and the refusal of linking while the flag is off move to Task 6, the first to need them. `client_address` stays empty until Task 11 settles the trusted address.
+
 **Files:**
 - Create: `app/auth/events.py`
 - Modify: `app/auth/identity.py`, `app/models/core_models.py`, a migration, `app/api/routes/auth.py`, `app/utils/hub_login.py`, `app/utils/hub_tokens.py:174-182`, `app/utils/auth_utils.py`, `app/utils/user_utils.py:207,297`, `app/api/routes/account.py:127`, `app/api/routes/users.py:441,554`

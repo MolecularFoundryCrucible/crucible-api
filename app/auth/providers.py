@@ -87,7 +87,7 @@ def _registered(name: str, issuer: str, client_id: str, client_secret: str, scop
         name,
         client_id=client_id,
         client_secret=client_secret,
-        server_metadata_url=f"{issuer}/.well-known/openid-configuration",
+        server_metadata_url=f"{issuer.rstrip('/')}/.well-known/openid-configuration",
         client_kwargs={"scope": scope, "token_endpoint_auth_method": auth_method, "timeout": HTTP_TIMEOUT},
     )
     return oauth.create_client(name)

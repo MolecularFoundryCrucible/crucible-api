@@ -1,0 +1,43 @@
+# Test provider for tests/test_auth_oidc_integration.py. No Docker socket, and every capability dropped.
+name: crucible-authentik-test
+x-authentik: &authentik
+  image: ghcr.io/goauthentik/server:2026.8.5@sha256:602227a86455d6772e3d16b7d852713c4f864f40df5df894abd1285bb53979a5
+  depends_on:
+    postgresql:
+      condition: service_healthy
+  environment: &environment
+    AUTHENTIK_POSTGRESQL__HOST: postgresql
+    AUTHENTIK_POSTGRESQL__NAME: authentik
+    AUTHENTIK_POSTGRESQL__USER: authentik
+    AUTHENTIK_POSTGRESQL__PASSWORD: ci-only-database-password
+    AUTHENTIK_SECRET_KEY: ci-only-secret-key-not-real-ci-only-secret-key-not-real
+    CRUCIBLE_OIDC_SECRET: ci-only-client-secret
+    CRUCIBLE_TEST_PASSWORD: ci-only-password-not-real
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+services:
+  postgresql:
+    image: docker.io/library/postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ci-only-database-password
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d authentik -U authentik"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  server:
+    <<: *authentik
+    command: server
+    ports: ["127.0.0.1:9000:9000"]
+    volumes: [authentik-data:/data]
+  worker:
+    <<: *authentik
+    command: worker
+    volumes:
+      - authentik-data:/data
+      - ./blueprints:/blueprints/custom:ro
+volumes:
+  authentik-data:

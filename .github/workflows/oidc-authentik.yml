@@ -1,0 +1,53 @@
+name: oidc-authentik
+
+on:
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/oidc-authentik.yml
+      - tests/fixtures/authentik/**
+      - tests/test_auth_oidc_integration.py
+      - app/auth/providers.py
+
+permissions:
+  contents: read
+
+jobs:
+  authentik:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      API_CONF_FILE: app/conf/api_conf_local.yaml
+      CRUCIBLE_SECRET_KEY: ci-only
+      PGDB_PW: ci-only
+      DB_USERNAME: ci
+      DB_SERVER: localhost
+      DB_DATABASE: ci
+      OIDC_TEST_AUTHENTIK_ISSUER: http://localhost:9000/application/o/crucible/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.11.16"
+          enable-cache: true
+      - name: Start Authentik with the test blueprint
+        working-directory: tests/fixtures/authentik
+        run: |
+          docker compose up -d
+          for _ in $(seq 120); do curl -fs -o /dev/null "${OIDC_TEST_AUTHENTIK_ISSUER}.well-known/openid-configuration" && break; sleep 3; done
+          curl -fsS -o /dev/null "${OIDC_TEST_AUTHENTIK_ISSUER}.well-known/openid-configuration"
+      - run: uv sync --locked
+      - name: Sign in through the Hub flow
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run pytest -q -rs tests/test_auth_oidc_integration.py -k "authentik" | tee "$RUNNER_TEMP/oidc.txt"
+          if grep -q "skipped" "$RUNNER_TEMP/oidc.txt"; then echo "OIDC integration tests were skipped"; exit 1; fi
+      - name: Server logs
+        if: failure()
+        working-directory: tests/fixtures/authentik
+        run: docker compose logs --tail 100

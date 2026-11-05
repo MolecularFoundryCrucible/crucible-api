@@ -216,6 +216,10 @@ Production counts, read-only and totals only, 2026-11-05, schema `564d0bd33a5c`.
 
 To settle in the proposal: stored dataset and sample records that keep the old `owner_orcid`, Hub sessions and addresses holding an old ID, crucible-tests, the ingestion consumer, and how long ORCID input stays accepted.
 
+## Open bug, not sign-in: replaced files are not retired
+
+Found 2026-11-05, left for later by the user's decision. On staging, replacing a file through multipart upload logs `file_retire_failed` with `403 PATCH ... projection=full ...: Provided scope(s) are not authorized`. The replace succeeds, but the old object gets no `customTime`, so it stays in storage instead of expiring. No data is lost. Likely cause, not proven: `blob.patch` asks for `projection=full`, which needs a wider scope than the `devstorage.read_write` requested for impersonated credentials in `app/storage/gcs.py` since the keyless change (in v3.3.0 and v3.3.1). Production showed no failures in the logs available over 7 days and no replacements in 24 hours, so it may not have been triggered yet. Fix in its own small pull request, tested against real staging storage.
+
 ## Task 5: One resolver, lookups switch, disable and pending
 
 All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved from Task 3 on the user's decision. Until Task 7 adds registration, the resolver's registration step keeps ORCID behaving as today and refuses other providers. Lookups switch behind `CRUCIBLE_AUTH_IDENTITY_LOOKUP`, off by default, so one release can go out safely: migrate, deploy (rows start being written), backfill, then turn the setting on. Off is the rollback only until someone links a login, so linking, unlinking and administrator linking are refused with 409 while it is off, and `settings check` warns if it is off while linked rows exist. Changing it needs a pod restart, like any setting. The flag is temporary and is removed in a later release, as the user decided on 2026-11-03. Tests: `test_linking_refused_while_lookup_flag_is_off`, `test_unlinking_refused_while_lookup_flag_is_off`, `test_flag_on_finds_a_linked_login`.

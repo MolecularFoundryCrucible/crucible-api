@@ -174,7 +174,7 @@ From the review: while a provider's discovery document is bad, each `/auth/login
 - [ ] **Step 4: Implement settings, discovery, provider list and flow.** New callback route `GET /auth/hub/oidc/{key}/callback`, sharing the handler with `/auth/hub/callback`. Remove the `ORCID_PATTERN` check at `hub_login.py:141` and the issuer allowlist at `hub_login.py:68`. `_is_hub_auth_request` and the Caddy block already cover `/auth/hub/*`, so all new sign-in routes stay under that prefix; add nothing outside it except `GET /auth/methods`.
 - [ ] **Step 5: Add Dex to the CI job** using the image version pinned in the workflow, static password users, one client.
 - [ ] **Step 6: Run the full suite, commit, PR.** Staging check with crucible-tests after merge, and the user signs in to the Hub once. Expected: same `unique_id`.
-- [ ] **Step 7: Add a periodic CI job** running the integration tests against Authentik with the blueprint from the 2026-11-02 trial (`server` and `worker` without the Docker socket).
+- [x] **Step 7 (done in #420): Add a periodic CI job** running the integration tests against Authentik with the blueprint from the 2026-11-02 trial (`server` and `worker` without the Docker socket).
 
 ## Task 5a: Every person's unique_id becomes an MFID
 

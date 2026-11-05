@@ -337,6 +337,8 @@ Refuse with an API key, and keep for a Hub session with a recent sign-in: changi
 - Tests: `test_api_key_cannot_change_a_humans_admin_status`, `test_api_key_cannot_regenerate_or_read_another_admins_key`, `test_api_key_can_still_regenerate_an_ordinary_users_key`, `test_api_key_can_still_revoke_an_admins_keys`, `test_api_key_can_still_set_a_service_account_role`, `test_recent_hub_session_can_do_all_of_these`, `test_cli_set_role_keeps_the_last_admin_rule`
 - Tell the Hub and nano-crucible sessions, and add a changelog line, since scripts using these routes with a key will get 403.
 
+Built, 2026-11-05: `require_human_admin_safeguard(principal, target, *, makes_admin=False)` in `auth_utils.py`. Changing whether a human is an administrator, and reading or regenerating a human administrator's key (including your own through `/users/{ref}`), refuse API keys with 403 `hub_session_required` and need a recent Hub sign-in. Disable and enable now ask Hub sessions for a recent sign-in for every target. A role change records `role_changed` and drops the target's cached keys. `python -m app.cli admin set-role <user> none|contributor|admin` changes human roles from inside the pod and keeps the last active human administrator. Decided by the user: changing username and email with an API key stays unrestricted, for administrators too, on `PATCH /users/{ref}` and `PATCH /account/profile`. Revisit in Task 13 only if the user asks, since the username becomes the sign-in name and the email receives reset links.
+
 ## Task 7: Registration setting
 
 Changes from the security review: hide pending accounts from lookups and project membership, or rejecting them returns 409 forever. `resolve_sign_in` takes an issuer, so it needs the registration rule passed in.

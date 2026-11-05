@@ -185,7 +185,7 @@ Changes from the security review, section 3:
 - `deletionauditlog` gets internal ID columns and keeps its text as history. As first proposed, people would lose their deletion history, because `deletion.py:918-925` compares against their current ID.
 - Triggers cover every column that moves, including join requests and postprocessing runs, which are empty on production but not on staging.
 - Before dropping `owner_orcid`, search for every direct reader, including `gcs_record_utils.py`, metadata search and facets.
-- Revoke each person's Hub tokens in the same transaction as their rewrite. A one-time clear of `hub.session_entries` cannot work across batches.
+- Drop `Resource.public` and `Dataset.public` with the other old columns; only `set_public` writes them, and nothing reads them. Revoke each person's Hub tokens in the same transaction as their rewrite. A one-time clear of `hub.session_entries` cannot work across batches.
 - `ApiToken.access_group_id` also holds an ID, and 5 production keys already differ from their owner. Add it to the rewrite and check those 5.
 - Look by hand at the one production person whose ID ends in a lowercase letter, before the backfill.
 - To decide: after the rewrite, the check that refuses an unlinked ORCID can never fire, so with ORCID `open` it would create a new account.
@@ -232,9 +232,8 @@ To settle in the proposal: stored dataset and sample records that keep the old `
 
 Details and fixes are in `docs/self_hosting_phase3_security_review.md`, by the numbers below.
 
-- 1.1 Editing a dataset can re-publish or un-publish it. Reproduced. On production in `v3.3.1`; no dataset was in that state on 2026-11-05.
+- 1.1 and 1.4, public state: decided by the user and being fixed in its own pull request. `PUT` and `DELETE /resources/{mfid}/access/public` are the only way to change it, creation sets the starting state, and `PATCH` refuses `public` with a 422. Responses read the grant; the cost measured on production was about 0.2 ms per page. nano-crucible 3.0.0 to 3.2.0 get the 422, and the user accepted that.
 - 1.3 The legacy upload token lets a contributor overwrite or delete others' files on Google storage.
-- 1.4 Editors can publish datasets and samples through `PATCH`.
 - 1.5 A non-administrator can make anyone a project owner.
 - 1.6 Any signed-in person can look people up by email. Needs a decision.
 - 1.7 nano-crucible sends the API key to signed storage URLs. For the nano-crucible session.

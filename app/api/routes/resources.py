@@ -56,7 +56,7 @@ from app.utils.permissions import (
     has_permission,
 )
 from app.utils.sql_utils import add_or_update, set_public, sql_create_resource_acl, touch_resource_modification_time
-from app.utils.gcs_record_utils import write_metadata
+from app.utils.gcs_record_utils import dataset_record, sample_record, write_metadata, write_record
 from app.utils.link_utils import fetch_readable_links
 from app.utils.project_utils import resolve_project_identifiers, resolve_project_reference
 from app.utils.user_utils import close_pending_join_requests, resolve_user_by_identifier
@@ -924,8 +924,20 @@ def revoke_resource_access(mfid: str, kind: str, principal: str,
     return {"detail": f"Access revoked for {canonical}"}
 
 
+def _write_stored_record(session, background_tasks: BackgroundTasks, ri: Resource, public: bool, actor: str) -> None:
+    """Keep the stored copy of a dataset or sample accurate after publishing or unpublishing. Other
+    resources' stored records carry no public value."""
+    dataset = session.exec(select(Dataset).where(Dataset.unique_id == ri.mfid)).one_or_none()
+    if dataset is not None:
+        background_tasks.add_task(write_record, ri.mfid, dataset_record(dataset, ri, public), actor, "update")
+        return
+    sample = session.exec(select(Sample).where(Sample.unique_id == ri.mfid)).one_or_none()
+    if sample is not None:
+        background_tasks.add_task(write_record, ri.mfid, sample_record(sample, ri, public), actor, "update")
+
+
 @router.put("/resources/{mfid}/access/public", response_model=AccessGrantRead)
-def publish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+def publish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)], background_tasks: BackgroundTasks):
     """Make a resource publicly readable.
 
     No role parameter: standing in the public group is viewer, so min() caps
@@ -940,15 +952,16 @@ def publish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize
         require_grant(session, auth_res, mfid, Role.VIEWER)
 
         set_public(session, mfid, True)
-        touch_resource_modification_time(session, mfid)
+        ri = touch_resource_modification_time(session, mfid)
         session.commit()
+        _write_stored_record(session, background_tasks, ri, True, auth_res.user_id)
 
         ag, _ = _resolve_grantee(session, "public", PUBLIC_GROUP_NAME)
         return access_grant_read(session, ag, Role.VIEWER.db_value)
 
 
 @router.delete("/resources/{mfid}/access/public", response_model=DetailResponse)
-def unpublish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)]):
+def unpublish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize_user)], background_tasks: BackgroundTasks):
     """Withdraw public access."""
     with Session(get_engine()) as session:
         resource = session.exec(select(Resource).where(Resource.mfid == mfid)).one_or_none()
@@ -958,8 +971,9 @@ def unpublish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authori
         require_grant(session, auth_res, mfid, Role.VIEWER)
 
         set_public(session, mfid, False)
-        touch_resource_modification_time(session, mfid)
+        ri = touch_resource_modification_time(session, mfid)
         session.commit()
+        _write_stored_record(session, background_tasks, ri, False, auth_res.user_id)
     return {"detail": "Public access withdrawn"}
 
 

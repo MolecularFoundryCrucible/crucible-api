@@ -30,6 +30,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - `PATCH /datasets/{id}` and `PATCH /samples/{id}` refuse `public` with a 422; use `PUT` or `DELETE /resources/{mfid}/access/public`, which need admin rights.
 - The `public` value in responses and stored records is read from the public access grant.
+- Publishing or unpublishing a dataset or sample now updates its stored record.
 - `POST /account/sync-projects` uses the person's linked ORCID, returns 502 when the proposal service cannot be reached, skips projects pending deletion, and `orcid` in its response can be null.
 - Every newly created person gets a username, generated from their name when none is given; existing people are unchanged.
 - Browser and Hub sign-in share one resolver, which records `user_identity.verified_at`, `last_used_at` and sign-in events.

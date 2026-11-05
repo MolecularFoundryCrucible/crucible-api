@@ -186,14 +186,15 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
         session.add(sample)
         session.commit()
         session.refresh(sample)
-        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri, is_public(session, sample.unique_id)), user_unique_id, "update")
+        public = is_public(session, sample.unique_id)
+        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri, public), user_unique_id, "update")
         project_references = resolve_project_mfids_to_references([sample.project_mfid], session)
         project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
             "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
-            "public": is_public(session, sample.unique_id),
+            "public": public,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
         })
@@ -282,14 +283,15 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         session.add(sample)
         session.commit()
         session.refresh(sample)
-        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri, is_public(session, sample.unique_id)), user_unique_id, "create")
+        public = is_public(session, sample.unique_id)
+        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri, public), user_unique_id, "create")
         project_references = resolve_project_mfids_to_references([sample.project_mfid], session)
         project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
             "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
-            "public": is_public(session, sample.unique_id),
+            "public": public,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
         })

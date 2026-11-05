@@ -129,3 +129,50 @@ def test_editor_cannot_publish_through_any_route(client, auth_as, setup, db_engi
 
 def test_sample_table_has_no_public_column_to_drift():
     assert "public" not in Sample.model_fields
+
+
+@pytest.fixture
+def stored_records(monkeypatch):
+    from app.api.routes import resources
+
+    written = []
+    monkeypatch.setattr(resources, "write_record", lambda mfid, record, actor, operation: written.append((mfid, record["public"], record["resource_type"], actor, operation)))
+    return written
+
+
+def test_access_routes_keep_the_stored_record_accurate(client, setup, kind, stored_records):
+    mfid = create(client, kind, False)
+    assert client.put(f"/resources/{mfid}/access/public").status_code == 200
+    assert client.delete(f"/resources/{mfid}/access/public").status_code == 200
+    resource_type = kind[:-1]
+    assert stored_records == [(mfid, True, resource_type, OWNER, "update"), (mfid, False, resource_type, OWNER, "update")]
+
+
+def test_refused_publish_writes_no_stored_record(client, auth_as, setup, kind, stored_records):
+    mfid = create(client, kind, False)
+    auth_as("0000-0000-0000-0002", groups=[("nobody", 999, Role.VIEWER)])
+    assert client.put(f"/resources/{mfid}/access/public").status_code in (403, 404)
+    assert stored_records == []
+
+
+def test_publishing_something_without_a_public_stored_value_writes_none(client, setup, db_engine, stored_records):
+    with Session(db_engine) as session, session.begin():
+        session.add(Resource(mfid="0tinstrument000000000000a0", resource_type="instrument"))
+    client.put("/resources/0tinstrument000000000000a0/access/public")
+    assert stored_records == []
+
+
+@pytest.mark.parametrize("call", ["create", "edit"])
+def test_public_state_is_read_once_per_write(client, setup, kind, monkeypatch, call):
+    import importlib
+
+    mfid = create(client, kind, False)
+    route = importlib.import_module(f"app.api.routes.{kind}")
+    calls = []
+    real = route.is_public
+    monkeypatch.setattr(route, "is_public", lambda session, value: calls.append(value) or real(session, value))
+    response = client.post(f"/{kind}", json=KINDS[kind]) if call == "create" else client.patch(f"/{kind}/{mfid}", json=RENAME[kind])
+    assert response.status_code in (200, 201), response.text
+    assert len(calls) == 1
+    assert response.json()["public"] is False
+

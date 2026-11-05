@@ -285,14 +285,15 @@ def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
                 instrument.instrument_id,
                 instrument.unique_id,
             )
-        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri, is_public(session, ds.unique_id)), user_unique_id, "create")
+        public = is_public(session, ds.unique_id)
+        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri, public), user_unique_id, "create")
         project_references = resolve_project_mfids_to_references([ds.project_mfid], session)
         return DatasetResponse.model_validate({
             **ds.model_dump(),
             **dataset_instrument_fields(ds, InstrumentReferenceRead.model_validate(instrument) if instrument else None),
             "project_id": project_references[ds.project_mfid].project_id if ds.project_mfid in project_references else None,
             "project": project_references.get(ds.project_mfid),
-            "public": is_public(session, ds.unique_id),
+            "public": public,
             "creation_time": ri.creation_time,
             "modification_time": ri.modification_time,
         })
@@ -366,7 +367,8 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
 
         session.commit()
         session.refresh(upds)
-        background_tasks.add_task(write_record, upds.unique_id, dataset_record(upds, ri, is_public(session, upds.unique_id)), user_unique_id, "update")
+        public = is_public(session, upds.unique_id)
+        background_tasks.add_task(write_record, upds.unique_id, dataset_record(upds, ri, public), user_unique_id, "update")
         instrument_references = resolve_instrument_mfids_to_references([upds.instrument_mfid], session)
         project_references = resolve_project_mfids_to_references([upds.project_mfid], session)
         instrument_reference = instrument_references.get(upds.instrument_mfid)
@@ -376,7 +378,7 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
             **dataset_instrument_fields(upds, instrument_reference),
             "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
-            "public": is_public(session, upds.unique_id),
+            "public": public,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
         })

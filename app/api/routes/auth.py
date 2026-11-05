@@ -72,14 +72,14 @@ async def redirect_exchange(request: Request, code: str | None = None, state: st
     return response
 
 
-def _record_signed_in_user(subject: str, user_info: dict) -> tuple[str, str | None, str, str]:
+def _record_signed_in_user(subject: str, user_info: dict) -> tuple[int, str, str | None, str, str]:
     with Session(get_engine()) as session:
         user = resolve_sign_in(session, get_settings().api.orcid_issuer, subject, user_info.get('given_name'), user_info.get('family_name'))
         session.commit()
-        return user.unique_id, user.email, user.first_name, user.last_name
+        return user.id, user.unique_id, user.email, user.first_name, user.last_name
 
 
-def _signed_in_user_or_conflict(subject: str, user_info: dict) -> tuple[str, str | None, str, str]:
+def _signed_in_user_or_conflict(subject: str, user_info: dict) -> tuple[int, str, str | None, str, str]:
     try:
         return retry_after_concurrent_first_write(lambda: _record_signed_in_user(subject, user_info))
     except SignInRefused:
@@ -98,9 +98,9 @@ def get_apikey(request: Request, response: Response):
         return _login_redirect(f"{root}/login", f"{root}/user_apikey")
     orcid = user_info["orcid"]
 
-    unique_id, user_email, user_first_name, user_last_name = _signed_in_user_or_conflict(orcid, user_info)
+    user_id, unique_id, user_email, user_first_name, user_last_name = _signed_in_user_or_conflict(orcid, user_info)
 
-    crucible_token = find_or_add_api_access(unique_id, get_engine(), regenerate=False)
+    crucible_token = find_or_add_api_access(user_id, get_engine(), regenerate=False)
 
     if not user_email:
         return HTMLResponse(content=_email_prompt_html(root, orcid, unique_id, crucible_token, user_first_name, user_last_name), headers={"Cache-Control": "no-store"})
@@ -227,8 +227,8 @@ def regenerate_apikey(request: Request, response: Response):
     if user_info is None:
         return _login_redirect(f"{root}/auth/login", f"{root}/auth/apikey")
     orcid = user_info["orcid"]
-    unique_id, *_ = _signed_in_user_or_conflict(orcid, user_info)
-    crucible_token = find_or_add_api_access(unique_id, get_engine(), regenerate=True)
+    user_id, *_ = _signed_in_user_or_conflict(orcid, user_info)
+    crucible_token = find_or_add_api_access(user_id, get_engine(), regenerate=True)
     response.headers["Cache-Control"] = "no-store"
     return {"api_key": crucible_token}
 

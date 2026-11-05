@@ -132,7 +132,7 @@ def create_project(auth_res: Annotated[Principal, Depends(authorize_user)], P: P
         session.refresh(prop)
         capability_principal = (
             auth_res if auth_res.is_platform_admin
-            else load_principal(session, auth_res.user_id)
+            else load_principal(session, auth_res.internal_user_id)
         )
         return ProjectRead(
             **prop.model_dump(),

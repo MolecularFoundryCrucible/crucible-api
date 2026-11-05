@@ -313,6 +313,7 @@ class AuthEvent(SQLModel, table=True):
 class ApiToken(SQLModel, table = True):
     access_group_id: str= Field(default = None)
     user_unique_id: str = Field(default = None, foreign_key = "user.orcid", index = True)
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     token: str = Field(default = None, primary_key = True, index = True)
     token_created: str = Field(default_factory=get_utc_isoformat)
     last_used_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
@@ -339,6 +340,7 @@ class HubTokenFamily(SQLModel, table=True):
 
     id: str = Field(primary_key=True, max_length=36)
     user_unique_id: str = Field(foreign_key="user.orcid", index=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     client_id: str = Field(index=True)
     created_at: datetime = Field(sa_type=DateTime(timezone=True))
     expires_at: datetime = Field(sa_type=DateTime(timezone=True))
@@ -387,6 +389,7 @@ class HubLoginCode(SQLModel, table=True):
 
     code_hash: str = Field(primary_key=True, max_length=64)
     user_unique_id: str = Field(foreign_key="user.orcid", index=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     client_id: str
     callback_uri: str
     code_challenge: str = Field(max_length=43)

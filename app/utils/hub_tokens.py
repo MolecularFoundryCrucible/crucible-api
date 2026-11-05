@@ -34,10 +34,14 @@ def _may_hold_hub_tokens(user: User | None) -> bool:
     return user is not None and not user.is_service_account and user.disabled_at is None
 
 
-def revoke_all_hub_tokens(session: Session, user_unique_id: str, *, now: datetime | None = None) -> None:
+def _holder(session: Session, family: HubTokenFamily) -> User | None:
+    return session.get(User, family.user_id) if family.user_id is not None else None
+
+
+def revoke_all_hub_tokens(session: Session, user_id: int, *, now: datetime | None = None) -> None:
     """End every Hub session of this person, in the caller's transaction."""
     current = _now(now)
-    for family in session.exec(select(HubTokenFamily).where(HubTokenFamily.user_unique_id == user_unique_id, HubTokenFamily.revoked_at == None).with_for_update()).all():  # noqa: E711
+    for family in session.exec(select(HubTokenFamily).where(HubTokenFamily.user_id == user_id, HubTokenFamily.revoked_at == None).with_for_update()).all():  # noqa: E711
         family.revoked_at = current
         session.add(family)
 
@@ -72,19 +76,20 @@ def _issue_access(session: Session, family: HubTokenFamily, now: datetime) -> tu
     return token, expires_at
 
 
-def issue_hub_tokens(engine, user_unique_id: str, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None) -> HubTokenPair:
+def issue_hub_tokens(engine, user_id: int, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None) -> HubTokenPair:
     with Session(engine) as session, session.begin():
-        return issue_hub_tokens_in_session(session, user_unique_id, client_id, now=now, auth_time=auth_time)
+        return issue_hub_tokens_in_session(session, user_id, client_id, now=now, auth_time=auth_time)
 
 
-def issue_hub_tokens_in_session(session: Session, user_unique_id: str, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None) -> HubTokenPair:
+def issue_hub_tokens_in_session(session: Session, user_id: int, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None) -> HubTokenPair:
     current = _now(now)
-    user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
+    user = session.get(User, user_id)
     if not _may_hold_hub_tokens(user):
         raise InvalidHubGrant
     family = HubTokenFamily(
         id=str(uuid.uuid4()),
-        user_unique_id=user_unique_id,
+        user_id=user.id,
+        user_unique_id=user.unique_id,
         client_id=client_id,
         created_at=current,
         expires_at=current + REFRESH_ABSOLUTE_LIFETIME,
@@ -108,7 +113,7 @@ def issue_hub_tokens_in_session(session: Session, user_unique_id: str, client_id
         refresh_token=refresh_token,
         access_expires_at=access_expires_at,
         refresh_expires_at=family.expires_at,
-        user_unique_id=user_unique_id,
+        user_unique_id=user.unique_id,
         auth_time=auth_time,
     )
 
@@ -143,7 +148,7 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
         elif current >= _aware(family.expires_at) or current >= _aware(family.last_refreshed_at) + REFRESH_IDLE_LIFETIME:
             family.revoked_at = current
         else:
-            user = session.exec(select(User).where(User.unique_id == family.user_unique_id)).one_or_none()
+            user = _holder(session, family)
             if not _may_hold_hub_tokens(user):
                 family.revoked_at = current
             else:
@@ -164,7 +169,7 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
                     refresh_token=next_refresh,
                     access_expires_at=access_expires_at,
                     refresh_expires_at=_aware(family.expires_at),
-                    user_unique_id=family.user_unique_id,
+                    user_unique_id=user.unique_id,
                     auth_time=_aware(family.auth_time) if family.auth_time else None,
                 )
     if replayed or result is None:
@@ -172,8 +177,8 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
     return result
 
 
-def hub_access_user(session: Session, access_token: str, *, now: datetime | None = None) -> str:
-    return hub_access_family(session, access_token, now=now).user_unique_id
+def hub_access_user(session: Session, access_token: str, *, now: datetime | None = None) -> int:
+    return hub_access_family(session, access_token, now=now).user_id
 
 
 def hub_access_family(session: Session, access_token: str, *, now: datetime | None = None) -> HubTokenFamily:
@@ -186,7 +191,7 @@ def hub_access_family(session: Session, access_token: str, *, now: datetime | No
     family = session.get(HubTokenFamily, token.family_id)
     if family is None or family.revoked_at is not None or current >= _aware(family.expires_at):
         raise InvalidHubGrant
-    user = session.exec(select(User).where(User.unique_id == family.user_unique_id)).one_or_none()
+    user = _holder(session, family)
     if not _may_hold_hub_tokens(user):
         raise InvalidHubGrant
     return family

@@ -15,6 +15,7 @@ from app.utils.hub_login import HubLoginRefused, create_handoff_code, create_log
 from app.utils.hub_tokens import InvalidHubGrant, hub_access_family, issue_hub_tokens, refresh_hub_tokens
 from app.utils.permissions import PlatformRole
 from tests.test_hub_tokens import ORCID_PROVIDER
+from tests.people import internal_id, person_row
 
 ORCID = "0000-0002-1825-0097"
 ADMIN = "0tmnyhfztdwc1000w2kspzsnh0"
@@ -48,7 +49,7 @@ def set_disabled(db_engine, unique_id=ORCID, value=NOW):
 
 def api_key_for(db_engine, unique_id=ORCID):
     with Session(db_engine) as session, session.begin():
-        return add_apikey(unique_id, session)
+        return add_apikey(person_row(session, unique_id), session)
 
 
 def authorize(token):
@@ -103,7 +104,7 @@ def test_disabled_refused_on_handoff_redemption(db_engine):
 
 def test_disabled_refused_on_hub_refresh_and_the_family_is_revoked(db_engine):
     person(db_engine)
-    pair = issue_hub_tokens(db_engine, ORCID, "crucible-hub")
+    pair = issue_hub_tokens(db_engine, internal_id(db_engine, ORCID), "crucible-hub")
     set_disabled(db_engine)
     with pytest.raises(InvalidHubGrant):
         refresh_hub_tokens(db_engine, pair.refresh_token, "crucible-hub")
@@ -113,7 +114,7 @@ def test_disabled_refused_on_hub_refresh_and_the_family_is_revoked(db_engine):
 
 def test_disabled_refused_on_hub_access_token(db_engine):
     person(db_engine)
-    pair = issue_hub_tokens(db_engine, ORCID, "crucible-hub")
+    pair = issue_hub_tokens(db_engine, internal_id(db_engine, ORCID), "crucible-hub")
     set_disabled(db_engine)
     with Session(db_engine) as session:
         with pytest.raises(InvalidHubGrant):
@@ -139,7 +140,7 @@ def test_disabled_refused_on_api_key_after_cache_clear(db_engine):
 def test_load_principal_still_works_for_a_disabled_target(db_engine):
     person(db_engine, disabled=True)
     with Session(db_engine) as session:
-        assert auth_utils.load_principal(session, ORCID).user_id == ORCID
+        assert auth_utils.load_principal(session, internal_id(session, ORCID)).user_id == ORCID
 
 
 def as_admin(auth_as, client, user_id=ADMIN, age=timedelta(seconds=5)):
@@ -157,7 +158,7 @@ def test_admin_disables_and_everything_stops_at_once(client, auth_as, db_engine)
     person(db_engine)
     key = api_key_for(db_engine)
     assert authorize(key).user_id == ORCID
-    pair = issue_hub_tokens(db_engine, ORCID, "crucible-hub")
+    pair = issue_hub_tokens(db_engine, internal_id(db_engine, ORCID), "crucible-hub")
     as_admin(auth_as, client)
     response = client.post(f"/users/{ORCID}/disable")
     assert response.status_code == 200, response.text
@@ -177,7 +178,7 @@ def test_enable_restores_sign_in_but_not_old_sessions(client, auth_as, db_engine
     human_admins(db_engine, ADMIN)
     person(db_engine)
     key = api_key_for(db_engine)
-    pair = issue_hub_tokens(db_engine, ORCID, "crucible-hub")
+    pair = issue_hub_tokens(db_engine, internal_id(db_engine, ORCID), "crucible-hub")
     as_admin(auth_as, client)
     assert client.post(f"/users/{ORCID}/disable").status_code == 200
     response = client.post(f"/users/{ORCID}/enable")

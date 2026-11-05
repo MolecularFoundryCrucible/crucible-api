@@ -310,15 +310,15 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
 
         key_status_by_user = {}
         if is_admin:
-            private_ids = [user.unique_id for user in rows]
+            private_ids = [user.id for user in rows]
             for token in session.exec(
-                select(ApiToken).where(ApiToken.user_unique_id.in_(private_ids))
+                select(ApiToken).where(ApiToken.user_id.in_(private_ids))
                 .order_by(ApiToken.token_created.desc())
             ).all() if private_ids else []:
-                if token.user_unique_id not in key_status_by_user:
-                    key_status_by_user[token.user_unique_id] = _key_status(token)
+                if token.user_id not in key_status_by_user:
+                    key_status_by_user[token.user_id] = _key_status(token)
         items = [
-            _user_read(auth_res, user, key_status=key_status_by_user.get(user.unique_id), with_capabilities=True)
+            _user_read(auth_res, user, key_status=key_status_by_user.get(user.id), with_capabilities=True)
             if is_admin or auth_res.is_user(user)
             else _user_public_read(auth_res, user, with_capabilities=True)
             for user in rows
@@ -477,7 +477,7 @@ def _admin_key_status(session, caller: Principal, user: User) -> Optional[Servic
         return None
     token = session.exec(
         select(ApiToken)
-        .where(ApiToken.user_unique_id == user.unique_id)
+        .where(ApiToken.user_id == user.id)
         .order_by(ApiToken.token_created.desc())
     ).first()
     return _key_status(token)
@@ -488,9 +488,10 @@ def _admin_user_for_key(user_ref, auth_res):
     require_platform_admin(auth_res)
     require_recent_authentication(auth_res)
     with Session(get_engine()) as session:
-        if session.exec(select(User.id).where(User.unique_id == user_id)).first() is None:
-            raise HTTPException(status_code=404, detail="User not found")
-    return user_id
+        internal_user_id = session.exec(select(User.id).where(User.unique_id == user_id)).first()
+    if internal_user_id is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return internal_user_id
 
 
 @router.post("/users/{user_ref}/apikey", response_model=ApiKeyRead, deprecated=True, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}, 409: {"description": "Hub sessions cannot read an existing key (`api_key_exists`)"}})
@@ -629,7 +630,7 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
 
     # Mirror the canonical /auth/apikey flow: provisioning a user also mints
     # their API key (idempotent) so they can authenticate immediately.
-    find_or_add_api_access(unique_id, get_engine(), regenerate=False)
+    find_or_add_api_access(user.id, get_engine(), regenerate=False)
     return _user_read(auth_res, user, with_capabilities=True)
 
 
@@ -736,10 +737,10 @@ def disable_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(autho
                     raise HTTPException(status_code=409, detail="Cannot disable the last active human platform administrator")
             user.disabled_at = datetime.now(timezone.utc)
             session.add(user)
-            revoke_all_hub_tokens(session, user.unique_id)
+            revoke_all_hub_tokens(session, user.id)
             record_event(session, AuthEventType.DISABLED, user=user, actor=caller_row(session, auth_res))
             session.commit()
-            forget_cached_keys(session, user.unique_id)
+            forget_cached_keys(session, user.id)
         session.refresh(user)
         return _user_read(auth_res, user, key_status=_admin_key_status(session, auth_res, user), with_capabilities=True)
 
@@ -773,7 +774,7 @@ def delete_user_apikey(
             raise HTTPException(status_code=404, detail="User not found")
 
         tokens = session.exec(
-            select(ApiToken).where(ApiToken.user_unique_id == user_id)
+            select(ApiToken).where(ApiToken.user_id == user.id)
         ).all()
         for token in tokens:
             session.delete(token)

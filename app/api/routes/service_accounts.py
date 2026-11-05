@@ -52,7 +52,7 @@ def _service_account_admin_detail(
 ) -> ServiceAccountAdminDetail:
     token = session.exec(
         select(ApiToken)
-        .where(ApiToken.user_unique_id == user.unique_id)
+        .where(ApiToken.user_id == user.id)
         .order_by(ApiToken.token_created.desc())
     ).first()
     return ServiceAccountAdminDetail.model_validate(
@@ -190,9 +190,10 @@ def create_service_account(
             group_type=AccessGroupType.IDENTITY,
         )
         session.commit()
+        user_id = user.id
 
     # Generate API key (outside session — find_or_add_api_access opens its own)
-    api_key = find_or_add_api_access(unique_id, get_engine(), regenerate=False)
+    api_key = find_or_add_api_access(user_id, get_engine(), regenerate=False)
     response.headers["Cache-Control"] = "no-store"
 
     return ServiceAccountRead(
@@ -218,10 +219,10 @@ def rotate_service_account_key(
 
     with Session(get_engine()) as session:
         user = resolve_service_account_reference(session, service_account_ref)
-        unique_id = user.unique_id
+        user_id, unique_id = user.id, user.unique_id
         username = user.username
 
-    api_key = find_or_add_api_access(unique_id, get_engine(), regenerate=True)
+    api_key = find_or_add_api_access(user_id, get_engine(), regenerate=True)
     response.headers["Cache-Control"] = "no-store"
 
     return ServiceAccountRead(

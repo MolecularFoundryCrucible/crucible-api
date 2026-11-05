@@ -120,11 +120,11 @@ def _create(values: dict, allow_additional: bool) -> tuple[str, str, str]:
             raise Refused(f"Already in use: {_detail(error)}") from None
         username = values["username"] or generate_unique_username(session, values["first_name"], values["last_name"])
         try:
-            provision_user(
+            user = provision_user(
                 session, unique_id=unique_id, first_name=values["first_name"], last_name=values["last_name"],
                 email=values["email"], username=username, platform_role=PlatformRole.ADMIN,
             )
-            api_key = add_apikey(unique_id, session)
+            api_key = add_apikey(user, session)
             commit_user(session)
         except IdentityTaken:
             raise Refused(f"ORCID {unique_id} is already linked to another user; nothing created") from None

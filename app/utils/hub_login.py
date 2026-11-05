@@ -160,6 +160,7 @@ def create_handoff_code(engine, transaction: HubLoginTransaction, provider: Oidc
             user = resolve_sign_in(session, provider.issuer, subject, given_name, family_name, required_user=transaction.required_user)
             session.add(HubLoginCode(
                 code_hash=_digest(code),
+                user_id=user.id,
                 user_unique_id=user.unique_id,
                 client_id=transaction.client_id,
                 callback_uri=transaction.callback_uri,
@@ -193,4 +194,4 @@ def exchange_handoff_code(engine, code: str, verifier: str, client_id: str, call
         if grant.client_id != client_id or grant.callback_uri != callback_uri or not secrets.compare_digest(grant.code_challenge, challenge):
             raise InvalidHubGrant
         grant.consumed_at = current
-        return issue_hub_tokens_in_session(session, grant.user_unique_id, client_id, now=current, auth_time=_aware(grant.auth_time) if grant.auth_time else None)
+        return issue_hub_tokens_in_session(session, grant.user_id, client_id, now=current, auth_time=_aware(grant.auth_time) if grant.auth_time else None)

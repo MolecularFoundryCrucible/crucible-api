@@ -52,7 +52,7 @@ def save(session, upload):
 
 
 def demoted(session, principal):
-    current = load_principal(session, principal.user_id)
+    current = load_principal(session, principal.internal_user_id)
     if current.is_platform_admin and not principal.is_platform_admin:
         current = replace(current, platform_role=PlatformRole.NONE)
     return current

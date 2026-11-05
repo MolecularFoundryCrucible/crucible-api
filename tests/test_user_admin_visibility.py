@@ -5,6 +5,7 @@ from sqlmodel import Session, select
 from app.models.core_models import ApiToken, Project, User
 from app.models.query_params import UserListQuery
 from app.utils.permissions import PlatformRole, Role
+from tests.people import internal_id
 
 PERSON = "0000-0001-2345-6789"
 OTHER = "0000-0002-3456-7890"
@@ -49,13 +50,14 @@ def _seed(db_engine):
                 is_service_account=True,
                 platform_role=PlatformRole.ADMIN.value,
             ),
-            ApiToken(
-                access_group_id=PERSON,
-                user_unique_id=PERSON,
-                token="alice-secret-token",
-                token_created="2026-09-16",
-            ),
         ])
+        session.add(ApiToken(
+            access_group_id=PERSON,
+            user_id=internal_id(session, PERSON),
+            user_unique_id=PERSON,
+            token="alice-secret-token",
+            token_created="2026-09-16",
+        ))
         session.commit()
 
 

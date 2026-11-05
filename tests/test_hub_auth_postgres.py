@@ -18,6 +18,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from app.models.core_models import HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User
 from app.utils.hub_login import exchange_handoff_code
 from app.utils.hub_tokens import InvalidHubGrant, hub_access_user, issue_hub_tokens, refresh_hub_tokens, revoke_hub_tokens
+from tests.people import internal_id
 
 
 NOW = datetime(2026, 9, 28, tzinfo=timezone.utc)
@@ -59,7 +60,7 @@ def test_exchange_rolls_back_code_and_family_on_issuance_failure(pg_engine, monk
     callback = "https://example.test/hub/auth/callback"
     with Session(pg_engine) as session, session.begin():
         session.add(HubLoginCode(
-            code_hash=code_hash, user_unique_id=USER, client_id="hub", callback_uri=callback,
+            code_hash=code_hash, user_id=internal_id(session, USER), user_unique_id=USER, client_id="hub", callback_uri=callback,
             code_challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode(),
             created_at=NOW, expires_at=NOW + timedelta(minutes=1),
         ))
@@ -76,13 +77,13 @@ def test_exchange_rolls_back_code_and_family_on_issuance_failure(pg_engine, monk
         assert session.exec(select(HubTokenFamily)).all() == []
     pair = exchange_handoff_code(pg_engine, code, verifier, "hub", callback, now=NOW)
     with Session(pg_engine) as session:
-        assert hub_access_user(session, pair.access_token, now=NOW) == USER
+        assert hub_access_user(session, pair.access_token, now=NOW) == internal_id(session, USER)
     with pytest.raises(InvalidHubGrant):
         exchange_handoff_code(pg_engine, code, verifier, "hub", callback, now=NOW)
 
 
 def test_concurrent_refresh_detects_replay_and_revokes_family(pg_engine):
-    first = issue_hub_tokens(pg_engine, USER, "hub", now=NOW)
+    first = issue_hub_tokens(pg_engine, internal_id(pg_engine, USER), "hub", now=NOW)
     barrier = threading.Barrier(2)
 
     def after_read(connection, cursor, statement, parameters, context, executemany):
@@ -112,7 +113,7 @@ def test_concurrent_refresh_detects_replay_and_revokes_family(pg_engine):
 
 @pytest.mark.parametrize("first_operation", ["refresh", "revoke"])
 def test_logout_and_refresh_serialize_without_restoring_session(pg_engine, first_operation):
-    pair = issue_hub_tokens(pg_engine, USER, "hub", now=NOW)
+    pair = issue_hub_tokens(pg_engine, internal_id(pg_engine, USER), "hub", now=NOW)
     both_read = threading.Barrier(2)
     first_finished = threading.Event()
     operation = threading.local()
@@ -157,14 +158,14 @@ def test_logout_and_refresh_serialize_without_restoring_session(pg_engine, first
 def test_cleanup_respects_foreign_keys_and_preserves_live_family(pg_engine):
     from app.utils.hub_auth_maintenance import cleanup_hub_auth
 
-    expired = issue_hub_tokens(pg_engine, USER, "hub", now=NOW - timedelta(days=31))
-    live = issue_hub_tokens(pg_engine, USER, "hub", now=NOW)
+    expired = issue_hub_tokens(pg_engine, internal_id(pg_engine, USER), "hub", now=NOW - timedelta(days=31))
+    live = issue_hub_tokens(pg_engine, internal_id(pg_engine, USER), "hub", now=NOW)
     preview = cleanup_hub_auth(pg_engine, now=NOW, batch_size=1)
     assert preview["hubtokenfamily"] == 1
     counts = cleanup_hub_auth(pg_engine, commit=True, now=NOW, batch_size=1)
     assert counts == preview
     with Session(pg_engine) as session:
-        assert hub_access_user(session, live.access_token, now=NOW) == USER
+        assert hub_access_user(session, live.access_token, now=NOW) == internal_id(session, USER)
         assert len(session.exec(select(HubTokenFamily)).all()) == 1
         assert len(session.exec(select(HubRefreshToken)).all()) == 1
     with pytest.raises(InvalidHubGrant):
@@ -176,7 +177,7 @@ def test_expiry_index_migration_round_trip(pg_engine):
     spec = importlib.util.spec_from_file_location("hub_expiry_revision", path)
     revision = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(revision)
-    pair = issue_hub_tokens(pg_engine, USER, "hub", now=NOW)
+    pair = issue_hub_tokens(pg_engine, internal_id(pg_engine, USER), "hub", now=NOW)
 
     with pg_engine.connect() as connection:
         context = MigrationContext.configure(connection)
@@ -196,4 +197,4 @@ def test_expiry_index_migration_round_trip(pg_engine):
                 model_index = next(index for index in SQLModel.metadata.tables[table].indexes if index.name == name)
                 assert list(model_index.columns.keys()) == ["expires_at", key]
     with Session(pg_engine) as session:
-        assert hub_access_user(session, pair.access_token, now=NOW) == USER
+        assert hub_access_user(session, pair.access_token, now=NOW) == internal_id(session, USER)

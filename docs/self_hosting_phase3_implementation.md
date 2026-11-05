@@ -263,6 +263,8 @@ All sign-in paths use `resolve_sign_in`, and the event log arrives here, moved f
   - `test_identity_of_another_user_refused`, `test_orcid_that_is_another_users_unique_id_refused`, `test_no_merge_ever`
   - `test_last_method_cannot_be_unlinked`, `test_unlink_allowed_with_password_or_other_identity`, `test_unlink_ends_other_hub_sessions`, `test_unlink_voids_live_link`
   - `test_every_link_and_unlink_writes_event`, `test_admin_link_records_actor`, `test_admin_link_refuses_service_account`
+- From the 2026-11-04 review: the migration adds `purpose` and `user_id` to `hublogintransaction` and `purpose`, `issuer`, `subject`, `label` to `hublogincode`, moved here from Task 4. A link code lasts 10 minutes, because a person reads a confirm page, while sign-in codes stay at 1 minute (agreed with the Hub session). Task 5 must come first: until sign-in finds people through `user_identity`, someone whose `unique_id` is not their ORCID is refused at ORCID sign-in. Linking sets `verified_at` and writes `last_used_at`, neither of which sign-in does yet for a non-ORCID provider.
+- Open, for the user to decide when this is proposed: signing in with an `open` provider before linking it creates a second account, and linking is then refused because accounts never merge. ORCID is `open` at the Foundry, so this can happen there.
 - [ ] **Step 2: Run to verify they fail.**
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run the full suite, commit, PR.**

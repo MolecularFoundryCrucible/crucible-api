@@ -101,7 +101,7 @@ def _hub_error(callback_uri: str, hub_state: str, error: str) -> Response:
 def _chooser(request: Request, listed: list[OidcProvider], hub_request: dict[str, str | int | None]) -> Response:
     """Starts nothing: each link returns to this route with a provider, which then starts that sign-in."""
     known = {name: value for name, value in hub_request.items() if value is not None}
-    methods = [{"display_name": provider.display_name, "href": f"?{urlencode({**known, 'provider': provider.key})}"} for provider in listed]
+    methods = [{"display_name": provider.display_name, "is_orcid": provider.is_orcid, "href": f"?{urlencode({**known, 'provider': provider.key})}"} for provider in listed]
     nonce = secrets.token_urlsafe(16)
     response = _templates.TemplateResponse(request, "hub_sign_in_chooser.html", {"methods": methods, "style_nonce": nonce})
     response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"

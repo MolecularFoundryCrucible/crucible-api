@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
-- Hub sign-in supports several OIDC providers, each with its own callback, a choice page, `GET /auth/methods`, and PKCE when advertised; providers other than ORCID sign in only people already linked.
+- Hub sign-in supports several OIDC providers, each with its own callback, a Hub-styled choice page, `GET /auth/methods`, and PKCE when advertised; providers other than ORCID sign in only people already linked.
 - `GET /auth/hub/login` accepts `provider` and `required_user`, and `POST /auth/hub/token` and `POST /auth/hub/refresh` return `auth_time`.
 - `user_identity` table and backfill script (`migrations/data/20261103_backfill_user_identity.py`), recording how each person signs in; sign-in still looks people up as before.
 

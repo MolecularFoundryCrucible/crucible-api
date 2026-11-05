@@ -186,6 +186,21 @@ def test_chooser_page_has_no_script_form_or_outside_address(client):
     assert "http://" not in text.replace(HUB_CALLBACK.lower(), "") and "//" not in re.sub(r'href="\?[^"]+"', "", text)
 
 
+def test_chooser_page_uses_no_blocked_markup(client):
+    text = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False).text.lower()
+    for blocked in ("style=", " src=", "<image", "<use", "<link", "url(", "@import", "@font-face", " on"):
+        assert blocked not in re.sub(r'href="\?[^"]+"', "", text.replace("<a href", "<a-href")), blocked
+
+
+def test_chooser_shows_the_logo_and_only_the_orcid_provider_gets_its_mark(client, configure):
+    page = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False).text
+    assert page.count('class="logo"') == 1
+    assert page.count('class="provider-mark"') == 1
+    assert page.index('class="provider-mark"') < page.index("Sign in with ORCID") < page.index("Sign in with Example Lab")
+    configure({**LAB_ENTRY, "key": "one"}, {**LAB_ENTRY, "key": "two", "issuer": "https://other.example.org"})
+    assert 'class="provider-mark"' not in client.get("/auth/hub/login", params=LOGIN, follow_redirects=False).text
+
+
 def test_chooser_links_carry_only_known_parameters(client):
     page = client.get("/auth/hub/login", params={**LOGIN, "injected": "value", "next": "https://evil.example"}, follow_redirects=False)
     assert "injected" not in page.text and "evil.example" not in page.text

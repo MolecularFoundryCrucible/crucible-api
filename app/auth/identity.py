@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.config import ORCID_ISSUERS, get_settings
+from app.general_utils import is_orcid
 from app.models.core_models import User, UserIdentity
 
 T = TypeVar("T")
@@ -36,6 +37,15 @@ def find_identity(session: Session, issuer: str, subject: str) -> UserIdentity |
 def orcid_of(session: Session, user: User) -> str | None:
     """The person's linked ORCID. Never read from `unique_id`, which may look like one."""
     return session.exec(select(UserIdentity.subject).where(UserIdentity.user_id == user.id, UserIdentity.issuer.in_(ORCID_ISSUERS))).one_or_none()
+
+
+def linked_orcid(session: Session, user: User) -> str | None:
+    """The ORCID to act on. Until the backfill has run and the lookup setting is on, a person's
+    `unique_id` still counts, or everyone without a row yet would lose project sync."""
+    orcid = orcid_of(session, user)
+    if orcid is not None or get_settings().auth.identity_lookup:
+        return orcid
+    return user.unique_id if is_orcid(user.unique_id) and not user.is_service_account else None
 
 
 def ensure_identity(session: Session, user: User, issuer: str, subject: str, *, label: str | None = None, created_by: User | None = None) -> UserIdentity:

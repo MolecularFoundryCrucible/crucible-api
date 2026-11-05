@@ -11,7 +11,7 @@ from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.general_utils import get_utc_datetime, if_match_satisfied, is_orcid
+from app.general_utils import get_utc_datetime, if_match_satisfied
 from app.models.core_models import ApiToken, Dataset, DeletionRequest, Instrument, Project, Resource, Sample, User, UserPreferences, UserRecentResource
 from app.models.preferences import MAX_DOCUMENT_BYTES, PREFERENCES_SCHEMA_VERSION, PreferencesDocument, PreferencesRead, RecentResourceRead, RecentResourceRecord, serialized_size
 from app.api.routes.join_requests import join_request_filters, list_join_requests_page
@@ -36,7 +36,9 @@ from app.utils.permissions import (
 )
 from app.api.errors import feature_disabled_response
 from app.config import require_feature
-from app.utils.user_utils import assert_profile_fields_available, assign_projects_to_user, commit_user, find_mf_user_proposals
+from app.auth.identity import linked_orcid
+from app.services.proposals import ProposalServiceUnavailable, assign_discovered_projects, lookup_proposals
+from app.utils.user_utils import assert_profile_fields_available, commit_user
 
 router = APIRouter(tags=["account"])
 
@@ -119,16 +121,20 @@ def update_account_profile(auth_res: Annotated[Principal, Depends(authorize_user
         return _self_user_read(user)
 
 
-@router.post("/account/sync-projects", response_model=ProjectSyncResult, responses=feature_disabled_response("proposal_sync"))
+@router.post("/account/sync-projects", response_model=ProjectSyncResult, responses={**feature_disabled_response("proposal_sync"), 502: {"description": "The proposal service could not be reached"}})
 def sync_account_projects(auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Add project memberships discovered from the MF proposal database."""
     require_feature("proposal_sync")
-    user_unique_id = auth_res.user_id
-    proposal_ids = find_mf_user_proposals(user_unique_id) if is_orcid(user_unique_id) else []
     with Session(get_engine()) as session:
-        result = assign_projects_to_user(session, user_unique_id, proposal_ids)
+        orcid = linked_orcid(session, session.exec(select(User).where(User.unique_id == auth_res.user_id)).one())
+    try:
+        proposal_ids = lookup_proposals(orcid) if orcid else []
+    except ProposalServiceUnavailable:
+        raise HTTPException(status_code=502, detail="The proposal service could not be reached; try again.") from None
+    with Session(get_engine()) as session:
+        result = assign_discovered_projects(session, session.exec(select(User).where(User.unique_id == auth_res.user_id)).one(), proposal_ids)
         session.commit()
-    return ProjectSyncResult(orcid=user_unique_id, **result)
+    return ProjectSyncResult(orcid=orcid, **result)
 
 
 @router.get("/account/join_requests", response_model=PaginatedResponse[JoinRequestRead], deprecated=True)

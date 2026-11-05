@@ -27,6 +27,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `POST /account/sync-projects` uses the person's linked ORCID, returns 502 when the proposal service cannot be reached, skips projects pending deletion, and `orcid` in its response can be null.
 - Every newly created person gets a username, generated from their name when none is given; existing people are unchanged.
 - Browser and Hub sign-in share one resolver, which records `user_identity.verified_at`, `last_used_at` and sign-in events.
 - Generated usernames keep accented and non-Latin names readable, such as `jose_garcia` and `li_ming`.

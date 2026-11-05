@@ -1,24 +1,21 @@
 import logging
 import re
-from typing import Dict, List, Optional, Sequence
+from typing import Optional, Sequence
 
-import requests
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from anyascii import anyascii
 from sqlmodel import select
-from app.config import get_secret, get_settings
 from app.auth.identity import default_orcid_issuer, ensure_identity
 from app.general_utils import is_orcid, is_valid_mfid
-from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
+from app.models.core_models import AccessGroup, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
 
 logger = logging.getLogger(__name__)
 # urllib3 logs request URLs at DEBUG, and the proposal service takes its API key in the query string.
 logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
-MF_PROPOSAL_DB_TIMEOUT = 10
 
 # A separator (- or _) must always be followed by an alphanumeric run, which
 # structurally rules out leading, trailing, and consecutive separators in one
@@ -312,85 +309,3 @@ def close_pending_join_requests(session, accessgroup_id, orcid, granted_role, ac
         )
         .execution_options(synchronize_session=False)
     )
-
-
-def find_mf_user_proposals(orcid: str) -> List[str]:
-    """Return MF proposal IDs for an ORCID without blocking on service failures. Returns nothing
-    when proposal sync is disabled."""
-    if not get_settings().proposals.enabled:
-        return []
-    try:
-        api_key = get_secret("PROPDB_APIKEY")
-    except Exception as exc:
-        logger.warning("Could not load proposal service credentials: %s", exc)
-        return []
-    if not api_key:
-        logger.warning("Proposal service credentials are unavailable")
-        return []
-
-    try:
-        response = requests.get(
-            get_settings().proposals.url,
-            params={"key": api_key, "orcid": orcid},
-            timeout=MF_PROPOSAL_DB_TIMEOUT,
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-        logger.warning("MF proposal lookup failed for %s: %s%s", orcid, type(exc).__name__, f" {status}" if status else "")
-        return []
-
-    if not isinstance(payload, list) or any(not isinstance(item, dict) for item in payload):
-        logger.warning("MF proposal lookup returned an invalid response for %s", orcid)
-        return []
-    if any(not isinstance(item.get("proposals", []), list) for item in payload):
-        logger.warning("MF proposal lookup returned invalid proposals for %s", orcid)
-        return []
-    return sorted({
-        proposal
-        for item in payload
-        for proposal in item.get("proposals", [])
-        if isinstance(proposal, str)
-    })
-
-
-def assign_projects_to_user(session, user_id: str, project_ids: List[str]) -> Dict[str, List[str]]:
-    """Add project memberships without removing existing memberships."""
-    from app.models.core_models import UserAccessGroupLink
-    from app.utils.permissions import AccessGroupType, Role
-
-    user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    added = []
-    already_member = []
-    not_found = []
-    for project_id in sorted(set(project_id for project_id in project_ids if project_id)):
-        project = session.exec(select(Project).where(func.lower(Project.project_id) == project_id.lower())).one_or_none()
-        if project is None:
-            logger.warning("No project found for %s", project_id)
-            not_found.append(project_id)
-            continue
-
-        member = session.exec(
-            select(UserAccessGroupLink.user_id)
-            .join(AccessGroup, AccessGroup.id == UserAccessGroupLink.accessgroup_id)
-            .where(UserAccessGroupLink.user_id == user.id, AccessGroup.group_name == project.unique_id)
-        ).first()
-        (already_member if member is not None else added).append(project_id)
-        sql_add_user_to_access_group(
-            user_id,
-            project.unique_id,
-            session,
-            role=Role.CONTRIBUTOR,
-            group_type=AccessGroupType.PROJECT,
-        )
-
-    session.add(user)
-    return {
-        "projects_added": added,
-        "projects_already_member": already_member,
-        "projects_not_found": not_found,
-    }

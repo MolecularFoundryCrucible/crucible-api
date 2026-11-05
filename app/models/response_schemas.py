@@ -41,7 +41,7 @@ class AuthMethodRead(BaseModel):
 
 
 class ProjectSyncResult(BaseModel):
-    orcid: str
+    orcid: Optional[str] = None
     projects_added: List[str] = []
     projects_already_member: List[str] = []
     projects_not_found: List[str] = []

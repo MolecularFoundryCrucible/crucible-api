@@ -29,11 +29,12 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, get_active_deletion_request, select_active
+from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_active
 from app.auth.events import AuthEventType, record_event
 from app.auth.identity import IdentityTaken, default_orcid_issuer, find_identity
 from app.utils.hub_tokens import revoke_all_hub_tokens
-from app.utils.user_utils import assert_profile_fields_available, commit_user, find_mf_user_proposals, profile_conflict, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
+from app.services.proposals import find_mf_user_proposals, usable_discovered_projects
+from app.utils.user_utils import assert_profile_fields_available, commit_user, profile_conflict, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import resolve_project_reference
 from app.models.pagination import PaginatedResponse
 from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
@@ -566,30 +567,24 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
 
     explicit_project_ids = set(project_ids or [])
     discovered_project_ids = set(find_mf_user_proposals(unique_id)) if is_orcid(unique_id) else set()
-    requested_project_ids = explicit_project_ids | discovered_project_ids
 
     with Session(get_engine()) as session:
         projects_by_mfid = {}
         missing_explicit = []
-        for ref in sorted(requested_project_ids):
+        for ref in sorted(explicit_project_ids):
             project = resolve_project_reference(ref, session)
             if project is None:
-                if ref in explicit_project_ids:
-                    missing_explicit.append(ref)
-                else:
-                    logger.warning("Ignoring proposal project not provisioned in Crucible: %s", ref)
+                missing_explicit.append(ref)
                 continue
-            if ref in explicit_project_ids:
-                assert_not_pending_deletion(session, project.unique_id)
-            elif get_active_deletion_request(session, project.unique_id) is not None:
-                logger.warning("Ignoring proposal project pending deletion: %s", ref)
-                continue
+            assert_not_pending_deletion(session, project.unique_id)
             projects_by_mfid[project.unique_id] = project
         if missing_explicit:
             raise HTTPException(
                 status_code=404,
                 detail=f"Projects not found: {', '.join(missing_explicit)}",
             )
+        discovered_projects, _ = usable_discovered_projects(session, sorted(discovered_project_ids - explicit_project_ids))
+        projects_by_mfid.update({project.unique_id: project for project in discovered_projects})
         projects = list(projects_by_mfid.values())
 
         project_group_names = {project.unique_id for project in projects}

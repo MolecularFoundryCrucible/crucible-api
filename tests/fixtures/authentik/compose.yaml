@@ -32,12 +32,8 @@ services:
     <<: *authentik
     command: server
     ports: ["127.0.0.1:9000:9000"]
-    volumes: [authentik-data:/data]
   worker:
     <<: *authentik
     command: worker
     volumes:
-      - authentik-data:/data
       - ./blueprints:/blueprints/custom:ro
-volumes:
-  authentik-data:

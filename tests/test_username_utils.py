@@ -1,4 +1,5 @@
 import pytest
+from fastapi import HTTPException
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
@@ -226,3 +227,48 @@ class TestGenerateUniqueUsername:
         _user(session, "0000-0009", "a" * 24)
         result = generate_unique_username(session, "A" * 24, "")
         assert validate_username_format(result) == result
+
+
+@pytest.mark.parametrize("first, last, expected", [
+    ("Ada", "Lovelace", "ada_lovelace"),
+    ("José", "García", "jose_garcia"),
+    ("François", "Müller", "francois_muller"),
+    ("Søren", "Kierkegaard", "soren_kierkegaard"),
+    ("Łukasz", "Straße", "lukasz_strasse"),
+    ("Mary Jane", "O'Neil", "mary_jane_oneil"),
+    ("Mary Jane", "O\u2019Neil", "mary_jane_oneil"),
+    ("Иван", "Петров", "ivan_petrov"),
+    ("李", "明", "li_ming"),
+    ("Anne-Marie", "Smith", "anne-marie_smith"),
+])
+def test_names_become_readable_usernames(first, last, expected):
+    assert sanitize_username_from_name(first, last) == expected
+    assert validate_username_format(expected) == expected
+
+
+@pytest.mark.parametrize("first, last", [("", ""), ("!!!", "???"), ("123", "456"), ("\U0001F600", "")])
+def test_unusable_names_still_give_a_valid_username(db_engine, first, last):
+    with Session(db_engine) as session:
+        assert validate_username_format(generate_unique_username(session, first, last))
+
+
+def test_long_transliterated_names_stay_valid():
+    candidate = sanitize_username_from_name("Ñandú" * 10, "Ñandú" * 10)
+    assert len(candidate) <= 24
+    assert validate_username_format(candidate) == candidate
+
+
+def test_email_usernames_are_transliterated_too():
+    assert sanitize_username_from_email("josé.garcía@example.org") == "jose_garcia"
+
+
+def test_two_existing_colliding_usernames_do_not_crash_the_check(db_engine):
+    with Session(db_engine) as session:
+        session.add(User(unique_id="a", first_name="A", last_name="A", username="ada_lovelace"))
+        session.add(User(unique_id="b", first_name="B", last_name="B", username="adalovelace"))
+        session.commit()
+        assert generate_unique_username(session, "Ada", "Lovelace") == "ada_lovelace_2"
+        assert is_username_available(session, "ada-lovelace") is False
+        with pytest.raises(HTTPException):
+            assert_username_available(session, "ada-lovelace")
+

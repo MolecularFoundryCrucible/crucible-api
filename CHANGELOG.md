@@ -26,6 +26,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - Every newly created person gets a username, generated from their name when none is given; existing people are unchanged.
+- Generated usernames keep accented and non-Latin names readable, such as `jose_garcia` and `li_ming`.
 - Hub sign-in requires an explicit `CRUCIBLE_AUTH_PROVIDERS` list and `OIDC_{KEY}_CLIENT_SECRET`, replacing `HUB_AUTH_ORCID_CLIENT_ID`, `HUB_AUTH_ORCID_ISSUER` and `HUB_AUTH_ORCID_CLIENT_SECRET`; set them before upgrading.
 - Hub sign-in reads ORCID's addresses from its discovery document.
 - Hub sign-in failures after a valid request redirect to the Hub with `state` and a standard OAuth `error`, instead of a 400 or 503 page.

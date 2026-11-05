@@ -6,6 +6,7 @@ import requests
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
+from anyascii import anyascii
 from sqlmodel import select
 from app.config import get_secret, get_settings
 from app.auth.identity import default_orcid_issuer, ensure_identity
@@ -44,7 +45,8 @@ def _sanitize_username_candidate(raw: str) -> str:
     construction — callers that skip re-validating (the backfill script
     does) rely on that. May still come out empty or under 3 chars; the
     caller checks length before use."""
-    sanitized = re.sub(r'[^a-z0-9_-]', '_', raw.lower())
+    sanitized = anyascii(raw).replace("'", "").lower()
+    sanitized = re.sub(r'[^a-z0-9_-]', '_', sanitized)
     sanitized = re.sub(r'[_-]{2,}', '_', sanitized)
     sanitized = re.sub(r'^[^a-z]+', '', sanitized)
     sanitized = sanitized[:_USERNAME_MAX]
@@ -80,7 +82,7 @@ def assert_username_available(session, username: str, exclude_orcid: Optional[st
     q = select(User).where(collision_expr == _username_collision_key(username))
     if exclude_orcid:
         q = q.where(User.unique_id != exclude_orcid)
-    if session.exec(q).one_or_none() is not None:
+    if session.exec(q).first() is not None:
         raise fields_in_use(["username"])
 
 
@@ -164,7 +166,7 @@ def is_username_available(session, username: str) -> bool:
     loops rather than request validation."""
     collision_expr = func.lower(func.replace(func.replace(User.username, '_', ''), '-', ''))
     q = select(User).where(collision_expr == _username_collision_key(username))
-    return session.exec(q).one_or_none() is None
+    return session.exec(q).first() is None
 
 
 def generate_unique_username(session, first_name: str, last_name: str) -> str:

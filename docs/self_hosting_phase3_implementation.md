@@ -127,6 +127,11 @@ Decisions on 2026-11-04, which override the text below where they differ:
 - Until Task 5, a non-ORCID provider signs in only people already in `user_identity`; everyone else gets `access_denied`, and no account is created.
 - Pull request 2's migration also adds nullable `provider_code_verifier` to `hublogintransaction`, because the Hub flow keeps its state in the database.
 - Clients are cached per provider, so a missing secret or bad discovery on one leaves the others working. A failed discovery waits 30 seconds before the next try.
+- Pull request 2 keeps its migration to what it uses: `provider_key`, `provider_code_verifier` and `required_user` on `hublogintransaction`. `purpose`, `user_id` and the identity columns on `hublogincode` move to Task 6, which is the first to use them. A row with no `provider_key` means the `legacy_callback` provider, so sign-ins in progress during a rollout finish.
+- The choice page starts nothing: each link returns to `/auth/hub/login` with `provider`, which creates that method's own login record, state and nonce. The Hub can skip the page by passing `provider` itself.
+- A discovery failure at the start of a valid request redirects to the Hub with `temporarily_unavailable`, not a 503 page, because the record's target is already validated. 503 remains for a server with no usable Hub settings.
+- A deployment needs at least one provider, not specifically a `legacy_callback` one, so a lab can run without ORCID.
+- `test_settings_check_names_users_stranded_by_removed_provider` moves to Task 13's `auth` commands: `settings check` runs against manifests in the build, with no database.
 - The Hub's `/login` and `/callback` routes are async, with database work in `run_in_threadpool`. They use Authlib's `create_authorization_url`, `fetch_access_token` and `parse_id_token`, and keep `HubLoginTransaction`.
 
 From the review: while a provider's discovery document is bad, each `/auth/login` fetches it again with no backoff. Add a short pause between retries when generalizing the provider code.

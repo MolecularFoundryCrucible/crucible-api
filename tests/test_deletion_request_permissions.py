@@ -18,6 +18,7 @@ from app.models.core_models import (
 from app.models.deletion import DeletionRequestScope, DeletionRequestSort
 from app.models.query_params import SortDirection
 from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role
+from tests.people import person_principal, user_id_or_none
 
 
 def _create_resource(db_engine, permission: Role = Role.CONTRIBUTOR) -> int:
@@ -42,7 +43,7 @@ def _create_resource(db_engine, permission: Role = Role.CONTRIBUTOR) -> int:
 
 
 def _principal(group_id: int) -> Principal:
-    return Principal(
+    return person_principal(
         user_id="requester",
         groups=(GroupMembership(
             id=group_id,
@@ -93,7 +94,7 @@ def test_deletion_request_accepts_platform_admin_without_acl(
     with Session(db_engine) as session:
         session.add(Resource(mfid="dataset-to-delete", resource_type="dataset"))
         session.commit()
-    principal = Principal(
+    principal = person_principal(
         user_id="platform-admin",
         platform_role=PlatformRole.ADMIN,
     )
@@ -135,12 +136,14 @@ def test_active_deletion_request_unique_index(db_engine):
         session.add(DeletionRequest(
             resource_id="dataset-to-delete",
             requester_id="first",
+            requester_user_id=user_id_or_none(session, "first"),
             status="pending",
         ))
         session.commit()
         session.add(DeletionRequest(
             resource_id="dataset-to-delete",
             requester_id="second",
+            requester_user_id=user_id_or_none(session, "second"),
             status="approved",
         ))
         with pytest.raises(IntegrityError):
@@ -165,6 +168,7 @@ def test_reviewable_scope_requires_admin_or_owner(
         session.add(DeletionRequest(
             resource_id="dataset-to-delete",
             requester_id="another-user",
+            requester_user_id=user_id_or_none(session, "another-user"),
             status="pending",
         ))
         session.commit()
@@ -185,16 +189,18 @@ def test_reviewable_scope_requires_admin_or_owner(
 
 def test_submitted_scope_returns_only_callers_requests(db_engine):
     group_id = _create_resource(db_engine, Role.CONTRIBUTOR)
+    caller = _principal(group_id)
     with Session(db_engine) as session:
         session.add(DeletionRequest(
             resource_id="dataset-to-delete",
             requester_id="requester",
+            requester_user_id=user_id_or_none(session, "requester"),
             status="pending",
         ))
         session.commit()
 
     response = deletion_routes.list_deletion_requests(
-        _principal(group_id),
+        caller,
         scope=DeletionRequestScope.SUBMITTED,
         status=None,
         limit=100,
@@ -230,7 +236,9 @@ def test_deletion_request_responses_embed_public_actor_summaries(db_engine):
         request = DeletionRequest(
             resource_id="dataset-to-delete",
             requester_id="requester",
+            requester_user_id=user_id_or_none(session, "requester"),
             reviewer_id="reviewer",
+            reviewer_user_id=user_id_or_none(session, "reviewer"),
             status="rejected",
         )
         session.add(request)
@@ -259,17 +267,18 @@ def test_deletion_request_responses_embed_public_actor_summaries(db_engine):
 
 
 def test_deletion_request_actor_summaries_are_null_when_unresolved(db_engine):
-    group_id = _create_resource(db_engine, Role.CONTRIBUTOR)
+    _create_resource(db_engine, Role.CONTRIBUTOR)
     with Session(db_engine) as session:
         session.add(DeletionRequest(
             resource_id="dataset-to-delete",
-            requester_id="requester",
-            status="pending",
+            requester_id="0000-0009-0000-0009",
+            reviewer_id="departed-reviewer",
+            status="rejected",
         ))
         session.commit()
 
     response = deletion_routes.list_deletion_requests(
-        _principal(group_id),
+        person_principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
         scope=DeletionRequestScope.ACCESSIBLE,
         status=None,
         limit=100,
@@ -278,6 +287,7 @@ def test_deletion_request_actor_summaries_are_null_when_unresolved(db_engine):
 
     assert response.items[0].requester is None
     assert response.items[0].reviewer is None
+    assert (response.items[0].requester_id, response.items[0].reviewer_id) == ("0000-0009-0000-0009", "departed-reviewer")
 
 
 def test_service_account_cannot_review_with_admin_acl(db_engine):
@@ -286,10 +296,11 @@ def test_service_account_cannot_review_with_admin_acl(db_engine):
         session.add(DeletionRequest(
             resource_id="dataset-to-delete",
             requester_id="another-user",
+            requester_user_id=user_id_or_none(session, "another-user"),
             status="pending",
         ))
         session.commit()
-    principal = Principal(
+    principal = person_principal(
         user_id="service-account",
         is_service_account=True,
         groups=(GroupMembership(
@@ -313,10 +324,12 @@ def test_service_account_cannot_review_with_admin_acl(db_engine):
 
 def test_requester_can_read_own_deletion_request_detail(db_engine):
     group_id = _create_resource(db_engine, Role.CONTRIBUTOR)
+    caller = _principal(group_id)
     with Session(db_engine) as session:
         request = DeletionRequest(
             resource_id="dataset-to-delete",
             requester_id="requester",
+            requester_user_id=user_id_or_none(session, "requester"),
             status="pending",
         )
         session.add(request)
@@ -325,7 +338,7 @@ def test_requester_can_read_own_deletion_request_detail(db_engine):
         request_id = request.id
 
     response = deletion_routes.get_deletion_request(
-        auth_res=_principal(group_id),
+        auth_res=caller,
         request_id=request_id,
     )
 
@@ -339,6 +352,7 @@ def test_non_requester_without_admin_cannot_read_deletion_request_detail(db_engi
         request = DeletionRequest(
             resource_id="dataset-to-delete",
             requester_id="another-user",
+            requester_user_id=user_id_or_none(session, "another-user"),
             status="pending",
         )
         session.add(request)
@@ -370,13 +384,14 @@ def test_project_filter_returns_canonical_project_reference(db_engine):
                 DeletionRequest(
                     resource_id=resource_id,
                     requester_id="requester",
+                    requester_user_id=user_id_or_none(session, "requester"),
                     status="pending",
                 ),
             ])
         session.commit()
 
     response = deletion_routes.list_deletion_requests(
-        Principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
+        person_principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
         scope=DeletionRequestScope.ACCESSIBLE,
         status=None,
         project_mfid="project-mfid-two",
@@ -401,6 +416,7 @@ def test_deletion_request_order_uses_id_as_timestamp_tiebreaker(db_engine):
                 DeletionRequest(
                     resource_id=resource_id,
                     requester_id="requester",
+                    requester_user_id=user_id_or_none(session, "requester"),
                     status="pending",
                     request_time=request_time,
                 ),
@@ -408,7 +424,7 @@ def test_deletion_request_order_uses_id_as_timestamp_tiebreaker(db_engine):
         session.commit()
 
     response = deletion_routes.list_deletion_requests(
-        Principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
+        person_principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
         scope=DeletionRequestScope.ACCESSIBLE,
         status=None,
         limit=100,
@@ -421,7 +437,7 @@ def test_deletion_request_order_uses_id_as_timestamp_tiebreaker(db_engine):
     ]
 
     ascending = deletion_routes.list_deletion_requests(
-        Principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
+        person_principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
         scope=DeletionRequestScope.ACCESSIBLE,
         status=None,
         sort=DeletionRequestSort.REQUEST_TIME,
@@ -446,13 +462,14 @@ def test_deletion_request_cursor_is_stable_when_earlier_requests_change(db_engin
                 DeletionRequest(
                     resource_id=resource_id,
                     requester_id="requester",
+                    requester_user_id=user_id_or_none(session, "requester"),
                     status="pending",
                     request_time=f"2026-09-{index:02d}T12:00:00Z",
                 ),
             ])
         session.commit()
 
-    principal = Principal(
+    principal = person_principal(
         user_id="platform-admin",
         platform_role=PlatformRole.ADMIN,
     )
@@ -480,6 +497,7 @@ def test_deletion_request_cursor_is_stable_when_earlier_requests_change(db_engin
             DeletionRequest(
                 resource_id="dataset-4",
                 requester_id="requester",
+                requester_user_id=user_id_or_none(session, "requester"),
                 status="pending",
                 request_time="2026-09-04T12:00:00Z",
             ),
@@ -511,13 +529,14 @@ def test_deletion_request_cursor_is_bound_to_query_and_principal(db_engine):
                 DeletionRequest(
                     resource_id=resource_id,
                     requester_id="requester",
+                    requester_user_id=user_id_or_none(session, "requester"),
                     status="pending",
                     request_time=f"2026-09-{index:02d}T12:00:00Z",
                 ),
             ])
         session.commit()
 
-    principal = Principal(
+    principal = person_principal(
         user_id="platform-admin",
         platform_role=PlatformRole.ADMIN,
     )
@@ -555,7 +574,7 @@ def test_deletion_request_cursor_is_bound_to_query_and_principal(db_engine):
 
     with pytest.raises(HTTPException) as changed_principal:
         deletion_routes.list_deletion_requests(
-            Principal(user_id="another-admin", platform_role=PlatformRole.ADMIN),
+            person_principal(user_id="another-admin", platform_role=PlatformRole.ADMIN),
             scope=DeletionRequestScope.ACCESSIBLE,
             status=None,
             limit=1,
@@ -566,7 +585,7 @@ def test_deletion_request_cursor_is_bound_to_query_and_principal(db_engine):
 
     with pytest.raises(HTTPException) as changed_privilege_mode:
         deletion_routes.list_deletion_requests(
-            Principal(user_id="platform-admin"),
+            person_principal(user_id="platform-admin"),
             scope=DeletionRequestScope.ACCESSIBLE,
             status=None,
             limit=1,
@@ -631,6 +650,7 @@ def test_deletion_request_sort_modes_and_cursors(db_engine):
                     resource_id=resource_id,
                     resource_name=resource_name,
                     requester_id=requester_id,
+                    requester_user_id=user_id_or_none(session, requester_id),
                     status=status,
                 ),
             ])
@@ -702,7 +722,7 @@ def test_deletion_request_sort_modes_and_cursors(db_engine):
             "dataset-two",
         ],
     }
-    principal = Principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN)
+    principal = person_principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN)
 
     for (sort, direction), expected_ids in expected.items():
         actual_ids = []

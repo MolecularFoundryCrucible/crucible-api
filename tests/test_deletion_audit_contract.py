@@ -7,7 +7,8 @@ from app.api.main import app
 from app.models.core_models import DeletionAuditLog, User
 from app.models.deletion import DeletableResourceType, DeletionAuditScope
 from app.models.query_params import SortDirection
-from app.utils.permissions import PlatformRole, Principal
+from app.utils.permissions import PlatformRole
+from tests.people import person_principal, user_id_or_none
 
 
 def _seed_audit_entries(db_engine):
@@ -34,14 +35,16 @@ def _seed_audit_entries(db_engine):
                 project_id="project-slug",
                 project_mfid="project-mfid",
                 requester_id="requester",
+                requester_user_id=user_id_or_none(session, "requester"),
                 reviewer_id="reviewer",
+                reviewer_user_id=user_id_or_none(session, "reviewer"),
                 deleted_at="2026-09-23T08:00:00+00:00",
             ))
         session.commit()
 
 
 def _admin():
-    return Principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN)
+    return person_principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN)
 
 
 def _list_audit(auth_res, **overrides):
@@ -137,14 +140,14 @@ def test_deletion_audit_remains_platform_admin_only(db_engine):
     _seed_audit_entries(db_engine)
 
     with pytest.raises(HTTPException) as exc:
-        _list_audit(Principal(user_id="ordinary-user"))
+        _list_audit(person_principal(user_id="ordinary-user"))
 
     assert exc.value.status_code == 403
 
 
 def test_human_requester_can_list_and_read_submitted_deletion_history(db_engine):
     _seed_audit_entries(db_engine)
-    requester = Principal(user_id="requester")
+    requester = person_principal(user_id="requester")
 
     result = _list_audit(requester, scope=DeletionAuditScope.SUBMITTED)
     detail = deletion_routes.get_deletion_audit(auth_res=requester, audit_id=1)
@@ -159,7 +162,7 @@ def test_submitted_scope_rejects_another_requester_filter(db_engine):
 
     with pytest.raises(HTTPException) as exc:
         _list_audit(
-            Principal(user_id="requester"),
+            person_principal(user_id="requester"),
             scope=DeletionAuditScope.SUBMITTED,
             requester_id="another-user",
         )
@@ -169,7 +172,7 @@ def test_submitted_scope_rejects_another_requester_filter(db_engine):
 
 def test_service_account_cannot_read_deletion_audit(db_engine):
     _seed_audit_entries(db_engine)
-    service_admin = Principal(
+    service_admin = person_principal(
         user_id="service-admin",
         platform_role=PlatformRole.ADMIN,
         is_service_account=True,

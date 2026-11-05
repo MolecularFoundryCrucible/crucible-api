@@ -26,7 +26,7 @@ from app.models.users import (
     AccountProfileUpdate,
     UserRead,
 )
-from app.utils.auth_utils import caller_row, API_KEY_READ_DEPRECATION, authorize_user, find_or_add_api_access, security, permission_filter, reject_hub_api_key_read, require_recent_authentication
+from app.utils.auth_utils import caller_row, is_callers, API_KEY_READ_DEPRECATION, authorize_user, find_or_add_api_access, security, permission_filter, reject_hub_api_key_read, require_recent_authentication
 from app.utils.permissions import (
     Permission,
     PlatformRole,
@@ -166,7 +166,7 @@ def get_account_apikey(
     response.headers["Deprecation"] = API_KEY_READ_DEPRECATION
     with Session(get_engine()) as session:
         token = session.exec(
-            select(ApiToken).where(ApiToken.user_id == auth_res.internal_user_id)
+            select(ApiToken).where(is_callers(ApiToken.user_id, auth_res))
             .order_by(ApiToken.token_created.desc())
         ).first()
         if token is None:
@@ -199,7 +199,7 @@ def verify_account_apikey(
     with Session(get_engine()) as session:
         if auth_res.credential == "hub":
             token = session.exec(
-                select(ApiToken).where(ApiToken.user_id == auth_res.internal_user_id)
+                select(ApiToken).where(is_callers(ApiToken.user_id, auth_res))
                 .order_by(ApiToken.token_created.desc())
             ).first()
         else:

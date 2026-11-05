@@ -16,7 +16,8 @@ from app.models.core_models import (
     User,
     UserRecentResource,
 )
-from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Principal, Role
+from app.utils.permissions import AccessGroupType, GroupMembership, PlatformRole, Role
+from tests.people import person_principal, user_id_or_none
 
 
 def _setup(
@@ -62,6 +63,7 @@ def _setup(
                 resource_id=resource.mfid,
                 resource_name="delete me",
                 requester_id="requester",
+                requester_user_id=user_id_or_none(session, "requester"),
                 status="pending",
             )
             session.add(deletion_request)
@@ -72,7 +74,7 @@ def _setup(
 
 
 def _principal(group_id):
-    return Principal(
+    return person_principal(
         user_id="actor",
         groups=(GroupMembership(group_id, "resource-owner", Role.OWNER),),
     )
@@ -159,7 +161,7 @@ def test_owner_and_platform_admin_can_force_delete(db_engine):
     result = deletion_routes.hard_delete_resource_route(
         resource_id="resource-to-delete",
         background_tasks=None,
-        auth_res=Principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
+        auth_res=person_principal(user_id="platform-admin", platform_role=PlatformRole.ADMIN),
         force=True,
     )
     assert "permanently deleted" in result["detail"]

@@ -40,6 +40,7 @@ from app.services.resource_access import access_grant_read, access_grant_reads, 
 from app.services.resource_details import ResourceDetailOptions, load_resource_detail
 from app.utils.auth_utils import (
     authorize_user,
+    caller_row,
     fetch_acl_rows,
     permission_filter,
     require_grant,
@@ -525,8 +526,8 @@ def create_deletion_request(
     Returns 409 if an active deletion request already exists for this resource,
     or if a project or instrument still has assigned datasets or samples.
     '''
-    requester_id = auth_res.user_id
     with Session(get_engine()) as session:
+        requester = caller_row(session, auth_res)
         resource = session.exec(
             select(Resource).where(Resource.mfid == resource_id).with_for_update()
         ).one_or_none()
@@ -613,7 +614,8 @@ def create_deletion_request(
         deletion_req = DeletionRequest(
             resource_id=resource_id,
             resource_name=resource_name,
-            requester_id=requester_id,
+            requester_id=requester.unique_id,
+            requester_user_id=requester.id,
             reason=reason,
             status="pending",
         )
@@ -635,9 +637,6 @@ def create_deletion_request(
                 )
             raise
         session.refresh(deletion_req)
-        requester = session.exec(
-            select(User).where(User.unique_id == requester_id)
-        ).one_or_none()
         preview = None
         if summary is not None:
             preview = deletion_preview_read(

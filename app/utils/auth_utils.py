@@ -726,11 +726,19 @@ def caller_row(session, principal: Principal, *, for_update: bool = False):
     return session.exec(query.with_for_update() if for_update else query).one_or_none()
 
 
+def is_callers(column, principal: Principal):
+    """SQL test that `column` holds the caller's internal key. False for a caller without one,
+    where `column == None` would match every row with no person."""
+    from sqlalchemy import false
+
+    return column == principal.internal_user_id if principal.internal_user_id is not None else false()
+
+
 def _own_identity_group_ids(principal: Principal):
     from app.models.core_models import UserAccessGroupLink
 
     return select(UserAccessGroupLink.accessgroup_id).where(
-        UserAccessGroupLink.user_id == principal.internal_user_id,
+        is_callers(UserAccessGroupLink.user_id, principal),
         UserAccessGroupLink.role == Role.OWNER.db_value,
     )
 

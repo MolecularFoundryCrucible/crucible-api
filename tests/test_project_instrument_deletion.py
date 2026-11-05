@@ -19,6 +19,7 @@ from app.models.core_models import (
     UserAccessGroupLink,
 )
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
+from tests.people import user_id_or_none
 
 INSTRUMENT_PAYLOAD = {
     "instrument_id": "xrd-del-1",
@@ -241,6 +242,7 @@ class TestForcedDeletionInstrument:
         operator_group_id = _group_id_session(db_engine, mfid)
         with Session(db_engine) as session:
             _user(session, "0tp5sade1000000000000000a1", is_service_account=True)
+            _user(session, "sa-admin-1")
         auth_as("sa-admin-1", groups=[], platform_role=PlatformRole.ADMIN)
         resp = client.post(f"/instruments/{mfid}/service_accounts/0tp5sade1000000000000000a1")
         assert resp.status_code == 200, resp.text
@@ -350,6 +352,7 @@ class TestBlockers:
             session.add(DeletionRequest(
                 resource_id=project_mfid,
                 requester_id="block-owner-1",
+                requester_user_id=user_id_or_none(session, "block-owner-1"),
                 status="pending",
             ))
             session.commit()
@@ -677,6 +680,8 @@ class TestPermissionMatrix:
         assert resp.status_code == 200, resp.text
 
         project_mfid = _project(db_engine, "proj_perm_5", "perm-owner-5")
+        with Session(db_engine) as session:
+            _user(session, "perm-admin-2")
         auth_as("perm-admin-2", groups=[], platform_role=PlatformRole.ADMIN)
         resp = client.delete(
             f"/resources/{project_mfid}",

@@ -39,6 +39,8 @@ from app.models.users import UserPublicRead
 from app.models.response_schemas import DetailResponse
 from app.utils.auth_utils import (
     authorize_user,
+    caller_row,
+    is_callers,
     fetch_acl_rows,
     permission_filter,
     require_permission,
@@ -127,6 +129,15 @@ def _write_deletion_record(
     background_tasks.add_task(write_record, resource_id, record, actor, "delete")
 
 
+def _shown_id(user: Optional[User], stored: Optional[str]) -> Optional[str]:
+    """The person's current ID when the row is linked to a user, else the ID stored at the time."""
+    return user.unique_id if user is not None else stored
+
+
+def _person_is(user_alias, id_column, stored_column, value: str):
+    return or_(user_alias.unique_id == value, and_(id_column.is_(None), stored_column == value))
+
+
 def _to_read(
     req: DeletionRequest,
     resource_type: Optional[str],
@@ -138,7 +149,7 @@ def _to_read(
     preview: Optional[DeletionPreviewRead] = None,
 ) -> DeletionRequestRead:
     return DeletionRequestRead(
-        **req.model_dump(),
+        **{**req.model_dump(), "requester_id": _shown_id(requester, req.requester_id), "reviewer_id": _shown_id(reviewer, req.reviewer_id)},
         resource_mfid=req.resource_id,
         resource_type=resource_type,
         project_id=project_id,
@@ -156,7 +167,7 @@ def _audit_to_read(
     reviewer: Optional[User],
 ) -> DeletionAuditLogRead:
     return DeletionAuditLogRead(
-        **audit.model_dump(),
+        **{**audit.model_dump(), "requester_id": _shown_id(requester, audit.requester_id), "reviewer_id": _shown_id(reviewer, audit.reviewer_id)},
         requester=UserPublicRead.model_validate(requester) if requester else None,
         reviewer=UserPublicRead.model_validate(reviewer) if reviewer else None,
     )
@@ -185,7 +196,7 @@ def _deletion_sort_expressions(
             func.lower(requester_user.last_name),
             func.lower(requester_user.first_name),
             func.lower(requester_user.username),
-            func.lower(DeletionRequest.requester_id),
+            func.lower(func.coalesce(requester_user.unique_id, DeletionRequest.requester_id)),
         )
     if sort is DeletionRequestSort.STATUS:
         return (
@@ -391,8 +402,8 @@ def list_deletion_requests(
             .outerjoin(Sample, Sample.unique_id == DeletionRequest.resource_id)
             .outerjoin(resource_project, resource_project.unique_id == DeletionRequest.resource_id)
             .outerjoin(record_project, record_project.unique_id == project_mfid_column)
-            .outerjoin(requester_user, requester_user.unique_id == DeletionRequest.requester_id)
-            .outerjoin(reviewer_user, reviewer_user.unique_id == DeletionRequest.reviewer_id)
+            .outerjoin(requester_user, requester_user.id == DeletionRequest.requester_user_id)
+            .outerjoin(reviewer_user, reviewer_user.id == DeletionRequest.reviewer_user_id)
         )
         if status is not None:
             count_query = count_query.where(DeletionRequest.status == status.value)
@@ -408,7 +419,7 @@ def list_deletion_requests(
             data_query = data_query.where(project_mfid_column == project_mfid)
 
         if scope is DeletionRequestScope.SUBMITTED:
-            visible = DeletionRequest.requester_id == auth_res.user_id
+            visible = is_callers(DeletionRequest.requester_user_id, auth_res)
             count_query = count_query.where(visible)
             data_query = data_query.where(visible)
         elif scope is DeletionRequestScope.REVIEWABLE:
@@ -416,7 +427,7 @@ def list_deletion_requests(
             data_query = data_query.where(can_review)
         elif not auth_res.is_platform_admin:
             visible = (
-                (DeletionRequest.requester_id == auth_res.user_id)
+                is_callers(DeletionRequest.requester_user_id, auth_res)
                 | review_authority
             )
             count_query = count_query.where(visible)
@@ -495,8 +506,8 @@ def get_deletion_request(
         reviewer_user = aliased(User)
         row = session.exec(
             select(DeletionRequest, requester_user, reviewer_user)
-            .outerjoin(requester_user, requester_user.unique_id == DeletionRequest.requester_id)
-            .outerjoin(reviewer_user, reviewer_user.unique_id == DeletionRequest.reviewer_id)
+            .outerjoin(requester_user, requester_user.id == DeletionRequest.requester_user_id)
+            .outerjoin(reviewer_user, reviewer_user.id == DeletionRequest.reviewer_user_id)
             .where(DeletionRequest.id == request_id)
         ).one_or_none()
         if row is None:
@@ -506,7 +517,7 @@ def get_deletion_request(
         has_review_authority = has_permission(
             auth_res, acl_rows, Permission.DELETE
         )
-        if req.requester_id != auth_res.user_id and not has_review_authority:
+        if not auth_res.has_user_id(req.requester_user_id) and not has_review_authority:
             raise HTTPException(status_code=403, detail="Access denied")
         resource = session.exec(
             select(Resource).where(Resource.mfid == req.resource_id)
@@ -545,7 +556,6 @@ def review_deletion_request(
 
     Non-administrator service accounts cannot review deletion requests.
     """
-    user_unique_id = auth_res.user_id
     try:
         decision = DeletionReviewDecision(status)
     except ValueError:
@@ -609,7 +619,9 @@ def review_deletion_request(
 
         # Update the request record.
         req.status = decision.value
-        req.reviewer_id = user_unique_id
+        reviewer = caller_row(session, auth_res)
+        req.reviewer_id = reviewer.unique_id
+        req.reviewer_user_id = reviewer.id
         req.reviewer_notes = reviewer_notes
         req.review_time = get_utc_isoformat()
         session.add(req)
@@ -627,10 +639,7 @@ def review_deletion_request(
             resource_name = req.resource_name or (instrument.instrument_name if instrument else None)
         else:
             resource_name = req.resource_name
-        users = session.exec(
-            select(User).where(User.unique_id.in_({req.requester_id, user_unique_id}))
-        ).all()
-        users_by_id = {user.unique_id: user for user in users}
+        requester = session.get(User, req.requester_user_id) if req.requester_user_id is not None else None
 
         preview = None
         if summary is not None:
@@ -649,22 +658,14 @@ def review_deletion_request(
             resource_name=resource_name,
             project_id=project_id,
             project_mfid=project_mfid,
-            requester_id=req.requester_id,
-            requester=(
-                UserPublicRead.model_validate(users_by_id[req.requester_id])
-                if req.requester_id in users_by_id
-                else None
-            ),
+            requester_id=_shown_id(requester, req.requester_id),
+            requester=UserPublicRead.model_validate(requester) if requester else None,
             reason=req.reason,
             status=req.status,
             request_time=req.request_time,
             review_time=req.review_time,
-            reviewer_id=req.reviewer_id,
-            reviewer=(
-                UserPublicRead.model_validate(users_by_id[user_unique_id])
-                if user_unique_id in users_by_id
-                else None
-            ),
+            reviewer_id=reviewer.unique_id,
+            reviewer=UserPublicRead.model_validate(reviewer),
             reviewer_notes=req.reviewer_notes,
             capabilities=DeletionRequestCapabilities(can_review=False),
             preview=preview,
@@ -679,9 +680,11 @@ def review_deletion_request(
                 project_id=project_id,
                 project_mfid=project_mfid,
                 requester_id=req.requester_id,
+                requester_user_id=req.requester_user_id,
                 reason=req.reason,
                 request_time=req.request_time,
-                reviewer_id=user_unique_id,
+                reviewer_id=reviewer.unique_id,
+                reviewer_user_id=reviewer.id,
                 reviewer_notes=reviewer_notes,
                 review_time=req.review_time,
                 deleted_at=get_utc_isoformat(),
@@ -696,7 +699,7 @@ def review_deletion_request(
                     req.resource_id,
                     resource_type,
                     resource_name,
-                    user_unique_id,
+                    reviewer.unique_id,
                     summary,
                 )
         else:
@@ -738,11 +741,11 @@ def hard_delete_resource_route(
     return a preview; pass confirm=true to execute the deletion, which still
     requires them to be empty. Stored GCS objects are not deleted.
     """
-    user_unique_id = auth_res.user_id
     if force is not True:
         raise HTTPException(status_code=422, detail="Direct deletion requires force=true.")
 
     with Session(get_engine()) as session:
+        actor = caller_row(session, auth_res)
         resource = session.exec(
             select(Resource).where(Resource.mfid == resource_id).with_for_update()
         ).one_or_none()
@@ -781,10 +784,12 @@ def hard_delete_resource_route(
                 resource_name=resource_name,
                 project_id=resource_name if resource_type == "project" else None,
                 project_mfid=resource_id if resource_type == "project" else None,
-                requester_id=user_unique_id,
+                requester_id=actor.unique_id,
+                requester_user_id=actor.id,
                 reason="direct forced deletion",
                 request_time=None,
-                reviewer_id=user_unique_id,
+                reviewer_id=actor.unique_id,
+                reviewer_user_id=actor.id,
                 reviewer_notes="force=True",
                 review_time=get_utc_isoformat(),
                 deleted_at=get_utc_isoformat(),
@@ -799,7 +804,7 @@ def hard_delete_resource_route(
                 resource_id,
                 resource_type,
                 resource_name,
-                user_unique_id,
+                actor.unique_id,
                 summary,
             )
             return _deletion_summary_read(resource_id, resource_type, True, summary)
@@ -824,10 +829,12 @@ def hard_delete_resource_route(
             resource_name=resource_name,
             project_id=project_id,
             project_mfid=project_mfid,
-            requester_id=user_unique_id,
+            requester_id=actor.unique_id,
+            requester_user_id=actor.id,
             reason="direct forced deletion",
             request_time=None,
-            reviewer_id=user_unique_id,
+            reviewer_id=actor.unique_id,
+            reviewer_user_id=actor.id,
             reviewer_notes="force=True",
             review_time=get_utc_isoformat(),
             deleted_at=get_utc_isoformat(),
@@ -956,12 +963,14 @@ def list_deletion_audit(
 
         requester_user = aliased(User)
         reviewer_user = aliased(User)
-        count_query = select(func.count(DeletionAuditLog.id))
-        data_query = (
-            select(DeletionAuditLog, requester_user, reviewer_user)
-            .outerjoin(requester_user, requester_user.unique_id == DeletionAuditLog.requester_id)
-            .outerjoin(reviewer_user, reviewer_user.unique_id == DeletionAuditLog.reviewer_id)
-        )
+        def with_people(statement):
+            return (
+                statement
+                .outerjoin(requester_user, requester_user.id == DeletionAuditLog.requester_user_id)
+                .outerjoin(reviewer_user, reviewer_user.id == DeletionAuditLog.reviewer_user_id)
+            )
+        count_query = with_people(select(func.count(DeletionAuditLog.id)).select_from(DeletionAuditLog))
+        data_query = with_people(select(DeletionAuditLog, requester_user, reviewer_user))
         if resource_id is not None:
             count_query = count_query.where(DeletionAuditLog.resource_id == resource_id)
             data_query = data_query.where(DeletionAuditLog.resource_id == resource_id)
@@ -974,16 +983,19 @@ def list_deletion_audit(
         if project_mfid is not None:
             count_query = count_query.where(DeletionAuditLog.project_mfid == project_mfid)
             data_query = data_query.where(DeletionAuditLog.project_mfid == project_mfid)
-        if effective_requester_id is not None:
-            count_query = count_query.where(
-                DeletionAuditLog.requester_id == effective_requester_id
-            )
-            data_query = data_query.where(
-                DeletionAuditLog.requester_id == effective_requester_id
-            )
+        if scope is DeletionAuditScope.SUBMITTED:
+            requested_by = is_callers(DeletionAuditLog.requester_user_id, auth_res)
+        elif requester_id is not None:
+            requested_by = _person_is(requester_user, DeletionAuditLog.requester_user_id, DeletionAuditLog.requester_id, requester_id)
+        else:
+            requested_by = None
+        if requested_by is not None:
+            count_query = count_query.where(requested_by)
+            data_query = data_query.where(requested_by)
         if reviewer_id is not None:
-            count_query = count_query.where(DeletionAuditLog.reviewer_id == reviewer_id)
-            data_query = data_query.where(DeletionAuditLog.reviewer_id == reviewer_id)
+            reviewed_by = _person_is(reviewer_user, DeletionAuditLog.reviewer_user_id, DeletionAuditLog.reviewer_id, reviewer_id)
+            count_query = count_query.where(reviewed_by)
+            data_query = data_query.where(reviewed_by)
         if cursor_deleted_at is not None:
             if direction is SortDirection.ASC:
                 data_query = data_query.where(or_(
@@ -1049,12 +1061,12 @@ def get_deletion_audit(
         reviewer_user = aliased(User)
         row = session.exec(
             select(DeletionAuditLog, requester_user, reviewer_user)
-            .outerjoin(requester_user, requester_user.unique_id == DeletionAuditLog.requester_id)
-            .outerjoin(reviewer_user, reviewer_user.unique_id == DeletionAuditLog.reviewer_id)
+            .outerjoin(requester_user, requester_user.id == DeletionAuditLog.requester_user_id)
+            .outerjoin(reviewer_user, reviewer_user.id == DeletionAuditLog.reviewer_user_id)
             .where(DeletionAuditLog.id == audit_id)
         ).one_or_none()
         if row is None:
             raise HTTPException(status_code=404, detail="Audit log entry not found.")
-        if row[0].requester_id != auth_res.user_id:
+        if not auth_res.has_user_id(row[0].requester_user_id):
             require_platform_admin(auth_res)
         return _audit_to_read(*row)

@@ -22,7 +22,7 @@ from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectReferenceRead
 from app.models.query_params import SortDirection
 from app.models.users import UserPublicRead
-from app.utils.auth_utils import caller_row, authorize_user, permission_filter, require_grant
+from app.utils.auth_utils import caller_row, authorize_user, is_callers, permission_filter, require_grant
 from app.utils.cursor_utils import CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.project_utils import is_project_member, resolve_project_reference, sql_add_user_to_project
@@ -110,7 +110,7 @@ def _joined(statement):
 
 
 def _conditions(session, principal: Principal, filters: JoinRequestFilters, authority) -> list:
-    mine = AccessGroupJoinRequest.requester_user_id == principal.internal_user_id
+    mine = is_callers(AccessGroupJoinRequest.requester_user_id, principal)
     if filters.scope is JoinRequestScope.SUBMITTED:
         conditions = [mine]
     elif filters.scope is JoinRequestScope.REVIEWABLE:
@@ -174,7 +174,7 @@ def _read(principal: Principal, req, project_mfid, project, requester, reviewer,
         granted_role=req.granted_role,
         capabilities=JoinRequestCapabilities(
             can_review=pending and bool(may_review),
-            can_withdraw=pending and req.requester_user_id == principal.internal_user_id,
+            can_withdraw=pending and principal.has_user_id(req.requester_user_id),
         ),
         group_name=project.project_id if project else project_mfid,
     )
@@ -186,7 +186,7 @@ def _visible_row(session, principal: Principal, request_id: int):
     if row is None:
         raise _error(404, "join_request_not_found", "Join request not found")
     req, _, _, _, _, may_review = row
-    if not (principal.is_platform_admin or may_review or req.requester_user_id == principal.internal_user_id):
+    if not (principal.is_platform_admin or may_review or principal.has_user_id(req.requester_user_id)):
         raise _error(404, "join_request_not_found", "Join request not found")
     return row
 
@@ -455,7 +455,7 @@ def withdraw_join_request(request_id: int, auth_res: Annotated[Principal, Depend
     with Session(get_engine()) as session:
         session.exec(select(AccessGroupJoinRequest.id).where(AccessGroupJoinRequest.id == request_id).with_for_update()).first()
         req = _visible_row(session, auth_res, request_id)[0]
-        if req.requester_user_id != auth_res.internal_user_id:
+        if not auth_res.has_user_id(req.requester_user_id):
             raise _error(403, "withdraw_not_allowed", "Only the requester can withdraw a join request")
         if req.status != PENDING:
             raise _error(409, "join_request_closed", f"Join request is already {req.status}", status=req.status)

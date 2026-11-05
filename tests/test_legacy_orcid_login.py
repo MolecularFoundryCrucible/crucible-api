@@ -13,7 +13,7 @@ from joserfc.jwk import OctKey, RSAKey
 import app.utils.auth_utils as auth_utils
 from app.api.main import app
 from app.auth import browser_login
-from app.auth.providers import get_oauth
+from app.auth import providers
 
 ISSUER = "https://orcid.org"
 ORCID = "0000-0002-1825-0097"
@@ -76,9 +76,9 @@ def orcid(monkeypatch):
         return fake.respond(request)
 
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle)
-    get_oauth.cache_clear()
+    providers.forget_clients()
     yield fake
-    get_oauth.cache_clear()
+    providers.forget_clients()
 
 
 @pytest.fixture
@@ -370,6 +370,7 @@ def test_discovery_without_a_required_field_refuses_sign_in_and_recovers(browser
         orcid.metadata[field] = bad
     assert browser.get("/auth/login").status_code == 502
     orcid.metadata[field] = good
+    providers._recent_failures.clear()
     assert browser.get("/auth/login").status_code == 302
 
 
@@ -377,6 +378,7 @@ def test_discovery_with_another_issuer_recovers_without_a_restart(browser, orcid
     orcid.metadata["issuer"] = "https://orcid.org/"
     assert browser.get("/auth/login").status_code == 502
     orcid.metadata["issuer"] = ISSUER
+    providers._recent_failures.clear()
     assert browser.get("/auth/login").status_code == 302
 
 
@@ -384,6 +386,7 @@ def test_discovery_with_only_unsafe_algorithms_recovers_without_a_restart(browse
     orcid.metadata["id_token_signing_alg_values_supported"] = ["HS256"]
     assert browser.get("/auth/login").status_code == 502
     orcid.metadata["id_token_signing_alg_values_supported"] = ["RS256"]
+    providers._recent_failures.clear()
     assert browser.get("/auth/login").status_code == 302
 
 
@@ -410,23 +413,22 @@ def test_a_good_discovery_document_is_fetched_once(browser, orcid):
 def test_discovery_is_refreshed_after_twelve_hours(browser, orcid):
     twelve_hours = 12 * 60 * 60
     assert browser.get("/auth/login").status_code == 302
-    get_oauth.cache.expire(time.monotonic() + twelve_hours - 60)
+    providers._clients.expire(time.monotonic() + twelve_hours - 60)
     assert browser.get("/auth/login").status_code == 302
     assert orcid.discovery_calls == 1
-    get_oauth.cache.expire(time.monotonic() + twelve_hours + 60)
+    providers._clients.expire(time.monotonic() + twelve_hours + 60)
     assert browser.get("/auth/login").status_code == 302
     assert orcid.discovery_calls == 2
 
 
 def test_missing_client_secret_refuses_sign_in_without_a_crash(browser, orcid, monkeypatch):
     from app import config
-    from app.auth import providers
 
     def missing():
         raise config.ConfigurationError("ORCID_CLIENT_SECRET is not set")
 
     monkeypatch.setattr(providers, "get_orcid_client_secret", missing)
-    get_oauth.cache_clear()
+    providers.forget_clients()
     assert browser.get("/auth/login").status_code == 502
 
 
@@ -452,10 +454,19 @@ def test_an_error_with_another_state_leaves_the_sign_in_running(browser, orcid):
     assert browser.get("/auth", params={"code": "abc", "state": state}).status_code == 307
 
 
+def test_failed_discovery_is_not_retried_at_once(browser, orcid):
+    orcid.down = True
+    assert browser.get("/auth/login").status_code == 502
+    orcid.down = False
+    assert browser.get("/auth/login").status_code == 502
+    assert orcid.discovery_calls == 0
+
+
 def test_orcid_unreachable_at_login_is_502_and_recovers(browser, orcid):
     orcid.down = True
     assert browser.get("/auth/login").status_code == 502
     orcid.down = False
+    providers._recent_failures.clear()
     assert browser.get("/auth/login").status_code == 302
 
 

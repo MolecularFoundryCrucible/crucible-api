@@ -1,3 +1,4 @@
+import json
 import io
 import os
 from types import SimpleNamespace
@@ -151,12 +152,16 @@ def test_unknown_container_is_an_error():
     assert run(server_documents(), servers=("nope",)).errors == ["no container named nope in the input (found: api)"]
 
 
-ISSUER_WARNING = "HUB_AUTH_ORCID_ISSUER (https://sandbox.orcid.org) and ORCID_ISSUER (https://orcid.org) differ, so a person signing in through both is refused"
-HUB_ON = {"HUB_AUTH_ENABLED": "true", "HUB_AUTH_CALLBACK_URI": "https://hub.example/callback", "HUB_AUTH_CLIENT_SECRET": "s", "HUB_AUTH_ORCID_CLIENT_SECRET": "s", "HUB_AUTH_PUBLIC_API_URL": "https://api.example"}
+def orcid_list(issuer):
+    return json.dumps([{"key": "orcid", "display_name": "ORCID", "issuer": issuer, "client_id": "APP-TEST", "scopes": "openid", "token_endpoint_auth_method": "client_secret_post", "registration": "open", "legacy_callback": True}])
+
+
+ISSUER_WARNING = "The ORCID provider's issuer (https://sandbox.orcid.org) and ORCID_ISSUER (https://orcid.org) differ, so a person signing in through both is refused"
+HUB_ON = {"HUB_AUTH_ENABLED": "true", "HUB_AUTH_CALLBACK_URI": "https://hub.example/callback", "HUB_AUTH_CLIENT_SECRET": "s", "OIDC_ORCID_CLIENT_SECRET": "s", "HUB_AUTH_PUBLIC_API_URL": "https://api.example", "CRUCIBLE_AUTH_PROVIDERS": orcid_list("https://orcid.org")}
 
 
 def test_differing_orcid_issuers_warn_but_do_not_fail():
-    report = run(server_documents({**HUB_ON, "HUB_AUTH_ORCID_ISSUER": "https://sandbox.orcid.org"}))
+    report = run(server_documents({**HUB_ON, "CRUCIBLE_AUTH_PROVIDERS": orcid_list("https://sandbox.orcid.org")}))
     assert ISSUER_WARNING in report.warnings
     assert report.errors == []
 
@@ -165,6 +170,23 @@ def test_matching_orcid_issuers_do_not_warn():
     report = run(server_documents(HUB_ON))
     assert ISSUER_WARNING not in report.warnings
     assert report.errors == []
+
+
+def test_replaced_hub_orcid_settings_are_reported_as_retired():
+    report = run(server_documents({**HUB_ON, "HUB_AUTH_ORCID_CLIENT_ID": "APP-OLD", "HUB_AUTH_ORCID_CLIENT_SECRET_VERSION": "projects/1/secrets/old/versions/1"}))
+    assert any(warning.startswith("HUB_AUTH_ORCID_CLIENT_ID is no longer read") for warning in report.warnings)
+    assert any(warning.startswith("HUB_AUTH_ORCID_CLIENT_SECRET_VERSION is no longer read") for warning in report.warnings)
+    assert report.errors == []
+
+
+def test_provider_secret_is_a_known_setting():
+    report = run(server_documents(HUB_ON))
+    assert not [warning for warning in report.warnings if "OIDC_ORCID" in warning or "CRUCIBLE_AUTH_PROVIDERS" in warning]
+
+
+def test_hub_without_a_provider_list_fails_the_check():
+    environment = {name: value for name, value in HUB_ON.items() if name != "CRUCIBLE_AUTH_PROVIDERS"}
+    assert any("CRUCIBLE_AUTH_PROVIDERS" in error for error in run(server_documents(environment)).errors)
 
 
 def test_verify_secrets_reads_metadata_only(monkeypatch):

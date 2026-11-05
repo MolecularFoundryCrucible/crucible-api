@@ -21,7 +21,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
-- `settings check` warns when `HUB_AUTH_ORCID_ISSUER` and `ORCID_ISSUER` differ.
+- Hub sign-in requires an explicit `CRUCIBLE_AUTH_PROVIDERS` list and `OIDC_{KEY}_CLIENT_SECRET`, replacing `HUB_AUTH_ORCID_CLIENT_ID`, `HUB_AUTH_ORCID_ISSUER` and `HUB_AUTH_ORCID_CLIENT_SECRET`; set them before upgrading.
+- Hub sign-in reads ORCID's addresses from its discovery document, and `GET /auth/hub/login` returns 503 when that document cannot be read.
+- `settings check` warns when the ORCID provider's issuer and `ORCID_ISSUER` differ.
 
 ### Security
 

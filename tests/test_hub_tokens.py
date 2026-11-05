@@ -30,6 +30,8 @@ from app.utils.hub_tokens import (
     refresh_hub_tokens,
     revoke_hub_tokens,
 )
+from app.auth.providers import VerifiedIdentity
+from app.config import OidcProvider
 from app.utils.hub_login import (
     HubLoginConfig, InvalidHubLogin, create_handoff_code, create_login,
     consume_login, exchange_handoff_code,
@@ -37,6 +39,12 @@ from app.utils.hub_login import (
 
 
 NOW = datetime(2026, 9, 28, 12, tzinfo=timezone.utc)
+
+
+ORCID_PROVIDER = OidcProvider(
+    key="orcid", display_name="ORCID", issuer="https://orcid.org", client_id="APP-TEST", scopes="openid",
+    token_endpoint_auth_method="client_secret_post", registration="open", legacy_callback=True,
+)
 
 
 def test_cleanup_preserves_refresh_replay_history_and_defaults_to_dry_run(engine):
@@ -266,7 +274,7 @@ def test_hub_and_legacy_credentials_both_authorize(use_engine, engine, monkeypat
 
 
 def test_login_handoff_is_bound_and_single_use(engine):
-    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", "https://orcid.org")
+    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", ORCID_PROVIDER)
     verifier = "v" * 43
     import base64
     import hashlib
@@ -290,7 +298,7 @@ def test_login_handoff_is_bound_and_single_use(engine):
 
 
 def test_login_expiry(engine):
-    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", "https://orcid.org")
+    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", ORCID_PROVIDER)
     state, browser_secret, _ = create_login(engine, config, "crucible-hub", config.callback_uri, "hub-state-123456789", "a" * 43, now=NOW)
     with pytest.raises(InvalidHubLogin):
         consume_login(engine, state, browser_secret, now=NOW + timedelta(minutes=10))
@@ -302,15 +310,23 @@ def test_login_expiry(engine):
         exchange_handoff_code(engine, code, "a" * 43, "crucible-hub", config.callback_uri, now=NOW + timedelta(minutes=1))
 
 
-def test_browser_login_and_code_exchange_routes(engine, monkeypatch):
+def test_browser_login_and_code_exchange_routes(engine, monkeypatch, orcid_provider_settings):
     import app.api.routes.hub_auth as routes
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://crucible.lbl.gov/hub/auth/callback")
     monkeypatch.setenv("HUB_AUTH_PUBLIC_API_URL", "http://localhost:7777")
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret")
     monkeypatch.setattr(routes, "get_api_root_path", lambda: "")
-    monkeypatch.setattr(routes, "orcid_authorization_url", lambda config, state, nonce, max_age=None: f"https://orcid.org/oauth/authorize?state={state}")
-    monkeypatch.setattr(routes, "exchange_orcid_code", lambda config, code, nonce: ("0000-0000-0000-0001", "Test", "Human", None))
+    orcid_provider_settings()
+
+    async def authorization_url(provider, callback_uri, state, nonce, max_age=None):
+        return f"https://orcid.org/oauth/authorize?state={state}"
+
+    async def verified_identity(provider, callback_uri, code, nonce):
+        return VerifiedIdentity("0000-0000-0000-0001", "Test", "Human", None)
+
+    monkeypatch.setattr(routes, "authorization_url", authorization_url)
+    monkeypatch.setattr(routes, "verified_identity", verified_identity)
     app = FastAPI()
     app.include_router(hub_auth_router)
     app.dependency_overrides[get_engine] = lambda: engine
@@ -344,91 +360,87 @@ def test_browser_login_and_code_exchange_routes(engine, monkeypatch):
         assert exchanged.json()["user_unique_id"] == "0000-0000-0000-0001"
 
 
-def test_orcid_id_token_verification_rejects_wrong_identity_context(monkeypatch):
-    import time
-    from joserfc import jwt
-    from joserfc.errors import JoseError
-    from joserfc.jwk import RSAKey
-    from app.utils.hub_orcid import verify_orcid_id_token
+@pytest.fixture
+def hub_routes(engine, monkeypatch, orcid_provider_settings):
+    import httpx
+    import app.api.routes.hub_auth as routes
+    from tests.test_auth_providers import FakeProvider
 
-    monkeypatch.setattr("app.utils.hub_orcid.get_orcid_client_id", lambda: "test-orcid-client")
-    monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_ID", "test-orcid-client")
-    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", "https://orcid.org")
-    key = RSAKey.generate_key(auto_kid=True)
-    jwks = {"keys": [key.as_dict()]}
-    claims = {
-        "iss": "https://orcid.org", "sub": "0000-0000-0000-0001",
-        "aud": "test-orcid-client", "iat": int(time.time()),
-        "exp": int(time.time()) + 60, "nonce": "expected-nonce",
-    }
-    encoded = jwt.encode({"alg": "RS256", "kid": key.kid}, claims, key)
-    assert verify_orcid_id_token(config, encoded, jwks, "expected-nonce")[0] == claims["sub"]
-    with pytest.raises(JoseError):
-        verify_orcid_id_token(config, encoded, jwks, "wrong-nonce")
-    other_key = RSAKey.generate_key(auto_kid=True)
-    with pytest.raises(JoseError):
-        verify_orcid_id_token(config, encoded, {"keys": [other_key.as_dict()]}, "expected-nonce")
-    for field, bad in (("iss", "https://sandbox.orcid.org"), ("aud", "other-client"), ("exp", int(time.time()) - 60)):
-        rejected = jwt.encode({"alg": "RS256", "kid": key.kid}, {**claims, field: bad}, key)
-        with pytest.raises(JoseError):
-            verify_orcid_id_token(config, rejected, jwks, "expected-nonce")
-    single = jwt.encode({"alg": "RS256", "kid": key.kid}, {**claims, "aud": ["test-orcid-client"]}, key)
-    assert verify_orcid_id_token(config, single, jwks, "expected-nonce")[0] == claims["sub"]
-    extra = jwt.encode({"alg": "RS256", "kid": key.kid}, {**claims, "aud": ["test-orcid-client", "other-client"], "azp": "test-orcid-client"}, key)
-    with pytest.raises(InvalidHubLogin):
-        verify_orcid_id_token(config, extra, jwks, "expected-nonce")
+    monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://crucible.lbl.gov/hub/auth/callback")
+    monkeypatch.setenv("HUB_AUTH_PUBLIC_API_URL", "http://localhost:7777")
+    monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret")
+    monkeypatch.setattr(routes, "get_api_root_path", lambda: "")
+    orcid_provider_settings()
+    fake = FakeProvider()
+
+    async def handle(self, request):
+        await request.aread()
+        return fake.respond(request)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle)
+    app = FastAPI()
+    app.include_router(hub_auth_router)
+    app.dependency_overrides[get_engine] = lambda: engine
+    with TestClient(app) as client:
+        yield client, fake
 
 
-def test_orcid_authorization_request_has_state_nonce_and_exact_callback(monkeypatch):
+HUB_LOGIN = {
+    "client_id": "crucible-hub",
+    "redirect_uri": "https://crucible.lbl.gov/hub/auth/callback",
+    "state": "hub-state-123456789",
+    "code_challenge": "a" * 43,
+    "code_challenge_method": "S256",
+}
+
+
+def start_hub_login(client, fake):
     from urllib.parse import parse_qs, urlparse
-    from app.utils.hub_orcid import orcid_authorization_url
 
-    monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_ID", "sandbox-client")
-    monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_SECRET", "sandbox-secret")
-    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", "https://orcid.org")
-    url = orcid_authorization_url(config, "api-state", "api-nonce")
-    parsed = urlparse(url)
-    params = parse_qs(parsed.query)
-    assert parsed.scheme == "https" and parsed.netloc == "orcid.org"
-    assert params["redirect_uri"] == ["https://crucible.lbl.gov/api/v3/auth/hub/callback"]
-    assert params["state"] == ["api-state"]
-    assert params["nonce"] == ["api-nonce"]
-    assert params["scope"] == ["openid"]
-    assert params["client_id"] == ["sandbox-client"]
+    started = client.get("/auth/hub/login", params=HUB_LOGIN, follow_redirects=False)
+    assert started.status_code == 302
+    query = parse_qs(urlparse(started.headers["location"]).query)
+    assert query["redirect_uri"] == ["http://localhost:7777/auth/hub/callback"]
+    fake.claims = {"nonce": query["nonce"][0]}
+    return query["state"][0]
 
 
-def test_orcid_auth_time_is_returned_and_future_values_are_ignored(monkeypatch):
-    import time
-    from joserfc import jwt
-    from joserfc.jwk import RSAKey
-    from app.utils.hub_orcid import authentication_time, verify_orcid_id_token
-
-    monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_ID", "test-orcid-client")
-    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", "https://orcid.org")
-    key = RSAKey.generate_key(auto_kid=True)
-    signed_in = int(time.time()) - 5
-    claims = {"iss": "https://orcid.org", "sub": "0000-0000-0000-0001", "aud": "test-orcid-client", "iat": int(time.time()), "exp": int(time.time()) + 60, "nonce": "n", "auth_time": signed_in}
-    encoded = jwt.encode({"alg": "RS256", "kid": key.kid}, claims, key)
-    assert verify_orcid_id_token(config, encoded, {"keys": [key.as_dict()]}, "n")[3] == datetime.fromtimestamp(signed_in, timezone.utc)
-    assert authentication_time(None) is None
-    assert authentication_time(True) is None
-    assert authentication_time("123") is None
-    assert authentication_time(int(time.time()) + 3600) is None
+def test_hub_sign_in_runs_through_the_listed_provider(hub_routes):
+    client, fake = hub_routes
+    state = start_hub_login(client, fake)
+    finished = client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state}, follow_redirects=False)
+    assert finished.status_code == 302
+    assert finished.headers["location"].startswith("https://crucible.lbl.gov/hub/auth/callback?code=")
 
 
-def test_orcid_reauthentication_request_forwards_max_age(monkeypatch):
-    from urllib.parse import parse_qs, urlparse
-    from app.utils.hub_orcid import orcid_authorization_url
+def test_hub_callback_refuses_a_token_for_the_wrong_nonce(hub_routes):
+    client, fake = hub_routes
+    state = start_hub_login(client, fake)
+    fake.claims = {"nonce": "another"}
+    assert client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state}, follow_redirects=False).status_code == 400
 
-    monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_ID", "sandbox-client")
-    monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_SECRET", "sandbox-secret")
-    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", "https://orcid.org")
-    forced = parse_qs(urlparse(orcid_authorization_url(config, "s", "n", 0)).query)
-    assert forced["max_age"] == ["0"] and forced["prompt"] == ["login"]
-    bounded = parse_qs(urlparse(orcid_authorization_url(config, "s", "n", 300)).query)
-    assert bounded["max_age"] == ["300"] and "prompt" not in bounded
-    plain = parse_qs(urlparse(orcid_authorization_url(config, "s", "n")).query)
-    assert "max_age" not in plain and "prompt" not in plain
+
+def test_hub_callback_is_400_when_the_provider_is_down(hub_routes):
+    client, fake = hub_routes
+    state = start_hub_login(client, fake)
+    fake.down = True
+    assert client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state}, follow_redirects=False).status_code == 400
+
+
+def test_hub_login_is_503_when_discovery_fails(hub_routes):
+    client, fake = hub_routes
+    fake.down = True
+    assert client.get("/auth/hub/login", params=HUB_LOGIN, follow_redirects=False).status_code == 503
+
+
+def test_hub_login_is_503_without_a_provider_list(hub_routes, monkeypatch):
+    from app.config import get_settings
+
+    client, _ = hub_routes
+    monkeypatch.delenv("CRUCIBLE_AUTH_PROVIDERS")
+    get_settings.cache_clear()
+    assert client.get("/auth/hub/login", params=HUB_LOGIN, follow_redirects=False).status_code == 503
 
 
 def test_auth_time_flows_from_handoff_code_to_hub_principal(use_engine, engine, monkeypatch):
@@ -436,7 +448,7 @@ def test_auth_time_flows_from_handoff_code_to_hub_principal(use_engine, engine, 
     import hashlib
     use_engine(engine)
     monkeypatch.setattr(auth_utils, "_PUBLIC_GROUP_ID", None)
-    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", "https://orcid.org")
+    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", ORCID_PROVIDER)
     verifier = "v" * 43
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     signed_in = datetime.now(timezone.utc) - timedelta(seconds=20)
@@ -453,8 +465,9 @@ def test_auth_time_flows_from_handoff_code_to_hub_principal(use_engine, engine, 
     assert auth_utils._authorize_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=refreshed.access_token)).authenticated_at == signed_in
 
 
-def test_login_accepts_only_an_exact_configured_callback(engine, monkeypatch):
+def test_login_accepts_only_an_exact_configured_callback(engine, monkeypatch, orcid_provider_settings):
     from app.config import get_settings
+    orcid_provider_settings()
     from app.utils.hub_login import HubLoginUnavailable, load_login_config
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret")

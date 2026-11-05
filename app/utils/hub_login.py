@@ -8,8 +8,8 @@ from urllib.parse import urlencode, urlparse
 
 from sqlmodel import Session, select
 
-from app.auth.identity import ensure_identity, retry_after_concurrent_first_write
-from app.config import ConfigurationError, get_settings, optional_secret
+from app.auth.identity import default_orcid_issuer, ensure_identity, retry_after_concurrent_first_write
+from app.config import ConfigurationError, OidcProvider, get_secret, get_settings, optional_secret
 from app.models.core_models import HubLoginCode, HubLoginTransaction, User
 from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens_in_session
 from app.utils.permissions import AccessGroupType, Role
@@ -39,14 +39,14 @@ class HubLoginConfig:
     client_id: str
     callback_uri: str
     public_api_url: str
-    orcid_issuer: str
+    provider: OidcProvider
 
     @property
     def allowed_callbacks(self) -> tuple[str, ...]:
         return tuple(uri.strip() for uri in self.callback_uri.split(",") if uri.strip())
 
     @property
-    def orcid_callback_uri(self) -> str:
+    def provider_callback_uri(self) -> str:
         return f"{self.public_api_url}/auth/hub/callback"
 
 
@@ -55,20 +55,22 @@ def load_login_config() -> HubLoginConfig:
 
     if not hub_auth_enabled():
         raise HubLoginUnavailable
-    hub = get_settings().hub
+    settings = get_settings()
+    hub = settings.hub
+    provider = settings.auth.hub_callback_provider
     client_id = hub.client_id
     callback_uri = hub.callback_uri
     public_api_url = hub.public_api_url or get_api_url()
-    issuer = hub.orcid_issuer
+    if provider is None:
+        raise HubLoginUnavailable
     try:
         client_secret = optional_secret("HUB_AUTH_CLIENT_SECRET")
+        get_secret(provider.secret_name)
     except ConfigurationError:
         raise HubLoginUnavailable from None
     if not client_id or not client_secret:
         raise HubLoginUnavailable
-    if issuer not in {"https://orcid.org", "https://sandbox.orcid.org"}:
-        raise HubLoginUnavailable
-    config = HubLoginConfig(client_id, callback_uri, public_api_url.rstrip("/"), issuer)
+    config = HubLoginConfig(client_id, callback_uri, public_api_url.rstrip("/"), provider)
     if not config.allowed_callbacks or not all(map(_trusted_public_url, config.allowed_callbacks)) or not _trusted_public_url(public_api_url):
         raise HubLoginUnavailable
     return config
@@ -158,7 +160,7 @@ def create_handoff_code(engine, transaction: HubLoginTransaction, orcid: str, gi
             if not user.last_name and family_name:
                 user.last_name = family_name
             sql_add_user_to_access_group(orcid, orcid, session, role=Role.OWNER, group_type=AccessGroupType.IDENTITY)
-            ensure_identity(session, user, get_settings().hub.orcid_issuer, orcid)
+            ensure_identity(session, user, default_orcid_issuer(), orcid)
             session.add(HubLoginCode(
                 code_hash=_digest(code),
                 user_unique_id=orcid,

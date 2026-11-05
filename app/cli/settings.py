@@ -29,7 +29,14 @@ OTHER_VARIABLES = frozenset({
 })
 # Settings the server no longer reads, with what replaced them.
 RETIRED_VARIABLES = {
-    name: "Google storage uses Application Default Credentials" for name in ("GCS_SA", "GCS_SA_FILE", "GCS_SA_VERSION")
+    **{name: "Google storage uses Application Default Credentials" for name in ("GCS_SA", "GCS_SA_FILE", "GCS_SA_VERSION")},
+    **{
+        name: "list the provider in CRUCIBLE_AUTH_PROVIDERS, with its secret in OIDC_{KEY}_CLIENT_SECRET"
+        for name in (
+            "HUB_AUTH_ORCID_CLIENT_ID", "HUB_AUTH_ORCID_ISSUER", "HUB_AUTH_ORCID_CLIENT_SECRET",
+            "HUB_AUTH_ORCID_CLIENT_SECRET_FILE", "HUB_AUTH_ORCID_CLIENT_SECRET_VERSION",
+        )
+    },
 }
 HIDDEN = "unchecked"
 DEFAULT_SECRETS_DIR = "/run/secrets"
@@ -214,7 +221,10 @@ def _unknown_variables(environment: dict[str, str]) -> list[str]:
         for name in map(group.env_name, group.model_fields):
             known |= {name, f"{name}_FILE"}
     known |= {f"{name}_VERSION" for name in config._SECRETS}
-    return sorted(name for name in environment if name.upper() not in known)
+    return sorted(
+        name for name in environment
+        if name.upper() not in known and not config._PROVIDER_SECRET.fullmatch(name.upper().removesuffix("_FILE").removesuffix("_VERSION"))
+    )
 
 
 def _pointed_files(container: Container) -> list[str]:
@@ -224,7 +234,7 @@ def _pointed_files(container: Container) -> list[str]:
     return [
         f"{name} points to {value}, which no volume in the pod provides"
         for name, value in sorted(container.environment.items())
-        if name.upper().endswith("_FILE") and name.upper()[:-5] in names and value and value != HIDDEN and value not in container.files
+        if name.upper().endswith("_FILE") and (name.upper()[:-5] in names or config._PROVIDER_SECRET.fullmatch(name.upper()[:-5])) and value and value != HIDDEN and value not in container.files
     ]
 
 
@@ -272,8 +282,9 @@ def check_container(container: Container, profile: str, verify_secrets: bool = F
             settings = config.get_settings()
             if profile == "server":
                 config.check_settings()
-                if settings.hub.enabled and settings.hub.orcid_issuer != settings.api.orcid_issuer:
-                    report.warnings.append(f"HUB_AUTH_ORCID_ISSUER ({settings.hub.orcid_issuer}) and ORCID_ISSUER ({settings.api.orcid_issuer}) differ, so a person signing in through both is refused")
+                orcid = settings.auth.orcid_provider
+                if settings.hub.enabled and orcid is not None and orcid.issuer != settings.api.orcid_issuer:
+                    report.warnings.append(f"The ORCID provider's issuer ({orcid.issuer}) and ORCID_ISSUER ({settings.api.orcid_issuer}) differ, so a person signing in through both is refused")
                 names = config.secrets_in_use()
             else:
                 missing = settings.db.missing("server", "username", "database", "password")

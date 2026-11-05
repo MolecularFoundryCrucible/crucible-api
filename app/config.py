@@ -1,3 +1,4 @@
+import json
 import os
 import re
 from urllib.parse import urlparse
@@ -5,13 +6,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr, ValidationError, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, SettingsError
 
 from app.utils.multipart_config import MultipartStorageConfig
 
 DEFAULT_SECRETS_DIR = "/run/secrets"
 _SECRET_VERSION = re.compile(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)")
+_PROVIDER_SECRET = re.compile(r"OIDC_[A-Z][A-Z0-9]*_CLIENT_SECRET")
+ORCID_ISSUERS = frozenset({"https://orcid.org", "https://sandbox.orcid.org"})
 _loaded_env_files: set[str] = set()
 _fetched_secrets: dict[str, str] = {}
 
@@ -67,6 +70,36 @@ def _read_secrets_file(name: str, path: Path) -> str:
         raise ConfigurationError(f"The {name} file in the secrets directory cannot be read ({path}): {error.__class__.__name__}") from None
 
 
+def _secret_files(secrets_dir: Path | None) -> tuple[dict, set[str]]:
+    paths = (path for path in secrets_dir.iterdir() if path.is_file()) if secrets_dir else ()
+    return _by_upper_name((path.name, path) for path in paths)
+
+
+def _given_ways(name: str, secret: bool, secrets_dir: Path | None) -> dict[str, str | None]:
+    """How a setting is given, by description. The value is None for NAME_VERSION, which get_secret
+    fetches later. Refuses a setting given more than one way."""
+    environment, duplicated = _by_upper_name(os.environ.items())
+    files, duplicated_files = _secret_files(secrets_dir)
+    related = {name, f"{name}_FILE"} | ({f"{name}_VERSION"} if secret else set())
+    if related & duplicated or name in duplicated_files:
+        raise ConfigurationError(f"{name} is given more than once with names that differ only in case; give it one way only")
+    ways: dict[str, str | None] = {}
+    if environment.get(name, "").strip():
+        ways[name] = environment[name]
+    pointer = environment.get(f"{name}_FILE", "").strip()
+    if pointer:
+        ways[f"{name}_FILE"] = _read_pointed_file(name, pointer)
+    if name in files:
+        content = _read_secrets_file(name, files[name])
+        if content.strip():
+            ways[f"a {name} file in the secrets directory"] = content
+    if secret and environment.get(f"{name}_VERSION", "").strip():
+        ways[f"{name}_VERSION"] = None
+    if len(ways) > 1:
+        raise ConfigurationError(f"{name} is given more than one way ({', '.join(ways)}); give it one way only")
+    return ways
+
+
 class SecretSources(PydanticBaseSettingsSource):
     """Reads each setting from exactly one of: a file named by NAME_FILE, a file NAME in the secrets
     directory, or the NAME environment variable. For secrets, NAME_VERSION (fetched later by
@@ -81,31 +114,10 @@ class SecretSources(PydanticBaseSettingsSource):
         raise NotImplementedError
 
     def __call__(self) -> dict[str, str]:
-        environment, duplicated = _by_upper_name(os.environ.items())
-        paths = (path for path in self.secrets_dir.iterdir() if path.is_file()) if self.secrets_dir else ()
-        files, duplicated_files = _by_upper_name((path.name, path) for path in paths)
         values = {}
         for field, info in self.settings_cls.model_fields.items():
             name = self.settings_cls.env_name(field)
-            secret = _is_secret(self.settings_cls, field)
-            related = {name, f"{name}_FILE"} | ({f"{name}_VERSION"} if secret else set())
-            if related & duplicated or name in duplicated_files:
-                raise ConfigurationError(f"{name} is given more than once with names that differ only in case; give it one way only")
-            ways: dict[str, str | None] = {}
-            if environment.get(name, "").strip():
-                ways[name] = environment[name]
-            pointer = environment.get(f"{name}_FILE", "").strip()
-            if pointer:
-                ways[f"{name}_FILE"] = _read_pointed_file(name, pointer)
-            if name in files:
-                content = _read_secrets_file(name, files[name])
-                if content.strip():
-                    ways[f"a {name} file in the secrets directory"] = content
-            if secret and environment.get(f"{name}_VERSION", "").strip():
-                ways[f"{name}_VERSION"] = None
-            if len(ways) > 1:
-                raise ConfigurationError(f"{name} is given more than one way ({', '.join(ways)}); give it one way only")
-            for value in ways.values():
+            for value in _given_ways(name, _is_secret(self.settings_cls, field), self.secrets_dir).values():
                 if value is not None:
                     values[info.validation_alias if isinstance(info.validation_alias, str) else field] = value.strip()
         return values
@@ -194,26 +206,109 @@ class ApiSettings(SettingsGroup):
     orcid_client_secret: SecretStr | None = Field(None, validation_alias="ORCID_CLIENT_SECRET")
 
 
+class OidcProvider(BaseModel):
+    """One entry of CRUCIBLE_AUTH_PROVIDERS. Every field is required, so a deployment states what it
+    runs. The client secret stays out of this list, in OIDC_{KEY}_CLIENT_SECRET."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    key: str = Field(pattern=r"^[a-z][a-z0-9]*$", max_length=32)
+    display_name: str = Field(min_length=1, max_length=100)
+    issuer: str
+    client_id: str = Field(min_length=1)
+    scopes: str
+    token_endpoint_auth_method: Literal["client_secret_basic", "client_secret_post"]
+    registration: Literal["closed", "approval", "open"]
+    legacy_callback: bool
+
+    @field_validator("issuer")
+    @classmethod
+    def issuer_is_a_plain_secure_address(cls, value: str) -> str:
+        parsed = urlparse(value)
+        secure = parsed.scheme == "https" or (parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1"})
+        if not secure or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("must be an https:// address (http:// only for localhost), with no user, query or fragment")
+        return value
+
+    @field_validator("scopes")
+    @classmethod
+    def scopes_include_openid(cls, value: str) -> str:
+        if "openid" not in value.split():
+            raise ValueError("must include openid")
+        return value
+
+    @model_validator(mode="after")
+    def orcid_flags_fit_the_issuer(self) -> "OidcProvider":
+        if self.legacy_callback and not self.is_orcid:
+            raise ValueError("legacy_callback is allowed only for the ORCID provider")
+        return self
+
+    @property
+    def is_orcid(self) -> bool:
+        return self.issuer in ORCID_ISSUERS
+
+    @property
+    def secret_name(self) -> str:
+        return f"OIDC_{self.key.upper()}_CLIENT_SECRET"
+
+
+class AuthSettings(SettingsGroup):
+    model_config = SettingsConfigDict(env_prefix="CRUCIBLE_AUTH_")
+
+    providers: list[OidcProvider] = Field(default_factory=list)
+
+    @field_validator("providers", mode="before")
+    @classmethod
+    def parse_json(cls, value):
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.loads(value)
+        except ValueError:
+            raise ValueError("is not valid JSON") from None
+
+    @field_validator("providers")
+    @classmethod
+    def one_of_each(cls, value: list[OidcProvider]) -> list[OidcProvider]:
+        keys = [provider.key for provider in value]
+        if len(keys) != len(set(keys)):
+            raise ValueError("lists the same key twice")
+        if sum(provider.is_orcid for provider in value) > 1:
+            raise ValueError("lists more than one ORCID provider")
+        return value
+
+    @property
+    def orcid_provider(self) -> OidcProvider | None:
+        return next((provider for provider in self.providers if provider.is_orcid), None)
+
+    @property
+    def hub_callback_provider(self) -> OidcProvider | None:
+        return next((provider for provider in self.providers if provider.legacy_callback), None)
+
+    def problems(self, settings: "Settings") -> list[str]:
+        found = []
+        for provider in self.providers:
+            version = optional_env(f"{provider.secret_name}_VERSION")
+            if not (version is not None and _SECRET_VERSION.fullmatch(version)) and configured_secret(provider.secret_name) is None:
+                found.append(provider.secret_name)
+        return found
+
+
 class HubSettings(SettingsGroup):
     model_config = SettingsConfigDict(env_prefix="HUB_AUTH_")
 
     enabled: bool = False
     client_id: str = "crucible-hub"
-    orcid_client_id: str | None = None
-    orcid_issuer: str = "https://orcid.org"
     callback_uri: str = ""
     public_api_url: str | None = None
     client_secret: SecretStr | None = None
-    orcid_client_secret: SecretStr | None = None
 
     def problems(self, settings: "Settings") -> list[str]:
         if not self.enabled:
             return []
         found = self.missing("client_secret", "callback_uri")
-        if self.orcid_client_secret is not None or optional_env("HUB_AUTH_ORCID_CLIENT_SECRET_VERSION") is not None:
-            found += self.missing("orcid_client_secret")
-        elif settings.api.missing("orcid_client_secret"):
-            found.append("HUB_AUTH_ORCID_CLIENT_SECRET or ORCID_CLIENT_SECRET")
+        if settings.auth.hub_callback_provider is None:
+            found.append("CRUCIBLE_AUTH_PROVIDERS")
         return found
 
 
@@ -298,6 +393,7 @@ class Settings(BaseModel):
     db: DatabaseSettings
     security: SecuritySettings
     api: ApiSettings
+    auth: AuthSettings
     hub: HubSettings
     storage: StorageSettings
     ingestion: IngestionSettings
@@ -313,7 +409,7 @@ _SECRETS: dict[str, tuple[str, str]] = {
     if info.annotation == SecretStr | None
 }
 # Sent verbatim in HTTP Basic credentials and ORCID token requests, where a stray newline breaks every sign-in.
-_SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_ORCID_CLIENT_SECRET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"})
+_SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"})
 _FEATURES = {"ingestion": "ingestion", "printing": "printing", "proposal_sync": "proposals"}
 
 
@@ -368,7 +464,8 @@ def get_settings() -> Settings:
             for issue in error.errors():
                 location = str(issue["loc"][0])
                 label = group.env_name(location) if location in group.model_fields else location.upper()
-                problems.append(f"{label} ({issue['msg']})")
+                detail = "".join(f".{step}" for step in issue["loc"][1:])
+                problems.append(f"{label}{detail} ({issue['msg']})")
         except (SettingsError, OSError, UnicodeDecodeError) as error:
             raise ConfigurationError(f"Unreadable file in the secrets directory: {error.__class__.__name__}") from None
     if problems:
@@ -376,10 +473,18 @@ def get_settings() -> Settings:
     return Settings(**groups)
 
 
+def _provider_secret_names() -> list[str]:
+    return [provider.secret_name for provider in get_settings().auth.providers]
+
+
 def configured_secret(name: str) -> str | None:
     """A secret setting given as NAME_FILE, a file in the secrets directory, or NAME, without
     Secret Manager; None when it is not given that way."""
     name = name.upper()
+    if name in _provider_secret_names():
+        secrets_dir = _secrets_dir()
+        given = _given_ways(name, True, Path(secrets_dir) if secrets_dir else None)
+        return next((value.strip() for value in given.values() if value is not None), None)
     if name not in _SECRETS:
         raise KeyError(f"{name} is not a secret setting")
     group, field = _SECRETS[name]
@@ -419,7 +524,7 @@ def get_secret(name: str) -> str:
                 raise ConfigurationError(f"{name}_VERSION names an empty secret")
             _fetched_secrets[version] = fetched
         value = _fetched_secrets[version]
-    if name in _SINGLE_LINE_SECRETS and not (value.isascii() and value.isprintable()):
+    if (name in _SINGLE_LINE_SECRETS or _PROVIDER_SECRET.fullmatch(name)) and not (value.isascii() and value.isprintable()):
         raise ConfigurationError(f"{name} must be one line of printable ASCII")
     return value
 
@@ -453,6 +558,9 @@ def secrets_in_use() -> list[str]:
     return [
         name for name, (group, _field) in _SECRETS.items()
         if getattr(settings, group).in_use() and (configured_secret(name) is not None or optional_env(f"{name}_VERSION") is not None)
+    ] + [
+        name for name in _provider_secret_names()
+        if configured_secret(name) is not None or optional_env(f"{name}_VERSION") is not None
     ]
 
 

@@ -12,7 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
 
 from app.api.dependencies import get_api_root_path, get_redirect_uri
-from app.auth.providers import ORCID_BROWSER, ProviderUnavailable, audience_is_only, get_oauth, orcid_browser_client, orcid_id_token_claims
+from app.auth.providers import ProviderUnavailable, audience_is_only, orcid_browser_app, orcid_browser_client, orcid_id_token_claims
 from app.config import ConfigurationError
 from app.utils.auth_utils import encode_token, get_secret_key
 
@@ -61,7 +61,7 @@ async def _abandon_sign_in(request: Request) -> None:
     if not pending or request.query_params.get("state") != pending["state"]:
         return
     request.session.pop(PENDING_SIGN_IN)
-    await get_oauth().create_client(ORCID_BROWSER).framework.clear_state_data(request.session, pending["state"])
+    await orcid_browser_app().framework.clear_state_data(request.session, pending["state"])
 
 
 async def start_sign_in(request: Request) -> Response:

@@ -6,6 +6,7 @@ from sqlalchemy import JSON, Column, CheckConstraint, UniqueConstraint, BigInteg
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel, Relationship
 from mfid import mfid
+from app.config import ORCID_ISSUERS
 from app.general_utils import get_utc_datetime, get_utc_isoformat
 
 
@@ -270,8 +271,7 @@ class User(SQLModel, table=True):
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
 
 
-ORCID_ISSUERS = ("https://orcid.org", "https://sandbox.orcid.org")
-_IS_ORCID_ISSUER = "issuer IN ({})".format(", ".join(f"'{issuer}'" for issuer in ORCID_ISSUERS))
+_IS_ORCID_ISSUER = "issuer IN ({})".format(", ".join(f"'{issuer}'" for issuer in sorted(ORCID_ISSUERS)))
 
 
 class UserIdentity(SQLModel, table=True):

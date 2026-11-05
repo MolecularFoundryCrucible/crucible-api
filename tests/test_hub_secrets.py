@@ -13,7 +13,6 @@ from app.config import ConfigurationError
 from app.api.routes.hub_auth import require_hub_client
 from app.config import optional_secret
 from app.utils.hub_login import HubLoginUnavailable, hub_auth_enabled, load_login_config
-from app.utils.hub_orcid import _orcid_client_secret
 
 
 VERSION = "projects/test-project/secrets/hub-client/versions/1"
@@ -23,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture(autouse=True)
 def isolated_config(monkeypatch):
     for name in ("HUB_AUTH_ENABLED", "HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_CLIENT_SECRET_VERSION",
-                 "HUB_AUTH_ORCID_CLIENT_SECRET", "HUB_AUTH_ORCID_CLIENT_SECRET_VERSION"):
+                 "OIDC_ORCID_CLIENT_SECRET", "OIDC_ORCID_CLIENT_SECRET_VERSION", "CRUCIBLE_AUTH_PROVIDERS"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -125,7 +124,8 @@ def test_disabled_auth_never_fetches_secrets(monkeypatch, manager):
     manager.assert_not_called()
 
 
-def test_unavailable_reference_becomes_safe_auth_failure(monkeypatch, manager):
+def test_unavailable_reference_becomes_safe_auth_failure(monkeypatch, manager, orcid_provider_settings):
+    orcid_provider_settings()
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://example.test/hub/auth/callback")
@@ -140,12 +140,17 @@ def test_unavailable_reference_becomes_safe_auth_failure(monkeypatch, manager):
     assert manager.call_count == 2
 
 
-def test_orcid_reference_failure_does_not_use_legacy_secret(monkeypatch, manager):
-    monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_SECRET_VERSION", VERSION)
-    monkeypatch.setenv("ORCID_CLIENT_SECRET", "legacy-secret")
+def test_provider_reference_failure_does_not_use_older_secret(monkeypatch, manager, orcid_provider_settings):
+    monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
+    monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://hub.example/callback")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "hub-secret")
+    orcid_provider_settings()
+    monkeypatch.delenv("OIDC_ORCID_CLIENT_SECRET")
+    monkeypatch.setenv("OIDC_ORCID_CLIENT_SECRET_VERSION", VERSION)
+    monkeypatch.setenv("ORCID_CLIENT_SECRET", "older-secret")
     manager.side_effect = DefaultCredentialsError("sensitive-error")
     with pytest.raises(HubLoginUnavailable):
-        _orcid_client_secret()
+        load_login_config()
     manager.assert_called_once()
 
 
@@ -171,7 +176,7 @@ def test_startup_check_requires_hub_secrets_when_enabled(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     missing = missing_required_settings()
-    assert {"HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_CALLBACK_URI", "HUB_AUTH_ORCID_CLIENT_SECRET or ORCID_CLIENT_SECRET"} <= set(missing)
+    assert {"HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_CALLBACK_URI", "CRUCIBLE_AUTH_PROVIDERS"} <= set(missing)
 
 
 def test_startup_check_accepts_hub_secret_references(monkeypatch):
@@ -231,18 +236,17 @@ def test_direct_api_orcid_config_and_secret_version(monkeypatch, tmp_path):
         dependencies.get_orcid_client_secret()
 
 
-def test_hub_orcid_secret_missing_is_unavailable(monkeypatch, tmp_path):
+def test_provider_secret_missing_is_unavailable(monkeypatch, tmp_path, orcid_provider_settings):
     from app import config
-    from app.utils import hub_orcid
 
     monkeypatch.delenv("CRUCIBLE_SECRETS_DIR", raising=False)
     monkeypatch.setattr(config, "DEFAULT_SECRETS_DIR", str(tmp_path / "no-secrets"))
-    from app.utils.hub_login import HubLoginUnavailable
-
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("DB_CONF_FILE", raising=False)
-    for name in ("HUB_AUTH_ORCID_CLIENT_SECRET", "ORCID_CLIENT_SECRET"):
-        for suffix in ("", "_VERSION"):
-            monkeypatch.delenv(f"{name}{suffix}", raising=False)
+    monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
+    monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://hub.example/callback")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "hub-secret")
+    orcid_provider_settings()
+    monkeypatch.delenv("OIDC_ORCID_CLIENT_SECRET")
     with pytest.raises(HubLoginUnavailable):
-        hub_orcid._orcid_client_secret()
+        load_login_config()

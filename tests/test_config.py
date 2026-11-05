@@ -151,15 +151,17 @@ def test_lowercase_version_reference_is_found(empty, monkeypatch):
     assert config.get_secret("PGDB_PW") == "from-manager"
 
 
-def test_hub_orcid_reference_must_be_valid_when_given(empty):
-    for name in ("DB_SERVER", "DB_USERNAME", "DB_DATABASE", "PGDB_PW", "CRUCIBLE_SECRET_KEY", "HUB_AUTH_CLIENT_SECRET", "ORCID_CLIENT_SECRET"):
+def test_provider_secret_reference_must_be_valid_when_given(empty, orcid_provider_settings):
+    for name in ("DB_SERVER", "DB_USERNAME", "DB_DATABASE", "PGDB_PW", "CRUCIBLE_SECRET_KEY", "HUB_AUTH_CLIENT_SECRET"):
         empty.setenv(name, "x")
+    orcid_provider_settings()
     empty.setenv("HUB_AUTH_ENABLED", "true")
     empty.setenv("HUB_AUTH_CALLBACK_URI", "https://example.test/hub/auth/callback")
     assert missing_required_settings() == []
-    empty.setenv("HUB_AUTH_ORCID_CLIENT_SECRET_VERSION", "not-a-version")
+    empty.delenv("OIDC_ORCID_CLIENT_SECRET")
+    empty.setenv("OIDC_ORCID_CLIENT_SECRET_VERSION", "not-a-version")
     get_settings.cache_clear()
-    assert missing_required_settings() == ["HUB_AUTH_ORCID_CLIENT_SECRET"]
+    assert missing_required_settings() == ["OIDC_ORCID_CLIENT_SECRET"]
 
 
 def test_malformed_version_counts_as_missing(empty):
@@ -304,7 +306,7 @@ HUB_VERSION = "projects/1/secrets/hub-client/versions/1"
 @pytest.fixture
 def startup(empty):
     for name in ("HUB_AUTH_ENABLED", "HUB_AUTH_CALLBACK_URI", "HUB_AUTH_CLIENT_SECRET", "ORCID_CLIENT_SECRET",
-                 "HUB_AUTH_ORCID_CLIENT_SECRET", "CRUCIBLE_CURSOR_SIGNING_KEY", "CRUCIBLE_CURSOR_SIGNING_KEYS"):
+                 "OIDC_ORCID_CLIENT_SECRET", "CRUCIBLE_CURSOR_SIGNING_KEY", "CRUCIBLE_CURSOR_SIGNING_KEYS"):
         for suffix in ("", "_VERSION", "_FILE"):
             empty.delenv(f"{name}{suffix}", raising=False)
     for name in BASE:

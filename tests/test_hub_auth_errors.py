@@ -19,13 +19,13 @@ AUTH = ("crucible-hub", "test-client-secret")
 
 
 @pytest.fixture
-def client(monkeypatch, caplog):
+def client(monkeypatch, caplog, orcid_provider_settings):
     caplog.set_level(logging.WARNING, logger="httpx")
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_ID", AUTH[0])
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", AUTH[1])
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://example.test/hub/auth/callback")
-    monkeypatch.setenv("HUB_AUTH_ORCID_CLIENT_SECRET", "test-orcid-secret")
+    orcid_provider_settings()
     monkeypatch.setitem(main.app.dependency_overrides, get_engine, lambda: object())
     with TestClient(main.app) as client:
         yield client

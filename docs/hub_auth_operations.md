@@ -6,11 +6,31 @@ The routes use exact configured callbacks, OIDC validation, a one-use PKCE-bound
 
 ## Settings and secrets
 
-- `HUB_AUTH_ENABLED=true` turns the routes on. When it is on, the startup check requires `HUB_AUTH_CLIENT_SECRET`, `HUB_AUTH_CALLBACK_URI`, and either `HUB_AUTH_ORCID_CLIENT_SECRET` or `ORCID_CLIENT_SECRET`.
+- `HUB_AUTH_ENABLED=true` turns the routes on. When it is on, the startup check requires `HUB_AUTH_CLIENT_SECRET`, `HUB_AUTH_CALLBACK_URI`, `CRUCIBLE_AUTH_PROVIDERS` with one provider marked `legacy_callback`, and that provider's secret.
+- `CRUCIBLE_AUTH_PROVIDERS` is the JSON list of sign-in providers. Nothing is implied from other settings, and the older `ORCID_*` settings serve only `/auth/login`. See [the provider list](#the-provider-list).
 - Each secret is given one way only: inline, `NAME_FILE`, a file named `NAME` in the secrets directory, or `NAME_VERSION` (a Secret Manager `projects/.../secrets/.../versions/N` or `versions/latest`). Giving one two ways stops the server at startup. Values must be one line of printable ASCII.
 - Every worker reads its secrets at start and refuses to start if one cannot be read (`get_secret` in `app/config.py`). Successful reads are cached per worker; failures are not. Secret Manager lookups time out after ten seconds without retries, use Application Default Credentials, and stay in worker memory.
 - The Hub client secret is shared only with the Hub server; the Hub never needs the ORCID client secret. Keep local environment files at mode `600`.
 - `HUB_AUTH_CALLBACK_URI` must match the Hub's callback exactly; no wildcards. Register the API's `<public API URL>/auth/hub/callback` with ORCID.
+
+## The provider list
+
+[`deploy/compose/auth-providers.example.json`](../deploy/compose/auth-providers.example.json) is a complete example. Every field is required, and an unknown field stops the server at startup.
+
+| Field | Meaning |
+|---|---|
+| `key` | Short name, lowercase letters and digits, starting with a letter. It names the secret. |
+| `display_name` | The name people see. |
+| `issuer` | The provider's exact issuer, compared character by character with its discovery document. `https://`, or `http://` only for `localhost`. |
+| `client_id` | The client ID the provider gave you. |
+| `scopes` | Space-separated scopes, including `openid`. ORCID uses `openid`. |
+| `token_endpoint_auth_method` | `client_secret_post` for ORCID; otherwise usually `client_secret_basic`. |
+| `registration` | `closed`, `approval` or `open`. Stored now, enforced once registration is built; until then only ORCID creates accounts, and other providers sign in only people already linked. |
+| `legacy_callback` | Uses the registered `<public API URL>/auth/hub/callback`. For the ORCID provider only. |
+
+A provider whose issuer is exactly `https://orcid.org` or `https://sandbox.orcid.org` is the ORCID provider, and only one may be listed. The client secret never goes in the list. It is `OIDC_{KEY}_CLIENT_SECRET`, for example `OIDC_ORCID_CLIENT_SECRET`, given any of the ways above.
+
+A provider whose discovery document cannot be read or does not match is unavailable; other providers keep working, and it is tried again after 30 seconds. Discovery is read on first use, so this never stops the server from starting.
 
 Rotation adds a secret version, points the reference at it, and restarts the processes. Only one shared Hub client secret is accepted at a time, so coordinate rotation with the Hub. Workers keep cached values after a version is disabled: emergency revocation needs a restart and, where needed, token-family revocation.
 

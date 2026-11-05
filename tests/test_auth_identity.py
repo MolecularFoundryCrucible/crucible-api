@@ -138,13 +138,14 @@ def test_hub_sign_in_writes_the_identity_row_for_new_and_existing_users(db_engin
     assert identities(db_engine) == [(ISSUER, ORCID), (ISSUER, OTHER_ORCID)]
 
 
-def test_hub_sign_in_uses_the_hub_issuer(db_engine, hub_tables, monkeypatch):
+def test_hub_sign_in_uses_the_hub_issuer(db_engine, hub_tables, monkeypatch, orcid_provider_settings):
     from datetime import datetime, timedelta, timezone
 
     from app.models.core_models import HubLoginTransaction
     from app.utils.hub_login import create_handoff_code
 
-    monkeypatch.setenv("HUB_AUTH_ORCID_ISSUER", SANDBOX)
+    monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
+    orcid_provider_settings(issuer=SANDBOX)
     now = datetime.now(timezone.utc)
     create_handoff_code(db_engine, HubLoginTransaction(state_hash="s", browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", created_at=now, expires_at=now + timedelta(minutes=10)), ORCID, None, None)
     assert identities(db_engine) == [(SANDBOX, ORCID)]
@@ -369,11 +370,11 @@ def test_provisioning_uses_the_older_flows_issuer_when_the_hub_is_off(db_engine,
     assert identities(db_engine) == [(SANDBOX, ORCID)]
 
 
-def test_provisioning_uses_the_hub_issuer_when_the_hub_is_on(db_engine, monkeypatch):
+def test_provisioning_uses_the_hub_issuer_when_the_hub_is_on(db_engine, monkeypatch, orcid_provider_settings):
     from app.utils.user_utils import provision_user
 
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
-    monkeypatch.setenv("HUB_AUTH_ORCID_ISSUER", SANDBOX)
+    orcid_provider_settings(issuer=SANDBOX)
     with Session(db_engine) as session, session.begin():
         provision_user(session, unique_id=ORCID, first_name="Ada", last_name="Lovelace", email=None, username=None)
     assert identities(db_engine) == [(SANDBOX, ORCID)]

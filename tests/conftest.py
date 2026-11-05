@@ -108,6 +108,20 @@ def db_engine(use_engine):
     yield engine
 
 
+@pytest.fixture
+def orcid_provider_settings(monkeypatch):
+    def configure(issuer="https://orcid.org", client_id="APP-TEST"):
+        from app import config
+
+        monkeypatch.setenv("CRUCIBLE_AUTH_PROVIDERS", json.dumps([{
+            "key": "orcid", "display_name": "ORCID", "issuer": issuer, "client_id": client_id, "scopes": "openid",
+            "token_endpoint_auth_method": "client_secret_post", "registration": "open", "legacy_callback": True,
+        }]))
+        monkeypatch.setenv("OIDC_ORCID_CLIENT_SECRET", "test-orcid-secret")
+        config.get_settings.cache_clear()
+    return configure
+
+
 @pytest.fixture(autouse=True)
 def fresh_settings(monkeypatch):
     """Settings are read once per process in production; tests change the environment, so each
@@ -117,14 +131,16 @@ def fresh_settings(monkeypatch):
     from app.auth import providers
     from app.storage import gcs
 
-    caches = (config.get_settings, dependencies.get_engine, storage.get_store, gcs.server_credentials, gcs.server_client, providers.get_oauth)
+    caches = (config.get_settings, dependencies.get_engine, storage.get_store, gcs.server_credentials, gcs.server_client)
     monkeypatch.setattr(config, "_fetched_secrets", {})
     monkeypatch.setattr(config, "_loaded_env_files", set())
     for cached in caches:
         cached.cache_clear()
+    providers.forget_clients()
     yield
     for cached in caches:
         cached.cache_clear()
+    providers.forget_clients()
 
 
 @pytest.fixture(autouse=True)

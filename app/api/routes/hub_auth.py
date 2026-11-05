@@ -1,21 +1,20 @@
 import secrets
 
-import requests
-from authlib.integrations.base_client.errors import OAuthError
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from joserfc.errors import JoseError
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_engine
 from app.api.dependencies import get_api_root_path
+from app.auth.providers import TOKEN_FAILURES, ProviderUnavailable, authorization_url, verified_identity
 from app.config import ConfigurationError, get_settings, optional_secret
 from app.utils.hub_login import (
     HubLoginUnavailable, InvalidHubLogin, consume_login, create_handoff_code,
     create_login, exchange_handoff_code, hub_auth_enabled, load_login_config,
 )
-from app.utils.hub_orcid import exchange_orcid_code, orcid_authorization_url
 from app.utils.hub_tokens import InvalidHubGrant, HubTokenPair, refresh_hub_tokens, revoke_hub_tokens
 from app.models.timestamps import UtcDatetime
 
@@ -86,7 +85,7 @@ def _browser_headers(response: Response) -> Response:
 
 
 @router.get("/login", response_class=RedirectResponse, status_code=302, responses={400: {"description": "Invalid sign-in request"}, 503: {"description": "Hub sign-in unavailable"}})
-def begin_hub_login(
+async def begin_hub_login(
     client_id: str = Query(min_length=1, max_length=100),
     redirect_uri: str = Query(min_length=1, max_length=512),
     state: str = Query(min_length=16, max_length=256),
@@ -96,10 +95,10 @@ def begin_hub_login(
     engine=Depends(get_engine),
 ) -> RedirectResponse:
     try:
-        config = load_login_config()
-        orcid_state, browser_secret, nonce = create_login(engine, config, client_id, redirect_uri, state, code_challenge)
-        destination = orcid_authorization_url(config, orcid_state, nonce, max_age)
-    except HubLoginUnavailable:
+        config = await run_in_threadpool(load_login_config)
+        provider_state, browser_secret, nonce = await run_in_threadpool(create_login, engine, config, client_id, redirect_uri, state, code_challenge)
+        destination = await authorization_url(config.provider, config.provider_callback_uri, provider_state, nonce, max_age)
+    except (HubLoginUnavailable, ProviderUnavailable, ConfigurationError, httpx.HTTPError):
         raise HTTPException(status_code=503, detail="Hub sign-in is unavailable")
     except InvalidHubLogin:
         raise HTTPException(status_code=400, detail="Invalid sign-in request")
@@ -117,7 +116,7 @@ def begin_hub_login(
 
 
 @router.get("/callback", response_class=RedirectResponse, status_code=302, responses={400: {"description": "Sign-in failed"}})
-def finish_hub_login(
+async def finish_hub_login(
     request: Request,
     code: str | None = Query(default=None, max_length=2048),
     state: str | None = Query(default=None, max_length=128),
@@ -126,14 +125,14 @@ def finish_hub_login(
 ) -> Response:
     cookie_path = f"{get_api_root_path()}/auth/hub"
     try:
-        config = load_login_config()
-        transaction = consume_login(engine, state or "", request.cookies.get(LOGIN_COOKIE))
+        config = await run_in_threadpool(load_login_config)
+        transaction = await run_in_threadpool(consume_login, engine, state or "", request.cookies.get(LOGIN_COOKIE))
         if error is not None or code is None:
             raise InvalidHubLogin
-        orcid, given_name, family_name, auth_time = exchange_orcid_code(config, code, transaction.nonce)
-        _, destination = create_handoff_code(engine, transaction, orcid, given_name, family_name, auth_time=auth_time)
+        identity = await verified_identity(config.provider, config.provider_callback_uri, code, transaction.nonce)
+        _, destination = await run_in_threadpool(create_handoff_code, engine, transaction, identity.subject, identity.given_name, identity.family_name, auth_time=identity.auth_time)
         response = _browser_headers(RedirectResponse(destination, status_code=302))
-    except (HubLoginUnavailable, InvalidHubLogin, OAuthError, JoseError, requests.RequestException, ValueError, KeyError):
+    except (HubLoginUnavailable, InvalidHubLogin, *TOKEN_FAILURES):
         response = _browser_headers(PlainTextResponse("Sign-in failed. Please return to the Hub and try again.", status_code=400))
     response.delete_cookie(LOGIN_COOKIE, path=cookie_path)
     return response

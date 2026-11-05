@@ -116,6 +116,49 @@ jobs:
           docker logs seaweedfs 2>&1 | tail -100
           docker logs versitygw 2>&1 | tail -100
 
+  oidc-dex:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      API_CONF_FILE: app/conf/api_conf_local.yaml
+      CRUCIBLE_SECRET_KEY: ci-only
+      PGDB_PW: ci-only
+      DB_USERNAME: ci
+      DB_SERVER: localhost
+      DB_DATABASE: ci
+      OIDC_TEST_DEX_ISSUER: http://localhost:5556/dex
+      OIDC_TEST_DEX_SECOND_ISSUER: http://localhost:5557/dex
+      DEX_IMAGE: ghcr.io/dexidp/dex:v2.46.1@sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.11.16"
+          enable-cache: true
+      - name: Start two Dex servers, so the same subject exists at two issuers
+        run: |
+          sed 's#5556#5557#g' tests/fixtures/dex.yaml > "$RUNNER_TEMP/dex-second.yaml"
+          docker run -d --name dex -p 5556:5556 -v "$PWD/tests/fixtures/dex.yaml:/etc/dex/config.yaml:ro" "$DEX_IMAGE" dex serve /etc/dex/config.yaml
+          docker run -d --name dex-second -p 5557:5557 -v "$RUNNER_TEMP/dex-second.yaml:/etc/dex/config.yaml:ro" "$DEX_IMAGE" dex serve /etc/dex/config.yaml
+          for issuer in "$OIDC_TEST_DEX_ISSUER" "$OIDC_TEST_DEX_SECOND_ISSUER"; do
+            for _ in $(seq 60); do curl -fs -o /dev/null "$issuer/.well-known/openid-configuration" && break; sleep 1; done
+            curl -fsS -o /dev/null "$issuer/.well-known/openid-configuration"
+          done
+      - run: uv sync --locked
+      - name: Sign in through the Hub flow against both
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run pytest -q -rs tests/test_auth_oidc_integration.py -k "not authentik" | tee "$RUNNER_TEMP/oidc.txt"
+          if grep -q "skipped" "$RUNNER_TEMP/oidc.txt"; then echo "OIDC integration tests were skipped"; exit 1; fi
+      - name: Server logs
+        if: failure()
+        run: |
+          docker logs dex 2>&1 | tail -100
+          docker logs dex-second 2>&1 | tail -100
+
   compose-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 25

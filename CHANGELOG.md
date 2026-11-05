@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Provider discovery works for issuers with a trailing slash, such as Authentik's.
 - `GET /auth/apikey`, `POST /auth/apikey/regenerate` and `POST /users` return 409, and `admin create` refuses cleanly, when an ORCID is already linked to another user, instead of failing with a 500.
 - Simultaneous first sign-ins through `/auth/apikey` or the Hub no longer fail, and simultaneous `POST /users` requests get a 409.
 - Simultaneous API key requests no longer leave one user with several keys, which broke their key routes.

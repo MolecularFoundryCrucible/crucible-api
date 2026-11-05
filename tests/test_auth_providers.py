@@ -421,3 +421,25 @@ async def test_discovery_is_fetched_once_while_it_is_good(remote):
     for _ in range(3):
         await providers.authorization_url(provider("orcid"), CALLBACK, "s", "n")
     assert remote["orcid.org"].discovery_calls == 1
+
+
+@pytest.mark.anyio
+async def test_discovery_address_drops_a_trailing_slash_but_the_issuer_stays_exact(monkeypatch):
+    issuer = "https://login.example.org/application/o/crucible/"
+    fake = FakeProvider(issuer, "crucible")
+    paths = []
+
+    async def handle(self, request):
+        await request.aread()
+        paths.append(request.url.path)
+        return fake.respond(request)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle)
+    monkeypatch.setenv("OIDC_LAB_CLIENT_SECRET", "lab-secret")
+    set_providers(monkeypatch, {**LAB_ENTRY, "issuer": issuer})
+    await providers.authorization_url(get_settings().auth.providers[0], CALLBACK, "s", "n")
+    assert paths == ["/application/o/crucible/.well-known/openid-configuration"]
+    fake.metadata["issuer"] = issuer.rstrip("/")
+    providers.forget_clients()
+    with pytest.raises(providers.ProviderUnavailable):
+        await providers.authorization_url(get_settings().auth.providers[0], CALLBACK, "s", "n")

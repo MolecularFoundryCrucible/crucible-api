@@ -21,7 +21,7 @@ The routes use exact configured callbacks, OIDC validation, a one-use PKCE-bound
 |---|---|
 | `key` | Short name, lowercase letters and digits, starting with a letter. It names the secret. |
 | `display_name` | The name people see. |
-| `issuer` | The provider's exact issuer, compared character by character with its discovery document. `https://`, or `http://` only for `localhost`. |
+| `issuer` | The provider's exact issuer, compared character by character with its discovery document, so keep any trailing slash it has (Authentik has one). `https://`, or `http://` only for `localhost`. |
 | `client_id` | The client ID the provider gave you. |
 | `scopes` | Space-separated scopes, including `openid`. ORCID uses `openid`. |
 | `token_endpoint_auth_method` | `client_secret_post` for ORCID; otherwise usually `client_secret_basic`. |

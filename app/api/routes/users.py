@@ -36,7 +36,7 @@ from app.auth.identity import IdentityTaken, default_orcid_issuer, find_identity
 from app.utils.hub_tokens import revoke_all_hub_tokens
 from app.services.proposals import find_mf_user_proposals, usable_discovered_projects
 from app.utils.user_utils import assert_profile_fields_available, commit_user, profile_conflict, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
-from app.utils.project_utils import resolve_project_reference
+from app.utils.project_utils import project_fields, project_leads, resolve_project_reference
 from app.models.pagination import PaginatedResponse
 from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
 from app.api.routes.projects import PROJECT_PAGINATION
@@ -1000,12 +1000,11 @@ def read_projects_for_user(
                     .where(ScientificMetadataBinary.unique_id.in_([p.unique_id for p in projects]))
                 ).all()
             }
-        orcids = [p.project_lead_orcid for p in projects if p.project_lead_orcid]
-        leads = {u.unique_id: u for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all()}
+        leads = project_leads(session, projects)
         items = [
             ProjectWithLead(
-                **proj.model_dump(),
-                lead=leads.get(proj.project_lead_orcid),
+                **project_fields(proj, leads.get(proj.lead_user_id)),
+                lead=leads.get(proj.lead_user_id),
                 creation_time=resource.creation_time if resource else None,
                 modification_time=resource.modification_time if resource else None,
                 scientific_metadata=metadata_by_mfid.get(proj.unique_id),

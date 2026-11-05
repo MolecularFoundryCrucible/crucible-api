@@ -244,7 +244,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
                     status_code=403,
                     detail="Only platform contributors and administrators may create a sample on behalf of another user")
             if project is not None:
-                standing = project_standing_by_mfid(user_unique_id, project.unique_id, session)
+                standing = project_standing_by_mfid(auth_res.internal_user_id, project.unique_id, session)
                 if standing is None or standing < Role.CONTRIBUTOR:
                     raise HTTPException(
                         status_code=403,

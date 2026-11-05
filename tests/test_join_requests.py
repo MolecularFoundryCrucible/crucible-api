@@ -171,6 +171,9 @@ def test_platform_role_admin_can_list_and_review(client, db_engine, auth_as):
     created = client.post("/access_groups/proj_x/join", json={})
     request_id = created.json()["id"]
 
+    with Session(db_engine) as session:
+        session.add(User(first_name="P", last_name="Admin", email=None, unique_id="platform-admin"))
+        session.commit()
     auth_as("platform-admin", groups=[], platform_role=PlatformRole.ADMIN)
     listed = client.get("/join_requests")
     assert listed.status_code == 200

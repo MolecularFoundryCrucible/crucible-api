@@ -35,7 +35,7 @@ from app.utils.deletion_utils import has_deletion_blockers
 from app.utils.instrument_utils import dataset_instrument_fields, resolve_instrument_mfids_to_references
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import Permission, Principal, Role, effective_role
-from app.utils.project_utils import resolve_project_mfids_to_references
+from app.utils.project_utils import project_fields, resolve_project_mfids_to_references
 from app.utils.sql_utils import is_public, get_active_deletion_request
 
 
@@ -333,11 +333,11 @@ def load_project_detail(
 
     resource = _resource(session, resource_id, resource)
     is_member = principal.is_platform_admin or principal.role_in(project.unique_id) is not None
-    lead = _owner(session, project.project_lead_orcid, True)
+    lead = session.get(User, project.lead_user_id) if project.lead_user_id is not None else None
     deletion_request = get_active_deletion_request(session, resource_id)
     return ProjectWithLead(
-        **project.model_dump(),
-        lead=lead,
+        **project_fields(project, lead),
+        lead=UserPublicRead.model_validate(lead) if lead else None,
         members=with_member_capabilities(session, principal, project.unique_id, load_project_members(session, project.project_id))
         if options.include_members and is_member else None,
         creation_time=resource.creation_time if resource else None,

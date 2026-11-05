@@ -285,7 +285,7 @@ def resolve_create_owner(session, owner: str | None, owner_orcid: str | None, au
     return resolve_user(session, orcid=owner_orcid or authenticated_user_id)
 
 
-def sql_add_user_to_access_group(orcid, group_name, session, role=None, group_type=None, actor_id=None):
+def sql_add_user_to_access_group(orcid, group_name, session, role=None, group_type=None, actor=None):
     """Add a user to an access group by ORCID, creating the group if needed.
 
     `role` is the standing in that group, defaulting to contributor. Appending
@@ -326,11 +326,11 @@ def sql_add_user_to_access_group(orcid, group_name, session, role=None, group_ty
         link.role = (role or Role.CONTRIBUTOR).db_value
         session.add(link)
     if ag.group_type == AccessGroupType.PROJECT.value:
-        close_pending_join_requests(session, ag.id, orcid, link.role if link is not None else (role or Role.CONTRIBUTOR).db_value, actor_id)
+        close_pending_join_requests(session, ag.id, user, link.role if link is not None else (role or Role.CONTRIBUTOR).db_value, actor)
     return ag
 
 
-def close_pending_join_requests(session, accessgroup_id, orcid, granted_role, actor_id=None):
+def close_pending_join_requests(session, accessgroup_id, user, granted_role, actor=None):
     from sqlalchemy import update
     from app.general_utils import get_utc_datetime
     from app.models.core_models import AccessGroupJoinRequest
@@ -339,13 +339,14 @@ def close_pending_join_requests(session, accessgroup_id, orcid, granted_role, ac
         update(AccessGroupJoinRequest)
         .where(
             AccessGroupJoinRequest.accessgroup_id == accessgroup_id,
-            AccessGroupJoinRequest.requester_id == orcid,
+            AccessGroupJoinRequest.requester_user_id == user.id,
             AccessGroupJoinRequest.status == "pending",
         )
         .values(
             status="approved",
             review_time=get_utc_datetime(),
-            reviewer_id=actor_id,
+            reviewer_id=actor.unique_id if actor is not None else None,
+            reviewer_user_id=actor.id if actor is not None else None,
             reviewer_notes="Added to the project directly",
             granted_role=granted_role,
         )

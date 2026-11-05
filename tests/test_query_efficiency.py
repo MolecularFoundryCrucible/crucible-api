@@ -64,6 +64,7 @@ def test_join_request_collection_uses_two_queries(db_engine):
         session.add(AccessGroupJoinRequest(
             accessgroup_id=group.id,
             requester_id=requester.unique_id,
+            requester_user_id=requester.id,
         ))
         session.commit()
 

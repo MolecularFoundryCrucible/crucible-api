@@ -100,7 +100,7 @@ def _join_request(db_engine, project_mfid, orcid):
         user = _user(session, orcid)
         ag_id = _group_id(session, project_mfid)
         session.add(AccessGroupJoinRequest(
-            accessgroup_id=ag_id, requester_id=user.unique_id))
+            accessgroup_id=ag_id, requester_id=user.unique_id, requester_user_id=user.id))
         session.commit()
 
 

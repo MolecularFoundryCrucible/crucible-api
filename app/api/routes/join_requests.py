@@ -104,13 +104,13 @@ def _joined(statement):
         statement
         .join(AccessGroup, AccessGroup.id == AccessGroupJoinRequest.accessgroup_id)
         .outerjoin(Project, Project.unique_id == AccessGroup.group_name)
-        .outerjoin(requester_user, requester_user.unique_id == AccessGroupJoinRequest.requester_id)
-        .outerjoin(reviewer_user, reviewer_user.unique_id == AccessGroupJoinRequest.reviewer_id)
+        .outerjoin(requester_user, requester_user.id == AccessGroupJoinRequest.requester_user_id)
+        .outerjoin(reviewer_user, reviewer_user.id == AccessGroupJoinRequest.reviewer_user_id)
     )
 
 
 def _conditions(session, principal: Principal, filters: JoinRequestFilters, authority) -> list:
-    mine = AccessGroupJoinRequest.requester_id == principal.user_id
+    mine = AccessGroupJoinRequest.requester_user_id == principal.internal_user_id
     if filters.scope is JoinRequestScope.SUBMITTED:
         conditions = [mine]
     elif filters.scope is JoinRequestScope.REVIEWABLE:
@@ -127,9 +127,9 @@ def _conditions(session, principal: Principal, filters: JoinRequestFilters, auth
         project = resolve_project_reference(filters.group_name, session)
         conditions.append(AccessGroup.group_name == project.unique_id if project else false())
     if filters.requester_id:
-        conditions.append(AccessGroupJoinRequest.requester_id == filters.requester_id)
+        conditions.append(requester_user.unique_id == filters.requester_id)
     if filters.reviewer_id:
-        conditions.append(AccessGroupJoinRequest.reviewer_id == filters.reviewer_id)
+        conditions.append(reviewer_user.unique_id == filters.reviewer_id)
     if filters.requested_after:
         conditions.append(AccessGroupJoinRequest.request_time >= filters.requested_after)
     if filters.requested_before:
@@ -144,7 +144,7 @@ def _conditions(session, principal: Principal, filters: JoinRequestFilters, auth
         conditions.append(or_(
             full_name.contains(needle, autoescape=True),
             func.lower(requester_user.username).contains(needle, autoescape=True),
-            func.lower(AccessGroupJoinRequest.requester_id).contains(needle, autoescape=True),
+            func.lower(requester_user.unique_id).contains(needle, autoescape=True),
         ))
     return conditions
 
@@ -163,18 +163,18 @@ def _read(principal: Principal, req, project_mfid, project, requester, reviewer,
         status=req.status,
         project_mfid=project_mfid,
         project=ProjectReferenceRead.model_validate(project) if project else None,
-        requester_id=req.requester_id,
+        requester_id=requester.unique_id if requester else None,
         requester=UserPublicRead.model_validate(requester) if requester else None,
         reason=req.reason,
         request_time=req.request_time,
-        reviewer_id=req.reviewer_id,
+        reviewer_id=reviewer.unique_id if reviewer else None,
         reviewer=UserPublicRead.model_validate(reviewer) if reviewer else None,
         review_time=req.review_time,
         reviewer_notes=req.reviewer_notes,
         granted_role=req.granted_role,
         capabilities=JoinRequestCapabilities(
             can_review=pending and bool(may_review),
-            can_withdraw=pending and req.requester_id == principal.user_id,
+            can_withdraw=pending and req.requester_user_id == principal.internal_user_id,
         ),
         group_name=project.project_id if project else project_mfid,
     )
@@ -186,7 +186,7 @@ def _visible_row(session, principal: Principal, request_id: int):
     if row is None:
         raise _error(404, "join_request_not_found", "Join request not found")
     req, _, _, _, _, may_review = row
-    if not (principal.is_platform_admin or may_review or req.requester_id == principal.user_id):
+    if not (principal.is_platform_admin or may_review or req.requester_user_id == principal.internal_user_id):
         raise _error(404, "join_request_not_found", "Join request not found")
     return row
 
@@ -203,7 +203,7 @@ def _sort_expressions(sort: JoinRequestSort):
             func.lower(requester_user.last_name),
             func.lower(requester_user.first_name),
             func.lower(requester_user.username),
-            func.lower(AccessGroupJoinRequest.requester_id),
+            func.lower(requester_user.unique_id),
         )
     return (AccessGroupJoinRequest.request_time,)
 
@@ -314,7 +314,7 @@ def create_join_request(session, principal: Principal, project_ref: str, reason:
 
     def pending(*conditions):
         return session.exec(select(AccessGroupJoinRequest.id).where(
-            AccessGroupJoinRequest.requester_id == user.unique_id, AccessGroupJoinRequest.status == PENDING, *conditions))
+            AccessGroupJoinRequest.requester_user_id == user.id, AccessGroupJoinRequest.status == PENDING, *conditions))
 
     existing = pending(AccessGroupJoinRequest.accessgroup_id == group.id).first()
     if existing is not None:
@@ -322,7 +322,7 @@ def create_join_request(session, principal: Principal, project_ref: str, reason:
     if len(pending().all()) >= MAX_PENDING_PER_REQUESTER:
         raise _error(409, "too_many_pending_requests", f"At most {MAX_PENDING_PER_REQUESTER} join requests can be pending at once; withdraw one first")
 
-    req = AccessGroupJoinRequest(accessgroup_id=group.id, requester_id=user.unique_id, reason=reason)
+    req = AccessGroupJoinRequest(accessgroup_id=group.id, requester_id=user.unique_id, requester_user_id=user.id, reason=reason)
     session.add(req)
     try:
         session.commit()
@@ -370,7 +370,7 @@ def join_request_facets(
         column = {
             JoinRequestFacetField.STATUS: AccessGroupJoinRequest.status,
             JoinRequestFacetField.PROJECT: AccessGroup.group_name,
-            JoinRequestFacetField.REQUESTER: AccessGroupJoinRequest.requester_id,
+            JoinRequestFacetField.REQUESTER: requester_user.unique_id,
         }[field]
         tie_break = {
             JoinRequestFacetField.STATUS: AccessGroupJoinRequest.status,
@@ -435,13 +435,15 @@ def review_join_request(request_id: int, body: JoinRequestReview, auth_res: Anno
             require_grant(session, auth_res, project.unique_id, role, floor=Role.EDITOR)
         req.status = body.status
         req.review_time = get_utc_datetime()
-        req.reviewer_id = auth_res.user_id
+        reviewer = caller_row(session, auth_res)
+        req.reviewer_id = reviewer.unique_id
+        req.reviewer_user_id = reviewer.id
         req.reviewer_notes = body.reviewer_notes
         req.granted_role = role.db_value if role else None
         session.add(req)
         session.flush()
         if role is not None:
-            sql_add_user_to_project(requester, project.project_id, session, role=role, actor_id=auth_res.user_id)
+            sql_add_user_to_project(requester, project.project_id, session, role=role, actor=reviewer)
         session.commit()
         return _read(auth_res, *_visible_row(session, auth_res, request_id))
 
@@ -453,7 +455,7 @@ def withdraw_join_request(request_id: int, auth_res: Annotated[Principal, Depend
     with Session(get_engine()) as session:
         session.exec(select(AccessGroupJoinRequest.id).where(AccessGroupJoinRequest.id == request_id).with_for_update()).first()
         req = _visible_row(session, auth_res, request_id)[0]
-        if req.requester_id != auth_res.user_id:
+        if req.requester_user_id != auth_res.internal_user_id:
             raise _error(403, "withdraw_not_allowed", "Only the requester can withdraw a join request")
         if req.status != PENDING:
             raise _error(409, "join_request_closed", f"Join request is already {req.status}", status=req.status)

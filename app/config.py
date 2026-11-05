@@ -256,6 +256,7 @@ class AuthSettings(SettingsGroup):
     model_config = SettingsConfigDict(env_prefix="CRUCIBLE_AUTH_")
 
     providers: list[OidcProvider] = Field(default_factory=list)
+    identity_lookup: bool = False
 
     @field_validator("providers", mode="before")
     @classmethod

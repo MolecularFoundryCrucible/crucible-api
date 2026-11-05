@@ -13,6 +13,7 @@ from app.api.routes.hub_auth import router as hub_auth_router
 from app.models.core_models import (
     AccessGroup,
     ApiToken,
+    AuthEvent,
     HubAccessToken,
     HubLoginCode,
     HubLoginTransaction,
@@ -81,7 +82,7 @@ def engine():
     SQLModel.metadata.create_all(
         engine,
         tables=[
-            User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__,
+            User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, AuthEvent.__table__,
             HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__,
             HubLoginTransaction.__table__, HubLoginCode.__table__, UserIdentity.__table__,
         ],

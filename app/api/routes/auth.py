@@ -6,17 +6,15 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.api.dependencies import get_engine, get_api_root_path
 from app.auth import browser_login
-from app.auth.identity import IdentityTaken, ensure_identity, retry_after_concurrent_first_write
+from app.auth.identity import retry_after_concurrent_first_write
+from app.auth.sign_in import SignInRefused, record_refused_sign_in, resolve_sign_in
 from app.config import get_settings
-from app.models.core_models import User
 from app.models.response_schemas import ApiKeyRead, AuthMethodRead, LegacyApiKeyRead
-from app.utils.permissions import AccessGroupType, Role
 from app.utils.auth_utils import decode_token, find_or_add_api_access
-from app.utils.user_utils import provision_user, sql_add_user_to_access_group
 
 # Note: /account/* routes live in account.py
 
@@ -74,36 +72,18 @@ async def redirect_exchange(request: Request, code: str | None = None, state: st
     return response
 
 
-def _record_signed_in_user(orcid: str, user_info: dict) -> tuple[str | None, str, str]:
+def _record_signed_in_user(subject: str, user_info: dict) -> tuple[str, str | None, str, str]:
     with Session(get_engine()) as session:
-        issuer = get_settings().api.orcid_issuer
-        given_name, family_name = user_info.get('given_name'), user_info.get('family_name')
-        user = session.exec(select(User).where(User.unique_id == orcid)).first()
-        if user is None:
-            user = provision_user(session, unique_id=orcid, first_name=given_name or '', last_name=family_name or '', email=None, username=None, orcid_issuer=issuer)
-        else:
-            if not user.first_name and given_name:
-                user.first_name = given_name
-            if not user.last_name and family_name:
-                user.last_name = family_name
-            session.add(user)
-
-        sql_add_user_to_access_group(
-            orcid,
-            orcid,
-            session,
-            role=Role.OWNER,
-            group_type=AccessGroupType.IDENTITY,
-        )
-        ensure_identity(session, user, issuer, orcid)
+        user = resolve_sign_in(session, get_settings().api.orcid_issuer, subject, user_info.get('given_name'), user_info.get('family_name'))
         session.commit()
-        return user.email, user.first_name, user.last_name
+        return user.unique_id, user.email, user.first_name, user.last_name
 
 
-def _signed_in_user_or_conflict(orcid: str, user_info: dict) -> tuple[str | None, str, str]:
+def _signed_in_user_or_conflict(subject: str, user_info: dict) -> tuple[str, str | None, str, str]:
     try:
-        return retry_after_concurrent_first_write(lambda: _record_signed_in_user(orcid, user_info))
-    except IdentityTaken:
+        return retry_after_concurrent_first_write(lambda: _record_signed_in_user(subject, user_info))
+    except SignInRefused:
+        record_refused_sign_in(get_engine(), get_settings().api.orcid_issuer)
         raise HTTPException(status_code=409, detail=IDENTITY_CONFLICT) from None
 
 
@@ -118,19 +98,19 @@ def get_apikey(request: Request, response: Response):
         return _login_redirect(f"{root}/login", f"{root}/user_apikey")
     orcid = user_info["orcid"]
 
-    user_email, user_first_name, user_last_name = _signed_in_user_or_conflict(orcid, user_info)
+    unique_id, user_email, user_first_name, user_last_name = _signed_in_user_or_conflict(orcid, user_info)
 
-    crucible_token = find_or_add_api_access(orcid, get_engine(), regenerate=False)
+    crucible_token = find_or_add_api_access(unique_id, get_engine(), regenerate=False)
 
     if not user_email:
-        return HTMLResponse(content=_email_prompt_html(root, orcid, crucible_token, user_first_name, user_last_name), headers={"Cache-Control": "no-store"})
+        return HTMLResponse(content=_email_prompt_html(root, orcid, unique_id, crucible_token, user_first_name, user_last_name), headers={"Cache-Control": "no-store"})
 
     response.headers["Cache-Control"] = "no-store"
     return {'crucible_apikey': crucible_token}
 
 
-def _email_prompt_html(root: str, orcid: str, crucible_token: str, first_name: str = '', last_name: str = '') -> str:
-    update_url = escape(f"{quote(root, safe='/')}/users/{quote(orcid, safe='')}", quote=True)
+def _email_prompt_html(root: str, orcid: str, unique_id: str, crucible_token: str, first_name: str = '', last_name: str = '') -> str:
+    update_url = escape(f"{quote(root, safe='/')}/users/{quote(unique_id, safe='')}", quote=True)
     first_name = escape(first_name, quote=True)
     last_name = escape(last_name, quote=True)
     orcid = escape(orcid, quote=True)
@@ -247,8 +227,8 @@ def regenerate_apikey(request: Request, response: Response):
     if user_info is None:
         return _login_redirect(f"{root}/auth/login", f"{root}/auth/apikey")
     orcid = user_info["orcid"]
-    _signed_in_user_or_conflict(orcid, user_info)
-    crucible_token = find_or_add_api_access(orcid, get_engine(), regenerate=True)
+    unique_id, *_ = _signed_in_user_or_conflict(orcid, user_info)
+    crucible_token = find_or_add_api_access(unique_id, get_engine(), regenerate=True)
     response.headers["Cache-Control"] = "no-store"
     return {"api_key": crucible_token}
 

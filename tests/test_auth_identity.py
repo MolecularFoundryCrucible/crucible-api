@@ -234,10 +234,10 @@ def test_regenerate_refuses_a_second_orcid_issuer_for_the_same_person(db_engine)
 
 
 def test_apikey_page_retries_when_a_simultaneous_sign_in_got_there_first(db_engine, monkeypatch):
-    from app.api.routes import auth as auth_routes
+    from app.auth import sign_in as sign_in_module
 
     calls = []
-    real = auth_routes.ensure_identity
+    real = sign_in_module.ensure_identity
 
     def lose_once(*args, **kwargs):
         calls.append(1)
@@ -245,7 +245,7 @@ def test_apikey_page_retries_when_a_simultaneous_sign_in_got_there_first(db_engi
             raise IntegrityError("insert", {}, Exception("duplicate key"))
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(auth_routes, "ensure_identity", lose_once)
+    monkeypatch.setattr(sign_in_module, "ensure_identity", lose_once)
     assert signed_in_browser().get("/auth/apikey").status_code == 200
     assert len(calls) == 2
     assert identities(db_engine) == [(ISSUER, ORCID)]
@@ -589,9 +589,9 @@ def test_concurrent_first_write_keeps_one_row_and_both_callers_succeed(pg_engine
 
 @pytest.fixture
 def pg_sign_in(pg_engine, monkeypatch):
-    from app.models.core_models import AccessGroup, ApiToken, HubLoginCode, UserAccessGroupLink
+    from app.models.core_models import AccessGroup, ApiToken, AuthEvent, HubLoginCode, UserAccessGroupLink
 
-    SQLModel.metadata.create_all(pg_engine, tables=[AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, HubLoginCode.__table__])
+    SQLModel.metadata.create_all(pg_engine, tables=[AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, HubLoginCode.__table__, AuthEvent.__table__])
     return pg_engine
 
 
@@ -623,9 +623,10 @@ def test_simultaneous_first_apikey_sign_ins_create_one_person_on_postgres(pg_sig
     from threading import Barrier, BrokenBarrierError
 
     from app.api.routes import auth as auth_routes
+    from app.auth import sign_in as sign_in_module
     from app.auth.identity import retry_after_concurrent_first_write
 
-    real_provision_user = auth_routes.provision_user
+    real_provision_user = sign_in_module.provision_user
     all_found_no_user = Barrier(8)
 
     def add_after_every_thread_has_looked(*args, **kwargs):
@@ -635,7 +636,7 @@ def test_simultaneous_first_apikey_sign_ins_create_one_person_on_postgres(pg_sig
             pass
         return real_provision_user(*args, **kwargs)
 
-    monkeypatch.setattr(auth_routes, "provision_user", add_after_every_thread_has_looked)
+    monkeypatch.setattr(sign_in_module, "provision_user", add_after_every_thread_has_looked)
     monkeypatch.setattr(auth_routes, "get_engine", lambda: pg_sign_in)
     claims = {"orcid": ORCID, "given_name": "Ada"}
     race(8, lambda: retry_after_concurrent_first_write(lambda: auth_routes._record_signed_in_user(ORCID, claims)))
@@ -646,10 +647,11 @@ def test_two_new_people_with_the_same_name_get_different_usernames_on_postgres(p
     from threading import Barrier, BrokenBarrierError
 
     from app.api.routes import auth as auth_routes
+    from app.auth import sign_in as sign_in_module
     from app.auth.identity import retry_after_concurrent_first_write
     from app.models.core_models import User
 
-    real_provision_user = auth_routes.provision_user
+    real_provision_user = sign_in_module.provision_user
     both_looked = Barrier(2)
 
     def add_after_both_have_looked(*args, **kwargs):
@@ -659,7 +661,7 @@ def test_two_new_people_with_the_same_name_get_different_usernames_on_postgres(p
             pass
         return real_provision_user(*args, **kwargs)
 
-    monkeypatch.setattr(auth_routes, "provision_user", add_after_both_have_looked)
+    monkeypatch.setattr(sign_in_module, "provision_user", add_after_both_have_looked)
     monkeypatch.setattr(auth_routes, "get_engine", lambda: pg_sign_in)
     people = iter((ORCID, OTHER_ORCID))
     def sign_in():
@@ -671,10 +673,15 @@ def test_two_new_people_with_the_same_name_get_different_usernames_on_postgres(p
     assert len(usernames) == 2 and len(set(usernames)) == 2 and all(usernames)
 
 
-def test_simultaneous_first_hub_sign_ins_create_one_person_on_postgres(pg_sign_in):
+@pytest.mark.parametrize("lookup", ["false", "true"])
+def test_simultaneous_first_hub_sign_ins_create_one_person_on_postgres(pg_sign_in, monkeypatch, lookup):
     from types import SimpleNamespace
 
+    from app.config import get_settings
     from app.utils.hub_login import create_handoff_code
+
+    monkeypatch.setenv("CRUCIBLE_AUTH_IDENTITY_LOOKUP", lookup)
+    get_settings.cache_clear()
 
     transaction = SimpleNamespace(client_id="crucible-hub", callback_uri="https://hub.example/callback", code_challenge="c", hub_state="s", required_user=None)
     results = race(8, lambda: create_handoff_code(pg_sign_in, transaction, ORCID_PROVIDER, ORCID, "Ada", "Lovelace"))

@@ -22,7 +22,7 @@ from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectReferenceRead
 from app.models.query_params import SortDirection
 from app.models.users import UserPublicRead
-from app.utils.auth_utils import caller_row, authorize_user, is_callers, permission_filter, require_grant
+from app.utils.auth_utils import caller_row, authorize_user, is_caller, permission_filter, require_grant
 from app.utils.cursor_utils import CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.project_utils import is_project_member, resolve_project_reference, sql_add_user_to_project
@@ -110,7 +110,7 @@ def _joined(statement):
 
 
 def _conditions(session, principal: Principal, filters: JoinRequestFilters, authority) -> list:
-    mine = is_callers(AccessGroupJoinRequest.requester_user_id, principal)
+    mine = is_caller(AccessGroupJoinRequest.requester_user_id, principal)
     if filters.scope is JoinRequestScope.SUBMITTED:
         conditions = [mine]
     elif filters.scope is JoinRequestScope.REVIEWABLE:

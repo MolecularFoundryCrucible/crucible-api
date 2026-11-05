@@ -40,7 +40,7 @@ from app.models.response_schemas import DetailResponse
 from app.utils.auth_utils import (
     authorize_user,
     caller_row,
-    is_callers,
+    is_caller,
     fetch_acl_rows,
     permission_filter,
     require_permission,
@@ -419,7 +419,7 @@ def list_deletion_requests(
             data_query = data_query.where(project_mfid_column == project_mfid)
 
         if scope is DeletionRequestScope.SUBMITTED:
-            visible = is_callers(DeletionRequest.requester_user_id, auth_res)
+            visible = is_caller(DeletionRequest.requester_user_id, auth_res)
             count_query = count_query.where(visible)
             data_query = data_query.where(visible)
         elif scope is DeletionRequestScope.REVIEWABLE:
@@ -427,7 +427,7 @@ def list_deletion_requests(
             data_query = data_query.where(can_review)
         elif not auth_res.is_platform_admin:
             visible = (
-                is_callers(DeletionRequest.requester_user_id, auth_res)
+                is_caller(DeletionRequest.requester_user_id, auth_res)
                 | review_authority
             )
             count_query = count_query.where(visible)
@@ -984,7 +984,7 @@ def list_deletion_audit(
             count_query = count_query.where(DeletionAuditLog.project_mfid == project_mfid)
             data_query = data_query.where(DeletionAuditLog.project_mfid == project_mfid)
         if scope is DeletionAuditScope.SUBMITTED:
-            requested_by = is_callers(DeletionAuditLog.requester_user_id, auth_res)
+            requested_by = is_caller(DeletionAuditLog.requester_user_id, auth_res)
         elif requester_id is not None:
             requested_by = _person_is(requester_user, DeletionAuditLog.requester_user_id, DeletionAuditLog.requester_id, requester_id)
         else:

@@ -30,10 +30,13 @@ def _existing_person(session: Session, issuer: str, subject: str) -> User | None
     orcid_provider = issuer in ORCID_ISSUERS
     if orcid_provider and not get_settings().auth.identity_lookup:
         return session.exec(select(User).where(User.unique_id == subject)).one_or_none()
+    # Read the user row first: a simultaneous first sign-in commits the user and identity together,
+    # so once its user is visible, the identity read below sees its identity too.
+    unlinked = orcid_provider and session.exec(select(User.id).where(User.unique_id == subject)).first() is not None
     identity = find_identity(session, issuer, subject)
     if identity is not None:
         return session.get(User, identity.user_id)
-    if orcid_provider and session.exec(select(User.id).where(User.unique_id == subject)).first() is not None:
+    if unlinked:
         raise SignInRefused(UNLINKED_ORCID)
     return None
 

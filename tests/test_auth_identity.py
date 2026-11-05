@@ -689,6 +689,31 @@ def test_simultaneous_first_hub_sign_ins_create_one_person_on_postgres(pg_sign_i
     assert_one_person(pg_sign_in)
 
 
+def test_first_sign_in_committed_between_the_two_lookups_is_found_on_postgres(pg_sign_in, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.auth import sign_in as sign_in_module
+    from app.config import get_settings
+    from app.utils.hub_login import create_handoff_code
+
+    monkeypatch.setenv("CRUCIBLE_AUTH_IDENTITY_LOOKUP", "true")
+    get_settings.cache_clear()
+    real_find_identity = sign_in_module.find_identity
+    other_signed_in = []
+
+    def other_sign_in_commits_after_this_read(session, issuer, subject):
+        found = real_find_identity(session, issuer, subject)
+        if not other_signed_in:
+            other_signed_in.append(True)
+            create_handoff_code(pg_sign_in, transaction, ORCID_PROVIDER, ORCID, "Ada", "Lovelace")
+        return found
+
+    monkeypatch.setattr(sign_in_module, "find_identity", other_sign_in_commits_after_this_read)
+    transaction = SimpleNamespace(client_id="crucible-hub", callback_uri="https://hub.example/callback", code_challenge="c", hub_state="s", required_user=None)
+    create_handoff_code(pg_sign_in, transaction, ORCID_PROVIDER, ORCID, "Ada", "Lovelace")
+    assert_one_person(pg_sign_in)
+
+
 def tokens(engine):
     from app.models.core_models import ApiToken
 

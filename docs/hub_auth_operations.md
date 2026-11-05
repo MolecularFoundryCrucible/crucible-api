@@ -34,14 +34,14 @@ A provider whose discovery document cannot be read or does not match is unavaila
 
 ## How the Hub signs in
 
-`GET /auth/methods` lists the ways to sign in. `GET /auth/hub/login` takes an optional `provider` key. Without one, a single listed provider is used directly, and several show a page to choose. `required_user` names the `unique_id` that must sign in; it passes through the browser, so the Hub must still compare the account it receives.
+`GET /auth/methods` lists the ways to sign in. `key` is whatever the deployment chose, so use `is_orcid` to show the ORCID mark. `GET /auth/hub/login` takes an optional `provider` key. Without one, a single listed provider is used directly, and several show a page to choose. `required_user` names the `unique_id` that must sign in; it passes through the browser, so the Hub must still compare the account it receives.
 
 Once a sign-in request is valid, failures redirect to the Hub's callback with `state` and an RFC 6749 `error`:
 
 | `error` | Meaning |
 |---|---|
 | `access_denied` | The person refused at the provider, their login is not linked to an account, or the login is refused for this account |
-| `login_required` | Someone other than `required_user` signed in, or the provider asked for a sign-in |
+| `login_required` | Someone other than `required_user` signed in; sent for nothing else |
 | `temporarily_unavailable` | The provider cannot be reached or its discovery document is bad; try again |
 | `server_error` | The provider's answer did not verify |
 

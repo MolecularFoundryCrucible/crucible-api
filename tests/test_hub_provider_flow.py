@@ -129,8 +129,8 @@ def people(db_engine):
 
 def test_methods_lists_each_provider_without_its_settings(client):
     assert client.get("/auth/methods").json() == [
-        {"key": "orcid", "display_name": "ORCID", "kind": "oidc"},
-        {"key": "lab", "display_name": "Example Lab", "kind": "oidc"},
+        {"key": "orcid", "display_name": "ORCID", "kind": "oidc", "is_orcid": True},
+        {"key": "lab", "display_name": "Example Lab", "kind": "oidc", "is_orcid": False},
     ]
 
 
@@ -160,10 +160,46 @@ def test_chooser_refuses_a_bad_request_before_showing_anything(client):
     assert client.get("/auth/hub/login", params={**LOGIN, "redirect_uri": "https://evil.example/cb"}, follow_redirects=False).status_code == 400
 
 
-def test_chooser_cannot_be_framed(client):
+def test_chooser_cannot_be_framed_cached_or_leak_its_address(client):
     page = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False)
     assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
+    assert page.headers["x-frame-options"] == "DENY"
     assert page.headers["cache-control"] == "no-store"
+    assert page.headers["referrer-policy"] == "no-referrer"
+    assert page.headers["x-content-type-options"] == "nosniff"
+
+
+def test_chooser_allows_no_script_and_only_its_own_style(client):
+    first = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False)
+    second = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False)
+    policy = first.headers["content-security-policy"]
+    assert "default-src 'none'" in policy and "base-uri 'none'" in policy and "form-action 'none'" in policy
+    assert "unsafe" not in policy
+    nonce = re.search(r"style-src 'nonce-([^']+)'", policy).group(1)
+    assert f'<style nonce="{nonce}">' in first.text
+    assert nonce not in second.headers["content-security-policy"]
+
+
+def test_chooser_page_has_no_script_form_or_outside_address(client):
+    text = client.get("/auth/hub/login", params=LOGIN, follow_redirects=False).text.lower()
+    assert "<script" not in text and "<form" not in text and "<input" not in text
+    assert "http://" not in text.replace(HUB_CALLBACK.lower(), "") and "//" not in re.sub(r'href="\?[^"]+"', "", text)
+
+
+def test_chooser_links_carry_only_known_parameters(client):
+    page = client.get("/auth/hub/login", params={**LOGIN, "injected": "value", "next": "https://evil.example"}, follow_redirects=False)
+    assert "injected" not in page.text and "evil.example" not in page.text
+
+
+@pytest.mark.parametrize("field, hostile", [
+    ("state", '"><script>alert(1)</script>aaaaaaaa'),
+    ("required_user", '"><script>alert(1)</script>'),
+])
+def test_chooser_escapes_what_the_request_carries(client, field, hostile):
+    page = client.get("/auth/hub/login", params={**LOGIN, field: hostile}, follow_redirects=False)
+    assert page.status_code == 200
+    assert "<script" not in page.text
+    assert [link[field] for link in chooser_links(client, **{field: hostile})] == [[hostile], [hostile]]
 
 
 def test_chooser_escapes_display_name(client, configure):
@@ -355,7 +391,8 @@ def test_required_user_with_orcid_account(client, remote, db_engine):
 
 @pytest.mark.parametrize("sent, expected", [
     ("access_denied", "access_denied"),
-    ("login_required", "login_required"),
+    ("login_required", "server_error"),
+    ("server_error", "server_error"),
     ("temporarily_unavailable", "temporarily_unavailable"),
     ("something_else", "server_error"),
 ])

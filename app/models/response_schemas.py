@@ -37,6 +37,7 @@ class AuthMethodRead(BaseModel):
     key: str
     display_name: str
     kind: Literal["oidc"] = "oidc"
+    is_orcid: bool
 
 
 class ProjectSyncResult(BaseModel):

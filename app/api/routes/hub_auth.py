@@ -27,7 +27,7 @@ from app.models.timestamps import UtcDatetime
 router = APIRouter(prefix="/auth/hub", tags=["auth"])
 client_security = HTTPBasic(auto_error=False)
 LOGIN_COOKIE = "crucible_hub_login"
-_PROVIDER_ERRORS = frozenset({"access_denied", "login_required", "temporarily_unavailable", "server_error"})
+_PROVIDER_ERRORS = frozenset({"access_denied", "temporarily_unavailable"})
 _templates = Jinja2Templates(directory=FilePath(__file__).resolve().parents[2] / "templates")
 logger = logging.getLogger(__name__)
 
@@ -98,13 +98,14 @@ def _hub_error(callback_uri: str, hub_state: str, error: str) -> Response:
     return _browser_headers(RedirectResponse(hub_error_destination(callback_uri, hub_state, error), status_code=302))
 
 
-def _chooser(request: Request, listed: list[OidcProvider]) -> Response:
-    methods = [
-        {"display_name": provider.display_name, "href": f"?{urlencode({**request.query_params, 'provider': provider.key})}"}
-        for provider in listed
-    ]
-    response = _templates.TemplateResponse(request, "hub_sign_in_chooser.html", {"methods": methods})
-    response.headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+def _chooser(request: Request, listed: list[OidcProvider], hub_request: dict[str, str | int | None]) -> Response:
+    """Starts nothing: each link returns to this route with a provider, which then starts that sign-in."""
+    known = {name: value for name, value in hub_request.items() if value is not None}
+    methods = [{"display_name": provider.display_name, "href": f"?{urlencode({**known, 'provider': provider.key})}"} for provider in listed]
+    nonce = secrets.token_urlsafe(16)
+    response = _templates.TemplateResponse(request, "hub_sign_in_chooser.html", {"methods": methods, "style_nonce": nonce})
+    response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    response.headers["X-Frame-Options"] = "DENY"
     return _browser_headers(response)
 
 
@@ -130,7 +131,10 @@ async def begin_hub_login(
         raise HTTPException(status_code=400, detail="Invalid sign-in request")
     listed = get_settings().auth.providers
     if provider is None and len(listed) > 1:
-        return _chooser(request, listed)
+        return _chooser(request, listed, {
+            "client_id": client_id, "redirect_uri": redirect_uri, "state": state, "code_challenge": code_challenge,
+            "code_challenge_method": code_challenge_method, "max_age": max_age, "required_user": required_user,
+        })
     chosen = listed[0] if provider is None else get_settings().auth.provider(provider)
     if chosen is None:
         raise HTTPException(status_code=400, detail="Invalid sign-in request")

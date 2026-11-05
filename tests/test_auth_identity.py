@@ -647,7 +647,7 @@ def test_simultaneous_first_hub_sign_ins_create_one_person_on_postgres(pg_sign_i
 
     from app.utils.hub_login import create_handoff_code
 
-    transaction = SimpleNamespace(client_id="crucible-hub", callback_uri="https://hub.example/callback", code_challenge="c", hub_state="s")
+    transaction = SimpleNamespace(client_id="crucible-hub", callback_uri="https://hub.example/callback", code_challenge="c", hub_state="s", required_user=None)
     results = race(8, lambda: create_handoff_code(pg_sign_in, transaction, ORCID_PROVIDER, ORCID, "Ada", "Lovelace"))
     assert len({code for code, _ in results}) == 8
     assert_one_person(pg_sign_in)

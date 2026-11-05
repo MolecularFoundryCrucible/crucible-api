@@ -8,6 +8,7 @@ from app.models.core_models import (
     AccessGroup, Project, Resource, ResourceACL, User, UserAccessGroupLink)
 from app.utils.auth_utils import fetch_acl_rows, require_permission, resource_capabilities
 from app.utils.permissions import GroupMembership, Permission, PlatformRole, Principal, Role
+from app.models.core_models import UserIdentity
 
 PROJ = "proj_x"
 GID = 1
@@ -19,7 +20,7 @@ def session():
                            poolclass=StaticPool)
     SQLModel.metadata.create_all(
         engine, tables=[m.__table__ for m in (AccessGroup, Project, Resource, ResourceACL, User,
-                              UserAccessGroupLink)])
+                              UserAccessGroupLink, UserIdentity)])
     with Session(engine) as s:
         s.add(AccessGroup(group_name=PROJ))
         s.add(Project(project_id=PROJ, organization="LBNL", project_lead_orcid="0-1"))

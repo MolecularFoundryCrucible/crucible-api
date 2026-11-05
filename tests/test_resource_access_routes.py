@@ -12,6 +12,7 @@ from app.models.core_models import (
     AccessGroup, Instrument, Project, Resource, ResourceACL, User, UserAccessGroupLink)
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, AccessGroupType, GroupMembership, PlatformRole, Principal, Role)
+from app.models.core_models import UserIdentity
 
 MFID = "ds-1"
 OWNER_ORCID = "0000-0001-2345-6789"
@@ -19,7 +20,7 @@ FRIEND_ORCID = "0000-0002-3456-7890"
 PROJ = "proj_x"
 
 TABLES = (AccessGroup, Instrument, Project, Resource, ResourceACL, User,
-          UserAccessGroupLink)
+          UserAccessGroupLink, UserIdentity)
 
 
 @pytest.fixture

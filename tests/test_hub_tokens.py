@@ -125,7 +125,7 @@ def test_issue_and_refresh_with_foreign_keys_enforced():
 
     SQLModel.metadata.create_all(
         engine,
-        tables=[User.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__],
+        tables=[User.__table__, UserIdentity.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__],
     )
     try:
         with Session(engine) as session:

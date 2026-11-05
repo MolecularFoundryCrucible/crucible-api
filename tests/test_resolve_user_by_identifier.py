@@ -9,13 +9,14 @@ from sqlalchemy.pool import StaticPool
 
 from app.models.core_models import User
 from app.utils.user_utils import resolve_user_by_identifier
+from app.models.core_models import UserIdentity
 
 SA_MFID = "0tkn2knjast3h0008nyq9zps2c"  # real SA unique_id shape, see test_resource_access_routes.py
 
 
 def _engine():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(engine, tables=[User.__table__])
+    SQLModel.metadata.create_all(engine, tables=[User.__table__, UserIdentity.__table__])
     with Session(engine) as session:
         session.add(User(first_name="A", last_name="B", email="alice@x.com",
                          unique_id="0000-0001-2345-6789", username="alice_b"))

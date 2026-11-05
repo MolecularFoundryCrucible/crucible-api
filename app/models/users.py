@@ -68,6 +68,8 @@ class UserRead(SQLModel):
     email: Optional[str] = None
     unique_id: str
     username: Optional[str] = None
+    orcid: Optional[str] = Field(default=None, validation_alias=AliasChoices("orcid", "profile_orcid"), description="The person's linked ORCID, when they have one.")
+    orcid_verified: Optional[bool] = Field(default=None, validation_alias=AliasChoices("orcid_verified", "profile_orcid_verified"), description="Whether the ORCID was confirmed by signing in with it; null without an ORCID.")
     is_service_account: Optional[bool] = False
     platform_role: Optional[PlatformRole] = None
     user_capabilities: Optional[UserCapabilities] = None
@@ -103,6 +105,8 @@ class UserPublicRead(SQLModel):
     '''
     unique_id: str
     username: Optional[str] = None
+    orcid: Optional[str] = Field(default=None, validation_alias=AliasChoices("orcid", "profile_orcid"), description="The person's linked ORCID, when they have one.")
+    orcid_verified: Optional[bool] = Field(default=None, validation_alias=AliasChoices("orcid_verified", "profile_orcid_verified"), description="Whether the ORCID was confirmed by signing in with it; null without an ORCID.")
     first_name: str
     last_name: str
     is_service_account: bool = False

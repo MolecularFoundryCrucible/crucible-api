@@ -80,6 +80,8 @@ def test_deletion_audit_cursor_is_stable_and_embeds_public_identities(db_engine)
     assert first.items[0].requester.model_dump() == {
         "unique_id": "requester",
         "username": "requester-user",
+        "orcid": None,
+        "orcid_verified": None,
         "first_name": "Request",
         "last_name": "Owner",
         "is_service_account": False,

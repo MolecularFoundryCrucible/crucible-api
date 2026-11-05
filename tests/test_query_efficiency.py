@@ -39,7 +39,7 @@ def _statement_count(engine):
         event.remove(engine, "before_cursor_execute", record_statement)
 
 
-def test_join_request_collection_uses_two_queries(db_engine):
+def test_join_request_collection_uses_three_queries(db_engine):
     with Session(db_engine) as session:
         requester = User(
             first_name="Join",
@@ -84,7 +84,7 @@ def test_join_request_collection_uses_two_queries(db_engine):
             JoinRequestSort.REQUEST_TIME, SortDirection.DESC, 100, None, 0,
         )
 
-    assert len(statements) == 2
+    assert len(statements) == 3
     assert response.items[0].group_name == "join-project"
 
 
@@ -220,7 +220,7 @@ def test_member_grants_resolve_principals_in_constant_queries(db_engine, people,
         grants = load_member_grants(session, "shared-ds")
     assert len(grants) == people + projects
     assert {grant.principal_type for grant in grants} == {"user", "project"}
-    assert len(statements) <= 3
+    assert len(statements) <= 4
 
 
 def test_adding_a_file_does_not_load_the_datasets_other_files(client, db_engine, auth_as):

@@ -2,6 +2,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, case, exists, func, literal, or_
 from sqlmodel import Session, select
 
+from app.utils.user_utils import canonical_person_id
 from app.models.core_models import (
     Dataset,
     DatasetSampleLink,
@@ -325,7 +326,7 @@ def list_dataset_facets(
         (Dataset.session_name, params.session_name),
         (Dataset.measurement, params.measurement),
         (Dataset.data_format, params.data_format),
-        (Dataset.owner_orcid, params.owner_id),
+        (Dataset.owner_orcid, canonical_person_id(session, params.owner_id)),
     ):
         if value is not None:
             query = query.where(filter_column == value)
@@ -395,7 +396,7 @@ def list_sample_facets(
         )
     for filter_column, value in (
         (Sample.sample_type, params.sample_type),
-        (Sample.owner_orcid, params.owner_id),
+        (Sample.owner_orcid, canonical_person_id(session, params.owner_id)),
     ):
         if value is not None:
             query = query.where(filter_column == value)

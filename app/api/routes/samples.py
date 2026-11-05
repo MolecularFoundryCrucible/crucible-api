@@ -46,7 +46,7 @@ from app.utils.search_utils import (
 from app.utils.sql_utils import is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_parent_accepts_assignment, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public
 
 from app.utils.gcs_record_utils import write_record, sample_record
-from app.utils.user_utils import resolve_create_owner
+from app.utils.user_utils import canonical_person_id, resolve_create_owner
 from app.models.users import UserPublicRead
 from app.models.response_schemas import MessageResponse
 from app.services.resource_details import ResourceDetailOptions, load_sample_detail
@@ -366,7 +366,8 @@ def list_samples(
     }
     owner_id = params.owner_id or param_values["owner_orcid"]
     if owner_id is not None:
-        exact_filters["owner_orcid"] = owner_id
+        with Session(get_engine()) as session:
+            exact_filters["owner_orcid"] = canonical_person_id(session, owner_id)
     result_filters = params.normalized_result_filters(
         exclude={
             "anchor_mfid", "cursor", "offset", "limit", "sort", "direction",
@@ -617,7 +618,7 @@ def search_samples(
         if params.affiliation:
             query = query.where(resource_affiliation_filter(auth_res, Sample, params.affiliation))
         if params.owner_id is not None:
-            query = query.where(Sample.owner_orcid == params.owner_id)
+            query = query.where(Sample.owner_orcid == canonical_person_id(session, params.owner_id))
         query = query.order_by(
             trigram_rank(normalized_q, (Sample.sample_name,)).desc(),
             Sample.unique_id.desc(),

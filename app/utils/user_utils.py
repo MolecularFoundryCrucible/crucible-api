@@ -7,7 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from anyascii import anyascii
 from sqlmodel import select
-from app.auth.identity import default_orcid_issuer, ensure_identity
+from app.auth.identity import default_orcid_issuer, ensure_identity, find_identity
 from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import AccessGroup, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole, Role
@@ -190,12 +190,32 @@ def generate_unique_username(session, first_name: str, last_name: str) -> str:
     return candidate
 
 
+def user_by_id_or_orcid(session, value: str) -> Optional[User]:
+    """The person whose unique_id this is, or whose linked ORCID it is, so an ORCID keeps working
+    once it is no longer anyone's unique_id. Only the configured ORCID issuer counts, never a
+    look-alike subject from another provider."""
+    user = session.exec(select(User).where(User.unique_id == value)).one_or_none()
+    if user is not None or not is_orcid(value):
+        return user
+    identity = find_identity(session, default_orcid_issuer(), value)
+    return session.get(User, identity.user_id) if identity is not None else None
+
+
+def canonical_person_id(session, value: Optional[str]) -> Optional[str]:
+    """For filters: the unique_id for an ID or linked ORCID. Anything else is returned unchanged,
+    so it simply matches nothing."""
+    if value is None:
+        return None
+    user = user_by_id_or_orcid(session, value)
+    return user.unique_id if user is not None else value
+
+
 def resolve_user(session, orcid: Optional[str] = None, email: Optional[str] = None, username: Optional[str] = None) -> User:
-    """Resolve a user by ORCID, email, or username (priority: orcid > email > username).
+    """Resolve a user by ID or ORCID, email, or username (priority: orcid > email > username).
     Email matching is case-insensitive. Raises 400 if no identifier provided, 404 if not found.
     """
     if orcid:
-        user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
+        user = user_by_id_or_orcid(session, orcid)
     elif email:
         user = session.exec(select(User).where(func.lower(User.email) == email.lower())).one_or_none()
     elif username:
@@ -208,8 +228,8 @@ def resolve_user(session, orcid: Optional[str] = None, email: Optional[str] = No
 
 
 def resolve_user_by_identifier(session, identifier: str) -> User:
-    """Resolve a user from a single string that may be an ORCID, a service
-    account's MFID, a username, or an email — distinguished by format rather
+    """Resolve a user from a single string that may be a unique_id, a linked ORCID, a
+    username, or an email — distinguished by format rather
     than requiring the caller to name which field they mean.
 
     The four never collide: email always contains '@'; ORCID is a strict

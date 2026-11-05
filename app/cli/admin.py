@@ -16,6 +16,9 @@ class Refused(Exception):
     pass
 
 
+ROLES = (PlatformRole.NONE.value, PlatformRole.CONTRIBUTOR.value, PlatformRole.ADMIN.value)
+
+
 def register(groups: argparse._SubParsersAction) -> None:
     commands = groups.add_parser("admin", help="Manage platform administrators").add_subparsers(dest="command", required=True)
     create = commands.add_parser(
@@ -31,6 +34,14 @@ def register(groups: argparse._SubParsersAction) -> None:
     create.add_argument("--allow-additional", action="store_true", help="Create the administrator even if one already exists")
     create.add_argument("--no-input", action="store_true", help="Never prompt")
     create.set_defaults(handler=_run_create)
+    set_role = commands.add_parser(
+        "set-role",
+        help="Change a person's platform role",
+        description="For when no administrator can sign in to the Hub. Refuses to demote the last active human administrator.",
+    )
+    set_role.add_argument("user", help="unique_id, linked ORCID, username or email")
+    set_role.add_argument("role", choices=ROLES)
+    set_role.set_defaults(handler=_run_set_role)
 
 
 def _name(value: str) -> str:
@@ -169,3 +180,47 @@ def _run_create(args: argparse.Namespace) -> int:
     print(f"Created platform administrator {username}. The API key below signs in as this administrator; keep it secret.", file=sys.stderr)
     print(json.dumps({"unique_id": unique_id, "username": username, "api_key": api_key}))
     return 0
+
+
+def _set_role(user_ref: str, role: str) -> tuple[str, str]:
+    from app.api.dependencies import get_engine
+    from app.auth.events import AuthEventType, record_event
+    from app.models.core_models import User
+    from app.utils.auth_utils import forget_cached_keys
+    from app.utils.user_utils import person_by_reference
+
+    with Session(get_engine()) as session:
+        user = person_by_reference(session, user_ref)
+        if user is None:
+            raise Refused(f"No user matches {user_ref}")
+        if user.is_service_account:
+            raise Refused(f"{user.unique_id} is a service account; change its role through the service account routes")
+        previous = user.platform_role
+        if previous == role:
+            return user.username or user.unique_id, previous
+        if previous == PlatformRole.ADMIN.value:
+            active_admins = session.exec(
+                select(User.id).where(User.platform_role == PlatformRole.ADMIN.value, User.is_service_account == False, User.disabled_at == None).order_by(User.id).with_for_update()  # noqa: E711, E712
+            ).all()
+            if not [admin_id for admin_id in active_admins if admin_id != user.id]:
+                raise Refused("Cannot demote the last active human platform administrator; nothing changed")
+        user.platform_role = role
+        session.add(user)
+        record_event(session, AuthEventType.ROLE_CHANGED, user=user)
+        session.commit()
+        forget_cached_keys(session, user.id)
+        return user.username or user.unique_id, previous
+
+
+def _run_set_role(args: argparse.Namespace) -> int:
+    try:
+        name, previous = _set_role(args.user, args.role)
+    except Refused as error:
+        print(error, file=sys.stderr)
+        return 1
+    if previous == args.role:
+        print(f"{name} is already {args.role}; nothing changed", file=sys.stderr)
+    else:
+        print(f"Changed {name} from {previous} to {args.role}", file=sys.stderr)
+    return 0
+

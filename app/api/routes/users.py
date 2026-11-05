@@ -17,7 +17,7 @@ from app.models.core_models import (
     UserIdentity,
     AccessGroup, ApiToken, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
 )
-from app.utils.auth_utils import caller_row, forget_cached_keys, API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
+from app.utils.auth_utils import caller_row, forget_cached_keys, API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_human_admin_safeguard, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
 from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor,
 )
@@ -488,10 +488,11 @@ def _admin_user_for_key(user_ref, auth_res):
     require_platform_admin(auth_res)
     require_recent_authentication(auth_res)
     with Session(get_engine()) as session:
-        internal_user_id = session.exec(select(User.id).where(User.unique_id == user_id)).first()
-    if internal_user_id is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    return internal_user_id
+        user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        require_human_admin_safeguard(auth_res, user)
+        return user.id
 
 
 @router.post("/users/{user_ref}/apikey", response_model=ApiKeyRead, deprecated=True, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}, 409: {"description": "Hub sessions cannot read an existing key (`api_key_exists`)"}})
@@ -644,7 +645,6 @@ def update_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(author
 
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-
         update_data = user_update.model_dump(exclude_unset=True)
         assert_profile_fields_available(session, username=update_data.get("username"), email=update_data.get("email"), exclude_orcid=user_id)
         for key, value in update_data.items():
@@ -680,6 +680,7 @@ def update_user_platform_role(
             )
         if auth_res.is_user(user):
             raise HTTPException(status_code=403, detail="Callers cannot change their own platform role")
+        require_human_admin_safeguard(auth_res, user, makes_admin=body.platform_role == PlatformRole.ADMIN.value)
 
         if user.platform_role == PlatformRole.ADMIN.value and body.platform_role != "admin":
             # Lock every human admin row, not just the target, so two concurrent
@@ -701,7 +702,9 @@ def update_user_platform_role(
 
         user.platform_role = body.platform_role
         session.add(user)
+        record_event(session, AuthEventType.ROLE_CHANGED, user=user, actor=caller_row(session, auth_res))
         session.commit()
+        forget_cached_keys(session, user.id)
         session.refresh(user)
         key_status = _admin_key_status(session, auth_res, user)
         return _user_read(auth_res, user, key_status=key_status, with_capabilities=True)
@@ -714,10 +717,8 @@ def _account_to_switch(session: Session, user_ref: str, auth_res: Principal) -> 
     user = resolve_user_by_identifier(session, user_ref)
     if auth_res.is_user(user):
         raise HTTPException(status_code=403, detail="Callers cannot switch their own account off or on")
-    if user.platform_role == PlatformRole.ADMIN.value and not user.is_service_account:
-        if auth_res.credential != "hub":
-            raise HTTPException(status_code=403, detail="Changing a human administrator needs a Hub session, not an API key")
-        require_recent_authentication(auth_res)
+    require_human_admin_safeguard(auth_res, user)
+    require_recent_authentication(auth_res)
     return user
 
 

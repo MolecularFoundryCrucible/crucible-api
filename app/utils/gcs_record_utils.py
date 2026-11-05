@@ -58,7 +58,7 @@ def _build_audit(store, bucket: str, key: str, payload: dict, actor: str, operat
     }
 
 
-def dataset_record(ds, ri) -> dict:
+def dataset_record(ds, ri, public: bool) -> dict:
     return {
         "unique_id": ds.unique_id, "dataset_name": ds.dataset_name,
         "owner_orcid": ds.owner_orcid, "project_mfid": ds.project_mfid,
@@ -66,20 +66,20 @@ def dataset_record(ds, ri) -> dict:
         "data_type": ds.data_type, "data_format": ds.data_format,
         "session_name": ds.session_name,
         "timestamp": ds.timestamp, "size": ds.size,
-        "public": ri.public if ri else ds.public,
+        "public": public,
         "resource_type": "dataset",
         "creation_time": ri.creation_time if ri else None,
         "modification_time": ri.modification_time if ri else None,
     }
 
 
-def sample_record(samp, ri) -> dict:
+def sample_record(samp, ri, public: bool) -> dict:
     return {
         "unique_id": samp.unique_id, "sample_name": samp.sample_name,
         "sample_type": samp.sample_type, "owner_orcid": samp.owner_orcid,
         "project_mfid": samp.project_mfid, "description": samp.description,
         "timestamp": samp.timestamp,
-        "public": ri.public if ri else False,
+        "public": public,
         "resource_type": "sample",
         "creation_time": ri.creation_time if ri else None,
         "modification_time": ri.modification_time if ri else None,

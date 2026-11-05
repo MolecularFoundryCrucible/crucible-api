@@ -6,6 +6,14 @@ import hashlib
 def remove_file(filepath):
     os.remove(filepath)
 
+def refuse_public_change(data):
+    """For update models: whether a record is public changes only through its access routes, so a
+    request trying to change it here fails instead of quietly doing nothing."""
+    if isinstance(data, dict) and "public" in data:
+        raise ValueError("public cannot be changed here; use PUT or DELETE /resources/{mfid}/access/public, or upgrade nano-crucible")
+    return data
+
+
 def is_orcid(val):
     pattern= re.compile("[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$")
     if re.match(pattern, val):

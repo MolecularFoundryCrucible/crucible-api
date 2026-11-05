@@ -26,6 +26,6 @@ def test_source_folder_is_not_serialized_in_new_dataset_records():
         public=False,
     )
 
-    record = dataset_record(dataset, None)
+    record = dataset_record(dataset, None, False)
 
     assert "source_folder" not in record

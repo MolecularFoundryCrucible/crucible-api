@@ -940,8 +940,6 @@ def publish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authorize
         require_grant(session, auth_res, mfid, Role.VIEWER)
 
         set_public(session, mfid, True)
-        resource.public = True
-        session.add(resource)
         touch_resource_modification_time(session, mfid)
         session.commit()
 
@@ -960,8 +958,6 @@ def unpublish_resource(mfid: str, auth_res: Annotated[Principal, Depends(authori
         require_grant(session, auth_res, mfid, Role.VIEWER)
 
         set_public(session, mfid, False)
-        resource.public = False
-        session.add(resource)
         touch_resource_modification_time(session, mfid)
         session.commit()
     return {"detail": "Public access withdrawn"}

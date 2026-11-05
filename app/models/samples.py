@@ -2,6 +2,7 @@ from typing import List, Optional
 from pydantic import MISSING, ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
 
+from app.general_utils import refuse_public_change
 from app.general_utils import blank_to_none, is_valid_mfid
 from app.models.datasets import DatasetRead
 from app.models.fields import NonBlankStr
@@ -91,7 +92,12 @@ class SampleUpdate(SQLModel):
     sample_type: Optional[str] = None
     description: Optional[str] = None
     timestamp: Optional[str] = None
-    public: Optional[bool] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def public_is_not_editable(cls, data):
+        return refuse_public_change(data)
+
 
 class SampleRead(SQLModel):
     '''Response model for Sample. Includes server-generated fields.'''

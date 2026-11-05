@@ -36,7 +36,7 @@ from app.utils.instrument_utils import dataset_instrument_fields, resolve_instru
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import Permission, Principal, Role, effective_role
 from app.utils.project_utils import resolve_project_mfids_to_references
-from app.utils.sql_utils import get_active_deletion_request
+from app.utils.sql_utils import is_public, get_active_deletion_request
 
 
 @dataclass(frozen=True)
@@ -156,7 +156,7 @@ def load_dataset_detail(
         **dataset_instrument_fields(dataset, instrument_reference),
         "project_id": project_reference.project_id if project_reference else None,
         "project": project_reference,
-        "public": resource.public if resource else dataset.public,
+        "public": is_public(session, dataset.unique_id),
         "creation_time": resource.creation_time if resource else None,
         "modification_time": resource.modification_time if resource else None,
         "scientific_metadata": _metadata(session, resource_id, options.include_metadata),
@@ -234,7 +234,7 @@ def load_sample_detail(
         **sample.model_dump(),
         "project_id": project_references[sample.project_mfid].project_id if sample.project_mfid in project_references else None,
         "project": project_references.get(sample.project_mfid),
-        "public": resource.public if resource else False,
+        "public": is_public(session, sample.unique_id),
         "datasets": [
             DatasetRead.model_validate({
                 **dataset.model_dump(),

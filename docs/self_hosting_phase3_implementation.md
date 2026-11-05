@@ -465,6 +465,8 @@ A gate, not code.
 
 ## Task 15: Compose default and release
 
+Production settings for the provider list (PR #418): the Foundry's deployments wire each setting into the container by key, so `CRUCIBLE_AUTH_PROVIDERS` and `OIDC_ORCID_CLIENT_SECRET_VERSION` must be added to `foundry/main/deployment.yaml` as well as its ConfigMap, or the new image's settings check fails. Remove `HUB_AUTH_ORCID_*` only after the new image is verified.
+
 **Files:**
 - Modify: `deploy/compose/compose.yaml`, `deploy/compose/.env.example`, `deploy/compose/README.md`, `deploy/compose/Caddyfile`, `docs/self_hosting_design.md` (Sign-in section points to the plan), `CHANGELOG.md`, version file
 

@@ -27,6 +27,7 @@ class HubTokenPair:
     access_expires_at: datetime
     refresh_expires_at: datetime
     user_unique_id: str
+    auth_time: datetime | None = None
 
 
 def _now(value: datetime | None) -> datetime:
@@ -96,6 +97,7 @@ def issue_hub_tokens_in_session(session: Session, user_unique_id: str, client_id
         access_expires_at=access_expires_at,
         refresh_expires_at=family.expires_at,
         user_unique_id=user_unique_id,
+        auth_time=auth_time,
     )
 
 
@@ -151,6 +153,7 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
                     access_expires_at=access_expires_at,
                     refresh_expires_at=_aware(family.expires_at),
                     user_unique_id=family.user_unique_id,
+                    auth_time=_aware(family.auth_time) if family.auth_time else None,
                 )
     if replayed or result is None:
         raise InvalidHubGrant

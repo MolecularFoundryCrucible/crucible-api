@@ -274,7 +274,7 @@ def test_hub_and_legacy_credentials_both_authorize(use_engine, engine, monkeypat
 
 
 def test_login_handoff_is_bound_and_single_use(engine):
-    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", ORCID_PROVIDER)
+    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3")
     verifier = "v" * 43
     import base64
     import hashlib
@@ -285,7 +285,7 @@ def test_login_handoff_is_bound_and_single_use(engine):
     transaction = consume_login(engine, state, browser_secret, now=NOW)
     with pytest.raises(InvalidHubLogin):
         consume_login(engine, state, browser_secret, now=NOW)
-    code, redirect = create_handoff_code(engine, transaction, "0000-0000-0000-0001", "Test", "Human", now=NOW)
+    code, redirect = create_handoff_code(engine, transaction, ORCID_PROVIDER, "0000-0000-0000-0001", "Test", "Human", now=NOW)
     assert "state=hub-state-123456789" in redirect
     with pytest.raises(InvalidHubGrant):
         exchange_handoff_code(engine, code, "w" * 43, "crucible-hub", config.callback_uri, now=NOW)
@@ -298,14 +298,14 @@ def test_login_handoff_is_bound_and_single_use(engine):
 
 
 def test_login_expiry(engine):
-    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", ORCID_PROVIDER)
+    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3")
     state, browser_secret, _ = create_login(engine, config, "crucible-hub", config.callback_uri, "hub-state-123456789", "a" * 43, now=NOW)
     with pytest.raises(InvalidHubLogin):
         consume_login(engine, state, browser_secret, now=NOW + timedelta(minutes=10))
 
     second_state, second_browser_secret, _ = create_login(engine, config, "crucible-hub", config.callback_uri, "hub-state-123456789", "a" * 43, now=NOW)
     transaction = consume_login(engine, second_state, second_browser_secret, now=NOW)
-    code, _ = create_handoff_code(engine, transaction, "0000-0000-0000-0001", None, None, now=NOW)
+    code, _ = create_handoff_code(engine, transaction, ORCID_PROVIDER, "0000-0000-0000-0001", None, None, now=NOW)
     with pytest.raises(InvalidHubGrant):
         exchange_handoff_code(engine, code, "a" * 43, "crucible-hub", config.callback_uri, now=NOW + timedelta(minutes=1))
 
@@ -319,13 +319,17 @@ def test_browser_login_and_code_exchange_routes(engine, monkeypatch, orcid_provi
     monkeypatch.setattr(routes, "get_api_root_path", lambda: "")
     orcid_provider_settings()
 
-    async def authorization_url(provider, callback_uri, state, nonce, max_age=None):
+    async def authorization_url(provider, callback_uri, state, nonce, max_age=None, code_verifier=None):
         return f"https://orcid.org/oauth/authorize?state={state}"
 
-    async def verified_identity(provider, callback_uri, code, nonce):
+    async def verified_identity(provider, callback_uri, code, nonce, code_verifier=None):
         return VerifiedIdentity("0000-0000-0000-0001", "Test", "Human", None)
 
+    async def new_code_verifier(provider):
+        return None
+
     monkeypatch.setattr(routes, "authorization_url", authorization_url)
+    monkeypatch.setattr(routes, "new_code_verifier", new_code_verifier)
     monkeypatch.setattr(routes, "verified_identity", verified_identity)
     app = FastAPI()
     app.include_router(hub_auth_router)
@@ -414,24 +418,31 @@ def test_hub_sign_in_runs_through_the_listed_provider(hub_routes):
     assert finished.headers["location"].startswith("https://crucible.lbl.gov/hub/auth/callback?code=")
 
 
+def hub_error_of(response):
+    from urllib.parse import parse_qs, urlparse
+
+    assert response.status_code == 302
+    return parse_qs(urlparse(response.headers["location"]).query)["error"][0]
+
+
 def test_hub_callback_refuses_a_token_for_the_wrong_nonce(hub_routes):
     client, fake = hub_routes
     state = start_hub_login(client, fake)
     fake.claims = {"nonce": "another"}
-    assert client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state}, follow_redirects=False).status_code == 400
+    assert hub_error_of(client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state}, follow_redirects=False)) == "server_error"
 
 
-def test_hub_callback_is_400_when_the_provider_is_down(hub_routes):
+def test_hub_callback_tells_the_hub_when_the_provider_is_down(hub_routes):
     client, fake = hub_routes
     state = start_hub_login(client, fake)
     fake.down = True
-    assert client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state}, follow_redirects=False).status_code == 400
+    assert hub_error_of(client.get("/auth/hub/callback", params={"code": "orcid-code", "state": state}, follow_redirects=False)) == "temporarily_unavailable"
 
 
-def test_hub_login_is_503_when_discovery_fails(hub_routes):
+def test_hub_login_tells_the_hub_when_discovery_fails(hub_routes):
     client, fake = hub_routes
     fake.down = True
-    assert client.get("/auth/hub/login", params=HUB_LOGIN, follow_redirects=False).status_code == 503
+    assert hub_error_of(client.get("/auth/hub/login", params=HUB_LOGIN, follow_redirects=False)) == "temporarily_unavailable"
 
 
 def test_hub_login_is_503_without_a_provider_list(hub_routes, monkeypatch):
@@ -448,13 +459,13 @@ def test_auth_time_flows_from_handoff_code_to_hub_principal(use_engine, engine, 
     import hashlib
     use_engine(engine)
     monkeypatch.setattr(auth_utils, "_PUBLIC_GROUP_ID", None)
-    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3", ORCID_PROVIDER)
+    config = HubLoginConfig("crucible-hub", "https://crucible.lbl.gov/hub/auth/callback", "https://crucible.lbl.gov/api/v3")
     verifier = "v" * 43
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     signed_in = datetime.now(timezone.utc) - timedelta(seconds=20)
     state, browser_secret, _ = create_login(engine, config, "crucible-hub", config.callback_uri, "hub-state-123456789", challenge)
     transaction = consume_login(engine, state, browser_secret)
-    code, _ = create_handoff_code(engine, transaction, "0000-0000-0000-0001", None, None, auth_time=signed_in)
+    code, _ = create_handoff_code(engine, transaction, ORCID_PROVIDER, "0000-0000-0000-0001", None, None, auth_time=signed_in)
     pair = exchange_handoff_code(engine, code, verifier, "crucible-hub", config.callback_uri)
     with Session(engine) as session:
         assert session.exec(select(HubTokenFamily)).one().auth_time.replace(tzinfo=timezone.utc) == signed_in

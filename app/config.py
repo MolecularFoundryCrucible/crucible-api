@@ -275,6 +275,8 @@ class AuthSettings(SettingsGroup):
             raise ValueError("lists the same key twice")
         if sum(provider.is_orcid for provider in value) > 1:
             raise ValueError("lists more than one ORCID provider")
+        if sum(provider.legacy_callback for provider in value) > 1:
+            raise ValueError("lists more than one provider with legacy_callback")
         return value
 
     @property
@@ -284,6 +286,9 @@ class AuthSettings(SettingsGroup):
     @property
     def hub_callback_provider(self) -> OidcProvider | None:
         return next((provider for provider in self.providers if provider.legacy_callback), None)
+
+    def provider(self, key: str) -> OidcProvider | None:
+        return next((provider for provider in self.providers if provider.key == key), None)
 
     def problems(self, settings: "Settings") -> list[str]:
         found = []
@@ -307,7 +312,7 @@ class HubSettings(SettingsGroup):
         if not self.enabled:
             return []
         found = self.missing("client_secret", "callback_uri")
-        if settings.auth.hub_callback_provider is None:
+        if not settings.auth.providers:
             found.append("CRUCIBLE_AUTH_PROVIDERS")
         return found
 

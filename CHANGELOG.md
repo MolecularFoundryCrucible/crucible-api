@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Hub sign-in supports several OIDC providers, each with its own callback, a Hub-styled choice page, `GET /auth/methods`, and PKCE when advertised; providers other than ORCID sign in only people already linked.
+- `GET /auth/hub/login` accepts `provider` and `required_user`, and `POST /auth/hub/token` and `POST /auth/hub/refresh` return `auth_time`.
 - `user_identity` table and backfill script (`migrations/data/20261103_backfill_user_identity.py`), recording how each person signs in; sign-in still looks people up as before.
 
 ### Fixed
@@ -22,7 +24,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - Hub sign-in requires an explicit `CRUCIBLE_AUTH_PROVIDERS` list and `OIDC_{KEY}_CLIENT_SECRET`, replacing `HUB_AUTH_ORCID_CLIENT_ID`, `HUB_AUTH_ORCID_ISSUER` and `HUB_AUTH_ORCID_CLIENT_SECRET`; set them before upgrading.
-- Hub sign-in reads ORCID's addresses from its discovery document, and `GET /auth/hub/login` returns 503 when that document cannot be read.
+- Hub sign-in reads ORCID's addresses from its discovery document.
+- Hub sign-in failures after a valid request redirect to the Hub with `state` and a standard OAuth `error`, instead of a 400 or 503 page.
 - `settings check` warns when the ORCID provider's issuer and `ORCID_ISSUER` differ.
 
 ### Security

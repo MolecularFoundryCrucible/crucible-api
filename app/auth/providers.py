@@ -1,9 +1,11 @@
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import httpx
 from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.starlette_client import OAuth, StarletteOAuth2App
+from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from cachetools import TTLCache
 from joserfc.errors import JoseError
 
@@ -123,16 +125,25 @@ async def orcid_browser_client() -> StarletteOAuth2App:
     return await _with_discovery(ORCID_BROWSER, orcid_browser_app(), _orcid_issuer())
 
 
-async def authorization_url(provider: OidcProvider, callback_uri: str, state: str, nonce: str, max_age: int | None = None) -> str:
+async def new_code_verifier(provider: OidcProvider) -> str | None:
+    """A PKCE verifier when the provider advertises S256, which ORCID's discovery document does not."""
     client = await _with_discovery(provider.key, _provider_app(provider), provider.issuer)
-    reauthentication = {} if max_age is None else {"max_age": str(max_age), **({"prompt": "login"} if max_age == 0 else {})}
-    created = await client.create_authorization_url(callback_uri, state=state, nonce=nonce, **reauthentication)
+    advertised = client.server_metadata.get("code_challenge_methods_supported")
+    return secrets.token_urlsafe(64) if isinstance(advertised, list) and "S256" in advertised else None
+
+
+async def authorization_url(provider: OidcProvider, callback_uri: str, state: str, nonce: str, max_age: int | None = None, code_verifier: str | None = None) -> str:
+    client = await _with_discovery(provider.key, _provider_app(provider), provider.issuer)
+    extra = {} if max_age is None else {"max_age": str(max_age), **({"prompt": "login"} if max_age == 0 else {})}
+    if code_verifier is not None:
+        extra |= {"code_challenge": create_s256_code_challenge(code_verifier), "code_challenge_method": "S256"}
+    created = await client.create_authorization_url(callback_uri, state=state, nonce=nonce, **extra)
     return created["url"]
 
 
-async def verified_identity(provider: OidcProvider, callback_uri: str, code: str, nonce: str) -> VerifiedIdentity:
+async def verified_identity(provider: OidcProvider, callback_uri: str, code: str, nonce: str, code_verifier: str | None = None) -> VerifiedIdentity:
     client = await _with_discovery(provider.key, _provider_app(provider), provider.issuer)
-    token = await client.fetch_access_token(redirect_uri=callback_uri, code=code)
+    token = await client.fetch_access_token(redirect_uri=callback_uri, code=code, **({} if code_verifier is None else {"code_verifier": code_verifier}))
     if "id_token" not in token:
         raise ValueError("token response has no ID token")
     claims = await client.parse_id_token(token, nonce, claims_options=id_token_claims(provider.issuer, provider.client_id), leeway=ID_TOKEN_LEEWAY)

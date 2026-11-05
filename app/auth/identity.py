@@ -4,7 +4,7 @@ from typing import TypeVar
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.config import get_settings
+from app.config import ORCID_ISSUERS, get_settings
 from app.models.core_models import User, UserIdentity
 
 T = TypeVar("T")
@@ -31,6 +31,11 @@ def default_orcid_issuer() -> str:
 
 def find_identity(session: Session, issuer: str, subject: str) -> UserIdentity | None:
     return session.exec(select(UserIdentity).where(UserIdentity.issuer == issuer, UserIdentity.subject == subject)).one_or_none()
+
+
+def orcid_of(session: Session, user: User) -> str | None:
+    """The person's linked ORCID. Never read from `unique_id`, which may look like one."""
+    return session.exec(select(UserIdentity.subject).where(UserIdentity.user_id == user.id, UserIdentity.issuer.in_(ORCID_ISSUERS))).one_or_none()
 
 
 def ensure_identity(session: Session, user: User, issuer: str, subject: str, *, label: str | None = None, created_by: User | None = None) -> UserIdentity:

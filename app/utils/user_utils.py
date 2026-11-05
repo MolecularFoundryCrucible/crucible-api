@@ -135,15 +135,19 @@ def commit_user(session) -> None:
 
 
 def provision_user(session, *, unique_id: str, first_name: str, last_name: str, email: Optional[str], username: Optional[str],
-                   project_groups: Sequence[AccessGroup] = (), platform_role: Optional[PlatformRole] = None) -> User:
-    """Add a person with their identity group (as owner) and contributor membership of the given
-    project groups. The caller checks availability and commits."""
+                   project_groups: Sequence[AccessGroup] = (), platform_role: Optional[PlatformRole] = None, orcid_issuer: Optional[str] = None) -> User:
+    """Add a person, always with a username, with their identity group (as owner) and contributor
+    membership of the given project groups. The caller checks availability and commits. Every path
+    that creates a person comes through here."""
+    username = username or generate_unique_username(session, first_name, last_name)
     user = User(unique_id=unique_id, first_name=first_name, last_name=last_name, email=email, username=username, is_service_account=False)
     if platform_role is not None:
         user.platform_role = platform_role.value
     session.add(user)
-    identity_group = AccessGroup(group_name=unique_id, group_type=AccessGroupType.IDENTITY.value)
-    session.add(identity_group)
+    identity_group = session.exec(select(AccessGroup).where(AccessGroup.group_name == unique_id, AccessGroup.group_type == AccessGroupType.IDENTITY.value)).one_or_none()
+    if identity_group is None:
+        identity_group = AccessGroup(group_name=unique_id, group_type=AccessGroupType.IDENTITY.value)
+        session.add(identity_group)
     session.flush()
     session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=identity_group.id, role=Role.OWNER.db_value))
     session.add_all([
@@ -151,7 +155,7 @@ def provision_user(session, *, unique_id: str, first_name: str, last_name: str, 
         for group in project_groups
     ])
     if is_orcid(unique_id):
-        ensure_identity(session, user, default_orcid_issuer(), unique_id)
+        ensure_identity(session, user, orcid_issuer or default_orcid_issuer(), unique_id)
     return user
 
 

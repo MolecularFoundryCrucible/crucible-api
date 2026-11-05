@@ -16,8 +16,7 @@ from app.models.core_models import User
 from app.models.response_schemas import ApiKeyRead, AuthMethodRead, LegacyApiKeyRead
 from app.utils.permissions import AccessGroupType, Role
 from app.utils.auth_utils import decode_token, find_or_add_api_access
-from app.utils.sql_utils import add_or_update
-from app.utils.user_utils import sql_add_user_to_access_group
+from app.utils.user_utils import provision_user, sql_add_user_to_access_group
 
 # Note: /account/* routes live in account.py
 
@@ -77,22 +76,17 @@ async def redirect_exchange(request: Request, code: str | None = None, state: st
 
 def _record_signed_in_user(orcid: str, user_info: dict) -> tuple[str | None, str, str]:
     with Session(get_engine()) as session:
-        key_map = {'orcid': 'unique_id', 'given_name': 'first_name', 'family_name': 'last_name'}
-        user_updates = {key_map[k]: user_info[k] for k in key_map if user_info.get(k) is not None}
-
-        existing_user = session.exec(select(User).where(User.unique_id == orcid)).first()
-        if existing_user:
-            user_updates = {k: v for k, v in user_updates.items() if not getattr(existing_user, k, None)}
+        issuer = get_settings().api.orcid_issuer
+        given_name, family_name = user_info.get('given_name'), user_info.get('family_name')
+        user = session.exec(select(User).where(User.unique_id == orcid)).first()
+        if user is None:
+            user = provision_user(session, unique_id=orcid, first_name=given_name or '', last_name=family_name or '', email=None, username=None, orcid_issuer=issuer)
         else:
-            user_updates.setdefault('first_name', '')
-            user_updates.setdefault('last_name', '')
-
-        user = add_or_update(
-            session,
-            User,
-            User.unique_id == orcid,
-            **user_updates
-        )
+            if not user.first_name and given_name:
+                user.first_name = given_name
+            if not user.last_name and family_name:
+                user.last_name = family_name
+            session.add(user)
 
         sql_add_user_to_access_group(
             orcid,
@@ -101,7 +95,7 @@ def _record_signed_in_user(orcid: str, user_info: dict) -> tuple[str | None, str
             role=Role.OWNER,
             group_type=AccessGroupType.IDENTITY,
         )
-        ensure_identity(session, user, get_settings().api.orcid_issuer, orcid)
+        ensure_identity(session, user, issuer, orcid)
         session.commit()
         return user.email, user.first_name, user.last_name
 

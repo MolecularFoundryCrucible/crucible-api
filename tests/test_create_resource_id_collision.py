@@ -11,7 +11,7 @@ in one query.
 """
 from sqlmodel import Session, select
 
-from app.models.core_models import AccessGroup, Dataset, Resource, Sample, User
+from app.models.core_models import AccessGroup, Dataset, Resource, Sample, User, UserAccessGroupLink
 from app.utils.permissions import AccessGroupType, PlatformRole
 
 
@@ -19,16 +19,12 @@ def test_dataset_same_type_collision_is_409(client, db_engine, auth_as):
     with Session(db_engine) as session:
         session.add(Dataset(unique_id="00000000000000000000000001", dataset_name="existing", owner_orcid="0000-0001"))
         session.add(Resource(mfid="00000000000000000000000001", resource_type="dataset"))
-        session.add(AccessGroup(
-            group_name="0000-0001",
-            group_type=AccessGroupType.IDENTITY.value,
-        ))
-        session.add(User(
-            first_name="Collision",
-            last_name="Owner",
-            email="collision-owner@example.org",
-            unique_id="0000-0001",
-        ))
+        group = AccessGroup(group_name="0000-0001", group_type=AccessGroupType.IDENTITY.value)
+        user = User(first_name="Collision", last_name="Owner", email="collision-owner@example.org", unique_id="0000-0001")
+        session.add(group)
+        session.add(user)
+        session.flush()
+        session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=group.id, role="owner"))
         session.commit()
 
     auth_as("0000-0001", platform_role=PlatformRole.ADMIN)

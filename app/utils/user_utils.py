@@ -158,6 +158,28 @@ def provision_user(session, *, unique_id: str, first_name: str, last_name: str, 
     return user
 
 
+def identity_group_of(session, user_id: int) -> Optional[AccessGroup]:
+    """A person's own access group, found through their owner membership rather than its name,
+    so renaming the group never loses it."""
+    from app.models.core_models import UserAccessGroupLink
+
+    return session.exec(
+        select(AccessGroup)
+        .join(UserAccessGroupLink, UserAccessGroupLink.accessgroup_id == AccessGroup.id)
+        .where(UserAccessGroupLink.user_id == user_id, UserAccessGroupLink.role == Role.OWNER.db_value, AccessGroup.group_type == AccessGroupType.IDENTITY.value)
+    ).first()
+
+
+def identity_group_owner(session, group_id: int) -> Optional[User]:
+    from app.models.core_models import UserAccessGroupLink
+
+    return session.exec(
+        select(User)
+        .join(UserAccessGroupLink, UserAccessGroupLink.user_id == User.id)
+        .where(UserAccessGroupLink.accessgroup_id == group_id, UserAccessGroupLink.role == Role.OWNER.db_value)
+    ).first()
+
+
 def is_username_available(session, username: str) -> bool:
     """Boolean form of assert_username_available, for generate-and-retry
     loops rather than request validation."""

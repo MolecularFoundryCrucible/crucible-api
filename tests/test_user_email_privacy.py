@@ -1,5 +1,5 @@
 from fastapi import Request, Response
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.api.main import app
 from app.api.routes.users import list_users, read_user
@@ -10,6 +10,11 @@ from app.utils.permissions import PlatformRole, Principal
 
 
 USER_ID = "0000-0001-2345-6789"
+
+
+def _internal_user_id(db_engine):
+    with Session(db_engine) as session:
+        return session.exec(select(User.id).where(User.unique_id == USER_ID)).one()
 
 
 def _seed_user(db_engine):
@@ -75,7 +80,7 @@ def test_exact_collection_returns_private_self_and_public_other(db_engine):
     _seed_user(db_engine)
 
     self_result = list_users(
-        auth_res=Principal(user_id=USER_ID),
+        auth_res=Principal(user_id=USER_ID, internal_user_id=_internal_user_id(db_engine)),
         request=_request(b"username=alice_researcher"),
         response=Response(),
         params=_params(username=["alice_researcher"]),

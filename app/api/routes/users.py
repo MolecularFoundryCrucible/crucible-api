@@ -17,7 +17,7 @@ from app.models.core_models import (
     UserIdentity,
     AccessGroup, ApiToken, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
 )
-from app.utils.auth_utils import forget_cached_keys, API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
+from app.utils.auth_utils import caller_row, forget_cached_keys, API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
 from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor,
 )
@@ -87,7 +87,7 @@ def _key_status(token: Optional[ApiToken]) -> Optional[ServiceAccountKeyStatus]:
 
 def _user_capabilities(caller: Principal, user: User) -> UserCapabilities:
     caller_is_admin = caller.is_platform_admin
-    is_self = caller.user_id == user.unique_id
+    is_self = caller.is_user(user)
     return UserCapabilities(
         can_view_private=is_self or caller_is_admin,
         can_edit_profile=is_self or caller_is_admin,
@@ -319,7 +319,7 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
                     key_status_by_user[token.user_unique_id] = _key_status(token)
         items = [
             _user_read(auth_res, user, key_status=key_status_by_user.get(user.unique_id), with_capabilities=True)
-            if is_admin or user.unique_id == auth_res.user_id
+            if is_admin or auth_res.is_user(user)
             else _user_public_read(auth_res, user, with_capabilities=True)
             for user in rows
         ]
@@ -439,7 +439,7 @@ def get_user_by_username(username: str, response: Response,
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
         response.headers["Content-Location"] = f"/users/{user.unique_id}"
-        if auth_res.user_id == user.unique_id or auth_res.is_platform_admin:
+        if auth_res.is_user(user) or auth_res.is_platform_admin:
             key_status = _admin_key_status(session, auth_res, user)
             return _user_read(auth_res, user, key_status=key_status, with_capabilities=True)
         return _user_public_read(auth_res, user, with_capabilities=True)
@@ -466,7 +466,7 @@ def read_user(user_ref: UserRef, response: Response,
         is_admin = auth_res.is_platform_admin
         if user_ref != user.unique_id:
             response.headers["Content-Location"] = f"/users/{user.unique_id}"
-        if auth_res.user_id == user.unique_id or is_admin:
+        if auth_res.is_user(user) or is_admin:
             key_status = _admin_key_status(session, auth_res, user)
             return _user_read(auth_res, user, key_status=key_status, with_capabilities=True)
         return _user_public_read(auth_res, user, with_capabilities=True)
@@ -637,9 +637,9 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
 def update_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)], user_update: UserUpdate):
     '''Partially update a user record. Only fields provided in the request body are modified.'''
     user_id = _canonical_user_id(user_ref)
-    require_self_or_platform_admin(auth_res, user_id)
     with Session(get_engine()) as session:
         user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
+        require_self_or_platform_admin(auth_res, user)
 
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
@@ -677,7 +677,7 @@ def update_user_platform_role(
                 detail=(f"{user.unique_id} is a service account. "
                         f"Use PATCH /service_accounts/{user.unique_id} instead."),
             )
-        if user.unique_id == auth_res.user_id:
+        if auth_res.is_user(user):
             raise HTTPException(status_code=403, detail="Callers cannot change their own platform role")
 
         if user.platform_role == PlatformRole.ADMIN.value and body.platform_role != "admin":
@@ -711,7 +711,7 @@ def _account_to_switch(session: Session, user_ref: str, auth_res: Principal) -> 
     if auth_res.is_service_account:
         raise HTTPException(status_code=403, detail="Service accounts cannot switch accounts off or on")
     user = resolve_user_by_identifier(session, user_ref)
-    if user.unique_id == auth_res.user_id:
+    if auth_res.is_user(user):
         raise HTTPException(status_code=403, detail="Callers cannot switch their own account off or on")
     if user.platform_role == PlatformRole.ADMIN.value and not user.is_service_account:
         if auth_res.credential != "hub":
@@ -737,7 +737,7 @@ def disable_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(autho
             user.disabled_at = datetime.now(timezone.utc)
             session.add(user)
             revoke_all_hub_tokens(session, user.unique_id)
-            record_event(session, AuthEventType.DISABLED, user=user, actor=session.exec(select(User).where(User.unique_id == auth_res.user_id)).one_or_none())
+            record_event(session, AuthEventType.DISABLED, user=user, actor=caller_row(session, auth_res))
             session.commit()
             forget_cached_keys(session, user.unique_id)
         session.refresh(user)
@@ -752,7 +752,7 @@ def enable_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(author
         if user.disabled_at is not None:
             user.disabled_at = None
             session.add(user)
-            record_event(session, AuthEventType.ENABLED, user=user, actor=session.exec(select(User).where(User.unique_id == auth_res.user_id)).one_or_none())
+            record_event(session, AuthEventType.ENABLED, user=user, actor=caller_row(session, auth_res))
             session.commit()
         session.refresh(user)
         return _user_read(auth_res, user, key_status=_admin_key_status(session, auth_res, user), with_capabilities=True)
@@ -878,9 +878,9 @@ def add_user_to_access_group(auth_res: Annotated[Principal, Depends(authorize_us
 @router.get("/users/{user_ref}/access_groups", response_model=List[str])
 def list_user_access_groups(auth_res: Annotated[Principal, Depends(authorize_user)], user_ref: UserRef):
     user_id = _canonical_user_id(user_ref)
-    require_self_or_platform_admin(auth_res, user_id)
     with Session(get_engine()) as session:
         user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
+        require_self_or_platform_admin(auth_res, user)
 
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
@@ -956,10 +956,10 @@ def read_projects_for_user(
     '''
     user_id = _canonical_user_id(user_ref)
     with Session(get_engine()) as session:
-        if auth_res.user_id != user_id and not has_global_permission(auth_res, Permission.READ):
+        user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
+        if not auth_res.is_user(user) and not has_global_permission(auth_res, Permission.READ):
             raise HTTPException(status_code=403, detail="Not authorized")
 
-        user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 

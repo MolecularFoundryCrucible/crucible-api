@@ -107,6 +107,12 @@ class Principal:
     groups: tuple[GroupMembership, ...] = ()
     credential: str = "api_key"
     authenticated_at: Optional[datetime] = None
+    internal_user_id: Optional[int] = None
+
+    def is_user(self, user) -> bool:
+        """Whether `user`, a User row, is the caller. Compares the internal key, which never
+        changes, rather than unique_id."""
+        return self.internal_user_id is not None and user is not None and user.id == self.internal_user_id
 
     @property
     def is_platform_admin(self) -> bool:

@@ -153,10 +153,11 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_mfid=Non
     from sqlmodel import select
 
     if owner_id:
-        owner_ag = session.exec(select(AccessGroup).where(
-            AccessGroup.group_name == owner_id,
-            AccessGroup.group_type == AccessGroupType.IDENTITY.value,
-        )).one_or_none()
+        from app.models.core_models import User
+        from app.utils.user_utils import identity_group_of
+
+        owner = session.exec(select(User).where(User.unique_id == owner_id)).one_or_none()
+        owner_ag = identity_group_of(session, owner.id) if owner is not None else None
         if owner_ag is None:
             raise HTTPException(
                 status_code=409,

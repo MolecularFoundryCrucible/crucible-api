@@ -26,7 +26,7 @@ from app.models.users import (
     AccountProfileUpdate,
     UserRead,
 )
-from app.utils.auth_utils import API_KEY_READ_DEPRECATION, authorize_user, find_or_add_api_access, security, permission_filter, reject_hub_api_key_read, require_recent_authentication
+from app.utils.auth_utils import caller_row, API_KEY_READ_DEPRECATION, authorize_user, find_or_add_api_access, security, permission_filter, reject_hub_api_key_read, require_recent_authentication
 from app.utils.permissions import (
     Permission,
     PlatformRole,
@@ -126,13 +126,13 @@ def sync_account_projects(auth_res: Annotated[Principal, Depends(authorize_user)
     """Add project memberships discovered from the MF proposal database."""
     require_feature("proposal_sync")
     with Session(get_engine()) as session:
-        orcid = linked_orcid(session, session.exec(select(User).where(User.unique_id == auth_res.user_id)).one())
+        orcid = linked_orcid(session, caller_row(session, auth_res))
     try:
         proposal_ids = lookup_proposals(orcid) if orcid else []
     except ProposalServiceUnavailable:
         raise HTTPException(status_code=502, detail="The proposal service could not be reached; try again.") from None
     with Session(get_engine()) as session:
-        result = assign_discovered_projects(session, session.exec(select(User).where(User.unique_id == auth_res.user_id)).one(), proposal_ids)
+        result = assign_discovered_projects(session, caller_row(session, auth_res), proposal_ids)
         session.commit()
     return ProjectSyncResult(orcid=orcid, **result)
 
@@ -243,10 +243,10 @@ def _preferences_read(row: Optional[UserPreferences], response: Response) -> Pre
 
 
 def _caller_id(session: Session, principal: Principal) -> int:
-    user_id = session.exec(select(User.id).where(User.unique_id == principal.user_id)).one_or_none()
-    if user_id is None:
+    user = caller_row(session, principal)
+    if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    return user_id
+    return user.id
 
 
 @router.get("/account/preferences", response_model=PreferencesRead, responses={200: {"headers": {"ETag": {"description": "Current preferences revision; send it as `If-Match` on PATCH", "schema": {"type": "string"}}}}})

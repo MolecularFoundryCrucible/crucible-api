@@ -59,7 +59,7 @@ from app.utils.sql_utils import add_or_update, set_public, sql_create_resource_a
 from app.utils.gcs_record_utils import dataset_record, sample_record, write_metadata, write_record
 from app.utils.link_utils import fetch_readable_links
 from app.utils.project_utils import resolve_project_identifiers, resolve_project_reference
-from app.utils.user_utils import close_pending_join_requests, resolve_user_by_identifier
+from app.utils.user_utils import identity_group_of, identity_group_owner, close_pending_join_requests, resolve_user_by_identifier
 from app.utils.cursor_utils import (
     CursorError,
     filter_fingerprint,
@@ -1053,16 +1053,13 @@ def _transfer_resource_owner_acl(session, resource: Resource, mfid: str, new_own
     ).all()
     for acl in old_owner_acls:
         old_ag = session.exec(select(AccessGroup).where(AccessGroup.id == acl.accessgroup_id)).one()
-        prev_user = session.exec(select(User).where(User.unique_id == old_ag.group_name)).one_or_none()
+        prev_user = identity_group_owner(session, old_ag.id)
         if prev_user is not None:
             previous_owner = prev_user
         session.delete(acl)
     session.flush()
 
-    new_ag = session.exec(select(AccessGroup).where(
-        AccessGroup.group_name == new_owner.unique_id,
-        AccessGroup.group_type == AccessGroupType.IDENTITY.value,
-    )).one_or_none()
+    new_ag = identity_group_of(session, new_owner.id)
     if new_ag is None:
         raise HTTPException(status_code=409,
                             detail=f"New owner '{new_owner.unique_id}' has no personal access group")

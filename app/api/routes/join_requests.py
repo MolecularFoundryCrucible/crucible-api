@@ -22,7 +22,7 @@ from app.models.pagination import PaginatedResponse
 from app.models.projects import ProjectReferenceRead
 from app.models.query_params import SortDirection
 from app.models.users import UserPublicRead
-from app.utils.auth_utils import authorize_user, permission_filter, require_grant
+from app.utils.auth_utils import caller_row, authorize_user, permission_filter, require_grant
 from app.utils.cursor_utils import CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor
 from app.utils.permissions import AccessGroupType, Permission, Principal, Role
 from app.utils.project_utils import is_project_member, resolve_project_reference, sql_add_user_to_project
@@ -306,7 +306,7 @@ def create_join_request(session, principal: Principal, project_ref: str, reason:
         raise _error(409, "project_not_accepting_requests", f"Project '{project.project_id}' has no membership group")
     if session.exec(select(DeletionRequest.id).where(DeletionRequest.resource_id == project.unique_id, DeletionRequest.status.in_(["pending", "approved"]))).first():
         raise _error(409, "project_not_accepting_requests", f"Project '{project.project_id}' is pending deletion")
-    user = session.exec(select(User).where(User.unique_id == principal.user_id)).one_or_none()
+    user = caller_row(session, principal)
     if user is None:
         raise _error(404, "user_not_found", "User not found")
     if is_project_member(user.id, project.project_id, session):

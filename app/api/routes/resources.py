@@ -1085,6 +1085,7 @@ def _transfer_resource_owner_acl(session, resource: Resource, mfid: str, new_own
         instrument = session.exec(select(Instrument).where(Instrument.unique_id == mfid)).one_or_none()
         if instrument is not None:
             instrument.owner = new_owner.unique_id
+            instrument.owner_user_id = new_owner.id
             session.add(instrument)
 
     return previous_owner

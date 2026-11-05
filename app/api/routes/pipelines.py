@@ -17,7 +17,7 @@ from app.models.core_models import Dataset, PostprocessingRun
 from app.models.pagination import PaginatedResponse
 from app.models.pipelines import PipelineRead, PostprocessingRunRead, PostprocessingRunStatus, PostprocessingRunUpdate, PostprocessRequest
 from app.services.pipelines import PIPELINES
-from app.utils.auth_utils import authorize_user, permission_filter, require_permission
+from app.utils.auth_utils import authorize_user, is_caller, permission_filter, require_permission
 from app.utils.permissions import Permission, Principal
 from app.utils.rmq_utils import send_pika_message
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_active, select_readable
@@ -103,7 +103,7 @@ def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_n
 
         def previous():
             return session.exec(select(PostprocessingRun).where(
-                PostprocessingRun.requested_by == principal.user_id,
+                is_caller(PostprocessingRun.requested_by_user_id, principal),
                 PostprocessingRun.dataset_mfid == dataset.unique_id,
                 PostprocessingRun.idempotency_key == idempotency_key,
             )).one_or_none()
@@ -111,7 +111,7 @@ def start_postprocessing_run(principal: Principal, dataset_mfid: str, pipeline_n
         if idempotency_key is not None and (existing := previous()) is not None:
             return _replay(session, existing, fingerprint, pipeline.routing_key)
         run = PostprocessingRun(dataset_mfid=dataset.unique_id, pipeline=pipeline.name, parameters=parameters, requested_by=principal.user_id,
-                                requested_at=get_utc_datetime(), idempotency_key=idempotency_key, request_fingerprint=fingerprint)
+                                requested_by_user_id=principal.internal_user_id, requested_at=get_utc_datetime(), idempotency_key=idempotency_key, request_fingerprint=fingerprint)
         session.add(run)
         try:
             session.commit()

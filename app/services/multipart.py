@@ -18,7 +18,7 @@ from app.storage import StorageFailure, UploadMissing
 from app.storage.crc32c import combine_parts
 from app.services.file_versions import keep_version
 from app.services.storage_downloads import multipart_prefix, owned_object
-from app.utils.auth_utils import caller_row, load_principal, require_permission
+from app.utils.auth_utils import caller_row, is_caller, load_principal, require_permission
 from app.utils.permissions import Permission, PlatformRole
 from app.utils.sql_utils import assert_not_pending_deletion, get_active_deletion_request, touch_resource_modification_time
 
@@ -73,7 +73,7 @@ def owned(session, dsid, upload_id, principal, *, lock=False, check_access=True)
     upload = session.exec(query).one_or_none()
     if upload is None:
         raise HTTPException(404, "Upload session not found")
-    if upload.owner_user_id != principal.user_id:
+    if not principal.has_user_id(upload.user_id):
         raise HTTPException(403, "Not the owner of this upload session")
     if upload.dataset_mfid != dsid:
         raise HTTPException(404, "Upload session not found")
@@ -133,7 +133,7 @@ def unavailable(message):
 
 
 def idempotent(session, principal, dsid, key, fingerprint):
-    previous = session.exec(select(UploadSession).where(UploadSession.owner_user_id == principal.user_id, UploadSession.dataset_mfid == dsid, UploadSession.protocol == PROTOCOL, UploadSession.idempotency_key == key)).one_or_none()
+    previous = session.exec(select(UploadSession).where(is_caller(UploadSession.user_id, principal), UploadSession.dataset_mfid == dsid, UploadSession.protocol == PROTOCOL, UploadSession.idempotency_key == key)).one_or_none()
     if previous is None:
         return None
     if previous.request_fingerprint != fingerprint:
@@ -149,13 +149,13 @@ def choose_part_size(size):
 
 
 def new_session(session, principal, dsid, size, key, fingerprint, claimed_sha256, config, filename, replace_file_mfid=None, replace_base_etag=None):
-    for column, value, count_limit, byte_limit in ((UploadSession.owner_user_id, principal.user_id, config.owner_sessions, config.owner_bytes), (UploadSession.dataset_mfid, dsid, config.dataset_sessions, config.dataset_bytes)):
-        count, reserved = session.exec(select(func.count(UploadSession.id), func.coalesce(func.sum(UploadSession.size), 0)).where(column == value, *live())).one()
+    for scope, count_limit, byte_limit in ((is_caller(UploadSession.user_id, principal), config.owner_sessions, config.owner_bytes), (UploadSession.dataset_mfid == dsid, config.dataset_sessions, config.dataset_bytes)):
+        count, reserved = session.exec(select(func.count(UploadSession.id), func.coalesce(func.sum(UploadSession.size), 0)).where(scope, *live())).one()
         if count >= count_limit or reserved + size > byte_limit:
             raise HTTPException(429, "Upload reservation quota exceeded", headers={"Retry-After": "60"})
     identifier = uuid4().hex
     part_size = choose_part_size(size) if size else None
-    upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, object_key=f"{multipart_prefix(dsid)}{identifier}", associated_file_name=filename, expires_at=now() + INITIATION_WINDOW, size=size, protocol=PROTOCOL, bucket=config.bucket, state="initiating", part_size=part_size, part_count=(size + part_size - 1) // part_size if size else None, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=claimed_sha256, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0, replace_file_mfid=replace_file_mfid, replace_base_etag=replace_base_etag)
+    upload = UploadSession(upload_id=identifier, dataset_mfid=dsid, owner_user_id=principal.user_id, user_id=principal.internal_user_id, object_key=f"{multipart_prefix(dsid)}{identifier}", associated_file_name=filename, expires_at=now() + INITIATION_WINDOW, size=size, protocol=PROTOCOL, bucket=config.bucket, state="initiating", part_size=part_size, part_count=(size + part_size - 1) // part_size if size else None, idempotency_key=key, request_fingerprint=fingerprint, claimed_sha256=claimed_sha256, part_manifest={"authorized": {}}, created_at=now(), updated_at=now(), version=0, replace_file_mfid=replace_file_mfid, replace_base_etag=replace_base_etag)
     session.add(upload)
     session.commit()
     session.refresh(upload)

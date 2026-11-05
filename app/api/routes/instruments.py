@@ -1,7 +1,7 @@
 import os
 from typing import Annotated, List
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import func, join, or_
+from sqlalchemy import false, func, join, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
@@ -34,7 +34,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import add_or_update, create_standard_acls, touch_resource_modification_time, deletion_filter_for
-from app.utils.user_utils import canonical_person_id, resolve_create_owner, resolve_service_account_reference
+from app.utils.user_utils import resolve_create_owner, resolve_service_account_reference, user_by_id_or_orcid
 from app.utils.gcs_record_utils import write_record, instrument_record
 
 router = APIRouter(tags=["instruments"])
@@ -62,7 +62,6 @@ INSTRUMENT_FILTER_FIELDS = {
     "instrument_name",
     "manufacturer",
     "model",
-    "owner",
     "location",
     "description",
     "instrument_type",
@@ -91,11 +90,11 @@ def _instrument_capabilities(session, principal, instrument):
 
 
 def _instrument_response(instrument, resource=None, scientific_metadata=None, owner=None,
-                         capabilities=None, members=None, role=None):
+                         capabilities=None, members=None, role=None, include_owner=True):
     return InstrumentResponse.model_validate({
-        **instrument.model_dump(exclude={"owner"}),
-        "owner_orcid": instrument.owner,
-        "owner": owner,
+        **instrument.model_dump(exclude={"owner", "owner_user_id"}),
+        "owner_orcid": owner.unique_id if owner else None,
+        "owner": UserPublicRead.model_validate(owner) if owner and include_owner else None,
         "creation_time": resource.creation_time if resource else None,
         "modification_time": resource.modification_time if resource else None,
         "scientific_metadata": scientific_metadata,
@@ -130,14 +129,20 @@ def _instrument_members(session, principal, instrument):
     return with_grant_capabilities(session, principal, instrument.unique_id, load_member_grants(session, instrument.unique_id))
 
 
-def _instrument_owners(session, instruments):
-    owner_ids = {instrument.owner for instrument in instruments if instrument.owner}
+def _instrument_owners(session, instruments) -> dict[int, User]:
+    owner_ids = {instrument.owner_user_id for instrument in instruments if instrument.owner_user_id is not None}
     if not owner_ids:
         return {}
-    return {
-        user.unique_id: UserPublicRead.model_validate(user)
-        for user in session.exec(select(User).where(User.unique_id.in_(owner_ids))).all()
-    }
+    return {user.id: user for user in session.exec(select(User).where(User.id.in_(owner_ids))).all()}
+
+
+def _instrument_owner(session, instrument) -> User | None:
+    return session.get(User, instrument.owner_user_id) if instrument.owner_user_id is not None else None
+
+
+def _owner_filter(session, owner_ref: str):
+    owner = user_by_id_or_orcid(session, owner_ref)
+    return Instrument.owner_user_id == owner.id if owner is not None else false()
 
 @router.get("/instruments", response_model=PaginatedResponse[InstrumentResponse])
 def list_instruments(
@@ -167,10 +172,7 @@ def list_instruments(
     limit = params.limit
     cursor = params.cursor
     offset = params.offset
-    param_values["owner"] = params.owner_id or param_values["owner"]
-    if param_values["owner"] is not None:
-        with Session(get_engine()) as session:
-            param_values["owner"] = canonical_person_id(session, param_values["owner"])
+    owner_ref = params.owner_id or param_values["owner"]
     if instrument_id is None and params.mfid is None and params.status is None:
         param_values["status"] = "active"
     filters = [
@@ -207,6 +209,8 @@ def list_instruments(
             statement = statement.where(f)
         if params.affiliation:
             statement = statement.where(_instrument_affiliation_filter(auth_res, params.affiliation))
+        if owner_ref is not None:
+            statement = statement.where(_owner_filter(session, owner_ref))
 
         total = (
             session.exec(select(func.count()).select_from(statement.with_only_columns(Instrument.id).subquery())).one()
@@ -215,7 +219,7 @@ def list_instruments(
         )
         page = execute_resource_page(session, statement, pagination)
         rows = page.rows
-        owners = _instrument_owners(session, (row[0] for row in rows)) if include_owner else {}
+        owners = _instrument_owners(session, (row[0] for row in rows))
         roles = _instrument_roles(session, auth_res, [row[0].unique_id for row in rows])
 
         items = []
@@ -226,10 +230,11 @@ def list_instruments(
                 inst,
                 ri,
                 smb.scientific_metadata if smb else None,
-                owners.get(inst.owner),
+                owners.get(inst.owner_user_id),
                 _instrument_capabilities(session, auth_res, inst) if instrument_id is not None else None,
                 _instrument_members(session, auth_res, inst) if params.include_members else None,
                 role=roles.get(inst.unique_id),
+                include_owner=include_owner,
             ))
         return PaginatedResponse(
             total=total,
@@ -263,7 +268,7 @@ def search_instruments(
         if params.affiliation:
             base = base.where(_instrument_affiliation_filter(auth_res, params.affiliation))
         if params.owner_id is not None:
-            base = base.where(Instrument.owner == canonical_person_id(session, params.owner_id))
+            base = base.where(_owner_filter(session, params.owner_id))
         fields = (
             Instrument.instrument_name,
             Instrument.instrument_type,
@@ -280,9 +285,9 @@ def search_instruments(
             Instrument.unique_id.desc(),
         ).limit(params.limit)
         rows = session.exec(statement).all()
-        owners = _instrument_owners(session, (inst for inst, _ in rows)) if params.include_owner else {}
+        owners = _instrument_owners(session, (inst for inst, _ in rows))
         items = [
-            _instrument_response(inst, ri, owner=owners.get(inst.owner))
+            _instrument_response(inst, ri, owner=owners.get(inst.owner_user_id), include_owner=params.include_owner)
             for inst, ri in rows
         ]
         return PaginatedResponse(limit=params.limit, items=items)
@@ -348,6 +353,7 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
             )
 
         instrument_details["owner"] = owner_user.unique_id
+        instrument_details["owner_user_id"] = owner_user.id
         db_instrument = Instrument(**instrument_details)
         session.add(db_instrument)
         session.flush()
@@ -376,11 +382,11 @@ def create_instrument(auth_res: Annotated[Principal, Depends(authorize_user)], i
 
         session.commit()
         session.refresh(db_instrument)
-        background_tasks.add_task(write_record, db_instrument.unique_id, instrument_record(db_instrument, ri), user_unique_id, "create")
+        background_tasks.add_task(write_record, db_instrument.unique_id, instrument_record(db_instrument, ri, owner_user), user_unique_id, "create")
         return _instrument_response(
             db_instrument,
             ri,
-            owner=UserPublicRead.model_validate(owner_user),
+            owner=owner_user,
             capabilities=_instrument_capabilities(session, auth_res, db_instrument),
         )
 
@@ -417,10 +423,13 @@ def update_instrument(
         session.add(instrument)
         session.commit()
         session.refresh(instrument)
-        background_tasks.add_task(write_record, instrument.unique_id, instrument_record(instrument, ri), user_unique_id, "update")
+        owner = _instrument_owner(session, instrument)
+        background_tasks.add_task(write_record, instrument.unique_id, instrument_record(instrument, ri, owner), user_unique_id, "update")
         return _instrument_response(
             instrument,
             ri,
+            owner=owner,
+            include_owner=False,
             capabilities=_instrument_capabilities(session, auth_res, instrument),
         )
 
@@ -459,10 +468,13 @@ def set_instrument_status(
 
         ri = session.exec(select(Resource).where(
             Resource.mfid == instrument_mfid)).one_or_none()
-        background_tasks.add_task(write_record, instrument.unique_id, instrument_record(instrument, ri), auth_res.user_id, "update")
+        owner = _instrument_owner(session, instrument)
+        background_tasks.add_task(write_record, instrument.unique_id, instrument_record(instrument, ri, owner), auth_res.user_id, "update")
         return _instrument_response(
             instrument,
             ri,
+            owner=owner,
+            include_owner=False,
             capabilities=_instrument_capabilities(session, auth_res, instrument),
         )
 

@@ -180,7 +180,7 @@ def _create_upload_session(
     dsid: str,
     gcs_path: str,
     safe_filename: str,
-    user_unique_id: str,
+    principal,
     size: int,
 ) -> str:
     """Persist an UploadSession record and return the generated upload_id."""
@@ -189,7 +189,8 @@ def _create_upload_session(
         dataset_mfid=dsid,
         object_key=gcs_path,
         associated_file_name=safe_filename,
-        owner_user_id=user_unique_id,
+        owner_user_id=principal.user_id,
+        user_id=principal.internal_user_id,
         expires_at=expires_at,
         size=size,
     )
@@ -244,7 +245,7 @@ def initiate_resumable_upload(
     if not resumable_uri:
         raise HTTPException(status_code=503, detail="GCS did not return a resumable upload URI")
 
-    upload_id = _create_upload_session(dsid, gcs_path, safe_filename, user_unique_id, body.size)
+    upload_id = _create_upload_session(dsid, gcs_path, safe_filename, auth_res, body.size)
 
     return UploadInitiateRead(
         upload_id=upload_id,
@@ -283,7 +284,7 @@ def initiate_multipart_upload(
         logger.exception("upload_token_failed dataset=%s", dsid)
         raise HTTPException(status_code=503, detail="Could not start the upload; try again later") from None
 
-    upload_id = _create_upload_session(dsid, gcs_path, safe_filename, user_unique_id, body.size)
+    upload_id = _create_upload_session(dsid, gcs_path, safe_filename, auth_res, body.size)
 
     return UploadMultipartInitiateRead(
         upload_id=upload_id,
@@ -310,7 +311,6 @@ def complete_resumable_upload(
     Deprecated: use POST /datasets/{dataset_mfid}/upload/multipart/initiate.
     '''
     response.headers["Deprecation"] = LEGACY_UPLOAD_DEPRECATION
-    user_unique_id = auth_res.user_id
     bucket = _legacy_upload_bucket()
 
     with Session(get_engine()) as session:
@@ -319,7 +319,7 @@ def complete_resumable_upload(
         ).one_or_none()
         if us is None:
             raise HTTPException(status_code=404, detail="Upload session not found or already completed")
-        if us.owner_user_id != user_unique_id:
+        if not auth_res.has_user_id(us.user_id):
             raise HTTPException(status_code=403, detail="Not the owner of this upload session")
         if us.protocol is not None:
             raise HTTPException(status_code=409, detail="Use the multipart completion route for this upload session")

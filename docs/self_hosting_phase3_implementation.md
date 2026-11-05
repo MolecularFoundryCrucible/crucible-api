@@ -407,6 +407,8 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
 
 ## Task 12: Sign-in form
 
+From the Hub session, 2026-11-04: use the same styling as the choice page, with input border `oklch(0.62 0.018 240)` / `oklch(0.52 0.02 240)` and error text `#bb0914` / `#ff8a88`. Test `form-action` in real browsers: some apply it to the redirect after the POST, so `form-action 'self'` may block the redirect back to a Hub on another origin. Do not add `Cross-Origin-Opener-Policy`, because the Hub's step-up popup closes itself with `window.close()`.
+
 **Files:**
 - Modify: `app/api/routes/hub_auth.py`, `app/utils/hub_login.py`, `app/api/routes/account.py:104-120`, `app/api/routes/users.py:617-637`
 - Test: `tests/test_auth_password_sign_in.py`

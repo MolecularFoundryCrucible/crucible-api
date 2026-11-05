@@ -106,13 +106,12 @@ def get_account_profile(
 @router.patch("/account/profile", response_model=UserRead, responses={409: {"description": "Username or email already held by another user: `{\"detail\": {\"code\": \"already_in_use\", \"fields\": [\"username\", \"email\"], \"message\": ...}}`, listing every conflicting field"}})
 def update_account_profile(auth_res: Annotated[Principal, Depends(authorize_user)], user_update: AccountProfileUpdate):
     """Partially update the authenticated caller's own profile."""
-    user_unique_id = auth_res.user_id
     with Session(get_engine()) as session:
-        user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
+        user = caller_row(session, auth_res)
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
         update_data = user_update.model_dump(exclude_unset=True)
-        assert_profile_fields_available(session, username=update_data.get("username"), email=update_data.get("email"), exclude_orcid=user_unique_id)
+        assert_profile_fields_available(session, username=update_data.get("username"), email=update_data.get("email"), exclude_orcid=user.unique_id)
         for key, value in update_data.items():
             setattr(user, key, value)
         session.add(user)

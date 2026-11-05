@@ -22,6 +22,7 @@ class AuthEventType(str, Enum):
     API_KEY_CREATED = "api_key_created"
     API_KEY_REVOKED = "api_key_revoked"
     DISABLED = "disabled"
+    ROLE_CHANGED = "role_changed"
     ENABLED = "enabled"
 
 

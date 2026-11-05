@@ -47,6 +47,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- Changing whether a human is a platform administrator, and reading or regenerating a human administrator's API key, need a Hub session with a recent sign-in; API keys get 403 `hub_session_required`. `python -m app.cli admin set-role` changes roles from inside the pod.
 - `GET /auth/apikey`, `GET /user_apikey` and `POST /auth/apikey/regenerate` send `Cache-Control: no-store`.
 - `GET /auth/callback` and Hub sign-in refuse ID tokens that list any audience other than Crucible.
 - `GET /auth/callback` refuses token responses with no valid ID token.

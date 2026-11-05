@@ -698,6 +698,18 @@ def require_recent_authentication(principal: Principal) -> None:
     )
 
 
+def require_human_admin_safeguard(principal: Principal, target, *, makes_admin: bool = False) -> None:
+    """Changes to a human administrator, or that make someone one, need a person at a browser: an
+    API key is refused, even the administrator's own, and a Hub session needs a recent sign-in."""
+    if target is None or target.is_service_account:
+        return
+    if target.platform_role != PlatformRole.ADMIN.value and not makes_admin:
+        return
+    if principal.credential != "hub":
+        raise HTTPException(status_code=403, detail={"code": "hub_session_required", "message": "Changing a human administrator needs a Hub session, not an API key"})
+    require_recent_authentication(principal)
+
+
 def reject_hub_api_key_read(principal: Principal) -> None:
     if principal.credential == "hub":
         raise HTTPException(status_code=403, detail={"code": "api_key_read_not_allowed", "message": "Hub sessions cannot read API keys; regenerate a key instead"})

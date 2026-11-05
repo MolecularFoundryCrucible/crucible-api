@@ -68,7 +68,7 @@ def test_service_account_defaults_to_sample_owner_and_uses_generated_mfid_for_pu
         public_group_id = public_group.id
 
     response = create_sample(
-        Principal(user_id=SERVICE_ACCOUNT_ID, is_service_account=True),
+        Principal(user_id=SERVICE_ACCOUNT_ID, internal_user_id=owner_id, is_service_account=True),
         SampleCreate(sample_name="service-account-owned", public=True),
         BackgroundTasks(),
     )

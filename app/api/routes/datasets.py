@@ -51,7 +51,6 @@ from app.models.query_params import (
     UNIQUE_ID_FILTER_DEPRECATION, DatasetDetailQuery, DatasetFacetQuery, DatasetListQuery, ResourceSearchQuery)
 from app.models.projects import ProjectReferenceRead, ProjectScope
 from app.models.samples import SampleRead
-from app.models.users import UserPublicRead
 from app.services import multipart
 from app.services.resource_details import ResourceDetailOptions, load_dataset_detail
 from app.services.resource_facets import list_dataset_facets
@@ -90,7 +89,7 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.user_utils import canonical_person_id, resolve_create_owner
+from app.utils.user_utils import owned_by, owner_fields, owner_unique_id, owners_of, resolve_create_owner
 from app.utils.sql_utils import is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
@@ -184,7 +183,7 @@ def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
             raise project_not_found(requested_project_id, requested_project_mfid)
 
         if not has_global_permission(auth_res, Permission.CREATE):
-            if dataset_details['owner_orcid'] != user_unique_id:
+            if not auth_res.is_user(owner_user):
                 raise HTTPException(
                     status_code=403,
                     detail="Only platform contributors and administrators may create a dataset on behalf of another user")
@@ -286,10 +285,11 @@ def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
                 instrument.unique_id,
             )
         public = is_public(session, ds.unique_id)
-        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri, public), user_unique_id, "create")
+        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri, public, owner_unique_id(session, ds)), user_unique_id, "create")
         project_references = resolve_project_mfids_to_references([ds.project_mfid], session)
         return DatasetResponse.model_validate({
             **ds.model_dump(),
+            **owner_fields(ds, {owner_user.id: owner_user}),
             **dataset_instrument_fields(ds, InstrumentReferenceRead.model_validate(instrument) if instrument else None),
             "project_id": project_references[ds.project_mfid].project_id if ds.project_mfid in project_references else None,
             "project": project_references.get(ds.project_mfid),
@@ -368,13 +368,14 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
         session.commit()
         session.refresh(upds)
         public = is_public(session, upds.unique_id)
-        background_tasks.add_task(write_record, upds.unique_id, dataset_record(upds, ri, public), user_unique_id, "update")
+        background_tasks.add_task(write_record, upds.unique_id, dataset_record(upds, ri, public, owner_unique_id(session, upds)), user_unique_id, "update")
         instrument_references = resolve_instrument_mfids_to_references([upds.instrument_mfid], session)
         project_references = resolve_project_mfids_to_references([upds.project_mfid], session)
         instrument_reference = instrument_references.get(upds.instrument_mfid)
         project_reference = project_references.get(upds.project_mfid)
         return DatasetResponse.model_validate({
             **upds.model_dump(),
+            **owner_fields(upds, owners_of(session, [upds])),
             **dataset_instrument_fields(upds, instrument_reference),
             "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
@@ -468,7 +469,7 @@ def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_u
         session.commit()
         session.refresh(ds)
 
-        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri, is_public(session, ds.unique_id)),
+        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri, is_public(session, ds.unique_id), owner_unique_id(session, ds)),
                                   user_unique_id, "update")
         return DatasetInstrumentRead(
             dataset_mfid=dsid,
@@ -540,9 +541,6 @@ def list_datasets(
         if param_values[key] is not None
     }
     owner_id = params.owner_id or param_values["owner_orcid"]
-    if owner_id is not None:
-        with Session(get_engine()) as session:
-            exact_filters["owner_orcid"] = canonical_person_id(session, owner_id)
     result_filters = params.normalized_result_filters(
         exclude={
             "anchor_mfid", "cursor", "offset", "limit", "sort", "direction",
@@ -594,6 +592,8 @@ def list_datasets(
                 )
             if params.mfid is not None:
                 q = q.where(Dataset.unique_id.in_(params.mfid))
+            if owner_id is not None:
+                q = q.where(owned_by(session, Dataset.owner_user_id, owner_id))
             for key, value in exact_filters.items():
                 q = q.where(getattr(Dataset, key) == value)
             if param_values["instrument_name"] is not None:
@@ -602,7 +602,7 @@ def list_datasets(
                 (Dataset.session_name, params.session_name_is_null),
                 (Dataset.measurement, params.measurement_is_null),
                 (Dataset.data_format, params.data_format_is_null),
-                (Dataset.owner_orcid, params.owner_id_is_null),
+                (Dataset.owner_user_id, params.owner_id_is_null),
                 (Dataset.instrument_mfid, params.instrument_mfid_is_null),
                 (Dataset.project_mfid, params.project_mfid_is_null),
             ):
@@ -687,13 +687,7 @@ def list_datasets(
                         LinkedResource(unique_id=samp.unique_id, resource_type="sample", name=samp.sample_name, direction="undirected")
                     )
 
-        # Batch-resolve owners if requested
-        owners_by_orcid = {}
-        if include_owner:
-            orcids = {row[0].owner_orcid for row in results if row[0].owner_orcid}
-            if orcids:
-                for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all():
-                    owners_by_orcid[u.unique_id] = UserPublicRead.model_validate(u)
+        owners = owners_of(session, (row[0] for row in results))
 
         items = []
         for row in results:
@@ -729,7 +723,7 @@ def list_datasets(
                 "modification_time": modification_time,
                 "scientific_metadata": sci_md,
                 "links": links,
-                "owner": owners_by_orcid.get(dataset.owner_orcid),
+                **owner_fields(dataset, owners, include_owner),
                 "project_relation": (
                     "assigned" if dataset.project_mfid == filter_project_mfid else "shared"
                 ) if filter_project_mfid is not None else None,
@@ -801,14 +795,16 @@ def search_datasets(
         if params.affiliation:
             query = query.where(resource_affiliation_filter(auth_res, Dataset, params.affiliation))
         if params.owner_id is not None:
-            query = query.where(Dataset.owner_orcid == canonical_person_id(session, params.owner_id))
+            query = query.where(owned_by(session, Dataset.owner_user_id, params.owner_id))
         query = query.order_by(
             trigram_rank(normalized_q, (Dataset.dataset_name,)).desc(),
             Dataset.unique_id.desc(),
         ).limit(limit)
         results = session.exec(query).all()
+        owners = owners_of(session, (row[0] for row in results))
         items = [DatasetResponse.model_validate({
             **dataset.model_dump(),
+            **owner_fields(dataset, owners),
             **dataset_instrument_fields(dataset, InstrumentReferenceRead(
                 unique_id=instrument_mfid,
                 instrument_id=instrument_id,
@@ -980,8 +976,10 @@ def list_parent_datasets(child_dataset_id: ChildDatasetMfid, auth_res: Annotated
         parents = session.exec(query.offset(offset).limit(limit)).all()
         instrument_references = resolve_instrument_mfids_to_references((d.instrument_mfid for d in parents), session)
         project_references = resolve_project_mfids_to_references((d.project_mfid for d in parents), session)
+        owners = owners_of(session, parents)
         items = [DatasetRead.model_validate({
             **d.model_dump(),
+            **owner_fields(d, owners),
             **dataset_instrument_fields(d, instrument_references.get(d.instrument_mfid)),
             "project_id": project_references[d.project_mfid].project_id if d.project_mfid in project_references else None,
             "project": project_references.get(d.project_mfid),
@@ -1022,8 +1020,10 @@ def list_child_datasets(parent_dataset_id: ParentDatasetMfid, auth_res: Annotate
         children = session.exec(query.offset(offset).limit(limit)).all()
         instrument_references = resolve_instrument_mfids_to_references((d.instrument_mfid for d in children), session)
         project_references = resolve_project_mfids_to_references((d.project_mfid for d in children), session)
+        owners = owners_of(session, children)
         items = [DatasetRead.model_validate({
             **d.model_dump(),
+            **owner_fields(d, owners),
             **dataset_instrument_fields(d, instrument_references.get(d.instrument_mfid)),
             "project_id": project_references[d.project_mfid].project_id if d.project_mfid in project_references else None,
             "project": project_references.get(d.project_mfid),
@@ -1586,8 +1586,10 @@ def read_samples_in_dataset(dsid: DatasetMfid, auth_res: Annotated[Principal, De
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         samples = session.exec(query.offset(offset).limit(limit)).all()
         project_references = resolve_project_mfids_to_references((s.project_mfid for s in samples), session)
+        owners = owners_of(session, samples)
         items = [SampleRead.model_validate({
             **s.model_dump(),
+            **owner_fields(s, owners),
             "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else None,
             "project": project_references.get(s.project_mfid),
         }) for s in samples]

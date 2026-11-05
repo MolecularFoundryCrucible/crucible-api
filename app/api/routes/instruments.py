@@ -1,7 +1,7 @@
 import os
 from typing import Annotated, List
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import false, func, join, or_
+from sqlalchemy import func, join, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine, get_trgm_search_threshold
@@ -34,7 +34,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import add_or_update, create_standard_acls, touch_resource_modification_time, deletion_filter_for
-from app.utils.user_utils import resolve_create_owner, resolve_service_account_reference, user_by_id_or_orcid
+from app.utils.user_utils import owned_by, resolve_create_owner, resolve_service_account_reference
 from app.utils.gcs_record_utils import write_record, instrument_record
 
 router = APIRouter(tags=["instruments"])
@@ -140,10 +140,6 @@ def _instrument_owner(session, instrument) -> User | None:
     return session.get(User, instrument.owner_user_id) if instrument.owner_user_id is not None else None
 
 
-def _owner_filter(session, owner_ref: str):
-    owner = user_by_id_or_orcid(session, owner_ref)
-    return Instrument.owner_user_id == owner.id if owner is not None else false()
-
 @router.get("/instruments", response_model=PaginatedResponse[InstrumentResponse])
 def list_instruments(
     auth_res: Annotated[Principal, Depends(authorize_user)],
@@ -210,7 +206,7 @@ def list_instruments(
         if params.affiliation:
             statement = statement.where(_instrument_affiliation_filter(auth_res, params.affiliation))
         if owner_ref is not None:
-            statement = statement.where(_owner_filter(session, owner_ref))
+            statement = statement.where(owned_by(session, Instrument.owner_user_id, owner_ref))
 
         total = (
             session.exec(select(func.count()).select_from(statement.with_only_columns(Instrument.id).subquery())).one()
@@ -268,7 +264,7 @@ def search_instruments(
         if params.affiliation:
             base = base.where(_instrument_affiliation_filter(auth_res, params.affiliation))
         if params.owner_id is not None:
-            base = base.where(_owner_filter(session, params.owner_id))
+            base = base.where(owned_by(session, Instrument.owner_user_id, params.owner_id))
         fields = (
             Instrument.instrument_name,
             Instrument.instrument_type,

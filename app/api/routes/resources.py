@@ -60,7 +60,7 @@ from app.utils.sql_utils import add_or_update, set_public, sql_create_resource_a
 from app.utils.gcs_record_utils import dataset_record, sample_record, write_metadata, write_record
 from app.utils.link_utils import fetch_readable_links
 from app.utils.project_utils import resolve_project_identifiers, resolve_project_reference
-from app.utils.user_utils import identity_group_of, identity_group_owner, close_pending_join_requests, resolve_user_by_identifier
+from app.utils.user_utils import identity_group_of, identity_group_owner, close_pending_join_requests, owner_fields, owner_unique_id, owners_of, resolve_user_by_identifier
 from app.utils.cursor_utils import (
     CursorError,
     filter_fingerprint,
@@ -315,13 +315,17 @@ def search_resource_metadata_v2(
         name_map: dict = {}
         owner_map: dict = {}
         if "dataset" in by_type:
-            for ds in session.exec(select(Dataset).where(Dataset.unique_id.in_(by_type["dataset"]))).all():
+            datasets = session.exec(select(Dataset).where(Dataset.unique_id.in_(by_type["dataset"]))).all()
+            owners = owners_of(session, datasets)
+            for ds in datasets:
                 name_map[ds.unique_id] = ds.dataset_name
-                owner_map[ds.unique_id] = ds.owner_orcid
+                owner_map[ds.unique_id] = owner_fields(ds, owners)["owner_orcid"]
         if "sample" in by_type:
-            for s in session.exec(select(Sample).where(Sample.unique_id.in_(by_type["sample"]))).all():
+            samples = session.exec(select(Sample).where(Sample.unique_id.in_(by_type["sample"]))).all()
+            owners = owners_of(session, samples)
+            for s in samples:
                 name_map[s.unique_id] = s.sample_name
-                owner_map[s.unique_id] = s.owner_orcid
+                owner_map[s.unique_id] = owner_fields(s, owners)["owner_orcid"]
         if "instrument" in by_type:
             for i in session.exec(select(Instrument).where(Instrument.unique_id.in_(by_type["instrument"]))).all():
                 name_map[i.unique_id] = i.instrument_name
@@ -928,11 +932,11 @@ def _write_stored_record(session, background_tasks: BackgroundTasks, ri: Resourc
     resources' stored records carry no public value."""
     dataset = session.exec(select(Dataset).where(Dataset.unique_id == ri.mfid)).one_or_none()
     if dataset is not None:
-        background_tasks.add_task(write_record, ri.mfid, dataset_record(dataset, ri, public), actor, "update")
+        background_tasks.add_task(write_record, ri.mfid, dataset_record(dataset, ri, public, owner_unique_id(session, dataset)), actor, "update")
         return
     sample = session.exec(select(Sample).where(Sample.unique_id == ri.mfid)).one_or_none()
     if sample is not None:
-        background_tasks.add_task(write_record, ri.mfid, sample_record(sample, ri, public), actor, "update")
+        background_tasks.add_task(write_record, ri.mfid, sample_record(sample, ri, public, owner_unique_id(session, sample)), actor, "update")
 
 
 @router.put("/resources/{mfid}/access/public", response_model=AccessGrantRead)

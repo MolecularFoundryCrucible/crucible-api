@@ -28,6 +28,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Dataset and sample `owner_orcid` and `owner` are read from the owner's user record: records that store an owner only by internal reference now show it, and those whose stored owner matches no user show none.
+- The `owner_id` filters on datasets, samples, instruments and facets accept a unique_id, linked ORCID, username or email, matched exactly.
 - Instrument `owner_orcid` can be null: instruments whose stored owner matches no user show no owner, and the `owner` and `owner_id` filters match only people.
 - `PATCH /datasets/{id}` and `PATCH /samples/{id}` refuse `public` with a 422; use `PUT` or `DELETE /resources/{mfid}/access/public`, which need admin rights.
 - The `public` value in responses and stored records is read from the public access grant.

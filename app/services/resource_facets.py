@@ -2,7 +2,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, case, exists, func, literal, or_
 from sqlmodel import Session, select
 
-from app.utils.user_utils import canonical_person_id
+from app.utils.user_utils import owned_by
 from app.models.core_models import (
     Dataset,
     DatasetSampleLink,
@@ -41,14 +41,14 @@ DATASET_FACET_COLUMNS = {
     DatasetFacetField.SESSION: Dataset.session_name,
     DatasetFacetField.MEASUREMENT: Dataset.measurement,
     DatasetFacetField.DATA_FORMAT: Dataset.data_format,
-    DatasetFacetField.OWNER: Dataset.owner_orcid,
+    DatasetFacetField.OWNER: User.unique_id,
     DatasetFacetField.INSTRUMENT: Dataset.instrument_mfid,
     DatasetFacetField.PROJECT: Dataset.project_mfid,
 }
 
 SAMPLE_FACET_COLUMNS = {
     SampleFacetField.SAMPLE_TYPE: Sample.sample_type,
-    SampleFacetField.OWNER: Sample.owner_orcid,
+    SampleFacetField.OWNER: User.unique_id,
     SampleFacetField.PROJECT: Sample.project_mfid,
 }
 
@@ -65,14 +65,14 @@ def _nonblank_sql(column):
     return func.nullif(func.trim(column), "")
 
 
-def _facet_label_expression(field, column):
+def _facet_label_expression(field, column, owner_user_id_column):
     if field.value == "owner":
         first_name = func.coalesce(_nonblank_sql(User.first_name), "")
         last_name = func.coalesce(_nonblank_sql(User.last_name), "")
         full_name = _nonblank_sql(first_name + literal(" ") + last_name)
         return (
             func.coalesce(full_name, _nonblank_sql(User.username), column),
-            (User, User.unique_id == column),
+            (User, User.id == owner_user_id_column),
         )
     if field.value == "project":
         return (
@@ -295,7 +295,7 @@ def list_dataset_facets(
     params: DatasetFacetQuery,
 ) -> FacetResponse:
     column = DATASET_FACET_COLUMNS[params.field]
-    label_expression, label_join = _facet_label_expression(params.field, column)
+    label_expression, label_join = _facet_label_expression(params.field, column, Dataset.owner_user_id)
     query = (
         select(column, func.count(), label_expression.label("label"))
         .select_from(Dataset)
@@ -326,15 +326,16 @@ def list_dataset_facets(
         (Dataset.session_name, params.session_name),
         (Dataset.measurement, params.measurement),
         (Dataset.data_format, params.data_format),
-        (Dataset.owner_orcid, canonical_person_id(session, params.owner_id)),
     ):
         if value is not None:
             query = query.where(filter_column == value)
+    if params.owner_id is not None:
+        query = query.where(owned_by(session, Dataset.owner_user_id, params.owner_id))
     for filter_column, value in (
         (Dataset.session_name, params.session_name_is_null),
         (Dataset.measurement, params.measurement_is_null),
         (Dataset.data_format, params.data_format_is_null),
-        (Dataset.owner_orcid, params.owner_id_is_null),
+        (Dataset.owner_user_id, params.owner_id_is_null),
         (Dataset.instrument_mfid, params.instrument_mfid_is_null),
         (Dataset.project_mfid, params.project_mfid_is_null),
     ):
@@ -369,7 +370,7 @@ def list_sample_facets(
     params: SampleFacetQuery,
 ) -> FacetResponse:
     column = SAMPLE_FACET_COLUMNS[params.field]
-    label_expression, label_join = _facet_label_expression(params.field, column)
+    label_expression, label_join = _facet_label_expression(params.field, column, Sample.owner_user_id)
     query = (
         select(column, func.count(), label_expression.label("label"))
         .select_from(Sample)
@@ -396,13 +397,14 @@ def list_sample_facets(
         )
     for filter_column, value in (
         (Sample.sample_type, params.sample_type),
-        (Sample.owner_orcid, canonical_person_id(session, params.owner_id)),
     ):
         if value is not None:
             query = query.where(filter_column == value)
+    if params.owner_id is not None:
+        query = query.where(owned_by(session, Sample.owner_user_id, params.owner_id))
     for filter_column, value in (
         (Sample.sample_type, params.sample_type_is_null),
-        (Sample.owner_orcid, params.owner_id_is_null),
+        (Sample.owner_user_id, params.owner_id_is_null),
         (Sample.project_mfid, params.project_mfid_is_null),
     ):
         query = _apply_null_filter(query, filter_column, value)

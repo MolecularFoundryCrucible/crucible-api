@@ -223,13 +223,45 @@ def user_by_id_or_orcid(session, value: str) -> Optional[User]:
     return session.get(User, identity.user_id) if identity is not None else None
 
 
-def canonical_person_id(session, value: Optional[str]) -> Optional[str]:
-    """For filters: the unique_id for an ID or linked ORCID. Anything else is returned unchanged,
-    so it simply matches nothing."""
-    if value is None:
-        return None
+def person_by_reference(session, value: str) -> Optional[User]:
+    """For exact filters: the person a unique_id, linked ORCID, username or email names, or None."""
     user = user_by_id_or_orcid(session, value)
-    return user.unique_id if user is not None else value
+    if user is not None:
+        return user
+    if "@" in value:
+        return session.exec(select(User).where(func.lower(User.email) == value.lower())).one_or_none()
+    return session.exec(select(User).where(User.username == value.lower())).one_or_none()
+
+
+def owners_of(session, records) -> dict:
+    """Owner rows by `user.id` for records that carry `owner_user_id`, in one query."""
+    records = list(records)
+    ids = {record.owner_user_id for record in records if record.owner_user_id is not None}
+    return {user.id: user for user in session.exec(select(User).where(User.id.in_(ids))).all()} if ids else {}
+
+
+def owner_fields(record, owners: dict, include_owner: bool = False) -> dict:
+    """`owner_orcid`, and with include_owner the public `owner`, read from the owner's user row."""
+    from app.models.users import UserPublicRead
+
+    owner = owners.get(record.owner_user_id) if record.owner_user_id is not None else None
+    fields = {"owner_orcid": owner.unique_id if owner is not None else None}
+    if include_owner:
+        fields["owner"] = UserPublicRead.model_validate(owner) if owner is not None else None
+    return fields
+
+
+def owner_unique_id(session, record) -> Optional[str]:
+    owner = session.get(User, record.owner_user_id) if record.owner_user_id is not None else None
+    return owner.unique_id if owner is not None else None
+
+
+def owned_by(session, owner_user_id_column, value: str):
+    """SQL test that the owner named by `value` holds the record; matches nothing for an unknown person."""
+    from sqlalchemy import false
+
+    owner = person_by_reference(session, value)
+    return owner_user_id_column == owner.id if owner is not None else false()
 
 
 def resolve_user(session, orcid: Optional[str] = None, email: Optional[str] = None, username: Optional[str] = None) -> User:

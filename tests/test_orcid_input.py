@@ -3,8 +3,9 @@ from sqlmodel import Session
 
 from app.models.core_models import Dataset, Resource, Sample, User, UserIdentity
 from app.utils.permissions import PlatformRole
-from app.utils.user_utils import canonical_person_id, resolve_user, resolve_user_by_identifier, user_by_id_or_orcid
+from app.utils.user_utils import person_by_reference, resolve_user, resolve_user_by_identifier, user_by_id_or_orcid
 from app.utils.user_utils import provision_user
+from tests.people import user_id_or_none
 
 ORCID = "0000-0002-1825-0097"
 OTHER_ORCID = "0000-0001-5109-3700"
@@ -45,8 +46,7 @@ def test_orcid_as_unique_id_still_works_without_a_row(db_engine):
 def test_unknown_orcid_finds_nobody(db_engine, person):
     with Session(db_engine) as session:
         assert user_by_id_or_orcid(session, OTHER_ORCID) is None
-        assert canonical_person_id(session, OTHER_ORCID) == OTHER_ORCID
-        assert canonical_person_id(session, None) is None
+        assert person_by_reference(session, OTHER_ORCID) is None
 
 
 def test_orcid_shaped_subject_from_another_provider_finds_nobody(db_engine):
@@ -120,10 +120,10 @@ def test_project_lead_as_the_orcid(client, admin, person):
 
 def seed_records(db_engine):
     with Session(db_engine) as session, session.begin():
-        session.add(Dataset(unique_id="0tdatasetmine00000000000a0", dataset_name="mine", owner_orcid=MFID))
-        session.add(Dataset(unique_id="0tdatasetothr00000000000a0", dataset_name="other", owner_orcid="someone"))
-        session.add(Sample(unique_id="0tsamplemine000000000000a0", sample_name="mine", owner_orcid=MFID))
-        session.add(Sample(unique_id="0tsampleothr000000000000a0", sample_name="other", owner_orcid="someone"))
+        session.add(Dataset(unique_id="0tdatasetmine00000000000a0", dataset_name="mine", owner_orcid=MFID, owner_user_id=user_id_or_none(session, MFID)))
+        session.add(Dataset(unique_id="0tdatasetothr00000000000a0", dataset_name="other", owner_orcid="someone", owner_user_id=user_id_or_none(session, "someone")))
+        session.add(Sample(unique_id="0tsamplemine000000000000a0", sample_name="mine", owner_orcid=MFID, owner_user_id=user_id_or_none(session, MFID)))
+        session.add(Sample(unique_id="0tsampleothr000000000000a0", sample_name="other", owner_orcid="someone", owner_user_id=user_id_or_none(session, "someone")))
         for mfid, kind in (("0tdatasetmine00000000000a0", "dataset"), ("0tdatasetothr00000000000a0", "dataset"), ("0tsamplemine000000000000a0", "sample"), ("0tsampleothr000000000000a0", "sample")):
             session.add(Resource(mfid=mfid, resource_type=kind))
 

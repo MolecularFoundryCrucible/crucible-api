@@ -270,6 +270,31 @@ class User(SQLModel, table=True):
     last_active_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
     disabled_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
+    orcid_identity: Optional["UserIdentity"] = Relationship(sa_relationship_kwargs={
+        "primaryjoin": f"and_(User.id == foreign(UserIdentity.user_id), UserIdentity.issuer.in_({sorted(ORCID_ISSUERS)!r}))",
+        "uselist": False,
+        "viewonly": True,
+        "lazy": "selectin",
+    })
+
+    @property
+    def profile_orcid(self) -> Optional[str]:
+        """The ORCID to show for this person: their linked one. Until the backfill has run and the
+        lookup setting is on, an ORCID-shaped `unique_id` still counts, unverified."""
+        if self.orcid_identity is not None:
+            return self.orcid_identity.subject
+        from app.config import get_settings
+        from app.general_utils import is_orcid
+
+        if get_settings().auth.identity_lookup or self.is_service_account or not is_orcid(self.unique_id):
+            return None
+        return self.unique_id
+
+    @property
+    def profile_orcid_verified(self) -> Optional[bool]:
+        if self.orcid_identity is not None:
+            return self.orcid_identity.verified_at is not None
+        return False if self.profile_orcid is not None else None
 
 
 _IS_ORCID_ISSUER = "issuer IN ({})".format(", ".join(f"'{issuer}'" for issuer in sorted(ORCID_ISSUERS)))

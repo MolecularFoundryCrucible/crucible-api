@@ -271,6 +271,8 @@ def test_dataset_relationship_and_owner_facets_are_resolved(client, db_engine, a
     assert owner.json()["items"][0]["owner"] == {
         "unique_id": ALICE,
         "username": "alice",
+        "orcid": ALICE,
+        "orcid_verified": False,
         "first_name": "Alice",
         "last_name": "Scientist",
         "is_service_account": False,

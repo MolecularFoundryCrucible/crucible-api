@@ -5,12 +5,13 @@ from sqlalchemy.pool import StaticPool
 from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLink
 from app.utils.project_utils import is_project_group, is_project_member, sql_get_projects_for_user
 from app.utils.permissions import AccessGroupType
+from app.models.core_models import UserIdentity
 
 
 def _engine():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine, tables=[
-        AccessGroup.__table__, Project.__table__, User.__table__,
+        AccessGroup.__table__, Project.__table__, User.__table__, UserIdentity.__table__,
         UserAccessGroupLink.__table__,
     ])
     return engine

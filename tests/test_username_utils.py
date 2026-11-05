@@ -8,6 +8,7 @@ from app.utils.user_utils import (
     assert_username_available, generate_unique_username, is_username_available,
     sanitize_username_from_email, sanitize_username_from_name, validate_username_format,
 )
+from app.models.core_models import UserIdentity
 
 
 class TestValidateUsernameFormat:
@@ -145,7 +146,7 @@ class TestSanitizeUsernameFromEmail:
 @pytest.fixture
 def session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(engine, tables=[User.__table__])
+    SQLModel.metadata.create_all(engine, tables=[User.__table__, UserIdentity.__table__])
     with Session(engine) as s:
         yield s
 

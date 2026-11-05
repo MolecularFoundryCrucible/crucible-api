@@ -17,12 +17,13 @@ from app.models.core_models import AccessGroup, Project, User, UserAccessGroupLi
 from app.utils.permissions import AccessGroupType
 from app.utils.project_utils import is_project_owner
 from tests.people import internal_id
+from app.models.core_models import UserIdentity
 
 
 def _engine():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine, tables=[
-        AccessGroup.__table__, Project.__table__, User.__table__, UserAccessGroupLink.__table__,
+        AccessGroup.__table__, Project.__table__, User.__table__, UserIdentity.__table__, UserAccessGroupLink.__table__,
     ])
     return engine
 

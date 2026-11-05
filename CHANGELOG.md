@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- User objects in responses include `orcid` and `orcid_verified`, the person's linked ORCID and whether it was confirmed by signing in; both are null without one.
 - `POST /users/{user_ref}/disable` and `/enable` switch an account off and on; a disabled account cannot sign in, and its API keys and Hub sessions stop working.
 - `auth_event` table for sign-in history.
 - `CRUCIBLE_AUTH_IDENTITY_LOOKUP`, off by default: turn it on after the `user_identity` backfill, so ORCID sign-in finds people through that table.

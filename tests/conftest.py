@@ -168,7 +168,7 @@ def auth_as():
     pre-role model.
     """
     def _set(user_id, groups=None, platform_role=PlatformRole.NONE,
-             is_service_account=False):
+             is_service_account=False, credential="api_key", authenticated_at=None):
         if groups is None:
             groups = [("test_group", 1)]
         memberships = tuple(
@@ -181,6 +181,8 @@ def auth_as():
             platform_role=platform_role,
             is_service_account=is_service_account,
             groups=memberships,
+            credential=credential,
+            authenticated_at=authenticated_at,
         )
         app.dependency_overrides[authenticate_user] = lambda: principal
 

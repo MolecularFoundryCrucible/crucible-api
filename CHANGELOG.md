@@ -8,7 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
-- `auth_event` table for sign-in history, and `user.disabled_at`, not used yet.
+- `POST /users/{user_ref}/disable` and `/enable` switch an account off and on; a disabled account cannot sign in, and its API keys and Hub sessions stop working.
+- `auth_event` table for sign-in history.
 - `CRUCIBLE_AUTH_IDENTITY_LOOKUP`, off by default: turn it on after the `user_identity` backfill, so ORCID sign-in finds people through that table.
 - Hub sign-in supports several OIDC providers, each with its own callback, a Hub-styled choice page, `GET /auth/methods`, and PKCE when advertised; providers other than ORCID sign in only people already linked.
 - `GET /auth/hub/login` accepts `provider` and `required_user`, and `POST /auth/hub/token` and `POST /auth/hub/refresh` return `auth_time`.

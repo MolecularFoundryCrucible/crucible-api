@@ -30,6 +30,18 @@ class HubTokenPair:
     auth_time: datetime | None = None
 
 
+def _may_hold_hub_tokens(user: User | None) -> bool:
+    return user is not None and not user.is_service_account and user.disabled_at is None
+
+
+def revoke_all_hub_tokens(session: Session, user_unique_id: str, *, now: datetime | None = None) -> None:
+    """End every Hub session of this person, in the caller's transaction."""
+    current = _now(now)
+    for family in session.exec(select(HubTokenFamily).where(HubTokenFamily.user_unique_id == user_unique_id, HubTokenFamily.revoked_at == None).with_for_update()).all():  # noqa: E711
+        family.revoked_at = current
+        session.add(family)
+
+
 def _now(value: datetime | None) -> datetime:
     return value if value is not None else datetime.now(timezone.utc)
 
@@ -68,7 +80,7 @@ def issue_hub_tokens(engine, user_unique_id: str, client_id: str, *, now: dateti
 def issue_hub_tokens_in_session(session: Session, user_unique_id: str, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None) -> HubTokenPair:
     current = _now(now)
     user = session.exec(select(User).where(User.unique_id == user_unique_id)).one_or_none()
-    if user is None or user.is_service_account:
+    if not _may_hold_hub_tokens(user):
         raise InvalidHubGrant
     family = HubTokenFamily(
         id=str(uuid.uuid4()),
@@ -132,7 +144,7 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
             family.revoked_at = current
         else:
             user = session.exec(select(User).where(User.unique_id == family.user_unique_id)).one_or_none()
-            if user is None or user.is_service_account:
+            if not _may_hold_hub_tokens(user):
                 family.revoked_at = current
             else:
                 token.spent_at = current
@@ -175,7 +187,7 @@ def hub_access_family(session: Session, access_token: str, *, now: datetime | No
     if family is None or family.revoked_at is not None or current >= _aware(family.expires_at):
         raise InvalidHubGrant
     user = session.exec(select(User).where(User.unique_id == family.user_unique_id)).one_or_none()
-    if user is None or user.is_service_account:
+    if not _may_hold_hub_tokens(user):
         raise InvalidHubGrant
     return family
 

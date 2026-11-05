@@ -85,6 +85,13 @@ def _invalidate_auth_cache(apikey: str):
         _auth_cache.pop(_auth_cache_key(apikey), None)
 
 
+def forget_cached_keys(session, unique_id: str) -> None:
+    """Drop this person's keys from this worker's auth cache. Other workers follow within the
+    cache lifetime."""
+    for token in session.exec(select(ApiToken.token).where(ApiToken.user_unique_id == unique_id)).all():
+        _invalidate_auth_cache(token)
+
+
 # ====== Functions
 def find_or_add_api_access(orcid: str, engine, regenerate = False):
 
@@ -239,6 +246,8 @@ def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
         raise HTTPException(status_code=401, detail="Invalid or expired API key.")
 
     with Session(engine) as session:
+        if session.exec(select(User.disabled_at).where(User.unique_id == api_acct.user_unique_id)).first() is not None:
+            raise HTTPException(status_code=401, detail="Invalid or expired API key.")
         result = load_principal(session, api_acct.user_unique_id)
 
     with _auth_cache_lock:

@@ -9,7 +9,9 @@ on:
       - .github/workflows/oidc-authentik.yml
       - tests/fixtures/authentik/**
       - tests/test_auth_oidc_integration.py
-      - app/auth/providers.py
+      - app/auth/**
+      - app/utils/hub_login.py
+      - app/api/routes/hub_auth.py
 
 permissions:
   contents: read

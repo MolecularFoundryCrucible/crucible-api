@@ -16,7 +16,7 @@ from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import (
     AccessGroup, ApiToken, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
 )
-from app.utils.auth_utils import API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
+from app.utils.auth_utils import forget_cached_keys, API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
 from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor,
 )
@@ -30,7 +30,9 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, get_active_deletion_request, select_active
+from app.auth.events import AuthEventType, record_event
 from app.auth.identity import IdentityTaken, default_orcid_issuer, find_identity
+from app.utils.hub_tokens import revoke_all_hub_tokens
 from app.utils.user_utils import assert_profile_fields_available, commit_user, find_mf_user_proposals, profile_conflict, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import resolve_project_reference
 from app.models.pagination import PaginatedResponse
@@ -702,6 +704,58 @@ def update_user_platform_role(
         session.refresh(user)
         key_status = _admin_key_status(session, auth_res, user)
         return _user_read(auth_res, user, key_status=key_status, with_capabilities=True)
+
+
+def _account_to_switch(session: Session, user_ref: str, auth_res: Principal) -> User:
+    require_platform_admin(auth_res)
+    if auth_res.is_service_account:
+        raise HTTPException(status_code=403, detail="Service accounts cannot switch accounts off or on")
+    user = resolve_user_by_identifier(session, user_ref)
+    if user.unique_id == auth_res.user_id:
+        raise HTTPException(status_code=403, detail="Callers cannot switch their own account off or on")
+    if user.platform_role == PlatformRole.ADMIN.value and not user.is_service_account:
+        if auth_res.credential != "hub":
+            raise HTTPException(status_code=403, detail="Changing a human administrator needs a Hub session, not an API key")
+        require_recent_authentication(auth_res)
+    return user
+
+
+@router.post("/users/{user_ref}/disable", response_model=UserRead, responses={401: {"description": "A Hub session needs a recent sign-in to change a human administrator"}, 409: {"description": "This is the last active human platform administrator"}})
+def disable_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Switch an account off: every sign-in, API key and Hub session stops working. Other server
+    workers honor it within the API key cache lifetime. Platform administrators only."""
+    with Session(get_engine()) as session:
+        user = _account_to_switch(session, user_ref, auth_res)
+        if user.disabled_at is None:
+            if user.platform_role == PlatformRole.ADMIN.value and not user.is_service_account:
+                # Lock every human admin row, so two administrators disabling each other cannot both succeed.
+                active_admins = session.exec(
+                    select(User.id).where(User.platform_role == PlatformRole.ADMIN.value, User.is_service_account == False, User.disabled_at == None).order_by(User.id).with_for_update()  # noqa: E711, E712
+                ).all()
+                if len([admin_id for admin_id in active_admins if admin_id != user.id]) == 0:
+                    raise HTTPException(status_code=409, detail="Cannot disable the last active human platform administrator")
+            user.disabled_at = datetime.now(timezone.utc)
+            session.add(user)
+            revoke_all_hub_tokens(session, user.unique_id)
+            record_event(session, AuthEventType.DISABLED, user=user, actor=session.exec(select(User).where(User.unique_id == auth_res.user_id)).one_or_none())
+            session.commit()
+            forget_cached_keys(session, user.unique_id)
+        session.refresh(user)
+        return _user_read(auth_res, user, key_status=_admin_key_status(session, auth_res, user), with_capabilities=True)
+
+
+@router.post("/users/{user_ref}/enable", response_model=UserRead, responses={401: {"description": "A Hub session needs a recent sign-in to change a human administrator"}})
+def enable_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Switch an account back on. Hub sessions ended by disabling stay ended. Platform administrators only."""
+    with Session(get_engine()) as session:
+        user = _account_to_switch(session, user_ref, auth_res)
+        if user.disabled_at is not None:
+            user.disabled_at = None
+            session.add(user)
+            record_event(session, AuthEventType.ENABLED, user=user, actor=session.exec(select(User).where(User.unique_id == auth_res.user_id)).one_or_none())
+            session.commit()
+        session.refresh(user)
+        return _user_read(auth_res, user, key_status=_admin_key_status(session, auth_res, user), with_capabilities=True)
 
 
 @router.delete("/users/{user_ref}/apikey", status_code=204)

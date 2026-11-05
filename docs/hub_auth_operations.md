@@ -82,4 +82,4 @@ HUB_AUTH_TEST_DATABASE_URL=postgresql+psycopg2://localhost/crucible_hub_auth_tes
 
 ## Not yet supported
 
-Accounts cannot be suspended: there is no disabled-account field. Revoking a token family ends one session but does not block a new ORCID login or API keys. Suspension needs its own schema and policy change covering login, exchange, refresh, every authenticated request, and cache invalidation.
+Administrators can switch an account off with `POST /users/{user_ref}/disable`, which ends its Hub sessions and blocks new sign-ins; API keys stop within the 60-second cache lifetime on other workers. Revoking a token family ends one session but does not block a new sign-in or API keys.

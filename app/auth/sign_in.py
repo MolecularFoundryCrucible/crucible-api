@@ -15,6 +15,7 @@ UNLINKED_ORCID = "unlinked_orcid"
 WRONG_USER = "wrong_user"
 IDENTITY_TAKEN = "identity_taken"
 SERVICE_ACCOUNT = "service_account"
+DISABLED = "disabled"
 
 
 class SignInRefused(Exception):
@@ -41,6 +42,8 @@ def resolve_sign_in(session: Session, issuer: str, subject: str, given_name: str
     """The one answer to "who is this person", for every sign-in path. Matches only the exact issuer
     and subject, never email, username or name. Raises SignInRefused. Runs in the caller's transaction."""
     user = _existing_person(session, issuer, subject)
+    if user is not None and user.disabled_at is not None:
+        raise SignInRefused(DISABLED)
     if required_user is not None and (user is None or user.unique_id != required_user):
         raise SignInRefused(WRONG_USER)
     if user is not None and user.is_service_account:

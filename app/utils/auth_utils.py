@@ -296,6 +296,7 @@ def load_principal(session, orcid: str) -> Principal:
     # across threads and doesn't depend on the closed session.
     return Principal(
         user_id=orcid,
+        internal_user_id=user.id,
         platform_role=_platform_role(user.platform_role),
         is_service_account=bool(user.is_service_account),
         groups=tuple(groups),
@@ -528,7 +529,7 @@ def owner_affiliation_filter(principal: Principal, resource_model):
             ResourceACL.permission == Role.OWNER.db_value,
             ResourceACL.accessgroup_id == AccessGroup.id,
             AccessGroup.group_type == AccessGroupType.IDENTITY.value,
-            AccessGroup.group_name == principal.user_id,
+            AccessGroup.id.in_(_own_identity_group_ids(principal)),
         )
         .select_from(ResourceACL, AccessGroup)
         .correlate(resource_model)
@@ -579,7 +580,7 @@ def maintainer_affiliation_filter(principal: Principal, resource_model):
             ResourceACL.permission.in_((Role.EDITOR.db_value, Role.ADMIN.db_value)),
             ResourceACL.accessgroup_id == AccessGroup.id,
             AccessGroup.group_type == AccessGroupType.IDENTITY.value,
-            AccessGroup.group_name == principal.user_id,
+            AccessGroup.id.in_(_own_identity_group_ids(principal)),
         )
         .select_from(ResourceACL, AccessGroup)
         .correlate(resource_model)
@@ -709,11 +710,30 @@ def has_active_api_key(orcid: str, engine) -> bool:
         return session.exec(select(ApiToken.token).where(ApiToken.user_unique_id == orcid, ApiToken.token_created > one_year_ago)).first() is not None
 
 
-def require_self_or_platform_admin(principal: Principal, orcid: str) -> None:
-    """Raise 403 unless the caller is `orcid` or a platform admin."""
-    if principal.user_id == orcid:
+def require_self_or_platform_admin(principal: Principal, user) -> None:
+    """Raise 403 unless the caller is `user`, a User row or None, or a platform admin."""
+    if principal.is_user(user):
         return
     require_platform_admin(principal)
+
+
+def caller_row(session, principal: Principal, *, for_update: bool = False):
+    """The caller's own User row, found by internal key."""
+    from app.models.core_models import User
+
+    if principal.internal_user_id is None:
+        return None
+    query = select(User).where(User.id == principal.internal_user_id)
+    return session.exec(query.with_for_update() if for_update else query).one_or_none()
+
+
+def _own_identity_group_ids(principal: Principal):
+    from app.models.core_models import UserAccessGroupLink
+
+    return select(UserAccessGroupLink.accessgroup_id).where(
+        UserAccessGroupLink.user_id == principal.internal_user_id,
+        UserAccessGroupLink.role == Role.OWNER.db_value,
+    )
 
 
 def resolve_access_principal(
@@ -733,8 +753,8 @@ def resolve_access_principal(
         allow_global_contributor
         and has_global_permission(caller, Permission.READ)
     ):
-        require_self_or_platform_admin(caller, user.unique_id)
-    if caller.user_id == user.unique_id:
+        require_self_or_platform_admin(caller, user)
+    if caller.is_user(user):
         return caller
     return load_principal(session, user.unique_id)
 

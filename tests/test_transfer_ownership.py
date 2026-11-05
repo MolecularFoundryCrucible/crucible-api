@@ -27,6 +27,10 @@ def _group(session, name, group_type):
     session.add(ag)
     session.commit()
     session.refresh(ag)
+    owner = session.exec(select(User).where(User.unique_id == name)).one_or_none() if group_type is AccessGroupType.IDENTITY else None
+    if owner is not None:
+        session.add(UserAccessGroupLink(user_id=owner.id, accessgroup_id=ag.id, role="owner"))
+        session.commit()
     return ag
 
 

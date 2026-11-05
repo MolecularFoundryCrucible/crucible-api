@@ -11,14 +11,14 @@ from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from app.general_utils import if_match_satisfied
-from app.models.core_models import AssociatedFile, Dataset, UploadSession, User
+from app.models.core_models import AssociatedFile, Dataset, UploadSession
 from app.models.datasets import AssociatedFileRead, file_etag
 from app.models.multipart import EMPTY_SHA256, MultipartStatus
 from app.storage import StorageFailure, UploadMissing
 from app.storage.crc32c import combine_parts
 from app.services.file_versions import keep_version
 from app.services.storage_downloads import multipart_prefix, owned_object
-from app.utils.auth_utils import load_principal, require_permission
+from app.utils.auth_utils import caller_row, load_principal, require_permission
 from app.utils.permissions import Permission, PlatformRole
 from app.utils.sql_utils import assert_not_pending_deletion, get_active_deletion_request, touch_resource_modification_time
 
@@ -168,7 +168,7 @@ def reserve(engine, principal, dsid, body, key, config):
         raise HTTPException(413, "File exceeds the configured upload limit")
     fingerprint = hashlib.sha256(json.dumps(body.model_dump(), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     with Session(engine) as session:
-        user = session.exec(select(User).where(User.unique_id == principal.user_id).with_for_update()).one_or_none()
+        user = caller_row(session, principal, for_update=True)
         if user is None:
             raise HTTPException(401, "Unknown principal")
         dataset = session.exec(select(Dataset).where(Dataset.unique_id == dsid).with_for_update()).one_or_none()
@@ -229,7 +229,7 @@ def reserve_replace(engine, principal, file_mfid, body, key, if_match, config, b
         raise HTTPException(413, "File exceeds the configured upload limit")
     fingerprint = hashlib.sha256(json.dumps(body.model_dump() | {"replace_file_mfid": file_mfid}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     with Session(engine) as session:
-        user = session.exec(select(User).where(User.unique_id == principal.user_id).with_for_update()).one_or_none()
+        user = caller_row(session, principal, for_update=True)
         if user is None:
             raise HTTPException(401, "Unknown principal")
         probe_dataset_id = session.exec(select(AssociatedFile.dataset_id).where(AssociatedFile.mfid == file_mfid)).one_or_none()

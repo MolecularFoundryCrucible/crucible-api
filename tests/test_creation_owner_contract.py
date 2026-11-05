@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.api.routes.datasets import create_dataset
 from app.api.routes.samples import create_sample
-from app.models.core_models import AccessGroup, Dataset, ResourceACL, Sample, User
+from app.models.core_models import AccessGroup, Dataset, ResourceACL, Sample, User, UserAccessGroupLink
 from app.models.datasets import DatasetCreate
 from app.models.samples import SampleCreate
 from app.utils.permissions import (
@@ -28,6 +28,8 @@ def _add_identity(session, unique_id, username=None, is_service_account=False):
     group = AccessGroup(group_name=unique_id, group_type=AccessGroupType.IDENTITY.value)
     session.add(user)
     session.add(group)
+    session.flush()
+    session.add(UserAccessGroupLink(user_id=user.id, accessgroup_id=group.id, role="owner"))
     session.commit()
     session.refresh(user)
     session.refresh(group)

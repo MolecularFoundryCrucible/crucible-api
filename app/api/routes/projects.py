@@ -577,7 +577,7 @@ def remove_user_from_project(
         if proj is None:
             raise HTTPException(status_code=404, detail=f"Project {project_ref} not found")
         user = _resolve_member(session, user_ref, email, username)
-        is_self = auth_res.user_id == user.unique_id
+        is_self = auth_res.is_user(user)
         if not is_self:
             require_permission(session, auth_res, proj.unique_id, Permission.EDIT)
 

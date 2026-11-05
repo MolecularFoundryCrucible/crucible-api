@@ -184,7 +184,22 @@ def auth_as():
             credential=credential,
             authenticated_at=authenticated_at,
         )
-        app.dependency_overrides[authenticate_user] = lambda: principal
+        def current():
+            from dataclasses import replace
+
+            from sqlmodel import Session, select
+
+            from app.api.dependencies import get_engine
+            from app.models.core_models import User
+
+            try:
+                with Session(get_engine()) as session:
+                    internal_user_id = session.exec(select(User.id).where(User.unique_id == user_id)).first()
+            except Exception:
+                internal_user_id = None
+            return replace(principal, internal_user_id=internal_user_id)
+
+        app.dependency_overrides[authenticate_user] = current
 
     yield _set
     app.dependency_overrides.pop(authenticate_user, None)

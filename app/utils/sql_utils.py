@@ -180,14 +180,11 @@ def create_standard_acls(session, mfid, owner_id, requestor_id, project_mfid=Non
 
 
 def set_public(session, mfid: str, is_public: bool):
-    """Add or remove the resource's ACL entry against the virtual public group.
-
-    Publishing is an ACL grant now, not a boolean. The Resource.public column is
-    still written alongside until phase 5 drops it, but nothing reads it for
-    authorization — so setting the flag without this leaves a resource marked
-    public that nobody outside can actually reach.
-    """
-    from app.models.core_models import AccessGroup, ResourceACL
+    """Add or remove the resource's ACL entry against the virtual public group, which is what
+    "public" means. The only writer of public state, called when a record is created and by
+    PUT and DELETE /resources/{mfid}/access/public."""
+    from sqlalchemy import update
+    from app.models.core_models import AccessGroup, Dataset, Resource, ResourceACL
     from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType, Role
     from sqlmodel import select
 
@@ -203,6 +200,10 @@ def set_public(session, mfid: str, is_public: bool):
                 status_code=409,
                 detail="Public access group is not provisioned",
             )
+    # Older pods read these columns during a rollout, and Dataset.public overwrites the grant there.
+    session.exec(update(Resource).where(Resource.mfid == mfid).values(public=is_public))
+    session.exec(update(Dataset).where(Dataset.unique_id == mfid).values(public=is_public))
+    if pub is None:
         return
 
     existing = session.exec(
@@ -310,15 +311,21 @@ def visibility_filter_for(resource_model, visibility: str):
     Returns a SQLAlchemy filter narrowing to public or private resources.
     `visibility` is 'public' or 'private'; callers skip this entirely for 'all'.
 
-    Public means an ACL entry exists for the virtual public group — the ACL
-    entry is authoritative, not the legacy `public` column that phase 5 drops.
+    Public means an ACL entry exists for the virtual public group.
     """
+    is_public = public_grant_exists(resource_model.unique_id)
+    return is_public if visibility == "public" else ~is_public
+
+
+def public_grant_exists(mfid_column):
+    """SQL expression for whether a record is public: an ACL entry for the virtual public group.
+    Every response and filter reads this, never a `public` column."""
     from sqlalchemy import exists
     from app.models.core_models import AccessGroup, ResourceACL
     from app.utils.permissions import PUBLIC_GROUP_NAME, AccessGroupType
 
-    is_public = exists().where(
-        ResourceACL.mfid == resource_model.unique_id,
+    return exists().where(
+        ResourceACL.mfid == mfid_column,
         ResourceACL.accessgroup_id == (
             select(AccessGroup.id).where(
                 AccessGroup.group_name == PUBLIC_GROUP_NAME,
@@ -326,7 +333,11 @@ def visibility_filter_for(resource_model, visibility: str):
             ).scalar_subquery()
         ),
     )
-    return is_public if visibility == "public" else ~is_public
+
+
+def is_public(session, mfid: str) -> bool:
+    from sqlalchemy import literal
+    return bool(session.exec(select(public_grant_exists(literal(mfid)))).one())
 
 
 

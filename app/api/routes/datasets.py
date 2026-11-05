@@ -91,7 +91,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.user_utils import resolve_create_owner
-from app.utils.sql_utils import add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
+from app.utils.sql_utils import is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_not_pending_deletion, assert_parent_accepts_assignment, select_active, generate_kw_query, sql_create_resource_acl, create_standard_acls, touch_resource_modification_time, set_public, deletion_filter_for
 from app.utils.gcs_record_utils import write_record, dataset_record
 from app.api.routes.gcs_storage import _ensure_storage_path, _signed_download
 
@@ -242,7 +242,6 @@ def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
         ri.modification_time = now
         ri.created_with_api_version = API_VERSION
         ri.api_version_githash = API_VERSION_GITHASH
-        ri.public = ds.public
         set_public(session, ds.unique_id, bool(ds.public))
         
         session.flush()
@@ -286,14 +285,15 @@ def create_dataset(auth_res: Annotated[Principal, Depends(authorize_user)],
                 instrument.instrument_id,
                 instrument.unique_id,
             )
-        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri), user_unique_id, "create")
+        public = is_public(session, ds.unique_id)
+        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri, public), user_unique_id, "create")
         project_references = resolve_project_mfids_to_references([ds.project_mfid], session)
         return DatasetResponse.model_validate({
             **ds.model_dump(),
             **dataset_instrument_fields(ds, InstrumentReferenceRead.model_validate(instrument) if instrument else None),
             "project_id": project_references[ds.project_mfid].project_id if ds.project_mfid in project_references else None,
             "project": project_references.get(ds.project_mfid),
-            "public": ri.public,
+            "public": public,
             "creation_time": ri.creation_time,
             "modification_time": ri.modification_time,
         })
@@ -364,12 +364,11 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
         ri = session.exec(select(Resource).where(Resource.mfid == dsid)).one_or_none()
         if ri:
             ri.modification_time = get_utc_datetime()
-            ri.public = upds.public
-            set_public(session, upds.unique_id, bool(upds.public))
 
         session.commit()
         session.refresh(upds)
-        background_tasks.add_task(write_record, upds.unique_id, dataset_record(upds, ri), user_unique_id, "update")
+        public = is_public(session, upds.unique_id)
+        background_tasks.add_task(write_record, upds.unique_id, dataset_record(upds, ri, public), user_unique_id, "update")
         instrument_references = resolve_instrument_mfids_to_references([upds.instrument_mfid], session)
         project_references = resolve_project_mfids_to_references([upds.project_mfid], session)
         instrument_reference = instrument_references.get(upds.instrument_mfid)
@@ -379,7 +378,7 @@ def update_dataset(auth_res: Annotated[Principal, Depends(authorize_user)], dsid
             **dataset_instrument_fields(upds, instrument_reference),
             "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
-            "public": ri.public if ri else upds.public,
+            "public": public,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
         })
@@ -469,7 +468,7 @@ def assign_dataset_instrument(auth_res: Annotated[Principal, Depends(authorize_u
         session.commit()
         session.refresh(ds)
 
-        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri),
+        background_tasks.add_task(write_record, ds.unique_id, dataset_record(ds, ri, is_public(session, ds.unique_id)),
                                   user_unique_id, "update")
         return DatasetInstrumentRead(
             dataset_mfid=dsid,
@@ -623,7 +622,7 @@ def list_datasets(
         if include_metadata:
             query = (
                 select(Dataset, Resource.creation_time, Resource.modification_time,
-                       Resource.public, ScientificMetadataBinary.scientific_metadata,
+                       public_grant_exists(Dataset.unique_id), ScientificMetadataBinary.scientific_metadata,
                        Project.unique_id, Project.project_id, Project.title,
                        Instrument.unique_id, Instrument.instrument_id, Instrument.instrument_name)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
@@ -633,7 +632,7 @@ def list_datasets(
             )
         else:
             query = (
-                select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public,
+                select(Dataset, Resource.creation_time, Resource.modification_time, public_grant_exists(Dataset.unique_id),
                        Project.unique_id, Project.project_id, Project.title,
                        Instrument.unique_id, Instrument.instrument_id, Instrument.instrument_name)
                 .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
@@ -724,7 +723,7 @@ def list_datasets(
                 **dataset_instrument_fields(dataset, instrument_reference),
                 "project_id": project_id,
                 "project": project_reference,
-                "public": public if public is not None else False,
+                "public": public,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
                 "scientific_metadata": sci_md,
@@ -750,7 +749,7 @@ def _dataset_base_query(principal):
     auth_filter = permission_filter(principal, Dataset)
     deletion_filter = deletion_filter_for(Dataset)
     return (
-        select(Dataset, Resource.creation_time, Resource.modification_time, Resource.public,
+        select(Dataset, Resource.creation_time, Resource.modification_time, public_grant_exists(Dataset.unique_id),
                Project.unique_id, Project.project_id, Project.title,
                Instrument.unique_id, Instrument.instrument_id, Instrument.instrument_name)
         .join(Resource, Resource.mfid == Dataset.unique_id, isouter=True)
@@ -820,7 +819,7 @@ def search_datasets(
                 project_id=resolved_project_id,
                 title=project_title,
             ) if resolved_project_mfid else None,
-            "public": public if public is not None else False,
+            "public": public,
             "creation_time": creation_time,
             "modification_time": modification_time,
             "project_relation": (

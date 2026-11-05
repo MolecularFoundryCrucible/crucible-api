@@ -2,6 +2,7 @@ import hashlib
 from typing import List, Literal, Optional
 from pydantic import MISSING, ConfigDict, Field, computed_field, field_validator, model_validator
 from sqlmodel import SQLModel
+from app.general_utils import refuse_public_change
 from app.general_utils import blank_to_none, is_valid_mfid
 from app.models.fields import NonEmptyStr
 from app.models.links import LinkedResource
@@ -132,7 +133,11 @@ class DatasetUpdate(SQLModel):
     data_type: Optional[str] = None
     session_name: Optional[str] = None
     timestamp: Optional[str] = None
-    public: Optional[bool] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def public_is_not_editable(cls, data):
+        return refuse_public_change(data)
 
 
 class DatasetInstrumentAssign(SQLModel):

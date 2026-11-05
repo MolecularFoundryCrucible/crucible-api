@@ -43,7 +43,7 @@ from app.utils.search_utils import (
     normalize_search_query,
     trigram_rank,
 )
-from app.utils.sql_utils import add_or_update, assert_mfid_available, assert_parent_accepts_assignment, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public
+from app.utils.sql_utils import is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_parent_accepts_assignment, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public
 
 from app.utils.gcs_record_utils import write_record, sample_record
 from app.utils.user_utils import resolve_create_owner
@@ -176,28 +176,25 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
         require_permission(session, auth_res, sample_id, Permission.EDIT)
 
         update_dict = updated_sample.model_dump(exclude_unset=True)
-        new_public = update_dict.pop('public', None)
         for key, value in update_dict.items():
             setattr(sample, key, value)
 
         ri = session.exec(select(Resource).where(Resource.mfid == sample_id)).one_or_none()
         if ri:
             ri.modification_time = get_utc_datetime()
-            if new_public is not None:
-                ri.public = new_public
-                set_public(session, sample_id, bool(new_public))
 
         session.add(sample)
         session.commit()
         session.refresh(sample)
-        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri), user_unique_id, "update")
+        public = is_public(session, sample.unique_id)
+        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri, public), user_unique_id, "update")
         project_references = resolve_project_mfids_to_references([sample.project_mfid], session)
         project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
             "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
-            "public": ri.public if ri else False,
+            "public": public,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
         })
@@ -276,7 +273,6 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         if existing_ri is None:
             ri.creation_time = now
         ri.modification_time = now
-        ri.public = S.public
         set_public(session, sample.unique_id, bool(S.public))
 
         create_standard_acls(session, sample.unique_id,
@@ -287,14 +283,15 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         session.add(sample)
         session.commit()
         session.refresh(sample)
-        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri), user_unique_id, "create")
+        public = is_public(session, sample.unique_id)
+        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri, public), user_unique_id, "create")
         project_references = resolve_project_mfids_to_references([sample.project_mfid], session)
         project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
             "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
-            "public": ri.public if ri else False,
+            "public": public,
             "creation_time": ri.creation_time if ri else None,
             "modification_time": ri.modification_time if ri else None,
         })
@@ -438,7 +435,7 @@ def list_samples(
 
         if include_metadata:
             samp_cmd = (
-                select(Sample, Resource.creation_time, Resource.modification_time, Resource.public,
+                select(Sample, Resource.creation_time, Resource.modification_time, public_grant_exists(Sample.unique_id),
                        ScientificMetadataBinary.scientific_metadata, Project.unique_id,
                        Project.project_id, Project.title)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
@@ -447,7 +444,7 @@ def list_samples(
             )
         else:
             samp_cmd = (
-                select(Sample, Resource.creation_time, Resource.modification_time, Resource.public,
+                select(Sample, Resource.creation_time, Resource.modification_time, public_grant_exists(Sample.unique_id),
                        Project.unique_id, Project.project_id, Project.title)
                 .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
                 .outerjoin(Project, Project.unique_id == Sample.project_mfid)
@@ -543,7 +540,7 @@ def list_samples(
                 **samp.model_dump(),
                 "project_id": resolved_project_id,
                 "project": project_reference,
-                "public": public if public is not None else False,
+                "public": public,
                 "creation_time": creation_time,
                 "modification_time": modification_time,
                 "scientific_metadata": sci_md,
@@ -571,7 +568,7 @@ def _sample_base_query(principal):
     auth_filter = permission_filter(principal, Sample)
     deletion_filter = deletion_filter_for(Sample)
     return (
-        select(Sample, Resource.creation_time, Resource.modification_time, Resource.public,
+        select(Sample, Resource.creation_time, Resource.modification_time, public_grant_exists(Sample.unique_id),
                Project.unique_id, Project.project_id, Project.title)
         .join(Resource, Resource.mfid == Sample.unique_id, isouter=True)
         .outerjoin(Project, Project.unique_id == Sample.project_mfid)
@@ -634,7 +631,7 @@ def search_samples(
                 project_id=resolved_project_id,
                 title=project_title,
             ) if project_mfid is not None else None,
-            "public": public if public is not None else False,
+            "public": public,
             "creation_time": creation_time,
             "modification_time": modification_time,
             "project_relation": (

@@ -13,7 +13,7 @@ from app.auth import browser_login
 from app.auth.identity import IdentityTaken, ensure_identity, retry_after_concurrent_first_write
 from app.config import get_settings
 from app.models.core_models import User
-from app.models.response_schemas import ApiKeyRead, LegacyApiKeyRead
+from app.models.response_schemas import ApiKeyRead, AuthMethodRead, LegacyApiKeyRead
 from app.utils.permissions import AccessGroupType, Role
 from app.utils.auth_utils import decode_token, find_or_add_api_access
 from app.utils.sql_utils import add_or_update
@@ -40,6 +40,15 @@ def _login_redirect(login_path: str, return_to: str) -> RedirectResponse:
 
 
 # ── Canonical routes ─────────────────────────────────────────────────────────
+
+@router.get("/auth/methods", response_model=list[AuthMethodRead])
+def list_sign_in_methods():
+    """The ways to sign in through the Hub on this deployment; empty when Hub sign-in is off."""
+    settings = get_settings()
+    if not settings.hub.enabled:
+        return []
+    return [AuthMethodRead(key=provider.key, display_name=provider.display_name) for provider in settings.auth.providers]
+
 
 @router.get("/auth/login", response_class=RedirectResponse, status_code=302, responses={302: {"description": "Redirect to the ORCID sign-in page"}, 502: {"description": "ORCID cannot be reached"}})
 async def orcid_login(request: Request):

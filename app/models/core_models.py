@@ -355,6 +355,9 @@ class HubLoginTransaction(SQLModel, table=True):
     hub_state: str
     code_challenge: str = Field(max_length=43)
     nonce: str
+    provider_key: Optional[str] = Field(default=None, max_length=32)
+    provider_code_verifier: Optional[str] = Field(default=None, max_length=128)
+    required_user: Optional[str] = Field(default=None, max_length=255)
     created_at: datetime = Field(sa_type=DateTime(timezone=True))
     expires_at: datetime = Field(sa_type=DateTime(timezone=True))
     consumed_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))

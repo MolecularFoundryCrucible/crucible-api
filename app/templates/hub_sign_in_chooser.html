@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in to Crucible</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; font-family: system-ui, sans-serif; background: #f6f7f9; color: #1a1d21; }
+    main { width: 100%; max-width: 360px; margin: 24px; padding: 24px; box-sizing: border-box; background: #fff; border: 1px solid #dfe2e7; border-radius: 8px; }
+    h1 { margin: 0 0 16px; font-size: 20px; font-weight: 600; }
+    ul { margin: 0; padding: 0; list-style: none; }
+    li + li { margin-top: 8px; }
+    a { display: block; padding: 12px 16px; border: 1px solid #c4c9d1; border-radius: 6px; color: inherit; text-align: center; text-decoration: none; overflow-wrap: anywhere; }
+    a:hover, a:focus { background: #eef0f3; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #15171a; color: #e8eaed; }
+      main { background: #1e2125; border-color: #33373d; }
+      a { border-color: #4a4f57; }
+      a:hover, a:focus { background: #2a2e33; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Sign in to Crucible</h1>
+    <ul>
+      {% for method in methods %}
+      <li><a href="{{ method.href }}">{{ method.display_name }}</a></li>
+      {% endfor %}
+    </ul>
+  </main>
+</body>
+</html>

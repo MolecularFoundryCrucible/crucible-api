@@ -1,3 +1,4 @@
+from tests.test_hub_tokens import ORCID_PROVIDER
 import importlib.util
 import os
 import uuid
@@ -130,11 +131,11 @@ def test_hub_sign_in_writes_the_identity_row_for_new_and_existing_users(db_engin
     now = datetime.now(timezone.utc)
     def transaction(state):
         return HubLoginTransaction(state_hash=state, browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", created_at=now, expires_at=now + timedelta(minutes=10))
-    create_handoff_code(db_engine, transaction("s1"), ORCID, "Ada", "Lovelace")
-    create_handoff_code(db_engine, transaction("s2"), ORCID, "Ada", "Lovelace")
+    create_handoff_code(db_engine, transaction("s1"), ORCID_PROVIDER, ORCID, "Ada", "Lovelace")
+    create_handoff_code(db_engine, transaction("s2"), ORCID_PROVIDER, ORCID, "Ada", "Lovelace")
     with Session(db_engine) as session, session.begin():
         add_user(session, unique_id=OTHER_ORCID)
-    create_handoff_code(db_engine, transaction("s3"), OTHER_ORCID, "Grace", "Hopper")
+    create_handoff_code(db_engine, transaction("s3"), ORCID_PROVIDER, OTHER_ORCID, "Grace", "Hopper")
     assert identities(db_engine) == [(ISSUER, ORCID), (ISSUER, OTHER_ORCID)]
 
 
@@ -147,7 +148,7 @@ def test_hub_sign_in_uses_the_hub_issuer(db_engine, hub_tables, monkeypatch, orc
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     orcid_provider_settings(issuer=SANDBOX)
     now = datetime.now(timezone.utc)
-    create_handoff_code(db_engine, HubLoginTransaction(state_hash="s", browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", created_at=now, expires_at=now + timedelta(minutes=10)), ORCID, None, None)
+    create_handoff_code(db_engine, HubLoginTransaction(state_hash="s", browser_secret_hash="b", client_id="crucible-hub", callback_uri="https://hub.example/cb", hub_state="h" * 16, code_challenge="c" * 43, nonce="n", created_at=now, expires_at=now + timedelta(minutes=10)), ORCID_PROVIDER.model_copy(update={"issuer": SANDBOX}), ORCID, None, None)
     assert identities(db_engine) == [(SANDBOX, ORCID)]
 
 
@@ -647,7 +648,7 @@ def test_simultaneous_first_hub_sign_ins_create_one_person_on_postgres(pg_sign_i
     from app.utils.hub_login import create_handoff_code
 
     transaction = SimpleNamespace(client_id="crucible-hub", callback_uri="https://hub.example/callback", code_challenge="c", hub_state="s")
-    results = race(8, lambda: create_handoff_code(pg_sign_in, transaction, ORCID, "Ada", "Lovelace"))
+    results = race(8, lambda: create_handoff_code(pg_sign_in, transaction, ORCID_PROVIDER, ORCID, "Ada", "Lovelace"))
     assert len({code for code, _ in results}) == 8
     assert_one_person(pg_sign_in)
 

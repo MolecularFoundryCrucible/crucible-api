@@ -6,7 +6,7 @@ The routes use exact configured callbacks, OIDC validation, a one-use PKCE-bound
 
 ## Settings and secrets
 
-- `HUB_AUTH_ENABLED=true` turns the routes on. When it is on, the startup check requires `HUB_AUTH_CLIENT_SECRET`, `HUB_AUTH_CALLBACK_URI`, `CRUCIBLE_AUTH_PROVIDERS` with one provider marked `legacy_callback`, and that provider's secret.
+- `HUB_AUTH_ENABLED=true` turns the routes on. When it is on, the startup check requires `HUB_AUTH_CLIENT_SECRET`, `HUB_AUTH_CALLBACK_URI`, `CRUCIBLE_AUTH_PROVIDERS` with at least one provider, and each listed provider's secret.
 - `CRUCIBLE_AUTH_PROVIDERS` is the JSON list of sign-in providers. Nothing is implied from other settings, and the older `ORCID_*` settings serve only `/auth/login`. See [the provider list](#the-provider-list).
 - Each secret is given one way only: inline, `NAME_FILE`, a file named `NAME` in the secrets directory, or `NAME_VERSION` (a Secret Manager `projects/.../secrets/.../versions/N` or `versions/latest`). Giving one two ways stops the server at startup. Values must be one line of printable ASCII.
 - Every worker reads its secrets at start and refuses to start if one cannot be read (`get_secret` in `app/config.py`). Successful reads are cached per worker; failures are not. Secret Manager lookups time out after ten seconds without retries, use Application Default Credentials, and stay in worker memory.
@@ -25,12 +25,27 @@ The routes use exact configured callbacks, OIDC validation, a one-use PKCE-bound
 | `client_id` | The client ID the provider gave you. |
 | `scopes` | Space-separated scopes, including `openid`. ORCID uses `openid`. |
 | `token_endpoint_auth_method` | `client_secret_post` for ORCID; otherwise usually `client_secret_basic`. |
-| `registration` | `closed`, `approval` or `open`. Stored now, enforced once registration is built; until then only ORCID creates accounts, and other providers sign in only people already linked. |
-| `legacy_callback` | Uses the registered `<public API URL>/auth/hub/callback`. For the ORCID provider only. |
+| `registration` | `closed`, `approval` or `open`. Stored now, enforced once registration is built. Until then only ORCID creates accounts; other providers sign in only people already in `user_identity`, and anyone else gets `access_denied`. |
+| `legacy_callback` | Uses `<public API URL>/auth/hub/callback`, for an ORCID client already registered with that address. ORCID only, and at most one provider. Otherwise the callback to register with the provider is `<public API URL>/auth/hub/oidc/{key}/callback`. |
 
 A provider whose issuer is exactly `https://orcid.org` or `https://sandbox.orcid.org` is the ORCID provider, and only one may be listed. The client secret never goes in the list. It is `OIDC_{KEY}_CLIENT_SECRET`, for example `OIDC_ORCID_CLIENT_SECRET`, given any of the ways above.
 
 A provider whose discovery document cannot be read or does not match is unavailable; other providers keep working, and it is tried again after 30 seconds. Discovery is read on first use, so this never stops the server from starting.
+
+## How the Hub signs in
+
+`GET /auth/methods` lists the ways to sign in. `GET /auth/hub/login` takes an optional `provider` key. Without one, a single listed provider is used directly, and several show a page to choose. `required_user` names the `unique_id` that must sign in; it passes through the browser, so the Hub must still compare the account it receives.
+
+Once a sign-in request is valid, failures redirect to the Hub's callback with `state` and an RFC 6749 `error`:
+
+| `error` | Meaning |
+|---|---|
+| `access_denied` | The person refused at the provider, their login is not linked to an account, or the login is refused for this account |
+| `login_required` | Someone other than `required_user` signed in, or the provider asked for a sign-in |
+| `temporarily_unavailable` | The provider cannot be reached or its discovery document is bad; try again |
+| `server_error` | The provider's answer did not verify |
+
+A callback that cannot be matched to this browser's sign-in gets the API's own 400 page, because its redirect target cannot be trusted. `POST /auth/hub/token` and `POST /auth/hub/refresh` return `auth_time`, null when the provider gave none.
 
 Rotation adds a secret version, points the reference at it, and restarts the processes. Only one shared Hub client secret is accepted at a time, so coordinate rotation with the Hub. Workers keep cached values after a version is disabled: emergency revocation needs a restart and, where needed, token-family revocation.
 

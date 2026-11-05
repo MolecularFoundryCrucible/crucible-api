@@ -8,7 +8,8 @@ from google.api_core.exceptions import PermissionDenied
 from google.auth.exceptions import DefaultCredentialsError
 import pytest
 
-from app.config import ConfigurationError
+from app.auth import providers
+from app.config import ConfigurationError, get_settings
 
 from app.api.routes.hub_auth import require_hub_client
 from app.config import optional_secret
@@ -149,8 +150,9 @@ def test_provider_reference_failure_does_not_use_older_secret(monkeypatch, manag
     monkeypatch.setenv("OIDC_ORCID_CLIENT_SECRET_VERSION", VERSION)
     monkeypatch.setenv("ORCID_CLIENT_SECRET", "older-secret")
     manager.side_effect = DefaultCredentialsError("sensitive-error")
-    with pytest.raises(HubLoginUnavailable):
-        load_login_config()
+    with pytest.raises(ConfigurationError) as caught:
+        providers._provider_app(get_settings().auth.providers[0])
+    assert "sensitive-error" not in str(caught.value)
     manager.assert_called_once()
 
 
@@ -248,5 +250,6 @@ def test_provider_secret_missing_is_unavailable(monkeypatch, tmp_path, orcid_pro
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "hub-secret")
     orcid_provider_settings()
     monkeypatch.delenv("OIDC_ORCID_CLIENT_SECRET")
-    with pytest.raises(HubLoginUnavailable):
-        load_login_config()
+    get_settings.cache_clear()
+    with pytest.raises(ConfigurationError):
+        providers._provider_app(get_settings().auth.providers[0])

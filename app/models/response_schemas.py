@@ -33,6 +33,12 @@ class ApiKeyVerify(BaseModel):
     last_used_at: Optional[UtcDatetime] = None
 
 
+class AuthMethodRead(BaseModel):
+    key: str
+    display_name: str
+    kind: Literal["oidc"] = "oidc"
+
+
 class ProjectSyncResult(BaseModel):
     orcid: str
     projects_added: List[str] = []

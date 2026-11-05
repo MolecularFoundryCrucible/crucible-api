@@ -20,6 +20,7 @@ from app.models.core_models import (
     UserAccessGroupLink,
 )
 from app.utils.permissions import AccessGroupType, Role
+from tests.people import user_id_or_none
 
 
 ALICE = "0000-0001-1111-1111"
@@ -66,10 +67,10 @@ def _seed_owned_resources(db_engine):
         ])
 
         resources = [
-            Dataset(unique_id="dataset-alice", dataset_name="Owned search dataset", owner_orcid=ALICE),
-            Dataset(unique_id="dataset-bob", dataset_name="Shared search dataset", owner_orcid=BOB),
-            Sample(unique_id="sample-alice", sample_name="Owned search sample", owner_orcid=ALICE),
-            Sample(unique_id="sample-bob", sample_name="Shared search sample", owner_orcid=BOB),
+            Dataset(unique_id="dataset-alice", dataset_name="Owned search dataset", owner_orcid=ALICE, owner_user_id=user_id_or_none(session, ALICE)),
+            Dataset(unique_id="dataset-bob", dataset_name="Shared search dataset", owner_orcid=BOB, owner_user_id=user_id_or_none(session, BOB)),
+            Sample(unique_id="sample-alice", sample_name="Owned search sample", owner_orcid=ALICE, owner_user_id=user_id_or_none(session, ALICE)),
+            Sample(unique_id="sample-bob", sample_name="Shared search sample", owner_orcid=BOB, owner_user_id=user_id_or_none(session, BOB)),
             Instrument(unique_id="instrument-alice", instrument_id="alice-inst", instrument_name="Owned search instrument", owner=ALICE, owner_user_id=alice.id, location="A"),
             Instrument(unique_id="instrument-bob", instrument_id="bob-inst", instrument_name="Shared search instrument", owner=BOB, owner_user_id=bob.id, location="B"),
         ]
@@ -109,7 +110,7 @@ def _seed_sortable_datasets(db_engine, group_id):
     ]
     with Session(db_engine) as session:
         for unique_id, name, created, updated in rows:
-            session.add(Dataset(unique_id=unique_id, dataset_name=name, owner_orcid=ALICE))
+            session.add(Dataset(unique_id=unique_id, dataset_name=name, owner_orcid=ALICE, owner_user_id=user_id_or_none(session, ALICE)))
             session.add(Resource(mfid=unique_id, resource_type="dataset", creation_time=_dt(created), modification_time=_dt(updated)))
             session.add(ResourceACL(mfid=unique_id, accessgroup_id=group_id, read=True, write=True, permission=Role.OWNER.db_value))
         session.commit()

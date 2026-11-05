@@ -13,7 +13,7 @@ from app.api.path_params import ChildSampleMfid, ParentSampleMfid, SampleMfid
 from app.general_utils import get_utc_datetime
 from app.models.core_models import (
     Dataset, DatasetSampleLink,
-    Project, Resource, Sample, SampleLink, ScientificMetadataBinary, User,
+    Project, Resource, Sample, SampleLink, ScientificMetadataBinary,
 )
 from app.models.datasets import DatasetRead
 from app.models.facets import FacetResponse
@@ -46,8 +46,7 @@ from app.utils.search_utils import (
 from app.utils.sql_utils import is_public, public_grant_exists, add_or_update, assert_mfid_available, assert_parent_accepts_assignment, deletion_filter_for, select_active, create_standard_acls, touch_resource_modification_time, set_public
 
 from app.utils.gcs_record_utils import write_record, sample_record
-from app.utils.user_utils import canonical_person_id, resolve_create_owner
-from app.models.users import UserPublicRead
+from app.utils.user_utils import owned_by, owner_fields, owner_unique_id, owners_of, resolve_create_owner
 from app.models.response_schemas import MessageResponse
 from app.services.resource_details import ResourceDetailOptions, load_sample_detail
 from app.services.resource_facets import list_sample_facets
@@ -187,11 +186,12 @@ def update_sample(auth_res: Annotated[Principal, Depends(authorize_user)], sampl
         session.commit()
         session.refresh(sample)
         public = is_public(session, sample.unique_id)
-        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri, public), user_unique_id, "update")
+        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri, public, owner_unique_id(session, sample)), user_unique_id, "update")
         project_references = resolve_project_mfids_to_references([sample.project_mfid], session)
         project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
+            **owner_fields(sample, owners_of(session, [sample])),
             "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
             "public": public,
@@ -239,7 +239,7 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
             raise project_not_found(requested_project_id, requested_project_mfid)
 
         if not has_global_permission(auth_res, Permission.CREATE):
-            if (resolved_owner_orcid or user_unique_id) != user_unique_id:
+            if not auth_res.is_user(owner_user):
                 raise HTTPException(
                     status_code=403,
                     detail="Only platform contributors and administrators may create a sample on behalf of another user")
@@ -284,11 +284,12 @@ def create_sample(auth_res: Annotated[Principal, Depends(authorize_user)], S: Sa
         session.commit()
         session.refresh(sample)
         public = is_public(session, sample.unique_id)
-        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri, public), user_unique_id, "create")
+        background_tasks.add_task(write_record, sample.unique_id, sample_record(sample, ri, public, owner_unique_id(session, sample)), user_unique_id, "create")
         project_references = resolve_project_mfids_to_references([sample.project_mfid], session)
         project_reference = project_references.get(sample.project_mfid)
         return SampleResponse.model_validate({
             **sample.model_dump(),
+            **owner_fields(sample, owners_of(session, [sample])),
             "project_id": project_reference.project_id if project_reference else None,
             "project": project_reference,
             "public": public,
@@ -365,9 +366,6 @@ def list_samples(
         if param_values[key] is not None
     }
     owner_id = params.owner_id or param_values["owner_orcid"]
-    if owner_id is not None:
-        with Session(get_engine()) as session:
-            exact_filters["owner_orcid"] = canonical_person_id(session, owner_id)
     result_filters = params.normalized_result_filters(
         exclude={
             "anchor_mfid", "cursor", "offset", "limit", "sort", "direction",
@@ -416,11 +414,13 @@ def list_samples(
                 )
             if params.mfid is not None:
                 q = q.where(Sample.unique_id.in_(params.mfid))
+            if owner_id is not None:
+                q = q.where(owned_by(session, Sample.owner_user_id, owner_id))
             for key, value in exact_filters.items():
                 q = q.where(getattr(Sample, key) == value)
             for column, value in (
                 (Sample.sample_type, params.sample_type_is_null),
-                (Sample.owner_orcid, params.owner_id_is_null),
+                (Sample.owner_user_id, params.owner_id_is_null),
                 (Sample.project_mfid, params.project_mfid_is_null),
             ):
                 if value is not None:
@@ -496,24 +496,20 @@ def list_samples(
                     [ds.instrument_mfid for _, ds in sample_dataset_rows], session)
                 ds_project_references = resolve_project_mfids_to_references(
                     [ds.project_mfid for _, ds in sample_dataset_rows], session)
+                dataset_owners = owners_of(session, (ds for _, ds in sample_dataset_rows))
                 for sid, ds in sample_dataset_rows:
                     datasets_by_sample.setdefault(sid, []).append(
                         LinkedResource(unique_id=ds.unique_id, resource_type="dataset", name=ds.dataset_name, direction="undirected")
                     )
                     dataset_reads_by_sample.setdefault(sid, []).append(DatasetRead.model_validate({
                         **ds.model_dump(),
+                        **owner_fields(ds, dataset_owners),
                         **dataset_instrument_fields(ds, instrument_references.get(ds.instrument_mfid)),
                         "project_id": ds_project_references[ds.project_mfid].project_id if ds.project_mfid in ds_project_references else None,
                         "project": ds_project_references.get(ds.project_mfid),
                     }))
 
-        # Batch-resolve owners if requested
-        owners_by_orcid = {}
-        if include_owner:
-            orcids = {row[0].owner_orcid for row in rows if row[0].owner_orcid}
-            if orcids:
-                for u in session.exec(select(User).where(User.unique_id.in_(orcids))).all():
-                    owners_by_orcid[u.unique_id] = UserPublicRead.model_validate(u)
+        owners = owners_of(session, (row[0] for row in rows))
 
         items = []
         for row in rows:
@@ -547,7 +543,7 @@ def list_samples(
                 "scientific_metadata": sci_md,
                 "datasets": compat_datasets,
                 "links": links,
-                "owner": owners_by_orcid.get(samp.owner_orcid),
+                **owner_fields(samp, owners, include_owner),
                 "project_relation": (
                     "assigned" if samp.project_mfid == filter_project_mfid else "shared"
                 ) if filter_project_mfid is not None else None,
@@ -618,14 +614,16 @@ def search_samples(
         if params.affiliation:
             query = query.where(resource_affiliation_filter(auth_res, Sample, params.affiliation))
         if params.owner_id is not None:
-            query = query.where(Sample.owner_orcid == canonical_person_id(session, params.owner_id))
+            query = query.where(owned_by(session, Sample.owner_user_id, params.owner_id))
         query = query.order_by(
             trigram_rank(normalized_q, (Sample.sample_name,)).desc(),
             Sample.unique_id.desc(),
         ).limit(limit)
         results = session.exec(query).all()
+        owners = owners_of(session, (row[0] for row in results))
         items = [SampleResponse.model_validate({
             **samp.model_dump(),
+            **owner_fields(samp, owners),
             "project_id": resolved_project_id,
             "project": ProjectReferenceRead(
                 unique_id=project_mfid,
@@ -697,8 +695,10 @@ def list_parent_samples(child_sample_id: ChildSampleMfid, auth_res: Annotated[Pr
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
         project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
+        owners = owners_of(session, rows)
         items = [SampleRead.model_validate({
             **s.model_dump(),
+            **owner_fields(s, owners),
             "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else None,
             "project": project_references.get(s.project_mfid),
         }) for s in rows]
@@ -734,8 +734,10 @@ def list_child_samples(parent_sample_id: ParentSampleMfid, auth_res: Annotated[P
         total = session.exec(select(func.count()).select_from(query.subquery())).one()
         rows = session.exec(query.offset(offset).limit(limit)).all()
         project_references = resolve_project_mfids_to_references((s.project_mfid for s in rows), session)
+        owners = owners_of(session, rows)
         items = [SampleRead.model_validate({
             **s.model_dump(),
+            **owner_fields(s, owners),
             "project_id": project_references[s.project_mfid].project_id if s.project_mfid in project_references else None,
             "project": project_references.get(s.project_mfid),
         }) for s in rows]

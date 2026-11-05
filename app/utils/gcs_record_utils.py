@@ -58,10 +58,10 @@ def _build_audit(store, bucket: str, key: str, payload: dict, actor: str, operat
     }
 
 
-def dataset_record(ds, ri, public: bool) -> dict:
+def dataset_record(ds, ri, public: bool, owner_id: str | None) -> dict:
     return {
         "unique_id": ds.unique_id, "dataset_name": ds.dataset_name,
-        "owner_orcid": ds.owner_orcid, "project_mfid": ds.project_mfid,
+        "owner_orcid": owner_id, "project_mfid": ds.project_mfid,
         "instrument_mfid": ds.instrument_mfid, "measurement": ds.measurement,
         "data_type": ds.data_type, "data_format": ds.data_format,
         "session_name": ds.session_name,
@@ -73,10 +73,10 @@ def dataset_record(ds, ri, public: bool) -> dict:
     }
 
 
-def sample_record(samp, ri, public: bool) -> dict:
+def sample_record(samp, ri, public: bool, owner_id: str | None) -> dict:
     return {
         "unique_id": samp.unique_id, "sample_name": samp.sample_name,
-        "sample_type": samp.sample_type, "owner_orcid": samp.owner_orcid,
+        "sample_type": samp.sample_type, "owner_orcid": owner_id,
         "project_mfid": samp.project_mfid, "description": samp.description,
         "timestamp": samp.timestamp,
         "public": public,

@@ -422,7 +422,7 @@ class DatasetListQuery(ResourceCollectionQuery):
     owner_id: Optional[str] = Field(
         default=None,
         min_length=1,
-        description="Exact stable owner identifier for a human or service account.",
+        description="Exact owner: unique_id, linked ORCID, username or email.",
     )
     owner_orcid: Annotated[Optional[str], Field(
         deprecated=True,
@@ -444,7 +444,7 @@ class DatasetListQuery(ResourceCollectionQuery):
     session_name_is_null: Optional[bool] = Field(default=None, description="Filter by whether session_name is null.")
     measurement_is_null: Optional[bool] = Field(default=None, description="Filter by whether measurement is null.")
     data_format_is_null: Optional[bool] = Field(default=None, description="Filter by whether data_format is null.")
-    owner_id_is_null: Optional[bool] = Field(default=None, description="Filter by whether the stored owner identifier is null.")
+    owner_id_is_null: Optional[bool] = Field(default=None, description="Filter by whether the record has an owner.")
     instrument_mfid_is_null: Optional[bool] = Field(default=None, description="Filter by whether a canonical registered instrument is assigned.")
     project_mfid_is_null: Optional[bool] = Field(default=None, description="Filter by whether a canonical primary project is assigned.")
 
@@ -485,7 +485,7 @@ class SampleListQuery(ResourceCollectionQuery):
     owner_id: Optional[str] = Field(
         default=None,
         min_length=1,
-        description="Exact stable owner identifier for a human or service account.",
+        description="Exact owner: unique_id, linked ORCID, username or email.",
     )
     owner_orcid: Annotated[Optional[str], Field(
         deprecated=True,
@@ -494,7 +494,7 @@ class SampleListQuery(ResourceCollectionQuery):
     description: Optional[str] = None
     timestamp: Optional[str] = None
     sample_type_is_null: Optional[bool] = Field(default=None, description="Filter by whether sample_type is null.")
-    owner_id_is_null: Optional[bool] = Field(default=None, description="Filter by whether the stored owner identifier is null.")
+    owner_id_is_null: Optional[bool] = Field(default=None, description="Filter by whether the record has an owner.")
     project_mfid_is_null: Optional[bool] = Field(default=None, description="Filter by whether a canonical primary project is assigned.")
 
     @model_validator(mode="after")
@@ -593,11 +593,11 @@ class DatasetFacetQuery(ResourceFacetQuery):
     session_name: Optional[str] = None
     measurement: Optional[str] = None
     data_format: Optional[str] = None
-    owner_id: Optional[str] = Field(default=None, min_length=1)
+    owner_id: Optional[str] = Field(default=None, min_length=1, description="Exact owner: unique_id, linked ORCID, username or email.")
     session_name_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by whether session_name is null.")
     measurement_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by whether measurement is null.")
     data_format_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by whether data_format is null.")
-    owner_id_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by whether the stored owner identifier is null.")
+    owner_id_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by whether they have an owner.")
     instrument_mfid_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by canonical instrument assignment.")
     project_mfid_is_null: Optional[bool] = Field(default=None, description="Restrict contributing datasets by canonical primary project assignment.")
 
@@ -624,9 +624,9 @@ class SampleFacetQuery(ResourceFacetQuery):
     field: SampleFacetField = Field(description="Sample field to group into facet buckets.")
     dataset_mfid: Optional[str] = None
     sample_type: Optional[str] = None
-    owner_id: Optional[str] = Field(default=None, min_length=1)
+    owner_id: Optional[str] = Field(default=None, min_length=1, description="Exact owner: unique_id, linked ORCID, username or email.")
     sample_type_is_null: Optional[bool] = Field(default=None, description="Restrict contributing samples by whether sample_type is null.")
-    owner_id_is_null: Optional[bool] = Field(default=None, description="Restrict contributing samples by whether the stored owner identifier is null.")
+    owner_id_is_null: Optional[bool] = Field(default=None, description="Restrict contributing samples by whether they have an owner.")
     project_mfid_is_null: Optional[bool] = Field(default=None, description="Restrict contributing samples by canonical primary project assignment.")
 
     @model_validator(mode="after")
@@ -812,7 +812,7 @@ class InstrumentListQuery(StrictQueryModel):
     owner_id: Optional[str] = Field(
         default=None,
         min_length=1,
-        description="Exact stable owner identifier for a human or service account.",
+        description="Exact owner: unique_id, linked ORCID, username or email.",
     )
     owner: Annotated[Optional[str], Field(
         deprecated=True,
@@ -991,7 +991,7 @@ class ResourceSearchQuery(SearchQuery):
     owner_id: Optional[str] = Field(
         default=None,
         min_length=1,
-        description="Exact stable owner identifier for a human or service account.",
+        description="Exact owner: unique_id, linked ORCID, username or email.",
     )
     project_id: Optional[str] = Field(
         default=None,
@@ -1019,7 +1019,7 @@ class InstrumentSearchQuery(SearchQuery):
     owner_id: Optional[str] = Field(
         default=None,
         min_length=1,
-        description="Exact stable owner identifier for a human or service account.",
+        description="Exact owner: unique_id, linked ORCID, username or email.",
     )
     status: Optional[InstrumentStatus] = Field(
         default=None,

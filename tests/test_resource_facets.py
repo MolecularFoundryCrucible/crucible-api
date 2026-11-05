@@ -14,6 +14,7 @@ from app.models.core_models import (
 from app.models.query_params import DatasetFacetField, DatasetFacetQuery
 from app.utils.cursor_utils import filter_fingerprint, new_cursor
 from app.utils.permissions import AccessGroupType, Role
+from tests.people import user_id_or_none
 
 
 ALICE = "0000-0001-1111-1111"
@@ -83,7 +84,7 @@ def _seed_facets(db_engine):
             Dataset(
                 unique_id="facet-dataset-a",
                 dataset_name="A",
-                owner_orcid=ALICE,
+                owner_orcid=ALICE, owner_user_id=user_id_or_none(session, ALICE),
                 project_mfid=project.unique_id,
                 instrument_mfid=instrument.unique_id,
                 session_name="Session 1",
@@ -93,7 +94,7 @@ def _seed_facets(db_engine):
             Dataset(
                 unique_id="facet-dataset-b",
                 dataset_name="B",
-                owner_orcid=ALICE,
+                owner_orcid=ALICE, owner_user_id=user_id_or_none(session, ALICE),
                 project_mfid=project.unique_id,
                 instrument_mfid=None,
                 session_name=None,
@@ -103,7 +104,7 @@ def _seed_facets(db_engine):
             Dataset(
                 unique_id="facet-dataset-c",
                 dataset_name="C",
-                owner_orcid=BOB,
+                owner_orcid=BOB, owner_user_id=user_id_or_none(session, BOB),
                 project_mfid=None,
                 instrument_mfid=None,
                 session_name="Session 2",
@@ -113,7 +114,7 @@ def _seed_facets(db_engine):
             Dataset(
                 unique_id="facet-dataset-d",
                 dataset_name="D",
-                owner_orcid=None,
+                owner_orcid=None, owner_user_id=user_id_or_none(session, None),
                 project_mfid=None,
                 instrument_mfid=None,
                 session_name="",
@@ -126,28 +127,28 @@ def _seed_facets(db_engine):
                 unique_id="facet-sample-a",
                 sample_name="A",
                 sample_type="Powder",
-                owner_orcid=ALICE,
+                owner_orcid=ALICE, owner_user_id=user_id_or_none(session, ALICE),
                 project_mfid=project.unique_id,
             ),
             Sample(
                 unique_id="facet-sample-b",
                 sample_name="B",
                 sample_type="powder",
-                owner_orcid=BOB,
+                owner_orcid=BOB, owner_user_id=user_id_or_none(session, BOB),
                 project_mfid=None,
             ),
             Sample(
                 unique_id="facet-sample-c",
                 sample_name="C",
                 sample_type=None,
-                owner_orcid=None,
+                owner_orcid=None, owner_user_id=user_id_or_none(session, None),
                 project_mfid=None,
             ),
         ]
         hidden = Dataset(
             unique_id="facet-dataset-hidden",
             dataset_name="Hidden",
-            owner_orcid=BOB,
+            owner_orcid=BOB, owner_user_id=user_id_or_none(session, BOB),
             measurement="SECRET",
         )
         session.add_all(datasets + samples + [hidden])

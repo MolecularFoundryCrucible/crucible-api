@@ -36,6 +36,7 @@ from app.utils.instrument_utils import dataset_instrument_fields, resolve_instru
 from app.utils.link_utils import fetch_readable_links, fetch_readable_sample_datasets
 from app.utils.permissions import Permission, Principal, Role, effective_role
 from app.utils.project_utils import project_fields, resolve_project_mfids_to_references
+from app.utils.user_utils import owner_fields, owners_of
 from app.utils.sql_utils import is_public, get_active_deletion_request
 
 
@@ -68,15 +69,6 @@ def _metadata(session: Session, resource_id: str, include_metadata: bool) -> dic
         )
     ).one_or_none()
     return row.scientific_metadata if row else None
-
-
-def _owner(session: Session, owner_id: str | None, include_owner: bool) -> UserPublicRead | None:
-    if not include_owner or not owner_id:
-        return None
-    user = session.exec(
-        select(User).where(User.unique_id == owner_id)
-    ).one_or_none()
-    return UserPublicRead.model_validate(user) if user else None
 
 
 def _deletion_request_payload(deletion_request: DeletionRequest | None) -> dict | None:
@@ -153,6 +145,7 @@ def load_dataset_detail(
 
     return DatasetResponse.model_validate({
         **dataset.model_dump(),
+        **owner_fields(dataset, owners_of(session, [dataset]), options.include_owner),
         **dataset_instrument_fields(dataset, instrument_reference),
         "project_id": project_reference.project_id if project_reference else None,
         "project": project_reference,
@@ -167,7 +160,6 @@ def load_dataset_detail(
             "dataset",
             dataset,
         ) if options.include_links else None,
-        "owner": _owner(session, dataset.owner_orcid, options.include_owner),
         "capabilities": resource_capabilities(
             session,
             principal,
@@ -230,14 +222,17 @@ def load_sample_detail(
         + [sample.project_mfid],
         session,
     )
+    dataset_owners = owners_of(session, readable_datasets) if options.include_datasets else {}
     return SampleResponse.model_validate({
         **sample.model_dump(),
+        **owner_fields(sample, owners_of(session, [sample]), options.include_owner),
         "project_id": project_references[sample.project_mfid].project_id if sample.project_mfid in project_references else None,
         "project": project_references.get(sample.project_mfid),
         "public": is_public(session, sample.unique_id),
         "datasets": [
             DatasetRead.model_validate({
                 **dataset.model_dump(),
+                **owner_fields(dataset, dataset_owners),
                 **dataset_instrument_fields(dataset, instrument_references.get(dataset.instrument_mfid)),
                 "project_id": project_references[dataset.project_mfid].project_id if dataset.project_mfid in project_references else None,
                 "project": project_references.get(dataset.project_mfid),
@@ -255,7 +250,6 @@ def load_sample_detail(
             sample,
             associated_entities=readable_datasets,
         ) if options.include_links else None,
-        "owner": _owner(session, sample.owner_orcid, options.include_owner),
         "capabilities": resource_capabilities(
             session,
             principal,

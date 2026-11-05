@@ -70,8 +70,8 @@ def _seed_owned_resources(db_engine):
             Dataset(unique_id="dataset-bob", dataset_name="Shared search dataset", owner_orcid=BOB),
             Sample(unique_id="sample-alice", sample_name="Owned search sample", owner_orcid=ALICE),
             Sample(unique_id="sample-bob", sample_name="Shared search sample", owner_orcid=BOB),
-            Instrument(unique_id="instrument-alice", instrument_id="alice-inst", instrument_name="Owned search instrument", owner=ALICE, location="A"),
-            Instrument(unique_id="instrument-bob", instrument_id="bob-inst", instrument_name="Shared search instrument", owner=BOB, location="B"),
+            Instrument(unique_id="instrument-alice", instrument_id="alice-inst", instrument_name="Owned search instrument", owner=ALICE, owner_user_id=alice.id, location="A"),
+            Instrument(unique_id="instrument-bob", instrument_id="bob-inst", instrument_name="Shared search instrument", owner=BOB, owner_user_id=bob.id, location="B"),
         ]
         session.add_all(resources)
         session.add_all([

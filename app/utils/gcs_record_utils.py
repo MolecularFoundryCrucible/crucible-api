@@ -86,12 +86,12 @@ def sample_record(samp, ri, public: bool) -> dict:
     }
 
 
-def instrument_record(inst, ri) -> dict:
+def instrument_record(inst, ri, owner) -> dict:
     return {
         "unique_id": inst.unique_id, "instrument_id": inst.instrument_id,
         "instrument_name": inst.instrument_name,
         "manufacturer": inst.manufacturer, "model": inst.model,
-        "owner": inst.owner, "other_id": inst.other_id,
+        "owner": owner.unique_id if owner is not None else None, "other_id": inst.other_id,
         "other_id_source": inst.other_id_source,
         "location": inst.location, "description": inst.description,
         "instrument_type": inst.instrument_type, "status": inst.status,

@@ -588,7 +588,8 @@ class Instrument(SQLModel, table=True):
     instrument_name: str
     manufacturer: Optional[str]
     model: Optional[str]
-    owner: str
+    owner: Optional[str] = None
+    owner_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     location: str
     description: Optional[str]
     instrument_type: Optional[str]
@@ -628,6 +629,7 @@ class PostprocessingRun(SQLModel, table=True):
     status: str = "requested"
     error: Optional[str] = Field(default=None, sa_type=Text)
     requested_by: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("user.orcid", ondelete="SET NULL")))
+    requested_by_user_id: Optional[int] = Field(default=None, sa_column=Column(Integer, ForeignKey("user.id", ondelete="SET NULL"), index=True))
     requested_at: datetime = Field(sa_type=DateTime(timezone=True))
     started_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     finished_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
@@ -683,6 +685,7 @@ class UploadSession(SQLModel, table=True):
     object_key: str = Field(sa_column=Column("gcs_path", Text, nullable=False))
     associated_file_name: str   # relative filename within the dataset: "{safe_filename}"
     owner_user_id: str
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     size: Optional[int] = Field(default=None, sa_column=Column(BigInteger()))
     protocol: Optional[str] = None

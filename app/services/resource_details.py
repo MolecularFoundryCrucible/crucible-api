@@ -293,10 +293,11 @@ def load_instrument_detail(
             raise HTTPException(status_code=404, detail="Instrument not found")
     acl_rows = fetch_acl_rows(session, resource_id)
     deletion_request = get_active_deletion_request(session, resource_id)
+    owner = session.get(User, instrument.owner_user_id) if instrument.owner_user_id is not None else None
     return InstrumentResponse.model_validate({
-        **instrument.model_dump(exclude={"owner"}),
-        "owner_orcid": instrument.owner,
-        "owner": _owner(session, instrument.owner, options.include_owner),
+        **instrument.model_dump(exclude={"owner", "owner_user_id"}),
+        "owner_orcid": owner.unique_id if owner else None,
+        "owner": UserPublicRead.model_validate(owner) if owner and options.include_owner else None,
         "creation_time": resource.creation_time if resource else None,
         "modification_time": resource.modification_time if resource else None,
         "scientific_metadata": _metadata(session, resource_id, options.include_metadata),

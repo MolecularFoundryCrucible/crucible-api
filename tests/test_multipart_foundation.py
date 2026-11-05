@@ -15,7 +15,7 @@ from app.utils.permissions import Principal
 
 
 def make_session(**kwargs):
-    values = dict(dataset_mfid="ds", object_key="uploads/object", associated_file_name="data", owner_user_id="owner", expires_at=datetime(2000, 1, 1, tzinfo=timezone.utc), size=10)
+    values = dict(dataset_mfid="ds", object_key="uploads/object", associated_file_name="data", owner_user_id="owner", user_id=1, expires_at=datetime(2000, 1, 1, tzinfo=timezone.utc), size=10)
     values.update(kwargs)
     return UploadSession(**values)
 
@@ -27,7 +27,7 @@ def test_legacy_completion_protocol_guard(protocol, owner, status):
         session = session_cls.return_value.__enter__.return_value
         session.exec.return_value.one_or_none.return_value = upload
         with pytest.raises(HTTPException) as error:
-            gcs_storage.complete_resumable_upload(dsid="ds", response=Response(), body=UploadComplete(upload_id=upload.upload_id, sha256_hash="claimed"), auth_res=Principal(user_id=owner, groups=()))
+            gcs_storage.complete_resumable_upload(dsid="ds", response=Response(), body=UploadComplete(upload_id=upload.upload_id, sha256_hash="claimed"), auth_res=Principal(user_id=owner, internal_user_id=1 if owner == "owner" else 2, groups=()))
         assert error.value.status_code == status
         storage.assert_not_called()
         if protocol is None:

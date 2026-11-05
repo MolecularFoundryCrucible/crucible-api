@@ -77,7 +77,7 @@ class InstrumentRead(SQLModel):
     unique_id: str
     instrument_id: Optional[str] = None
     instrument_name: str
-    owner_orcid: str = Field(description="Canonical owner identity: human ORCID or service-account MFID.")
+    owner_orcid: Optional[str] = Field(default=None, description="Canonical owner identity: human ORCID or service-account MFID. Null when the instrument has no owner.")
     owner: Optional[UserPublicRead] = None
     location: str
     other_id: Optional[str] = None

@@ -11,6 +11,7 @@ from app.api.routes.service_accounts import (
 from app.models.core_models import ApiToken, User
 from app.models.users import ServiceAccountPlatformRoleUpdate
 from app.utils.permissions import PlatformRole, Principal
+from tests.people import internal_id
 
 
 def _seed(db_engine):
@@ -34,13 +35,14 @@ def _seed(db_engine):
                 is_service_account=False,
                 platform_role=PlatformRole.NONE.value,
             ),
-            ApiToken(
-                access_group_id="0tp5sa0ne00000000000000001",
-                user_unique_id="0tp5sa0ne00000000000000001",
-                token="secret-not-returned",
-                token_created="2026-09-16",
-            ),
         ])
+        session.add(ApiToken(
+            access_group_id="0tp5sa0ne00000000000000001",
+            user_id=internal_id(session, "0tp5sa0ne00000000000000001"),
+            user_unique_id="0tp5sa0ne00000000000000001",
+            token="secret-not-returned",
+            token_created="2026-09-16",
+        ))
         session.commit()
 
 

@@ -17,6 +17,7 @@ from app.auth.identity import IdentityTaken, ensure_identity
 from app.models.core_models import User, UserIdentity
 from app.utils.auth_utils import encode_token
 from app.utils.permissions import PlatformRole
+from tests.people import internal_id
 
 ORCID = "0000-0002-1825-0097"
 OTHER_ORCID = "0000-0001-5109-3700"
@@ -731,7 +732,7 @@ def test_simultaneous_key_requests_leave_one_key_on_postgres(pg_sign_in, monkeyp
     with Session(pg_sign_in) as session, session.begin():
         add_user(session)
     if regenerate:
-        find_or_add_api_access(ORCID, pg_sign_in)
+        find_or_add_api_access(internal_id(pg_sign_in, ORCID), pg_sign_in)
     real_generate = auth_utils.generate_apikey
     all_found_no_key = Barrier(8)
 
@@ -743,9 +744,9 @@ def test_simultaneous_key_requests_leave_one_key_on_postgres(pg_sign_in, monkeyp
         return real_generate(orcid, session)
 
     monkeypatch.setattr(auth_utils, "generate_apikey", generate_after_every_thread_has_looked)
-    race(8, lambda: find_or_add_api_access(ORCID, pg_sign_in, regenerate=regenerate))
+    race(8, lambda: find_or_add_api_access(internal_id(pg_sign_in, ORCID), pg_sign_in, regenerate=regenerate))
     assert len(tokens(pg_sign_in)) == 1
-    assert find_or_add_api_access(ORCID, pg_sign_in) == tokens(pg_sign_in)[0]
+    assert find_or_add_api_access(internal_id(pg_sign_in, ORCID), pg_sign_in) == tokens(pg_sign_in)[0]
 
 
 def test_deleting_a_user_removes_their_identities_on_postgres(pg_engine):

@@ -19,6 +19,7 @@ from sqlalchemy.engine import make_url
 from sqlmodel import Session, create_engine
 
 from app.models.core_models import AccessGroup, Dataset, Project, Resource, ResourceACL, User, UserAccessGroupLink
+from tests.people import internal_id
 
 PG_URL = os.getenv("CRUCIBLE_TEST_PG_URL")
 
@@ -102,6 +103,6 @@ def principal_for(engine, orcid):
     cached, auth_utils._PUBLIC_GROUP_ID = auth_utils._PUBLIC_GROUP_ID, auth_utils._UNSET
     try:
         with Session(engine) as session:
-            return auth_utils.load_principal(session, orcid)
+            return auth_utils.load_principal(session, internal_id(session, orcid))
     finally:
         auth_utils._PUBLIC_GROUP_ID = cached

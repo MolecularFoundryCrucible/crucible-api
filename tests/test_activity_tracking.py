@@ -9,6 +9,7 @@ import app.utils.auth_utils as auth_utils
 from app.general_utils import get_utc_datetime
 from app.models.core_models import ApiToken, Dataset, Instrument, Project, Resource, Sample, User
 from app.utils.permissions import PlatformRole
+from tests.people import internal_id
 
 ADMIN = "0000-0007-0000-0001"
 ALICE = "0000-0007-0000-0002"
@@ -28,7 +29,7 @@ def people(db_engine):
     with Session(db_engine) as session:
         for orcid, name in ((ADMIN, "admin"), (ALICE, "alice"), (BOB, "bob")):
             session.add(User(first_name=name, last_name=name, email=None, unique_id=orcid, username=name))
-        session.add(ApiToken(token=KEY, user_unique_id=ALICE, access_group_id=ALICE, token_created=get_utc_datetime().date().isoformat()))
+        session.add(ApiToken(token=KEY, user_id=internal_id(session, ALICE), user_unique_id=ALICE, access_group_id=ALICE, token_created=get_utc_datetime().date().isoformat()))
         session.commit()
     return db_engine
 

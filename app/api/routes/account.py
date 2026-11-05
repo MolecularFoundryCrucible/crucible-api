@@ -164,10 +164,9 @@ def get_account_apikey(
     """
     reject_hub_api_key_read(auth_res)
     response.headers["Deprecation"] = API_KEY_READ_DEPRECATION
-    user_unique_id = auth_res.user_id
     with Session(get_engine()) as session:
         token = session.exec(
-            select(ApiToken).where(ApiToken.user_unique_id == user_unique_id)
+            select(ApiToken).where(ApiToken.user_id == auth_res.internal_user_id)
             .order_by(ApiToken.token_created.desc())
         ).first()
         if token is None:
@@ -184,7 +183,7 @@ def regenerate_account_apikey(
     """Issue a new API key for the caller and revoke the previous one. The key is returned only once."""
     require_recent_authentication(auth_res)
     response.headers["Cache-Control"] = "no-store"
-    return ApiKeyRead(api_key=find_or_add_api_access(auth_res.user_id, get_engine(), regenerate=True))
+    return ApiKeyRead(api_key=find_or_add_api_access(auth_res.internal_user_id, get_engine(), regenerate=True))
 
 
 @router.get("/account/verify", response_model=ApiKeyVerify, responses={404: {"description": "A Hub session's account has no API key"}})
@@ -200,7 +199,7 @@ def verify_account_apikey(
     with Session(get_engine()) as session:
         if auth_res.credential == "hub":
             token = session.exec(
-                select(ApiToken).where(ApiToken.user_unique_id == auth_res.user_id)
+                select(ApiToken).where(ApiToken.user_id == auth_res.internal_user_id)
                 .order_by(ApiToken.token_created.desc())
             ).first()
         else:

@@ -7,6 +7,7 @@ from app.api.main import app
 from app.models.core_models import ApiToken, User
 from app.utils.auth_utils import STEP_UP_MAX_AGE, authenticate_user
 from app.utils.permissions import PlatformRole, Principal
+from tests.people import internal_id
 
 ORCID = "0000-0000-0000-0001"
 OTHER = "0000-0000-0000-0002"
@@ -25,7 +26,7 @@ def act_as(db_engine):
         if credential == "hub" and signed_in is not None:
             age = timedelta(seconds=30) if signed_in == FRESH else timedelta(seconds=STEP_UP_MAX_AGE + 1)
             authenticated_at = datetime.now(timezone.utc) - age
-        principal = Principal(user_id=ORCID, platform_role=PlatformRole.ADMIN if admin else PlatformRole.NONE, credential=credential, authenticated_at=authenticated_at)
+        principal = Principal(user_id=ORCID, internal_user_id=internal_id(db_engine, ORCID), platform_role=PlatformRole.ADMIN if admin else PlatformRole.NONE, credential=credential, authenticated_at=authenticated_at)
         app.dependency_overrides[authenticate_user] = lambda: principal
 
     yield _set
@@ -34,7 +35,7 @@ def act_as(db_engine):
 
 def add_key(engine, orcid, token):
     with Session(engine) as session:
-        session.add(ApiToken(user_unique_id=orcid, access_group_id=orcid, token=token, token_created=datetime.now(timezone.utc).date().isoformat()))
+        session.add(ApiToken(user_id=internal_id(session, orcid), user_unique_id=orcid, access_group_id=orcid, token=token, token_created=datetime.now(timezone.utc).date().isoformat()))
         session.commit()
 
 

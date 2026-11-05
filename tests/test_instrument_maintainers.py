@@ -9,6 +9,7 @@ from app.models.query_params import InstrumentAffiliation, InstrumentSearchQuery
 from app.utils.auth_utils import load_principal
 from app.utils.permissions import AccessGroupType
 from tests.test_instrument_lifecycle import _user
+from tests.people import internal_id
 
 OWNER = "0000-0001-0000-0001"
 EDITOR = "0000-0001-0000-0002"
@@ -19,7 +20,7 @@ SA = "0sa0000000000000000000000a"
 
 def _as(auth_as, db_engine, user_id):
     with Session(db_engine) as session:
-        principal = load_principal(session, user_id)
+        principal = load_principal(session, internal_id(session, user_id))
     auth_as(
         user_id,
         groups=[(g.group_name, g.id, g.role) for g in principal.groups],

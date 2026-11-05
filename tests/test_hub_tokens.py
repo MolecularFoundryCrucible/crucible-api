@@ -37,6 +37,7 @@ from app.utils.hub_login import (
     HubLoginConfig, InvalidHubLogin, create_handoff_code, create_login,
     consume_login, exchange_handoff_code,
 )
+from tests.people import internal_id
 
 
 NOW = datetime(2026, 9, 28, 12, tzinfo=timezone.utc)
@@ -51,7 +52,7 @@ ORCID_PROVIDER = OidcProvider(
 def test_cleanup_preserves_refresh_replay_history_and_defaults_to_dry_run(engine):
     from app.utils.hub_auth_maintenance import cleanup_hub_auth
 
-    first = issue_hub_tokens(engine, "0000-0000-0000-0001", "hub", now=NOW)
+    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "hub", now=NOW)
     refresh_hub_tokens(engine, first.refresh_token, "hub", now=NOW + timedelta(minutes=1))
     preview = cleanup_hub_auth(engine, now=NOW + timedelta(days=31))
     assert preview["hubtokenfamily"] == 1
@@ -69,7 +70,7 @@ def test_cleanup_preserves_refresh_replay_history_and_defaults_to_dry_run(engine
 
 def access_user(engine, token, *, now):
     with Session(engine) as session:
-        return hub_access_user(session, token, now=now)
+        return session.get(User, hub_access_user(session, token, now=now)).unique_id
 
 
 @pytest.fixture
@@ -96,7 +97,7 @@ def engine():
 
 
 def test_issue_refresh_and_access_expiry(engine):
-    first = issue_hub_tokens(engine, "0000-0000-0000-0001", "hub", now=NOW)
+    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "hub", now=NOW)
     assert access_user(engine, first.access_token, now=NOW) == first.user_unique_id
     with pytest.raises(InvalidHubGrant):
         access_user(engine, first.access_token, now=NOW + timedelta(minutes=15))
@@ -130,7 +131,7 @@ def test_issue_and_refresh_with_foreign_keys_enforced():
         with Session(engine) as session:
             session.add(User(first_name="Test", last_name="Human", unique_id="0000-0000-0000-0001"))
             session.commit()
-        first = issue_hub_tokens(engine, "0000-0000-0000-0001", "hub", now=NOW)
+        first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "hub", now=NOW)
         second = refresh_hub_tokens(engine, first.refresh_token, "hub", now=NOW + timedelta(minutes=1))
         assert access_user(engine, second.access_token, now=NOW + timedelta(minutes=1)) == first.user_unique_id
     finally:
@@ -138,7 +139,7 @@ def test_issue_and_refresh_with_foreign_keys_enforced():
 
 
 def test_spent_refresh_revokes_family(engine):
-    first = issue_hub_tokens(engine, "0000-0000-0000-0001", "hub", now=NOW)
+    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "hub", now=NOW)
     second = refresh_hub_tokens(engine, first.refresh_token, "hub", now=NOW + timedelta(minutes=1))
     with pytest.raises(InvalidHubGrant):
         refresh_hub_tokens(engine, first.refresh_token, "hub", now=NOW + timedelta(minutes=2))
@@ -149,7 +150,7 @@ def test_spent_refresh_revokes_family(engine):
 
 
 def test_client_binding_and_expiry(engine):
-    pair = issue_hub_tokens(engine, "0000-0000-0000-0001", "hub", now=NOW)
+    pair = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "hub", now=NOW)
     with pytest.raises(InvalidHubGrant):
         refresh_hub_tokens(engine, pair.refresh_token, "other", now=NOW + timedelta(minutes=1))
     with pytest.raises(InvalidHubGrant):
@@ -157,7 +158,7 @@ def test_client_binding_and_expiry(engine):
     with pytest.raises(InvalidHubGrant):
         access_user(engine, pair.access_token, now=NOW + timedelta(days=7))
 
-    second = issue_hub_tokens(engine, "0000-0000-0000-0001", "hub", now=NOW)
+    second = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "hub", now=NOW)
     current = second
     for day in range(1, 30):
         current = refresh_hub_tokens(engine, current.refresh_token, "hub", now=NOW + timedelta(days=day))
@@ -167,8 +168,8 @@ def test_client_binding_and_expiry(engine):
 
 def test_revoke_and_service_accounts(engine):
     with pytest.raises(InvalidHubGrant):
-        issue_hub_tokens(engine, "sa-test", "hub", now=NOW)
-    pair = issue_hub_tokens(engine, "0000-0000-0000-0001", "hub", now=NOW)
+        issue_hub_tokens(engine, internal_id(engine, "sa-test"), "hub", now=NOW)
+    pair = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "hub", now=NOW)
     revoke_hub_tokens(engine, pair.refresh_token, "other", now=NOW + timedelta(minutes=1))
     assert access_user(engine, pair.access_token, now=NOW + timedelta(minutes=1)) == pair.user_unique_id
     revoke_hub_tokens(engine, pair.access_token, "hub", now=NOW + timedelta(minutes=2))
@@ -180,8 +181,8 @@ def test_revoke_and_service_accounts(engine):
 
 
 def test_logout_with_rotated_token_revokes_only_its_family(engine):
-    first = issue_hub_tokens(engine, "0000-0000-0000-0001", "hub", now=NOW)
-    other = issue_hub_tokens(engine, first.user_unique_id, "hub", now=NOW)
+    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "hub", now=NOW)
+    other = issue_hub_tokens(engine, internal_id(engine, first.user_unique_id), "hub", now=NOW)
     second = refresh_hub_tokens(engine, first.refresh_token, "hub", now=NOW + timedelta(minutes=1))
     revoke_hub_tokens(engine, first.refresh_token, "hub", now=NOW + timedelta(minutes=2))
     for pair in (first, second):
@@ -194,7 +195,7 @@ def test_logout_with_rotated_token_revokes_only_its_family(engine):
 
 
 def test_tokens_are_stored_hashed(engine):
-    pair = issue_hub_tokens(engine, "0000-0000-0000-0001", "hub", now=NOW)
+    pair = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "hub", now=NOW)
     with Session(engine) as session:
         access = session.exec(select(HubAccessToken)).one()
         refresh = session.exec(select(HubRefreshToken)).one()
@@ -210,7 +211,7 @@ def test_refresh_and_revoke_routes(engine, monkeypatch):
     app = FastAPI()
     app.include_router(hub_auth_router)
     app.dependency_overrides[get_engine] = lambda: engine
-    pair = issue_hub_tokens(engine, "0000-0000-0000-0001", "crucible-hub")
+    pair = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub")
     with TestClient(app) as client:
         for auth in (None, ("crucible-hub", "wrong-secret")):
             denied_revoke = client.post("/auth/hub/revoke", auth=auth, json={"token": pair.refresh_token})
@@ -251,12 +252,13 @@ def test_refresh_and_revoke_routes(engine, monkeypatch):
 def test_hub_and_legacy_credentials_both_authorize(use_engine, engine, monkeypatch):
     use_engine(engine)
     monkeypatch.setattr(auth_utils, "_PUBLIC_GROUP_ID", None)
-    pair = issue_hub_tokens(engine, "0000-0000-0000-0001", "crucible-hub")
+    pair = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub")
     legacy_key = "a" * 64
     with Session(engine) as session:
         session.add(
             ApiToken(
                 token=legacy_key,
+                user_id=internal_id(session, "0000-0000-0000-0001"),
                 user_unique_id="0000-0000-0000-0001",
                 access_group_id="0000-0000-0000-0001",
                 token_created=datetime.now(timezone.utc).date().isoformat(),

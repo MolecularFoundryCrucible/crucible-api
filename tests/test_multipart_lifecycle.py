@@ -18,6 +18,7 @@ from app.models.datasets import file_etag
 from app.services import multipart as service
 from app.storage import ObjectInfo, Part, StorageFailure, UploadMissing
 from app.utils.permissions import Role
+from tests.people import internal_id
 
 BASE = "/datasets/ds/upload/multipart"
 DATA = b"verified scientific data"
@@ -290,7 +291,7 @@ def test_stranded_initiation_expires_and_releases_the_filename(flow):
     from app.utils.auth_utils import load_principal
     from app.utils.multipart_config import MultipartStorageConfig
     with Session(engine) as session:
-        principal = load_principal(session, "owner")
+        principal = load_principal(session, internal_id(session, "owner"))
     upload = service.reserve(engine, principal, "ds", MultipartInitiate(filename="data.bin", size=len(DATA)), "k", MultipartStorageConfig.from_env())
     assert service.utc(upload.expires_at) <= service.now() + service.INITIATION_WINDOW
     assert client.post(BASE + "/initiate", json={"filename": "data.bin", "size": len(DATA)}).status_code == 409
@@ -591,11 +592,11 @@ def test_real_authentication_supports_both_credentials(use_engine, flow, monkeyp
     if credential_kind == "api_key":
         credential = uuid4().hex
         with Session(engine) as session:
-            session.add(ApiToken(token=credential, user_unique_id="owner", access_group_id="owner-group"))
+            session.add(ApiToken(token=credential, user_id=internal_id(session, "owner"), user_unique_id="owner", access_group_id="owner-group"))
             session.commit()
     else:
         SQLModel.metadata.create_all(engine, tables=[HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__])
-        pair = issue_hub_tokens(engine, "owner", "hub")
+        pair = issue_hub_tokens(engine, internal_id(engine, "owner"), "hub")
         credential = pair.access_token
     headers = {"Authorization": f"Bearer {credential}"}
     response = client.post(BASE + "/initiate", json={"filename": "auth.bin", "size": len(DATA), "sha256_hash": SHA}, headers=headers)

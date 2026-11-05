@@ -2,6 +2,7 @@ from sqlmodel import Session
 
 from app.models.core_models import User
 from app.utils.permissions import PlatformRole
+from tests.people import internal_id
 
 
 PERSON_ORCID = "0000-0001-2345-6789"
@@ -231,8 +232,8 @@ def test_deprecated_key_verify_matches_admin_key_status_for_both_date_formats(cl
     _setup(db_engine)
     recent = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
     with Session(db_engine) as session:
-        session.add(ApiToken(user_unique_id=PERSON_ORCID, token_created=recent, token="k1", access_group_id="g"))
-        session.add(ApiToken(user_unique_id=OTHER_ORCID, token_created="2024-01-02", token="k2", access_group_id="g"))
+        session.add(ApiToken(user_id=internal_id(session, PERSON_ORCID), user_unique_id=PERSON_ORCID, token_created=recent, token="k1", access_group_id="g"))
+        session.add(ApiToken(user_id=internal_id(session, OTHER_ORCID), user_unique_id=OTHER_ORCID, token_created="2024-01-02", token="k2", access_group_id="g"))
         session.commit()
     auth_as("admin", platform_role=PlatformRole.ADMIN)
 

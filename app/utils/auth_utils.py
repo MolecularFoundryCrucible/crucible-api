@@ -85,22 +85,21 @@ def _invalidate_auth_cache(apikey: str):
         _auth_cache.pop(_auth_cache_key(apikey), None)
 
 
-def forget_cached_keys(session, unique_id: str) -> None:
+def forget_cached_keys(session, user_id: int) -> None:
     """Drop this person's keys from this worker's auth cache. Other workers follow within the
     cache lifetime."""
-    for token in session.exec(select(ApiToken.token).where(ApiToken.user_unique_id == unique_id)).all():
+    for token in session.exec(select(ApiToken.token).where(ApiToken.user_id == user_id)).all():
         _invalidate_auth_cache(token)
 
 
 # ====== Functions
-def find_or_add_api_access(orcid: str, engine, regenerate = False):
+def find_or_add_api_access(user_id: int, engine, regenerate = False):
 
-    # query the database for orcid
     one_year_ago = (date.today()-timedelta(365)).isoformat()
     with Session(engine) as session:
         # The row lock is what keeps simultaneous requests from each adding a key.
-        session.exec(select(User.id).where(User.unique_id == orcid).with_for_update()).first()
-        api_acct = session.exec(select(ApiToken).where(and_(ApiToken.user_unique_id == orcid,
+        user = session.exec(select(User).where(User.id == user_id).with_for_update()).one()
+        api_acct = session.exec(select(ApiToken).where(and_(ApiToken.user_id == user_id,
                                                             ApiToken.token_created > one_year_ago))).one_or_none()
 
         if api_acct is not None and regenerate == False:
@@ -108,25 +107,25 @@ def find_or_add_api_access(orcid: str, engine, regenerate = False):
 
         elif api_acct is not None and regenerate == True:
             old_token = api_acct.token
-            session.query(ApiToken).filter(ApiToken.user_unique_id == orcid).delete(synchronize_session=False)
-            new_token = generate_apikey(orcid, session)
+            session.query(ApiToken).filter(ApiToken.user_id == user_id).delete(synchronize_session=False)
+            new_token = generate_apikey(user, session)
             _invalidate_auth_cache(old_token)
             return(new_token)
 
         else:
-            new_token = generate_apikey(orcid, session)
+            new_token = generate_apikey(user, session)
             return(new_token)
 
 
-def add_apikey(orcid: str, session) -> str:
-    """Add a new API key to the session without committing."""
+def add_apikey(user, session) -> str:
+    """Add a new API key for this User row to the session without committing."""
     new_token = secrets.token_hex(32)
-    session.add(ApiToken(user_unique_id=orcid, access_group_id=orcid, token=new_token, token_created=date.today().isoformat()))
+    session.add(ApiToken(user_id=user.id, user_unique_id=user.unique_id, access_group_id=user.unique_id, token=new_token, token_created=date.today().isoformat()))
     return new_token
 
 
-def generate_apikey(orcid: str, session):
-    new_token = add_apikey(orcid, session)
+def generate_apikey(user, session):
+    new_token = add_apikey(user, session)
     session.commit()
     return(new_token)
 
@@ -177,7 +176,7 @@ def find_key(credentials, engine):
             if expired_api_acct is not None:
                 logger.warning(
                     "Expired API key presented (user=%s, created=%s)",
-                    expired_api_acct.user_unique_id, expired_api_acct.token_created,
+                    expired_api_acct.user_id, expired_api_acct.token_created,
                 )
             raise HTTPException(status_code=401, detail="Invalid or expired API key.")
 
@@ -229,7 +228,7 @@ def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
             except InvalidHubGrant:
                 raise HTTPException(status_code=401, detail="Invalid or expired API credential.")
             authenticated_at = family.auth_time.replace(tzinfo=family.auth_time.tzinfo or datetime.timezone.utc) if family.auth_time else None
-            principal = replace(load_principal(session, family.user_unique_id), credential="hub", authenticated_at=authenticated_at)
+            principal = replace(load_principal(session, family.user_id), credential="hub", authenticated_at=authenticated_at)
         record_caller_activity(engine, principal.user_id)
         return principal
 
@@ -246,9 +245,9 @@ def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
         raise HTTPException(status_code=401, detail="Invalid or expired API key.")
 
     with Session(engine) as session:
-        if session.exec(select(User.disabled_at).where(User.unique_id == api_acct.user_unique_id)).first() is not None:
+        if session.exec(select(User.disabled_at).where(User.id == api_acct.user_id)).first() is not None:
             raise HTTPException(status_code=401, detail="Invalid or expired API key.")
-        result = load_principal(session, api_acct.user_unique_id)
+        result = load_principal(session, api_acct.user_id)
 
     with _auth_cache_lock:
         _auth_cache[cache_key] = result
@@ -256,12 +255,12 @@ def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
     return result
 
 
-def load_principal(session, orcid: str) -> Principal:
+def load_principal(session, user_id: Optional[int]) -> Principal:
     """Build a Principal from the database. Split out of authorize_user so the
     query is testable without an API key or a live request."""
     from app.models.core_models import AccessGroup, User, UserAccessGroupLink
 
-    user = session.exec(select(User).where(User.unique_id == orcid)).first()
+    user = session.get(User, user_id) if user_id is not None else None
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid or expired API key.")
 
@@ -295,7 +294,7 @@ def load_principal(session, orcid: str) -> Principal:
     # Materialize to plain, immutable data so the cached value is safe to share
     # across threads and doesn't depend on the closed session.
     return Principal(
-        user_id=orcid,
+        user_id=user.unique_id,
         internal_user_id=user.id,
         platform_role=_platform_role(user.platform_role),
         is_service_account=bool(user.is_service_account),
@@ -704,10 +703,10 @@ def reject_hub_api_key_read(principal: Principal) -> None:
         raise HTTPException(status_code=403, detail={"code": "api_key_read_not_allowed", "message": "Hub sessions cannot read API keys; regenerate a key instead"})
 
 
-def has_active_api_key(orcid: str, engine) -> bool:
+def has_active_api_key(user_id: int, engine) -> bool:
     one_year_ago = (date.today() - timedelta(365)).isoformat()
     with Session(engine) as session:
-        return session.exec(select(ApiToken.token).where(ApiToken.user_unique_id == orcid, ApiToken.token_created > one_year_ago)).first() is not None
+        return session.exec(select(ApiToken.token).where(ApiToken.user_id == user_id, ApiToken.token_created > one_year_ago)).first() is not None
 
 
 def require_self_or_platform_admin(principal: Principal, user) -> None:
@@ -756,7 +755,7 @@ def resolve_access_principal(
         require_self_or_platform_admin(caller, user)
     if caller.is_user(user):
         return caller
-    return load_principal(session, user.unique_id)
+    return load_principal(session, user.id)
 
 
 def access_selector_filter(session, caller: Principal, resource_model,

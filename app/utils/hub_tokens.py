@@ -38,10 +38,10 @@ def _holder(session: Session, family: HubTokenFamily) -> User | None:
     return session.get(User, family.user_id) if family.user_id is not None else None
 
 
-def revoke_all_hub_tokens(session: Session, user_id: int, *, now: datetime | None = None) -> None:
-    """End every Hub session of this person, in the caller's transaction."""
+def revoke_all_hub_tokens(session: Session, user_id: int, *, now: datetime | None = None, except_family_id: str | None = None) -> None:
+    """End every Hub session of this person, or every one but `except_family_id`, in the caller's transaction."""
     current = _now(now)
-    for family in session.exec(select(HubTokenFamily).where(HubTokenFamily.user_id == user_id, HubTokenFamily.revoked_at == None).with_for_update()).all():  # noqa: E711
+    for family in session.exec(select(HubTokenFamily).where(HubTokenFamily.user_id == user_id, HubTokenFamily.revoked_at == None, HubTokenFamily.id != except_family_id).with_for_update()).all():  # noqa: E711
         family.revoked_at = current
         session.add(family)
 

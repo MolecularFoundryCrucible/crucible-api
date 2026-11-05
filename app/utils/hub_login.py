@@ -142,7 +142,7 @@ def consume_login(engine, state: str, browser_secret: str | None, *, now: dateti
         transaction = session.exec(select(HubLoginTransaction).where(HubLoginTransaction.state_hash == _digest(state)).with_for_update()).one_or_none()
         if transaction is None or transaction.consumed_at is not None or current >= _aware(transaction.expires_at):
             raise InvalidHubLogin
-        if not secrets.compare_digest(transaction.browser_secret_hash, _digest(browser_secret)):
+        if transaction.browser_secret_hash is None or not secrets.compare_digest(transaction.browser_secret_hash, _digest(browser_secret)):
             raise InvalidHubLogin
         transaction.consumed_at = current
         session.add(transaction)
@@ -189,7 +189,7 @@ def exchange_handoff_code(engine, code: str, verifier: str, client_id: str, call
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
     with Session(engine) as session, session.begin():
         grant = session.exec(select(HubLoginCode).where(HubLoginCode.code_hash == _digest(code)).with_for_update()).one_or_none()
-        if grant is None or grant.consumed_at is not None or current >= _aware(grant.expires_at):
+        if grant is None or grant.purpose != "sign_in" or grant.consumed_at is not None or current >= _aware(grant.expires_at):
             raise InvalidHubGrant
         if grant.client_id != client_id or grant.callback_uri != callback_uri or not secrets.compare_digest(grant.code_challenge, challenge):
             raise InvalidHubGrant

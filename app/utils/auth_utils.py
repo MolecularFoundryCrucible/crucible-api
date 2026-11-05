@@ -705,8 +705,13 @@ def require_human_admin_safeguard(principal: Principal, target, *, makes_admin: 
         return
     if target.platform_role != PlatformRole.ADMIN.value and not makes_admin:
         return
+    require_recent_hub_session(principal, "Changing a human administrator needs a Hub session, not an API key")
+
+
+def require_recent_hub_session(principal: Principal, message: str) -> None:
+    """For actions that need a person at a browser: API keys get 403, and a Hub session needs a recent sign-in."""
     if principal.credential != "hub":
-        raise HTTPException(status_code=403, detail={"code": "hub_session_required", "message": "Changing a human administrator needs a Hub session, not an API key"})
+        raise HTTPException(status_code=403, detail={"code": "hub_session_required", "message": message})
     require_recent_authentication(principal)
 
 

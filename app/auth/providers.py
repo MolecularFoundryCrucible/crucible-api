@@ -38,6 +38,7 @@ class VerifiedIdentity:
     given_name: str | None
     family_name: str | None
     auth_time: datetime | None
+    label: str | None = None
 
 
 def forget_clients() -> None:
@@ -168,7 +169,8 @@ async def verified_identity(provider: OidcProvider, callback_uri: str, code: str
     subject = claims.get("sub")
     if not isinstance(subject, str) or not subject:
         raise ValueError("ID token has no subject")
-    return VerifiedIdentity(subject, claims.get("given_name"), claims.get("family_name"), authentication_time(claims.get("auth_time")))
+    label = next((value for value in (claims.get("email"), claims.get("preferred_username"), claims.get("name")) if isinstance(value, str) and value), None)
+    return VerifiedIdentity(subject, claims.get("given_name"), claims.get("family_name"), authentication_time(claims.get("auth_time")), label[:255] if label else None)
 
 
 def authentication_time(value) -> datetime | None:

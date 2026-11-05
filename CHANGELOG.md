@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Linking another sign-in method: `POST /account/identities/{provider}/link` (Hub session, recent sign-in) returns a one-time start address; after the provider asks the person to sign in again, the Hub names the login with `POST /auth/hub/link/preview` and adds it with `POST /auth/hub/link/confirm`. `GET /account/identities` lists your logins and `DELETE /account/identities/{id}` removes one, never the last, ending your other Hub sessions. Linking needs `CRUCIBLE_AUTH_IDENTITY_LOOKUP` on.
 - User objects in responses include `orcid` and `orcid_verified`, the person's linked ORCID and whether it was confirmed by signing in; both are null without one.
 - `POST /users/{user_ref}/disable` and `/enable` switch an account off and on; a disabled account cannot sign in, and its API keys and Hub sessions stop working.
 - `auth_event` table for sign-in history.

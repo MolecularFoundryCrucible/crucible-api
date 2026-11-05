@@ -226,6 +226,8 @@ Production counts, read-only and totals only, 2026-11-05, schema `564d0bd33a5c`.
 - API keys, 514: 20 have no owner and were never used; 5 others have a differing `access_group_id`; 4 people have 2 or more, none within a year; all `token_created` values are `YYYY-MM-DD`.
 - Projects: 1313 of 6771 have no lead. `deletionrequest.reviewer_id` has 2 of 11 and `deletionauditlog.requester_id` 66 of 5233 matching no user. `accessgroupjoinrequest` and `postprocessingrun` are empty.
 
+ORCID input, built in #426, is partly temporary. Accepting an ORCID in `owner_id`, `owner_orcid`, `GET /users?unique_id=`, `POST /users/resolve`, and routes under `/users/{ref}` exists so old clients and bookmarks survive the rewrite, and goes at the next major API version, through the two functions `user_by_id_or_orcid` and `canonical_person_id`. The direction the user prefers: an explicit `orcid` filter (such as `GET /users?orcid=` and an owner equivalent), so callers say what a value is rather than the server guessing. That becomes the permanent exact lookup by ORCID. Not scheduled. Watch the name: `owner_orcid` today means the owner's `unique_id`, so it must not be reused with a new meaning while old clients still send it.
+
 To settle in the proposal: stored dataset and sample records that keep the old `owner_orcid`, Hub sessions and addresses holding an old ID, crucible-tests, the ingestion consumer, and how long ORCID input stays accepted.
 
 ## Open from the security review: built code, not scheduled

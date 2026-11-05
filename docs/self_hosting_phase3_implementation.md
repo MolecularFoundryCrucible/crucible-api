@@ -202,6 +202,16 @@ Hub addresses: the goal is `/users/{username}`, with old addresses, including OR
 
 Decided by the user, 2026-11-04: at the rewrite all Hub tokens are revoked and `hub.session_entries` is cleared, so everyone signs in again (the Hub stores `user_unique_id` in sessions and would otherwise show "different account" to the right person). A person's ORCID and verified status appear on public profiles as well as the account. `project_lead_orcid` retires like `owner_orcid`, with the lead resolved to a user object. `GET` user by ID and the `owner_id` filter keep accepting old IDs, for bookmarks.
 
+Agreed with the user, 2026-11-05: no maintenance window. Production takes at least three rollouts after the rest of Phase 3 is finished: (1) new columns and the new sign-in code, backfill, then the lookup flag on; (2) reads move to `user.id` and clients update; (3) old columns go. The rewrite then runs on its own, one person at a time, starting with one account and a small batch, with a check query after each. `CRUCIBLE_AUTH_IDENTITY_LOOKUP` stays. `pending_at` moves to Task 7. Old stored records stay as history. Exact lookups by ORCID stay permanently; the `owner_orcid` input and filter retire at the next major API version. Usernames are generated for people with none, then the column becomes `NOT NULL`. After the rewrite starts, only roll back to images with the new sign-in code, because older ones would create duplicate accounts on ORCID sign-in; keep the old-to-new mapping and test a reverse script on staging.
+
+Production counts, read-only and totals only, 2026-11-05, schema `564d0bd33a5c`. Staging is not representative of this data.
+- People: 3071, of which 19 service accounts, 3048 people with an ORCID, 2 with an MFID, and 1 with an unusual 19-character ID. 274 have no username, and all of those have a name.
+- Datasets, 365600: 82799 agree in all three places (`owner_user_id`, `owner_orcid`, owner ACL); 74571 have `owner_user_id` and owner ACL but no `owner_orcid`, so the API shows no owner today; 6952 have `owner_orcid` and owner ACL but no `owner_user_id`; 834 have only an `owner_orcid` that matches no user (4 distinct values); 200444 have no owner anywhere (3 public). No row has sources that disagree.
+- Samples, 13550: 13158 agree; 254 need `owner_user_id` filled; 66 have only an `owner_orcid` matching no user (6 distinct values); 72 have no owner.
+- Instruments, 80: 41 valid user IDs, 1 matches by email, 16 `undefined`, 22 free text.
+- API keys, 514: 20 have no owner and were never used; 5 others have a differing `access_group_id`; 4 people have 2 or more, none within a year; all `token_created` values are `YYYY-MM-DD`.
+- Projects: 1313 of 6771 have no lead. `deletionrequest.reviewer_id` has 2 of 11 and `deletionauditlog.requester_id` 66 of 5233 matching no user. `accessgroupjoinrequest` and `postprocessingrun` are empty.
+
 To settle in the proposal: stored dataset and sample records that keep the old `owner_orcid`, Hub sessions and addresses holding an old ID, crucible-tests, the ingestion consumer, and how long ORCID input stays accepted.
 
 ## Task 5: One resolver, lookups switch, disable and pending

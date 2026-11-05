@@ -395,7 +395,10 @@ class HubLoginTransaction(SQLModel, table=True):
     __table_args__ = (Index("ix_hublogintransaction_expiry", "expires_at", "state_hash"),)
 
     state_hash: str = Field(primary_key=True, max_length=64)
-    browser_secret_hash: str = Field(max_length=64)
+    browser_secret_hash: Optional[str] = Field(default=None, max_length=64)
+    purpose: str = Field(default="sign_in", sa_column=Column(String(16), nullable=False, server_default="sign_in"))
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+    start_hash: Optional[str] = Field(default=None, max_length=64, unique=True)
     client_id: str
     callback_uri: str
     hub_state: str
@@ -415,6 +418,10 @@ class HubLoginCode(SQLModel, table=True):
     code_hash: str = Field(primary_key=True, max_length=64)
     user_unique_id: str = Field(foreign_key="user.orcid", index=True)
     user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+    purpose: str = Field(default="sign_in", sa_column=Column(String(16), nullable=False, server_default="sign_in"))
+    issuer: Optional[str] = Field(default=None, sa_column=Column(Text))
+    subject: Optional[str] = Field(default=None, max_length=255)
+    label: Optional[str] = Field(default=None, max_length=255)
     client_id: str
     callback_uri: str
     code_challenge: str = Field(max_length=43)

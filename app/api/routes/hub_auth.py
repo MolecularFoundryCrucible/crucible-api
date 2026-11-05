@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import secrets
 from pathlib import Path as FilePath
@@ -13,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_engine
 from app.api.dependencies import get_api_root_path
-from app.auth.providers import TOKEN_FAILURES, ProviderUnavailable, authorization_url, new_code_verifier, verified_identity
+from app.auth.providers import TOKEN_FAILURES, IssuerMismatch, ProviderUnavailable, authorization_url, check_response_issuer, new_code_verifier, verified_identity
 from app.config import ConfigurationError, OidcProvider, get_settings, optional_secret
 from app.models.core_models import HubLoginTransaction
 from app.utils.hub_login import (
@@ -27,6 +28,15 @@ from app.models.timestamps import UtcDatetime
 router = APIRouter(prefix="/auth/hub", tags=["auth"])
 client_security = HTTPBasic(auto_error=False)
 LOGIN_COOKIE = "crucible_hub_login"
+
+
+def login_cookie_name(state: str) -> str:
+    """One cookie per sign-in, so parallel tabs and popups do not overwrite each other."""
+    return f"{LOGIN_COOKIE}_{hashlib.sha256(state.encode()).hexdigest()[:16]}"
+
+
+def _cookie_path() -> str:
+    return f"{get_api_root_path()}/auth/hub"
 _PROVIDER_ERRORS = frozenset({"access_denied", "temporarily_unavailable"})
 _templates = Jinja2Templates(directory=FilePath(__file__).resolve().parents[2] / "templates")
 logger = logging.getLogger(__name__)
@@ -147,10 +157,10 @@ async def begin_hub_login(
         return _hub_error(redirect_uri, state, "temporarily_unavailable")
     response = _browser_headers(RedirectResponse(destination, status_code=302))
     response.set_cookie(
-        LOGIN_COOKIE,
+        login_cookie_name(provider_state),
         browser_secret,
         max_age=600,
-        path=f"{get_api_root_path()}/auth/hub",
+        path=_cookie_path(),
         secure=config.public_api_url.startswith("https://"),
         httponly=True,
         samesite="lax",
@@ -168,15 +178,21 @@ def _callback_provider(transaction: HubLoginTransaction, served: OidcProvider | 
     return served
 
 
-async def _finish_sign_in(request: Request, engine, served_by, code: str | None, state: str | None, error: str | None) -> Response:
+async def _finish_sign_in(request: Request, engine, served_by, code: str | None, state: str | None, error: str | None, iss: str | None) -> Response:
+    cookie = login_cookie_name(state or "")
+    # Sign-ins started on a pod from before per-sign-in cookies set the shared name.
+    browser_secret = request.cookies.get(cookie) or request.cookies.get(LOGIN_COOKIE)
+    if request.cookies.get(cookie) is None:
+        cookie = LOGIN_COOKIE
     try:
         config = await run_in_threadpool(load_login_config)
-        transaction = await run_in_threadpool(consume_login, engine, state or "", request.cookies.get(LOGIN_COOKIE))
+        transaction = await run_in_threadpool(consume_login, engine, state or "", browser_secret)
     except (HubLoginUnavailable, InvalidHubLogin):
-        response = _browser_headers(PlainTextResponse("Sign-in failed. Please return to the Hub and try again.", status_code=400))
+        return _browser_headers(PlainTextResponse("Sign-in failed. Please return to the Hub and try again.", status_code=400))
     else:
         try:
             provider = _callback_provider(transaction, served_by(get_settings().auth))
+            await check_response_issuer(provider, iss)
             if error is not None:
                 raise HubLoginRefused(error if error in _PROVIDER_ERRORS else "server_error")
             if code is None:
@@ -187,13 +203,16 @@ async def _finish_sign_in(request: Request, engine, served_by, code: str | None,
         except HubLoginRefused as refused:
             logger.warning("Hub sign-in refused: %s", refused.error)
             response = _hub_error(transaction.callback_uri, transaction.hub_state, refused.error)
+        except IssuerMismatch as mismatch:
+            logger.warning("Hub sign-in refused, the response did not come from the expected provider: %s", mismatch)
+            response = _hub_error(transaction.callback_uri, transaction.hub_state, "access_denied")
         except (ProviderUnavailable, ConfigurationError, httpx.HTTPError) as failure:
             logger.warning("Hub sign-in could not reach the provider: %s", type(failure).__name__)
             response = _hub_error(transaction.callback_uri, transaction.hub_state, "temporarily_unavailable")
         except TOKEN_FAILURES as failure:
             logger.warning("Hub sign-in failed: %s", type(failure).__name__)
             response = _hub_error(transaction.callback_uri, transaction.hub_state, "server_error")
-    response.delete_cookie(LOGIN_COOKIE, path=f"{get_api_root_path()}/auth/hub")
+    response.delete_cookie(cookie, path=_cookie_path())
     return response
 
 
@@ -206,9 +225,10 @@ async def finish_hub_login(
     code: str | None = Query(default=None, max_length=2048),
     state: str | None = Query(default=None, max_length=128),
     error: str | None = Query(default=None, max_length=256),
+    iss: str | None = Query(default=None, max_length=512),
     engine=Depends(get_engine),
 ) -> Response:
-    return await _finish_sign_in(request, engine, lambda auth: auth.hub_callback_provider, code, state, error)
+    return await _finish_sign_in(request, engine, lambda auth: auth.hub_callback_provider, code, state, error, iss)
 
 
 @router.get("/oidc/{key}/callback", response_class=RedirectResponse, status_code=302, responses=_CALLBACK_RESPONSES)
@@ -218,13 +238,14 @@ async def finish_provider_login(
     code: str | None = Query(default=None, max_length=2048),
     state: str | None = Query(default=None, max_length=128),
     error: str | None = Query(default=None, max_length=256),
+    iss: str | None = Query(default=None, max_length=512),
     engine=Depends(get_engine),
 ) -> Response:
     def served_by(auth) -> OidcProvider | None:
         provider = auth.provider(key)
         return provider if provider is not None and not provider.legacy_callback else None
 
-    return await _finish_sign_in(request, engine, served_by, code, state, error)
+    return await _finish_sign_in(request, engine, served_by, code, state, error, iss)
 
 
 @router.post("/token", response_model=HubTokenResponse, responses={401: {"description": "Invalid client or sign-in code"}, 503: {"description": "Hub sign-in unavailable"}})

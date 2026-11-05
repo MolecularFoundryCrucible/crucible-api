@@ -141,6 +141,22 @@ async def authorization_url(provider: OidcProvider, callback_uri: str, state: st
     return created["url"]
 
 
+class IssuerMismatch(Exception):
+    pass
+
+
+async def check_response_issuer(provider: OidcProvider, iss: str | None) -> None:
+    """RFC 9207 mix-up defense: an authorization response's `iss` must name this provider, and a
+    provider that advertises the parameter must send it."""
+    client = await _with_discovery(provider.key, _provider_app(provider), provider.issuer)
+    if iss is None:
+        if client.server_metadata.get("authorization_response_iss_parameter_supported") is True:
+            raise IssuerMismatch("missing iss")
+        return
+    if iss != client.server_metadata.get("issuer"):
+        raise IssuerMismatch("unexpected iss")
+
+
 async def verified_identity(provider: OidcProvider, callback_uri: str, code: str, nonce: str, code_verifier: str | None = None) -> VerifiedIdentity:
     client = await _with_discovery(provider.key, _provider_app(provider), provider.issuer)
     token = await client.fetch_access_token(redirect_uri=callback_uri, code=code, **({} if code_verifier is None else {"code_verifier": code_verifier}))

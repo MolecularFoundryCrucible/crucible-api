@@ -107,6 +107,7 @@ class Principal:
     groups: tuple[GroupMembership, ...] = ()
     credential: str = "api_key"
     authenticated_at: Optional[datetime] = None
+    session_family_id: Optional[str] = None
     internal_user_id: Optional[int] = None
 
     def is_user(self, user) -> bool:

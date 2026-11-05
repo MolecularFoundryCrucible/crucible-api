@@ -38,6 +38,8 @@ Status: written 2026-11-02 for review; not started. The Hub and nano-crucible an
 
 ## Order
 
+The security review of 2026-11-05 is in `docs/self_hosting_phase3_security_review.md`. The user decided to record its findings and keep the order below. Design changes are noted in each task. Bugs in built code are listed under "Open from the security review", and are not scheduled.
+
 The user decided on 2026-11-03 that nothing is released until all of Phase 3 is ready: merges reach staging, and production stays on its release. Each task is proposed to the user first and built only after they agree. Tasks 3 to 8 build the provider side while ORCID stays the only provider at the Foundry. Task 9 (API keys) must finish before Task 15 turns passwords on anywhere by default, as the user decided. Tasks 10 to 13 are passwords behind the off switch. Task 14 is the review gate.
 
 ## File map
@@ -178,6 +180,16 @@ From the review: while a provider's discovery document is bad, each `/auth/login
 
 ## Task 5a: Every person's unique_id becomes an MFID
 
+Changes from the security review, section 3:
+- Move permission checks to `user.id` before any rewrite, because cached sign-ins hold the old ID for up to 60 seconds. Scale: 87 lines compare the caller's ID, and 184 compare `.unique_id`.
+- `deletionauditlog` gets internal ID columns and keeps its text as history. As first proposed, people would lose their deletion history, because `deletion.py:918-925` compares against their current ID.
+- Triggers cover every column that moves, including join requests and postprocessing runs, which are empty on production but not on staging.
+- Before dropping `owner_orcid`, search for every direct reader, including `gcs_record_utils.py`, metadata search and facets.
+- Revoke each person's Hub tokens in the same transaction as their rewrite. A one-time clear of `hub.session_entries` cannot work across batches.
+- `ApiToken.access_group_id` also holds an ID, and 5 production keys already differ from their owner. Add it to the rewrite and check those 5.
+- Look by hand at the one production person whose ID ends in a lowercase letter, before the backfill.
+- To decide: after the rewrite, the check that refuses an unlinked ORCID can never fire, so with ORCID `open` it would create a new account.
+
 Decided by the user on 2026-11-04. This replaces earlier text saying `unique_id` never changes and that ORCID sign-ins set it. Existing ORCIDs count as linked, verified or not, so people keep signing in. To be proposed in detail before it is built.
 
 Order, each step needing the one before it:
@@ -215,6 +227,21 @@ Production counts, read-only and totals only, 2026-11-05, schema `564d0bd33a5c`.
 - Projects: 1313 of 6771 have no lead. `deletionrequest.reviewer_id` has 2 of 11 and `deletionauditlog.requester_id` 66 of 5233 matching no user. `accessgroupjoinrequest` and `postprocessingrun` are empty.
 
 To settle in the proposal: stored dataset and sample records that keep the old `owner_orcid`, Hub sessions and addresses holding an old ID, crucible-tests, the ingestion consumer, and how long ORCID input stays accepted.
+
+## Open from the security review: built code, not scheduled
+
+Details and fixes are in `docs/self_hosting_phase3_security_review.md`, by the numbers below.
+
+- 1.1 Editing a dataset can re-publish or un-publish it. Reproduced. On production in `v3.3.1`; no dataset was in that state on 2026-11-05.
+- 1.3 The legacy upload token lets a contributor overwrite or delete others' files on Google storage.
+- 1.4 Editors can publish datasets and samples through `PATCH`.
+- 1.5 A non-administrator can make anyone a project owner.
+- 1.6 Any signed-in person can look people up by email. Needs a decision.
+- 1.7 nano-crucible sends the API key to signed storage URLs. For the nano-crucible session.
+- 1.8 The API key page loads a third-party script. 1.9 Discovery addresses need `https`. 1.10 `/keywords` is public.
+- 1.11 Smaller items, including two misses from Task 5: disable and enable skip recent sign-in for ordinary users, and `POST /users` does not record `created_by`.
+- Hub items: adopt `required_user` and `error`, and a login lockup in single-instance mode. For the Hub session.
+- Decisions in section 4: service accounts reading everything, instrument metadata, deletion requests, and an unlinked ORCID after the rewrite.
 
 ## Open bug, not sign-in: replaced files are not retired
 
@@ -260,6 +287,8 @@ Pull request 2 as built: `resolve_sign_in(session, issuer, subject, given_name, 
 
 ## Task 6: Linking and unlinking
 
+Changes from the security review, section 2: add a preview step so the Hub's confirm page can name the login being linked. Verifying your own ORCID must pass the "identity is free" check. Use one login cookie per transaction, because a single cookie means parallel tabs and popups overwrite each other. Add the token family to `Principal`, so "ends other Hub sessions" can work.
+
 **Files:**
 - Create: `app/auth/linking.py`, `app/api/routes/identities.py`
 - Modify: `app/utils/hub_login.py`, `app/api/routes/hub_auth.py`, `app/api/main.py` (router)
@@ -292,12 +321,16 @@ Pull request 2 as built: `resolve_sign_in(session, issuer, subject, given_name, 
 
 ## Task 6b: Protect human administrators from API keys
 
+Changes from the security review, section 2.1: refuse for any human administrator target, including the key's own account, since otherwise a leaked admin key can issue itself a reset link. Also cover `PATCH /users/{user_ref}` (username and email) and `DELETE /users/{user}/password`. A stale Hub session on these routes must sign in again.
+
 Refuse with an API key, and keep for a Hub session with a recent sign-in: changing a human's admin status (`PATCH /users/{user_ref}/platform_role`), and reading or regenerating another administrator's key (`POST /users/{user_ref}/apikey`, `/apikey/regenerate`). Add the same check to the admin identity routes from Task 6 and the password links from Task 13. Add `python -m app.cli admin set-role`. Service account roles and revoking keys stay as they are.
 
 - Tests: `test_api_key_cannot_change_a_humans_admin_status`, `test_api_key_cannot_regenerate_or_read_another_admins_key`, `test_api_key_can_still_regenerate_an_ordinary_users_key`, `test_api_key_can_still_revoke_an_admins_keys`, `test_api_key_can_still_set_a_service_account_role`, `test_recent_hub_session_can_do_all_of_these`, `test_cli_set_role_keeps_the_last_admin_rule`
 - Tell the Hub and nano-crucible sessions, and add a changelog line, since scripts using these routes with a key will get 403.
 
 ## Task 7: Registration setting
+
+Changes from the security review: hide pending accounts from lookups and project membership, or rejecting them returns 409 forever. `resolve_sign_in` takes an issuer, so it needs the registration rule passed in.
 
 **Files:**
 - Create: `app/auth/registration.py`
@@ -404,6 +437,8 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
 
 ## Task 11: Attempt limits
 
+Changes from the security review, section 2: `POST /account/password` is refused with an API key, because otherwise a leaked key disables its owner's password in 10 requests. `read_device_cookie` must check `password_changed_at`, as the spec says. Pin with a test that the 10th attempt is still allowed. Consider a small delay on the known-browser counter, for stolen cookies and shared computers.
+
 **Files:**
 - Create: `app/auth/throttle.py`, a migration
 - Modify: `app/models/core_models.py`, `app/auth/passwords.py`, `app/config.py`
@@ -428,6 +463,8 @@ prepared = base64.b64encode(hmac.new(pepper, normalized, hashlib.sha256).digest(
 - [ ] **Step 2: Run to verify they fail, implement, run the full suite, commit, PR.**
 
 ## Task 12: Sign-in form
+
+Changes from the security review: hide inputs from 422 responses on password routes, and test `form-action` in a real browser.
 
 From the Hub session, 2026-11-04: use the same styling as the choice page, with input border `oklch(0.62 0.018 240)` / `oklch(0.52 0.02 240)` and error text `#bb0914` / `#ff8a88`. Test `form-action` in real browsers: some apply it to the redirect after the POST, so `form-action 'self'` may block the redirect back to a Hub on another origin. Do not add `Cross-Origin-Opener-Policy`, because the Hub's step-up popup closes itself with `window.close()`.
 

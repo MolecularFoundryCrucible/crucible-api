@@ -237,7 +237,7 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 - A browser that signs in successfully gets a signed cookie (OWASP's device cookie), signed with `itsdangerous` under its own salt, so no other signed value can pass as one. Each sign-in issues a new one. It carries `password_changed_at`, so any password change or reset cancels all cookies. Failures are counted per account, not per cookie as OWASP does, which needs no extra table and stops a stolen cookie adding guesses.
 - What this does not solve: someone with no known browser can be locked out by a persistent attacker in about 20 hours of guessing, and then needs a known browser or an administrator's link. Closing that needs email or a second factor, out of scope here.
 - Per address: a wider limit, to slow one source trying many accounts, also covering registration and opening or submitting password links. The address comes from the header the bundle's Caddy sets, trusted only when configured.
-- `POST /account/password` uses the known-browser counter, so a stolen session cannot guess the current password freely, and an attacker's guesses cannot block a signed-in person from changing it.
+- API keys are refused on `POST /account/password` (security review, 2026-11-05). Earlier wording, for a signed-in session: `POST /account/password` uses the known-browser counter, so a stolen session cannot guess the current password freely, and an attacker's guesses cannot block a signed-in person from changing it.
 - A limit on simultaneous hash checks in each worker, so a burst cannot exhaust memory.
 
 ### Responses
@@ -271,12 +271,13 @@ Sources: NIST SP 800-63B revision 4 sections 3.1.1.2 and 3.2.2; OWASP Password S
 | Action | With an API key (CLI) | Hub session |
 |---|---|---|
 | Issue a setup or reset link, approve, disable, enable | Admin key works, and is logged | Admin, recent sign-in |
-| The same, on another human administrator's account | Refused | Admin, recent sign-in |
+| The same, on any human administrator's account, including your own | Refused | Admin, recent sign-in |
+| Change a human administrator's username or email, or delete their password | Refused | Admin, recent sign-in |
 | Change any human's admin status, promoting or demoting | Refused | Admin, recent sign-in |
 | Regenerate or read another administrator's API key | Refused | Admin, recent sign-in |
 | Link or unlink another administrator's login | Refused | Admin, recent sign-in |
 | Revoke someone's API keys | Admin key works, on anyone, as today | Admin |
-| Change own password | Key plus the current password, on the same attempt counter | Recent sign-in plus the current password |
+| Change own password | Refused; the CLI prints a browser link | Recent sign-in plus the current password |
 | Set a first password | Refused; the CLI prints a browser link | Recent sign-in |
 | Link or unlink a login | Refused; the CLI prints a browser link | Recent sign-in |
 

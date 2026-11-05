@@ -31,7 +31,7 @@ class PromptParser(HTMLParser):
         return next(attrs for _, attrs in self.elements if attrs.get("id") == element_id)
 
 
-@pytest.mark.parametrize("field", ["first_name", "last_name", "orcid", "crucible_token", "root"])
+@pytest.mark.parametrize("field", ["first_name", "last_name", "orcid", "unique_id", "crucible_token", "root"])
 @pytest.mark.parametrize("value", [
     'O\'Connor & "Co" <team>',
     '\"><img src=x onerror="alert(1)">',
@@ -40,7 +40,7 @@ class PromptParser(HTMLParser):
     "François 李 &quot;",
 ])
 def test_prompt_values_remain_data(field, value):
-    args = dict(root="/api/v3", orcid="0000-0000-0000-0001",
+    args = dict(root="/api/v3", orcid="0000-0000-0000-0001", unique_id="0000-0000-0000-0001",
                 crucible_token="synthetic-key", first_name="Alice", last_name="Smith")
     baseline = PromptParser(_email_prompt_html(**args))
     args[field] = value
@@ -53,11 +53,11 @@ def test_prompt_values_remain_data(field, value):
         assert parsed.by_id(name)["value"] == args[name]
     form = parsed.by_id("form-view")
     assert form["data-api-key"] == args["crucible_token"]
-    assert form["data-update-url"] == f"{quote(args['root'], safe='/')}/users/{quote(args['orcid'], safe='')}"
+    assert form["data-update-url"] == f"{quote(args['root'], safe='/')}/users/{quote(args['unique_id'], safe='')}"
 
 
 def test_prompt_keeps_existing_submission_contract():
-    parsed = PromptParser(_email_prompt_html("/api/v3", "0000-0000-0000-0001", "synthetic-key"))
+    parsed = PromptParser(_email_prompt_html("/api/v3", "0000-0000-0000-0001", "0000-0000-0000-0001", "synthetic-key"))
     assert parsed.by_id("first_name")["value"] == ""
     assert parsed.by_id("last_name")["value"] == ""
     assert parsed.by_id("form-view")["data-update-url"] == "/api/v3/users/0000-0000-0000-0001"

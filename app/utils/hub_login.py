@@ -8,18 +8,16 @@ from urllib.parse import urlencode, urlparse
 
 from sqlmodel import Session, select
 
-from app.auth.identity import IdentityTaken, ensure_identity, find_identity, retry_after_concurrent_first_write
+from app.auth.identity import retry_after_concurrent_first_write
+from app.auth.sign_in import WRONG_USER, SignInRefused, record_refused_sign_in, resolve_sign_in
 from app.config import ConfigurationError, OidcProvider, get_settings, optional_secret
-from app.models.core_models import HubLoginCode, HubLoginTransaction, User
+from app.models.core_models import HubLoginCode, HubLoginTransaction
 from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens_in_session
-from app.utils.permissions import AccessGroupType, Role
-from app.utils.user_utils import provision_user, sql_add_user_to_access_group
 
 
 LOGIN_LIFETIME = timedelta(minutes=10)
 CODE_LIFETIME = timedelta(minutes=1)
 CHALLENGE_PATTERN = re.compile(r"[A-Za-z0-9_-]{43}\Z")
-ORCID_PATTERN = re.compile(r"\d{4}-\d{4}-\d{4}-\d{3}[\dX]\Z")
 
 
 def hub_auth_enabled() -> bool:
@@ -153,45 +151,13 @@ def consume_login(engine, state: str, browser_secret: str | None, *, now: dateti
     return transaction
 
 
-def _orcid_user(session: Session, provider: OidcProvider, transaction: HubLoginTransaction, orcid: str, given_name: str | None, family_name: str | None) -> User:
-    if not ORCID_PATTERN.fullmatch(orcid):
-        raise HubLoginRefused("access_denied")
-    user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()
-    if transaction.required_user is not None and (user is None or user.unique_id != transaction.required_user):
-        raise HubLoginRefused("login_required")
-    if user is not None and user.is_service_account:
-        raise HubLoginRefused("access_denied")
-    try:
-        if user is None:
-            user = provision_user(session, unique_id=orcid, first_name=given_name or "", last_name=family_name or "", email=None, username=None, orcid_issuer=provider.issuer)
-        if not user.first_name and given_name:
-            user.first_name = given_name
-        if not user.last_name and family_name:
-            user.last_name = family_name
-        sql_add_user_to_access_group(orcid, orcid, session, role=Role.OWNER, group_type=AccessGroupType.IDENTITY)
-        ensure_identity(session, user, provider.issuer, orcid)
-    except IdentityTaken:
-        raise HubLoginRefused("access_denied") from None
-    return user
-
-
-def _linked_user(session: Session, provider: OidcProvider, transaction: HubLoginTransaction, subject: str) -> User:
-    identity = find_identity(session, provider.issuer, subject)
-    user = session.get(User, identity.user_id) if identity is not None else None
-    if transaction.required_user is not None and (user is None or user.unique_id != transaction.required_user):
-        raise HubLoginRefused("login_required")
-    if user is None or user.is_service_account:
-        raise HubLoginRefused("access_denied")
-    return user
-
-
 def create_handoff_code(engine, transaction: HubLoginTransaction, provider: OidcProvider, subject: str, given_name: str | None, family_name: str | None, *, auth_time: datetime | None = None, now: datetime | None = None) -> tuple[str, str]:
     current = _now(now)
     code = secrets.token_urlsafe(48)
 
     def write() -> None:
         with Session(engine) as session, session.begin():
-            user = _orcid_user(session, provider, transaction, subject, given_name, family_name) if provider.is_orcid else _linked_user(session, provider, transaction, subject)
+            user = resolve_sign_in(session, provider.issuer, subject, given_name, family_name, required_user=transaction.required_user)
             session.add(HubLoginCode(
                 code_hash=_digest(code),
                 user_unique_id=user.unique_id,
@@ -203,7 +169,11 @@ def create_handoff_code(engine, transaction: HubLoginTransaction, provider: Oidc
                 auth_time=auth_time,
             ))
 
-    retry_after_concurrent_first_write(write)
+    try:
+        retry_after_concurrent_first_write(write)
+    except SignInRefused as refused:
+        record_refused_sign_in(engine, provider.issuer)
+        raise HubLoginRefused("login_required" if refused.reason == WRONG_USER else "access_denied") from None
     return code, f"{transaction.callback_uri}?{urlencode({'code': code, 'state': transaction.hub_state})}"
 
 

@@ -193,6 +193,10 @@ jobs:
           python3 ../../scripts/selfhost_smoke.py
       - name: Storage check inside the API container
         run: docker compose exec -T api python -m app.cli storage check
+      - name: Sign-in cleanup runs and its service stays up
+        run: |
+          docker compose exec -T api python -m app.cli auth cleanup --dry-run
+          test -n "$(docker compose ps -q --status running auth-cleanup)"
       - name: Back up the stored files as in the install guide
         run: |
           mkdir -p "$RUNNER_TEMP/backups/files"

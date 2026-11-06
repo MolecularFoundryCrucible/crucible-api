@@ -108,16 +108,17 @@ def list_user_identities(user_ref: UserRef, auth_res: Annotated[Principal, Depen
         return [identity_read(identity) for identity in sign_in_methods(session, user)]
 
 
-@router.post("/users/{user_ref}/identities", response_model=IdentityRead, status_code=201, responses={**_STEP_UP, 400: {"description": "Not the issuer of a listed provider"}, 409: {"description": "`linked_elsewhere`, `second_orcid`, `orcid_of_another`, `already_yours`, `service_account`, or `identity_lookup_off`"}})
+@router.post("/users/{user_ref}/identities", response_model=IdentityRead, status_code=201, responses={**_STEP_UP, 400: {"description": "Not a listed provider"}, 409: {"description": "`linked_elsewhere`, `second_orcid`, `orcid_of_another`, `already_yours`, `service_account`, or `identity_lookup_off`"}})
 def add_user_identity(user_ref: UserRef, body: AdminIdentityCreate, auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Add a login to a person, such as the ORCID they gave you. It stays unverified until they sign
     in with it. Platform administrators, from a Hub session with a recent sign-in."""
-    if body.issuer not in {provider.issuer for provider in get_settings().auth.providers}:
-        raise HTTPException(status_code=400, detail="Not the issuer of a listed provider")
+    provider = get_settings().auth.provider(body.provider_key)
+    if provider is None:
+        raise HTTPException(status_code=400, detail="Not a listed provider")
     with Session(get_engine()) as session:
         user = _admin_target(session, user_ref, auth_res)
         try:
-            identity = admin_link(session, user, body.issuer, body.subject.strip(), actor=caller_row(session, auth_res), label=body.label)
+            identity = admin_link(session, user, provider.issuer, body.subject.strip(), actor=caller_row(session, auth_res), label=body.label)
         except LinkRefused as refused:
             raise HTTPException(status_code=409, detail={"code": refused.reason, "message": "This login cannot be added to the account"})
         session.commit()

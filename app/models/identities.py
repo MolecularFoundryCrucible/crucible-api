@@ -46,7 +46,7 @@ class LinkPreviewRead(SQLModel):
 
 
 class AdminIdentityCreate(SQLModel):
-    issuer: str = Field(min_length=1, max_length=512, description="The issuer of a listed provider.")
-    subject: str = Field(min_length=1, max_length=255, description="The provider's subject for this person, such as their ORCID.")
+    provider_key: str = Field(min_length=1, max_length=32, description="A provider's key from GET /auth/methods.")
+    subject: str = Field(min_length=1, max_length=255, description="The provider's subject for this person; for ORCID, their ORCID.")
     label: Optional[str] = Field(default=None, max_length=255)
 

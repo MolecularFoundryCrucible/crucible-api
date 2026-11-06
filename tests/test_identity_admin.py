@@ -35,7 +35,7 @@ def logins(engine, unique_id):
 
 def test_admin_adds_an_unverified_orcid_and_records_who(world):
     client, engine, admin = admin_world(world)
-    response = client.post(f"/users/{NEWCOMER}/identities", headers=bearer(admin), json={"issuer": ORCID_ISSUER, "subject": "0000-0004-0000-0004"})
+    response = client.post(f"/users/{NEWCOMER}/identities", headers=bearer(admin), json={"provider_key": "orcid", "subject": "0000-0004-0000-0004"})
     assert response.status_code == 201, response.text
     assert (response.json()["orcid"], response.json()["verified_at"]) == ("0000-0004-0000-0004", None)
     assert logins(engine, NEWCOMER) == [(LAB_ISSUER, "newcomer-lab", False), (ORCID_ISSUER, "0000-0004-0000-0004", False)]
@@ -47,10 +47,10 @@ def test_admin_adds_an_unverified_orcid_and_records_who(world):
 
 def test_admin_cannot_add_a_login_someone_else_has_or_an_unlisted_issuer(world):
     client, _, admin = admin_world(world)
-    taken = client.post(f"/users/{NEWCOMER}/identities", headers=bearer(admin), json={"issuer": ORCID_ISSUER, "subject": BOB_ORCID})
+    taken = client.post(f"/users/{NEWCOMER}/identities", headers=bearer(admin), json={"provider_key": "orcid", "subject": BOB_ORCID})
     assert (taken.status_code, taken.json()["detail"]["code"]) == (409, "linked_elsewhere")
-    assert client.post(f"/users/{NEWCOMER}/identities", headers=bearer(admin), json={"issuer": "https://login.attacker.example", "subject": "x"}).status_code == 400
-    robot = client.post(f"/users/{ROBOT}/identities", headers=bearer(admin), json={"issuer": LAB_ISSUER, "subject": "robot-lab"})
+    assert client.post(f"/users/{NEWCOMER}/identities", headers=bearer(admin), json={"provider_key": "attacker", "subject": "x"}).status_code == 400
+    robot = client.post(f"/users/{ROBOT}/identities", headers=bearer(admin), json={"provider_key": "lab", "subject": "robot-lab"})
     assert (robot.status_code, robot.json()["detail"]["code"]) == (409, "service_account")
 
 
@@ -59,7 +59,7 @@ def test_admin_identity_routes_need_a_recent_hub_session(world, auth_as):
 
     client, engine, _ = admin_world(world)
     stale = hub_session(engine, ADMIN, age=timedelta(hours=1))
-    body = {"issuer": LAB_ISSUER, "subject": "attacker-lab"}
+    body = {"provider_key": "lab", "subject": "attacker-lab"}
     assert client.post(f"/users/{ADA}/identities", headers=bearer(stale), json=body).status_code == 401
     auth_as(ADMIN, platform_role=PlatformRole.ADMIN)
     assert client.post(f"/users/{ADA}/identities", json=body).json()["detail"]["code"] == "hub_session_required"
@@ -72,7 +72,7 @@ def test_admin_removes_a_login_but_never_the_last_and_ends_their_sessions(world)
     hub_session(engine, NEWCOMER)
     only = client.get(f"/users/{NEWCOMER}/identities", headers=bearer(admin)).json()[0]["id"]
     assert client.delete(f"/users/{NEWCOMER}/identities/{only}", headers=bearer(admin)).json()["detail"]["code"] == "last_sign_in_method"
-    added = client.post(f"/users/{NEWCOMER}/identities", headers=bearer(admin), json={"issuer": ORCID_ISSUER, "subject": "0000-0004-0000-0004"}).json()["id"]
+    added = client.post(f"/users/{NEWCOMER}/identities", headers=bearer(admin), json={"provider_key": "orcid", "subject": "0000-0004-0000-0004"}).json()["id"]
     assert client.delete(f"/users/{NEWCOMER}/identities/{only}", headers=bearer(admin)).status_code == 204
     assert logins(engine, NEWCOMER) == [(ORCID_ISSUER, "0000-0004-0000-0004", False)]
     assert client.delete(f"/users/{BOB}/identities/{added}", headers=bearer(admin)).status_code == 404

@@ -16,17 +16,18 @@ from app.api.dependencies import get_engine
 from app.api.dependencies import get_api_root_path
 from app.auth.providers import TOKEN_FAILURES, IssuerMismatch, ProviderUnavailable, authorization_url, check_response_issuer, new_code_verifier, verified_identity
 from app.auth.clients import ClientUnavailable, authenticate_client, require_client_secrets
+from app.auth.oauth_server import FormRequest, authorization_server
 from app.config import ConfigurationError, OidcProvider, get_settings
 from app.models.core_models import HubLoginTransaction
 from app.auth.sign_in import AccountPending
 from app.utils.hub_login import (
     HubLoginRefused, HubLoginUnavailable, InvalidHubLogin, check_login_request, consume_login, create_handoff_code,
-    create_login, exchange_handoff_code, hub_auth_enabled, hub_error_destination, load_login_config,
+    create_login, hub_auth_enabled, hub_error_destination, load_login_config, public_api_url,
 )
 from app.auth.linking import LinkRefused, LinkSessionStale, LinkingUnavailable, confirm_link, create_link_code, identity_read, open_link, preview_link, provider_fields
 from app.config import ORCID_ISSUERS
 from app.models.identities import IdentityRead, LinkCode, LinkPreviewRead
-from app.utils.hub_tokens import InvalidHubGrant, HubTokenPair, refresh_hub_tokens, revoke_hub_tokens
+from app.utils.hub_tokens import InvalidHubGrant, HubTokenPair
 from app.models.timestamps import UtcDatetime
 
 
@@ -83,6 +84,21 @@ def require_hub_client(credentials: HTTPBasicCredentials | None = Depends(client
     if client is None:
         raise HTTPException(status_code=401, detail="Invalid client credentials", headers={"WWW-Authenticate": "Basic"})
     return client.client_id
+
+
+def _server_request(request: Request, path: str, fields: list[tuple[str, str]], engine) -> FormRequest:
+    try:
+        base = public_api_url()
+    except HubLoginUnavailable:
+        raise HTTPException(status_code=503, detail="Hub authentication is unavailable") from None
+    return FormRequest(f"{base}{path}", {"Authorization": request.headers["authorization"]}, fields, engine)
+
+
+def _through_server(request: Request, path: str, fields: list[tuple[str, str]], engine) -> HubTokenPair | None:
+    """The Hub's JSON routes run the same OAuth server as /oauth/token and keep their own answers."""
+    prepared = _server_request(request, path, fields, engine)
+    status, _, _ = authorization_server().create_token_response(prepared)
+    return prepared.token_pair if status == 200 else None
 
 
 def _token_response(pair: HubTokenPair, response: Response) -> HubTokenResponse:
@@ -323,13 +339,13 @@ def confirm_hub_link(body: LinkCode, response: Response, client_id: str = Depend
 @router.post("/token", response_model=HubTokenResponse, responses={401: {"description": "Invalid client or sign-in code"}, 503: {"description": "Hub sign-in unavailable"}})
 def exchange_hub_code(
     body: HubCodeExchangeRequest,
+    request: Request,
     response: Response,
     client_id: str = Depends(require_hub_client),
     engine=Depends(get_engine),
 ) -> HubTokenResponse:
-    try:
-        pair = exchange_handoff_code(engine, body.code, body.code_verifier, client_id, body.redirect_uri)
-    except InvalidHubGrant:
+    pair = _through_server(request, "/auth/hub/token", [("grant_type", "authorization_code"), ("code", body.code), ("code_verifier", body.code_verifier), ("redirect_uri", body.redirect_uri)], engine)
+    if pair is None:
         raise HTTPException(status_code=401, detail="Invalid or expired sign-in code")
     return _token_response(pair, response)
 
@@ -337,13 +353,13 @@ def exchange_hub_code(
 @router.post("/refresh", response_model=HubTokenResponse, responses={401: {"description": "Invalid client or refresh token"}, 503: {"description": "Hub sign-in unavailable"}})
 def refresh_hub_credential(
     body: HubRefreshRequest,
+    request: Request,
     response: Response,
     client_id: str = Depends(require_hub_client),
     engine=Depends(get_engine),
 ) -> HubTokenResponse:
-    try:
-        pair = refresh_hub_tokens(engine, body.refresh_token, client_id)
-    except InvalidHubGrant:
+    pair = _through_server(request, "/auth/hub/refresh", [("grant_type", "refresh_token"), ("refresh_token", body.refresh_token)], engine)
+    if pair is None:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
     return _token_response(pair, response)
 
@@ -356,8 +372,9 @@ def refresh_hub_credential(
 )
 def revoke_hub_credential(
     body: HubRevokeRequest,
+    request: Request,
     client_id: str = Depends(require_hub_client),
     engine=Depends(get_engine),
 ) -> Response:
-    revoke_hub_tokens(engine, body.token, client_id)
+    authorization_server().create_endpoint_response("revocation", _server_request(request, "/auth/hub/revoke", [("token", body.token)], engine))
     return Response(status_code=204, headers={"Cache-Control": "no-store"})

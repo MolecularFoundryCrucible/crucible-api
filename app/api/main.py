@@ -24,7 +24,7 @@ from app.api.routes import (account, api_keys, auth, identities, files, datasets
                             samples, instruments, users, projects,
                             access_groups, entities, misc, deletion,
                             ingestion_requests, join_requests, pipelines, service_accounts,
-                            resource_graph, hub_auth, print as print_routes)
+                            resource_graph, hub_auth, oauth, print as print_routes)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -69,7 +69,7 @@ def _is_hub_auth_request(request: Request) -> bool:
     root = request.scope.get("root_path", "").rstrip("/")
     if root and path.startswith(root + "/"):
         path = path[len(root):]
-    return path == "/auth/hub" or path.startswith("/auth/hub/")
+    return path == "/auth/hub" or path.startswith(("/auth/hub/", "/oauth/"))
 
 
 @app.exception_handler(RequestValidationError)
@@ -316,6 +316,7 @@ app.include_router(identities.router)
 app.include_router(api_keys.router)
 app.include_router(auth.router)
 app.include_router(hub_auth.router)
+app.include_router(oauth.router)
 app.include_router(files.router)
 app.include_router(ingestion_requests.router)
 app.include_router(pipelines.router)

@@ -119,7 +119,7 @@ def api(db_engine, monkeypatch, seen):
     SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginCode, HubLoginTransaction, HubTokenFamily, HubRefreshToken, HubAccessToken)])
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_ID", "crucible-hub")
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "hub-secret")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "hub-secret-padded-to-at-least-32-chars00")
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", HUB_CALLBACK)
     monkeypatch.setenv("HUB_AUTH_PUBLIC_API_URL", API_URL)
     for key in ("DEX", "SECOND", "AUTHENTIK"):
@@ -181,10 +181,10 @@ def test_full_code_flow_and_the_same_subject_on_the_next_sign_in(api, provider, 
     unique_id = link(db_engine, issuer, seen[0].subject)
     answer = hub_answer(sign_in(api, key, at_provider))
     assert seen[1].subject == seen[0].subject
-    tokens = api.post("/auth/hub/token", auth=("crucible-hub", "hub-secret"), json={"code": answer["code"], "code_verifier": VERIFIER, "redirect_uri": HUB_CALLBACK})
+    tokens = api.post("/auth/hub/token", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), json={"code": answer["code"], "code_verifier": VERIFIER, "redirect_uri": HUB_CALLBACK})
     assert tokens.status_code == 200, tokens.text
     assert tokens.json()["user_unique_id"] == unique_id
-    refreshed = api.post("/auth/hub/refresh", auth=("crucible-hub", "hub-secret"), json={"refresh_token": tokens.json()["refresh_token"]})
+    refreshed = api.post("/auth/hub/refresh", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), json={"refresh_token": tokens.json()["refresh_token"]})
     assert refreshed.status_code == 200, refreshed.text
 
 

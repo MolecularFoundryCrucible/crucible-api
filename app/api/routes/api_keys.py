@@ -9,7 +9,7 @@ from app.api.path_params import UserRef
 from app.auth.api_keys import KEY_LIFETIME, MAX_ACTIVE_KEYS, TooManyKeys, active, create_key, plain_key_hashes, revoke_key, status_of
 from app.models.api_keys import ApiKeyCreate, ApiKeyCreated, ApiKeyListItem, ApiKeyRename
 from app.models.core_models import ApiKey
-from app.utils.auth_utils import authorize_user, caller_row, forget_cached_key_hash, require_platform_admin, require_recent_hub_session
+from app.utils.auth_utils import authorize_user, caller_row, forget_cached_key_hash, require_human_admin_safeguard, require_platform_admin, require_recent_hub_session
 from app.utils.permissions import Principal
 from app.utils.user_utils import resolve_user_by_identifier
 
@@ -20,7 +20,7 @@ State = Literal["active", "inactive"]
 
 
 def list_item(key: ApiKey, plain: set[str] = frozenset()) -> ApiKeyListItem:
-    return ApiKeyListItem(id=key.id, name=key.name, last4=key.key_last4, status=status_of(key), created_at=key.created_at, last_used_at=key.last_used_at, expires_at=key.expires_at, older_routes=key.key_hash in plain)
+    return ApiKeyListItem(id=key.id, name=key.name, last4=key.key_last4, status=status_of(key), created_at=key.created_at, last_used_at=key.last_used_at, expires_at=key.expires_at, revoked_at=key.revoked_at, older_routes=key.key_hash in plain)
 
 
 def _keys(session: Session, user_id: int, state: State) -> list[ApiKeyListItem]:
@@ -106,9 +106,10 @@ def list_user_apikeys(user_ref: UserRef, auth_res: Annotated[Principal, Depends(
 
 @router.delete("/users/{user_ref}/apikeys/{key_id}", status_code=204, responses={404: {"description": "Not one of this person's keys"}})
 def revoke_user_apikey(user_ref: UserRef, key_id: int, auth_res: Annotated[Principal, Depends(authorize_user)]):
-    """Revoke one of a person's API keys. Platform administrators only."""
+    """Revoke one of a person's API keys. Platform administrators only; another human administrator's keys need a Hub session with a recent sign-in."""
     require_platform_admin(auth_res)
     with Session(get_engine()) as session:
         user = resolve_user_by_identifier(session, user_ref)
+        require_human_admin_safeguard(auth_res, user)
         _revoke(session, user.id, key_id, actor=caller_row(session, auth_res))
     return Response(status_code=204)

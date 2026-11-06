@@ -23,6 +23,7 @@ class ApiKeyListItem(SQLModel):
     created_at: UtcDatetime
     last_used_at: Optional[UtcDatetime] = None
     expires_at: Optional[UtcDatetime] = None
+    revoked_at: Optional[UtcDatetime] = None
     older_routes: bool = Field(default=False, description="The key the deprecated single-key routes show and regenerate replaces.")
 
 

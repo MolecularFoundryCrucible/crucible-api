@@ -250,3 +250,25 @@ def test_a_copied_older_key_is_named(people):
     authorize("q" * 64)
     with Session(people) as session:
         assert session.exec(select(ApiKey.name)).all() == ["Default key"]
+
+
+def test_inactive_list_shows_when_a_key_was_revoked(client, auth_as, people):
+    as_hub(auth_as, ADA)
+    key = create(client).json()
+    assert key["revoked_at"] is None
+    client.delete(f"/account/apikeys/{key['id']}")
+    assert client.get("/account/apikeys", params={"state": "inactive"}).json()[0]["revoked_at"] is not None
+
+
+def test_an_api_key_cannot_revoke_another_administrators_key(client, auth_as, people):
+    with Session(people) as session:
+        session.add(User(unique_id="0tmnyhfztdwc1000w2kspzsnh8", username="chief", first_name="C", last_name="D", email=None, platform_role="admin"))
+        session.commit()
+    as_hub(auth_as, "0tmnyhfztdwc1000w2kspzsnh8", role=PlatformRole.ADMIN)
+    chiefs = create(client).json()
+    client.headers["Crucible-Privilege-Mode"] = "elevated"
+    auth_as(ADMIN, platform_role=PlatformRole.ADMIN)
+    refused = client.delete(f"/users/0tmnyhfztdwc1000w2kspzsnh8/apikeys/{chiefs['id']}")
+    assert refused.status_code == 403 and authorize(chiefs["api_key"]).user_id == "0tmnyhfztdwc1000w2kspzsnh8"
+    as_hub(auth_as, ADMIN, role=PlatformRole.ADMIN)
+    assert client.delete(f"/users/0tmnyhfztdwc1000w2kspzsnh8/apikeys/{chiefs['id']}").status_code == 204

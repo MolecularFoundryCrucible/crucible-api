@@ -180,11 +180,21 @@ def create_handoff_code(engine, transaction: HubLoginTransaction, provider: Oidc
         raise HubLoginRefused("login_required" if refused.reason == WRONG_USER else "access_denied") from None
     if pending:
         raise AccountPending
-    return code, f"{transaction.callback_uri}?{urlencode({'code': code, 'state': transaction.hub_state})}"
+    return code, client_redirect(transaction.callback_uri, {"code": code, "state": transaction.hub_state})
+
+
+def client_redirect(callback_uri: str, params: dict[str, str]) -> str:
+    """An answer back to a client, codes and errors alike, naming this API as its issuer (RFC 9207),
+    so a client that talks to several servers can tell which one answered."""
+    try:
+        params = {**params, "iss": public_api_url()}
+    except HubLoginUnavailable:
+        pass
+    return f"{callback_uri}?{urlencode(params)}"
 
 
 def hub_error_destination(callback_uri: str, hub_state: str, error: str) -> str:
-    return f"{callback_uri}?{urlencode({'error': error, 'state': hub_state})}"
+    return client_redirect(callback_uri, {"error": error, "state": hub_state})
 
 
 def exchange_handoff_code(engine, code: str, verifier: str, client_id: str, callback_uri: str, *, now: datetime | None = None) -> HubTokenPair:

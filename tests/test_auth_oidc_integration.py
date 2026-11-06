@@ -153,7 +153,9 @@ def sign_in(api, key, sign_in_at_provider, username="ada", **extra):
 def hub_answer(response):
     assert response.status_code == 302, response.text
     assert response.headers["location"].startswith(HUB_CALLBACK + "?")
-    return {name: values[0] for name, values in parse_qs(urlparse(response.headers["location"]).query).items()}
+    answer = {name: values[0] for name, values in parse_qs(urlparse(response.headers["location"]).query).items()}
+    assert answer.pop("iss") == API_URL
+    return answer
 
 
 def link(db_engine, issuer, subject, unique_id="0tmnyhfztdwc1000w2kspzsnh0"):

@@ -76,16 +76,27 @@ def run_migrations_offline() -> None:
 def _limit_lock_waits(connection) -> None:
     if connection.dialect.name != "postgresql":
         return
-    connection.execute(text("SELECT set_config('lock_timeout', :value, false)"), {"value": os.getenv("ALEMBIC_LOCK_TIMEOUT", "5s")})
+    connection.execute(text("SELECT set_config('lock_timeout', :value, false)"), {"value": os.getenv("ALEMBIC_LOCK_TIMEOUT") or "5s"})
+    connection.commit()
+
+
+def _reset_lock_waits(connection) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+    connection.rollback()
+    connection.execute(text("RESET lock_timeout"))
     connection.commit()
 
 
 def _run_migrations(connection) -> None:
     _refuse_if_unguarded_production(connection)
     _limit_lock_waits(connection)
-    context.configure(connection=connection, target_metadata=target_metadata, transaction_per_migration=True)
-    with context.begin_transaction():
-        context.run_migrations()
+    try:
+        context.configure(connection=connection, target_metadata=target_metadata, transaction_per_migration=True)
+        with context.begin_transaction():
+            context.run_migrations()
+    finally:
+        _reset_lock_waits(connection)
 
 
 def run_migrations_online() -> None:

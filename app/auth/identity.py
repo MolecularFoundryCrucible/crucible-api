@@ -27,7 +27,9 @@ def retry_after_concurrent_first_write(write: Callable[[], T]) -> T:
 def default_orcid_issuer() -> str:
     settings = get_settings()
     provider = settings.auth.orcid_provider
-    return provider.issuer if settings.hub.enabled and provider is not None else settings.api.orcid_issuer
+    from app.auth.clients import sign_in_enabled
+
+    return provider.issuer if sign_in_enabled() and provider is not None else settings.api.orcid_issuer
 
 
 def find_identity(session: Session, issuer: str, subject: str) -> UserIdentity | None:

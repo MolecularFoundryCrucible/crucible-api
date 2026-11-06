@@ -36,7 +36,7 @@ LAB_ENTRY = {
     "registration": "closed",
     "legacy_callback": False,
 }
-HUB_ENVIRONMENT = {"HUB_AUTH_ENABLED": "true", "HUB_AUTH_CLIENT_SECRET": "hub-secret", "HUB_AUTH_CALLBACK_URI": "https://hub.example/callback"}
+HUB_ENVIRONMENT = {"HUB_AUTH_ENABLED": "true", "HUB_AUTH_CLIENT_SECRET": "hub-secret-padded-to-at-least-32-chars00", "HUB_AUTH_CALLBACK_URI": "https://hub.example/callback"}
 CALLBACK = "https://api.example/auth/hub/callback"
 
 

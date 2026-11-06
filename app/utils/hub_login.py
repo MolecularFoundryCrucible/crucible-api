@@ -4,13 +4,14 @@ import re
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode
 
 from sqlmodel import Session, select
 
 from app.auth.identity import retry_after_concurrent_first_write
 from app.auth.sign_in import WRONG_USER, AccountPending, SignInRefused, record_refused_sign_in, resolve_sign_in
-from app.config import ConfigurationError, OidcProvider, get_settings, optional_secret
+from app.auth.clients import RegisteredClient, registered_clients, sign_in_enabled
+from app.config import ConfigurationError, OidcProvider, get_settings, optional_secret, trusted_redirect_uri
 from app.models.core_models import HubLoginCode, HubLoginTransaction
 from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens_in_session
 
@@ -21,7 +22,7 @@ CHALLENGE_PATTERN = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 
 
 def hub_auth_enabled() -> bool:
-    return get_settings().hub.enabled
+    return sign_in_enabled()
 
 
 class InvalidHubLogin(Exception):
@@ -43,13 +44,11 @@ class HubLoginRefused(Exception):
 
 @dataclass(frozen=True)
 class HubLoginConfig:
-    client_id: str
-    callback_uri: str
+    clients: tuple[RegisteredClient, ...]
     public_api_url: str
 
-    @property
-    def allowed_callbacks(self) -> tuple[str, ...]:
-        return tuple(uri.strip() for uri in self.callback_uri.split(",") if uri.strip())
+    def client(self, client_id: str) -> RegisteredClient | None:
+        return next((client for client in self.clients if client.client_id == client_id), None)
 
     def provider_callback_uri(self, provider: OidcProvider) -> str:
         path = "/auth/hub/callback" if provider.legacy_callback else f"/auth/hub/oidc/{provider.key}/callback"
@@ -62,29 +61,19 @@ def load_login_config() -> HubLoginConfig:
     if not hub_auth_enabled():
         raise HubLoginUnavailable
     settings = get_settings()
-    hub = settings.hub
-    client_id = hub.client_id
-    callback_uri = hub.callback_uri
-    public_api_url = hub.public_api_url or get_api_url()
+    public_api_url = settings.hub.public_api_url or get_api_url()
     if not settings.auth.providers:
         raise HubLoginUnavailable
+    clients = registered_clients()
     try:
-        client_secret = optional_secret("HUB_AUTH_CLIENT_SECRET")
+        secrets_present = all(optional_secret(client.secret_name) for client in clients)
     except ConfigurationError:
         raise HubLoginUnavailable from None
-    if not client_id or not client_secret:
+    if not secrets_present or not trusted_redirect_uri(public_api_url):
         raise HubLoginUnavailable
-    config = HubLoginConfig(client_id, callback_uri, public_api_url.rstrip("/"))
-    if not config.allowed_callbacks or not all(map(_trusted_public_url, config.allowed_callbacks)) or not _trusted_public_url(public_api_url):
+    if not all(client.client_id and client.redirect_uris and all(map(trusted_redirect_uri, client.redirect_uris)) for client in clients):
         raise HubLoginUnavailable
-    return config
-
-
-def _trusted_public_url(value: str) -> bool:
-    parsed = urlparse(value)
-    if parsed.username or parsed.password or parsed.fragment or parsed.query or not parsed.hostname:
-        return False
-    return parsed.scheme == "https" or (parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1"})
+    return HubLoginConfig(clients, public_api_url.rstrip("/"))
 
 
 def _digest(value: str) -> str:
@@ -104,7 +93,8 @@ def valid_challenge(value: str) -> bool:
 
 
 def check_login_request(config: HubLoginConfig, client_id: str, callback_uri: str, hub_state: str, challenge: str) -> None:
-    if client_id != config.client_id or callback_uri not in config.allowed_callbacks or not valid_challenge(challenge):
+    client = config.client(client_id)
+    if client is None or callback_uri not in client.redirect_uris or not valid_challenge(challenge):
         raise InvalidHubLogin
     if not 16 <= len(hub_state) <= 256 or not hub_state.isascii():
         raise InvalidHubLogin

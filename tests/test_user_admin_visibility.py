@@ -470,7 +470,7 @@ def test_undeclared_param_is_ignored_with_deprecation_header(client, db_engine, 
 def test_role_route_promote_and_demote(client, db_engine, auth_as):
     _seed(db_engine)
     client.headers["Crucible-Privilege-Mode"] = "elevated"
-    auth_as(ADMIN, platform_role=PlatformRole.ADMIN, credential="hub", authenticated_at=datetime.now(timezone.utc))
+    auth_as(ADMIN, platform_role=PlatformRole.ADMIN, credential="session", authenticated_at=datetime.now(timezone.utc))
 
     promote = client.patch(f"/users/{PERSON}/platform_role", json={"platform_role": "admin"})
     assert promote.status_code == 200, promote.text
@@ -542,7 +542,7 @@ def test_role_route_rejects_demoting_last_human_admin(client, db_engine, auth_as
     # The caller's principal still carries admin from before their row was
     # demoted; the auth cache keeps it valid for up to AUTH_CACHE_TTL.
     client.headers["Crucible-Privilege-Mode"] = "elevated"
-    auth_as("0000-0007-7777-7773", platform_role=PlatformRole.ADMIN, credential="hub", authenticated_at=datetime.now(timezone.utc))
+    auth_as("0000-0007-7777-7773", platform_role=PlatformRole.ADMIN, credential="session", authenticated_at=datetime.now(timezone.utc))
 
     demote_last = client.patch(
         "/users/0000-0007-7777-7771/platform_role", json={"platform_role": "none"})
@@ -570,7 +570,7 @@ def test_role_route_allows_demoting_when_other_human_admins_remain(client, db_en
         ])
         session.commit()
     client.headers["Crucible-Privilege-Mode"] = "elevated"
-    auth_as("0000-0007-7777-7783", platform_role=PlatformRole.ADMIN, credential="hub", authenticated_at=datetime.now(timezone.utc))
+    auth_as("0000-0007-7777-7783", platform_role=PlatformRole.ADMIN, credential="session", authenticated_at=datetime.now(timezone.utc))
 
     response = client.patch(
         "/users/0000-0007-7777-7781/platform_role", json={"platform_role": "none"})

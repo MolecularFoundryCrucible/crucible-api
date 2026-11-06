@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session, select
 
+from app.auth.clients import client_by_id
 from app.models.core_models import HubAccessToken, HubRefreshToken, HubTokenFamily, User
 
 
@@ -190,6 +191,8 @@ def hub_access_family(session: Session, access_token: str, *, now: datetime | No
         raise InvalidHubGrant
     family = session.get(HubTokenFamily, token.family_id)
     if family is None or family.revoked_at is not None or current >= _aware(family.expires_at):
+        raise InvalidHubGrant
+    if client_by_id(family.client_id) is None:
         raise InvalidHubGrant
     user = _holder(session, family)
     if not _may_hold_hub_tokens(user):

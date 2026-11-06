@@ -49,14 +49,14 @@ def test_api_key_callers_get_the_key_they_presented(account, db_engine):
 def test_hub_callers_get_the_newest_key(account, db_engine):
     add_key(db_engine, OLD_KEY, date.today() - timedelta(days=100))
     add_key(db_engine, NEW_KEY, date.today() - timedelta(days=10))
-    as_caller("hub", db_engine)
+    as_caller("session", db_engine)
     body = verify(account).json()
     assert (body["valid"], body["created_at"]) == (True, (date.today() - timedelta(days=10)).isoformat())
 
 
 def test_hub_callers_see_an_expired_key_as_invalid(account, db_engine):
     add_key(db_engine, OLD_KEY, date.today() - timedelta(days=400))
-    as_caller("hub", db_engine)
+    as_caller("session", db_engine)
     body = verify(account).json()
     assert body["valid"] is False
     assert body["expires_at"] == (date.today() - timedelta(days=35)).isoformat()
@@ -64,10 +64,10 @@ def test_hub_callers_see_an_expired_key_as_invalid(account, db_engine):
 
 def test_a_key_expires_on_its_first_anniversary(account, db_engine):
     add_key(db_engine, OLD_KEY, date.today() - timedelta(days=365))
-    as_caller("hub", db_engine)
+    as_caller("session", db_engine)
     assert verify(account).json()["valid"] is False
 
 
 def test_hub_callers_without_a_key_get_404(account, db_engine):
-    as_caller("hub", db_engine)
+    as_caller("session", db_engine)
     assert verify(account).status_code == 404

@@ -31,6 +31,7 @@ from app.utils.permissions import (
     Permission,
     PlatformRole,
     Principal,
+    SESSION,
     has_global_permission,
     resolve_authorization_context,
 )
@@ -200,7 +201,7 @@ def verify_account_apikey(
     with valid false once it has expired.
     """
     with Session(get_engine()) as session:
-        if auth_res.credential == "hub":
+        if auth_res.credential == SESSION:
             key = newest_key(session, auth_res.internal_user_id) if auth_res.internal_user_id is not None else None
         else:
             key = find_api_key(session, credentials.credentials)

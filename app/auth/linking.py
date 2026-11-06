@@ -61,10 +61,11 @@ def require_linking_available() -> None:
         raise LinkingUnavailable
 
 
-def begin_link(engine, config: HubLoginConfig, user_id: int, provider: OidcProvider, callback_uri: str, hub_state: str, challenge: str, *, code_verifier: str | None = None, now: datetime | None = None) -> str:
-    """Record a link for this person and return the one-time token of its start address."""
+def begin_link(engine, config: HubLoginConfig, user_id: int, client_id: str, provider: OidcProvider, callback_uri: str, hub_state: str, challenge: str, *, code_verifier: str | None = None, now: datetime | None = None) -> str:
+    """Record a link for this person, for the client whose session started it, and return the
+    one-time token of its start address."""
     require_linking_available()
-    check_login_request(config, config.client_id, callback_uri, hub_state, challenge)
+    check_login_request(config, client_id, callback_uri, hub_state, challenge)
     current = _now(now)
     start = secrets.token_urlsafe(32)
     with Session(engine) as session, session.begin():
@@ -73,7 +74,7 @@ def begin_link(engine, config: HubLoginConfig, user_id: int, provider: OidcProvi
             start_hash=_digest(start),
             purpose="link",
             user_id=user_id,
-            client_id=config.client_id,
+            client_id=client_id,
             callback_uri=callback_uri,
             hub_state=hub_state,
             code_challenge=challenge,
@@ -168,7 +169,7 @@ def _link_grant(session: Session, code: str, verifier: str, client_id: str, call
     if grant.client_id != client_id or grant.callback_uri != callback_uri or not secrets.compare_digest(grant.code_challenge, _challenge(verifier)):
         raise InvalidHubGrant
     family = hub_access_family(session, session_token, now=current)
-    if family.user_id != grant.user_id:
+    if family.user_id != grant.user_id or family.client_id != client_id:
         raise InvalidHubGrant
     return grant, session.get(User, grant.user_id)
 

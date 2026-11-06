@@ -94,6 +94,10 @@ class GroupMembership:
     role: Role
 
 
+API_KEY = "api_key"
+SESSION = "session"
+
+
 @dataclass(frozen=True)
 class Principal:
     """The caller, as an authorization decision sees them.
@@ -105,9 +109,10 @@ class Principal:
     platform_role: PlatformRole = PlatformRole.NONE
     is_service_account: bool = False
     groups: tuple[GroupMembership, ...] = ()
-    credential: str = "api_key"
+    credential: str = API_KEY
     authenticated_at: Optional[datetime] = None
     session_family_id: Optional[str] = None
+    client_id: Optional[str] = None
     internal_user_id: Optional[int] = None
 
     def is_user(self, user) -> bool:
@@ -163,7 +168,7 @@ def resolve_authorization_context(
         raise PermissionError("Caller is not eligible for elevated mode")
 
     if requested_mode is None:
-        if actor.is_platform_admin and actor.credential != "hub":
+        if actor.is_platform_admin and actor.credential != SESSION:
             return AuthorizationContext(
                 actor=actor,
                 principal=actor,

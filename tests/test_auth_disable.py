@@ -11,7 +11,7 @@ from app.models.core_models import (
 )
 from app.utils import auth_utils
 from app.utils.auth_utils import add_apikey
-from app.utils.hub_login import HubLoginRefused, create_handoff_code, create_login, consume_login, exchange_handoff_code, HubLoginConfig
+from app.utils.hub_login import HubLoginRefused, create_handoff_code, create_login, consume_login, exchange_handoff_code
 from app.utils.hub_tokens import InvalidHubGrant, hub_access_family, issue_hub_tokens, refresh_hub_tokens
 from app.utils.permissions import PlatformRole
 from tests.test_hub_tokens import ORCID_PROVIDER
@@ -22,6 +22,9 @@ ADMIN = "0tmnyhfztdwc1000w2kspzsnh0"
 OTHER_ADMIN = "0tmnyhfztdwc1000w2kspzsnh1"
 ISSUER = "https://orcid.org"
 NOW = datetime.now(timezone.utc)
+from tests.hub_clients import hub_login_config
+
+pytestmark = pytest.mark.usefixtures("hub_client_registered")
 
 
 @pytest.fixture(autouse=True)
@@ -92,7 +95,7 @@ def test_disabled_refused_on_handoff_redemption(db_engine):
     import hashlib
 
     person(db_engine)
-    config = HubLoginConfig("crucible-hub", "https://hub.example/cb", "https://api.example")
+    config = hub_login_config("https://hub.example/cb", "https://api.example")
     verifier = "v" * 43
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     state, secret, _ = create_login(db_engine, config, "crucible-hub", "https://hub.example/cb", "hub-state-123456789", challenge)
@@ -145,7 +148,7 @@ def test_load_principal_still_works_for_a_disabled_target(db_engine):
 
 def as_admin(auth_as, client, user_id=ADMIN, age=timedelta(seconds=5)):
     client.headers["Crucible-Privilege-Mode"] = "elevated"
-    return auth_as(user_id, platform_role=PlatformRole.ADMIN, credential="hub", authenticated_at=datetime.now(timezone.utc) - age)
+    return auth_as(user_id, platform_role=PlatformRole.ADMIN, credential="session", authenticated_at=datetime.now(timezone.utc) - age)
 
 
 def human_admins(db_engine, *ids):
@@ -226,7 +229,7 @@ def test_service_account_admin_is_refused(client, auth_as, db_engine, action):
 
 def test_hub_administrator_must_ask_for_elevated_mode(client, auth_as, db_engine):
     person(db_engine)
-    auth_as(ADMIN, platform_role=PlatformRole.ADMIN, credential="hub", authenticated_at=datetime.now(timezone.utc))
+    auth_as(ADMIN, platform_role=PlatformRole.ADMIN, credential="session", authenticated_at=datetime.now(timezone.utc))
     assert client.post(f"/users/{ORCID}/disable").status_code == 403
 
 

@@ -55,7 +55,7 @@ def configure(monkeypatch):
         get_settings.cache_clear()
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_ID", "crucible-hub")
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "hub-secret")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "hub-secret-padded-to-at-least-32-chars00")
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", HUB_CALLBACK)
     monkeypatch.setenv("HUB_AUTH_PUBLIC_API_URL", API_URL)
     monkeypatch.setenv("OIDC_ORCID_CLIENT_SECRET", "orcid-secret")
@@ -497,12 +497,12 @@ def test_token_and_refresh_responses_include_auth_time(client, remote, db_engine
     query = start(client, remote, "orcid", code_challenge=challenge)
     remote["orcid.org"].claims = {"nonce": query["nonce"][0], "sub": ORCID, "auth_time": signed_in}
     code = hub_answer(finish(client, "/auth/hub/callback", query))["code"]
-    exchanged = client.post("/auth/hub/token", auth=("crucible-hub", "hub-secret"), json={"code": code, "code_verifier": verifier, "redirect_uri": HUB_CALLBACK})
+    exchanged = client.post("/auth/hub/token", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), json={"code": code, "code_verifier": verifier, "redirect_uri": HUB_CALLBACK})
     assert exchanged.status_code == 200, exchanged.text
     body = exchanged.json()
     assert set(body) == {"access_token", "refresh_token", "token_type", "access_expires_at", "refresh_expires_at", "user_unique_id", "auth_time"}
     assert datetime.fromisoformat(body["auth_time"].replace("Z", "+00:00")) == datetime.fromtimestamp(signed_in, timezone.utc)
-    refreshed = client.post("/auth/hub/refresh", auth=("crucible-hub", "hub-secret"), json={"refresh_token": body["refresh_token"]})
+    refreshed = client.post("/auth/hub/refresh", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), json={"refresh_token": body["refresh_token"]})
     assert refreshed.status_code == 200, refreshed.text
     assert refreshed.json()["auth_time"] == body["auth_time"]
 
@@ -513,7 +513,7 @@ def test_auth_time_is_null_when_the_provider_gives_none(client, remote, db_engin
     query = start(client, remote, "orcid", code_challenge=challenge)
     remote["orcid.org"].claims = {"nonce": query["nonce"][0], "sub": ORCID}
     code = hub_answer(finish(client, "/auth/hub/callback", query))["code"]
-    exchanged = client.post("/auth/hub/token", auth=("crucible-hub", "hub-secret"), json={"code": code, "code_verifier": verifier, "redirect_uri": HUB_CALLBACK})
+    exchanged = client.post("/auth/hub/token", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), json={"code": code, "code_verifier": verifier, "redirect_uri": HUB_CALLBACK})
     assert exchanged.json()["auth_time"] is None
 
 

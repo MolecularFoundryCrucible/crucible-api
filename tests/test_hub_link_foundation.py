@@ -16,6 +16,8 @@ from tests.test_hub_tokens import HUB_LOGIN, hub_error_of
 engine = hub_tokens_tests.engine
 hub_routes = hub_tokens_tests.hub_routes
 
+pytestmark = pytest.mark.usefixtures("hub_client_registered")
+
 
 def begin(client, hub_state):
     started = client.get("/auth/hub/login", params={**HUB_LOGIN, "state": hub_state}, follow_redirects=False)

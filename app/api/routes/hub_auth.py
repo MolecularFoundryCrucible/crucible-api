@@ -16,13 +16,14 @@ from app.api.dependencies import get_engine
 from app.api.dependencies import get_api_root_path
 from app.auth.providers import TOKEN_FAILURES, IssuerMismatch, ProviderUnavailable, authorization_url, check_response_issuer, new_code_verifier, verified_identity
 from app.auth.clients import ClientUnavailable, authenticate_client, require_client_secrets
-from app.auth.oauth_server import FormRequest, authorization_server
+from app.auth.oauth_server import FormRequest, authorization_server, check_authorization_request
+from authlib.oauth2 import OAuth2Error
 from app.config import ConfigurationError, OidcProvider, get_settings
 from app.models.core_models import HubLoginTransaction
 from app.auth.sign_in import AccountPending
 from app.utils.hub_login import (
     HubLoginRefused, HubLoginUnavailable, InvalidHubLogin, check_login_request, consume_login, create_handoff_code,
-    create_login, hub_auth_enabled, hub_error_destination, load_login_config, public_api_url,
+    client_redirect, create_login, hub_auth_enabled, hub_error_destination, load_login_config, public_api_url,
 )
 from app.auth.linking import LinkRefused, LinkSessionStale, LinkingUnavailable, confirm_link, create_link_code, identity_read, open_link, preview_link, provider_fields
 from app.config import ORCID_ISSUERS
@@ -158,16 +159,43 @@ async def begin_hub_login(
     required_user: str | None = Query(default=None, min_length=1, max_length=255, description="The unique_id that must sign in. Any other account gets error=login_required and no code. It passes through the browser, so the Hub must still compare the account it receives."),
     engine=Depends(get_engine),
 ) -> Response:
+    """The Hub's sign-in start; the same as GET /oauth/authorize with response_type=code."""
+    return await start_sign_in(request, engine, path="/auth/hub/login", response_type="code", client_id=client_id, redirect_uri=redirect_uri, state=state,
+                               code_challenge=code_challenge, code_challenge_method=code_challenge_method, max_age=max_age, provider=provider, required_user=required_user)
+
+
+_AUTHORIZATION_PARAMETERS = frozenset({"response_type", "client_id", "redirect_uri", "state", "scope", "code_challenge", "code_challenge_method"})
+
+
+async def start_sign_in(request: Request, engine, *, path: str, response_type: str | None, client_id: str | None, redirect_uri: str | None, state: str | None,
+                        code_challenge: str | None, code_challenge_method: str | None, max_age: int | None, provider: str | None, required_user: str | None) -> Response:
+    """Check an authorization request, then offer a choice of provider or send the browser to one.
+    Errors go back to the client only once its redirect is verified (RFC 6749 4.1.2.1)."""
     try:
         config = await run_in_threadpool(load_login_config)
-        check_login_request(config, client_id, redirect_uri, state, code_challenge)
     except HubLoginUnavailable:
         raise HTTPException(status_code=503, detail="Hub sign-in is unavailable")
+    standard = [(name, value) for name, value in request.query_params.multi_items() if name in _AUTHORIZATION_PARAMETERS and value]
+    if path == "/auth/hub/login":
+        standard.append(("response_type", "code"))
+    try:
+        check_authorization_request(f"{config.public_api_url}{path}", standard)
+    except OAuth2Error as error:
+        if error.redirect_uri is None or not state:
+            raise HTTPException(status_code=400, detail="Invalid sign-in request")
+        return _hub_error(error.redirect_uri, state, error.error)
+    try:
+        if code_challenge_method != "S256":
+            raise InvalidHubLogin
+        check_login_request(config, client_id, redirect_uri, state, code_challenge)
     except InvalidHubLogin:
-        raise HTTPException(status_code=400, detail="Invalid sign-in request")
+        if not state or not 16 <= len(state) <= 256:
+            raise HTTPException(status_code=400, detail="Invalid sign-in request")
+        return _hub_error(redirect_uri, state, "invalid_request")
     listed = get_settings().auth.providers
     if provider is None and len(listed) > 1:
         return _chooser(request, listed, {
+            "response_type": response_type if path != "/auth/hub/login" else None,
             "client_id": client_id, "redirect_uri": redirect_uri, "state": state, "code_challenge": code_challenge,
             "code_challenge_method": code_challenge_method, "max_age": max_age, "required_user": required_user,
         })
@@ -226,7 +254,7 @@ async def _finish_sign_in(request: Request, engine, served_by, code: str | None,
             identity = await verified_identity(provider, config.provider_callback_uri(provider), code, transaction.nonce, transaction.provider_code_verifier)
             if transaction.purpose == "link":
                 link_code = await run_in_threadpool(create_link_code, engine, transaction, provider, identity.subject, identity.auth_time, identity.label)
-                destination = f"{transaction.callback_uri}?{urlencode({'code': link_code, 'state': transaction.hub_state})}"
+                destination = client_redirect(transaction.callback_uri, {"code": link_code, "state": transaction.hub_state})
             else:
                 _, destination = await run_in_threadpool(create_handoff_code, engine, transaction, provider, identity.subject, identity.given_name, identity.family_name, auth_time=identity.auth_time)
             response = _browser_headers(RedirectResponse(destination, status_code=302))

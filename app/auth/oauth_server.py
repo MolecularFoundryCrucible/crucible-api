@@ -62,6 +62,33 @@ class FormRequest(OAuth2Request):
         return self._form
 
 
+class AuthorizeRequest(OAuth2Request):
+    """An authorization request, from its query parameters, checked against the public address."""
+
+    def __init__(self, uri: str, fields: list[tuple[str, str]]):
+        super().__init__("GET", uri)
+        self.payload = _FormPayload(fields)
+
+    @property
+    def args(self):
+        return self.payload.data
+
+    @property
+    def form(self):
+        return {}
+
+
+def check_authorization_request(uri: str, fields: list[tuple[str, str]]) -> None:
+    """Authlib's checks of an authorization request (RFC 6749 4.1.1 and 3.1): known client, a
+    redirect on its list, response_type code, no repeated parameter, and a well-formed PKCE
+    challenge. Raises Authlib's OAuth2Error, whose redirect_uri is set only when the client and the
+    redirect were verified, so the error may be sent back to the client."""
+    request = AuthorizeRequest(uri, fields)
+    grant = authorization_server().get_authorization_grant(request)
+    grant.validate_no_multiple_request_parameter(request)
+    grant.validate_authorization_request()
+
+
 class OAuthClient(ClientMixin):
     def __init__(self, client: RegisteredClient):
         self.client = client

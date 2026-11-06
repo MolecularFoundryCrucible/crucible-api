@@ -114,7 +114,9 @@ def link(db_engine, issuer, subject, unique_id="0tmnyhfztdwc1000w2kspzsnh0", **f
 def hub_answer(response):
     assert response.status_code == 302, response.text
     assert response.headers["location"].startswith(HUB_CALLBACK + "?")
-    return {name: values[0] for name, values in parse_qs(urlparse(response.headers["location"]).query).items()}
+    answer = {name: values[0] for name, values in parse_qs(urlparse(response.headers["location"]).query).items()}
+    assert answer.pop("iss") == API_URL
+    return answer
 
 
 def issued_codes(db_engine):
@@ -532,4 +534,93 @@ def test_failure_detail_is_not_sent_to_the_hub(client, remote):
     remote["login.example.org"].claims = {"nonce": "secret-looking-value", "sub": "lab-user"}
     location = finish(client, "/auth/hub/oidc/lab/callback", query).headers["location"]
     assert "secret-looking-value" not in location
-    assert set(parse_qs(urlparse(location).query)) == {"error", "state"}
+    assert set(parse_qs(urlparse(location).query)) == {"error", "state", "iss"}
+
+
+@pytest.fixture
+def oauth_client(db_engine, configure, remote):
+    from app.api.routes import oauth as oauth_routes
+
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginCode, HubLoginTransaction, HubTokenFamily, HubRefreshToken, HubAccessToken)])
+    app = FastAPI()
+    for router in (routes.router, auth_routes.router, oauth_routes.router, oauth_routes.discovery):
+        app.include_router(router)
+    app.dependency_overrides[get_engine] = lambda: db_engine
+    with TestClient(app, base_url=API_URL) as test_client:
+        yield test_client
+
+
+OAUTH_VERIFIER = "k" * 43
+OAUTH_LOGIN = {
+    "response_type": "code", "client_id": "crucible-hub", "redirect_uri": HUB_CALLBACK, "state": "client-state-123456789",
+    "code_challenge": base64.urlsafe_b64encode(hashlib.sha256(OAUTH_VERIFIER.encode()).digest()).rstrip(b"=").decode(), "code_challenge_method": "S256",
+}
+
+
+def authorize(client, **changes):
+    params = {name: value for name, value in {**OAUTH_LOGIN, **changes}.items() if value is not None}
+    return client.get("/oauth/authorize", params=params, follow_redirects=False)
+
+
+def client_answer(response):
+    assert response.status_code == 302, response.text
+    assert response.headers["location"].startswith(HUB_CALLBACK + "?")
+    return {name: values[0] for name, values in parse_qs(urlparse(response.headers["location"]).query).items()}
+
+
+def test_standard_authorization_runs_through_to_tokens(oauth_client, remote, db_engine):
+    link(db_engine, LAB_ISSUER, "lab-user")
+    started = authorize(oauth_client, provider="lab")
+    assert started.status_code == 302, started.text
+    query = parse_qs(urlparse(started.headers["location"]).query)
+    remote["login.example.org"].claims = {"nonce": query["nonce"][0], "sub": "lab-user"}
+    answer = client_answer(finish(oauth_client, "/auth/hub/oidc/lab/callback", query))
+    assert (answer["state"], answer["iss"]) == (OAUTH_LOGIN["state"], API_URL)
+    tokens = oauth_client.post("/oauth/token", auth=("crucible-hub", "hub-secret-padded-to-at-least-32-chars00"), data={
+        "grant_type": "authorization_code", "code": answer["code"], "code_verifier": OAUTH_VERIFIER, "redirect_uri": HUB_CALLBACK,
+    })
+    assert tokens.status_code == 200, tokens.text
+
+
+@pytest.mark.parametrize("changes", [{"client_id": "nobody"}, {"redirect_uri": "https://evil.example/cb"}, {"client_id": None}])
+def test_unknown_client_or_redirect_is_never_redirected_to(oauth_client, changes):
+    assert authorize(oauth_client, **changes).status_code == 400
+
+
+@pytest.mark.parametrize("changes,error", [
+    ({"response_type": "token"}, "unsupported_response_type"),
+    ({"response_type": None}, "unsupported_response_type"),
+    ({"code_challenge": None, "code_challenge_method": None}, "invalid_request"),
+    ({"code_challenge_method": "plain"}, "invalid_request"),
+    ({"code_challenge_method": None}, "invalid_request"),
+])
+def test_other_errors_go_back_to_the_client_with_state_and_iss(oauth_client, changes, error):
+    answer = client_answer(authorize(oauth_client, **changes))
+    assert answer == {"error": error, "state": OAUTH_LOGIN["state"], "iss": API_URL}
+
+
+def test_repeated_parameters_are_refused(oauth_client):
+    from urllib.parse import urlencode
+
+    query = urlencode(list(OAUTH_LOGIN.items()) + [("client_id", "crucible-hub")])
+    assert oauth_client.get(f"/oauth/authorize?{query}", follow_redirects=False).status_code == 400
+
+
+def test_the_chooser_keeps_the_standard_request(oauth_client):
+    page = authorize(oauth_client)
+    assert page.status_code == 200 and "response_type=code" in page.text
+
+
+def test_metadata_names_the_same_issuer_as_redirects(oauth_client):
+    from authlib.oauth2.rfc8414 import AuthorizationServerMetadata
+
+    metadata = oauth_client.get("/.well-known/oauth-authorization-server").json()
+    AuthorizationServerMetadata(metadata).validate()
+    assert metadata["issuer"] == API_URL and metadata["code_challenge_methods_supported"] == ["S256"]
+    assert metadata["authorization_response_iss_parameter_supported"] is True
+
+
+def test_no_metadata_without_clients(oauth_client, monkeypatch):
+    monkeypatch.setenv("HUB_AUTH_ENABLED", "false")
+    get_settings.cache_clear()
+    assert oauth_client.get("/.well-known/oauth-authorization-server").status_code == 404

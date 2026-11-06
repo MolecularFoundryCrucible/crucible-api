@@ -257,6 +257,7 @@ class AuthSettings(SettingsGroup):
 
     providers: list[OidcProvider] = Field(default_factory=list)
     identity_lookup: bool = False
+    event_retention_days: int = Field(365, ge=1, description="Days the sign-in history is kept before the cleanup job removes it.")
 
     @field_validator("providers", mode="before")
     @classmethod

@@ -1,10 +1,11 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, func
 from sqlmodel import Session, select
 
+from app.config import get_settings
 from app.models.core_models import (
-    HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily,
+    AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily,
 )
 
 
@@ -44,6 +45,15 @@ def cleanup_hub_auth(engine, *, commit: bool = False, batch_size: int = 1000, no
         counts[HubTokenFamily.__tablename__] = len(families)
         if commit and families:
             session.execute(delete(HubTokenFamily).where(HubTokenFamily.id.in_(families)))
+
+        oldest_kept = cutoff - timedelta(days=get_settings().auth.event_retention_days)
+        query = select(AuthEvent.id).where(AuthEvent.at < oldest_kept).order_by(AuthEvent.at, AuthEvent.id).limit(batch_size)
+        if commit:
+            query = query.with_for_update(skip_locked=True)
+        events = session.exec(query).all()
+        counts[AuthEvent.__tablename__] = len(events)
+        if commit and events:
+            session.execute(delete(AuthEvent).where(AuthEvent.id.in_(events)))
     from app.auth.registration import expire_pending_users
 
     counts["pending_users"] = expire_pending_users(engine, commit=commit, batch_size=batch_size, now=now)

@@ -19,7 +19,7 @@ from app.models.core_models import HubAccessToken, HubLoginCode, HubLoginTransac
 from app.utils.hub_login import exchange_handoff_code
 from app.utils.hub_tokens import InvalidHubGrant, hub_access_user, issue_hub_tokens, refresh_hub_tokens, revoke_hub_tokens
 from tests.people import internal_id
-from app.models.core_models import UserIdentity
+from app.models.core_models import AuthEvent, UserIdentity
 
 
 NOW = datetime(2026, 9, 28, tzinfo=timezone.utc)
@@ -41,7 +41,7 @@ def pg_engine():
     engine = create_engine(value, connect_args={"options": f"-csearch_path={schema}"})
     try:
         SQLModel.metadata.create_all(engine, tables=[
-            User.__table__, UserIdentity.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__,
+            User.__table__, UserIdentity.__table__, AuthEvent.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__,
             HubAccessToken.__table__, HubLoginCode.__table__, HubLoginTransaction.__table__,
         ])
         with Session(engine) as session, session.begin():

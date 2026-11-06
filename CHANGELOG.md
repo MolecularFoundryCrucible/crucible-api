@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `python -m app.cli auth cleanup`, and an hourly `auth-cleanup` service in the Compose bundle, remove expired sign-in records, sign-in history older than `CRUCIBLE_AUTH_EVENT_RETENTION_DAYS` (default 365) and accounts left waiting 30 days. The Foundry's existing Hub cleanup job also removes the old history.
 - A short list of reserved usernames (`admin`, `root`, `support`, `api` and similar, plus lookalikes) cannot be chosen for yourself; administrators can still set one, existing holders keep theirs, and generated usernames avoid them.
 - Each provider's `registration` now applies at first sign-in: `closed` refuses someone new, `approval` creates an account that waits and gets no session or key, and `open` one that works at once. A waiting account sees a waiting page only after a valid sign-in.
 - `GET /users?pending=true`, `POST /users/{user_ref}/approve` and `POST /users/{user_ref}/reject` for administrators; rejecting deletes the waiting account, and waiting accounts left 30 days are removed by the cleanup job. Waiting accounts are hidden from every other lookup.

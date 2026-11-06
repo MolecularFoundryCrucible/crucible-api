@@ -212,25 +212,30 @@ def generate_unique_username(session, first_name: str, last_name: str) -> str:
     return candidate
 
 
-def user_by_id_or_orcid(session, value: str) -> Optional[User]:
+def _visible(user: Optional[User], include_pending: bool) -> Optional[User]:
+    """Accounts waiting for approval exist only for administrators reviewing them."""
+    return user if user is not None and (include_pending or user.pending_at is None) else None
+
+
+def user_by_id_or_orcid(session, value: str, *, include_pending: bool = False) -> Optional[User]:
     """The person whose unique_id this is, or whose linked ORCID it is, so an ORCID keeps working
     once it is no longer anyone's unique_id. Only the configured ORCID issuer counts, never a
     look-alike subject from another provider."""
     user = session.exec(select(User).where(User.unique_id == value)).one_or_none()
     if user is not None or not is_orcid(value):
-        return user
+        return _visible(user, include_pending)
     identity = find_identity(session, default_orcid_issuer(), value)
-    return session.get(User, identity.user_id) if identity is not None else None
+    return _visible(session.get(User, identity.user_id) if identity is not None else None, include_pending)
 
 
-def person_by_reference(session, value: str) -> Optional[User]:
+def person_by_reference(session, value: str, *, include_pending: bool = False) -> Optional[User]:
     """For exact filters: the person a unique_id, linked ORCID, username or email names, or None."""
-    user = user_by_id_or_orcid(session, value)
+    user = user_by_id_or_orcid(session, value, include_pending=include_pending)
     if user is not None:
         return user
     if "@" in value:
-        return session.exec(select(User).where(func.lower(User.email) == value.lower())).one_or_none()
-    return session.exec(select(User).where(User.username == value.lower())).one_or_none()
+        return _visible(session.exec(select(User).where(func.lower(User.email) == value.lower())).one_or_none(), include_pending)
+    return _visible(session.exec(select(User).where(User.username == value.lower())).one_or_none(), include_pending)
 
 
 def owners_of(session, records) -> dict:
@@ -271,9 +276,9 @@ def resolve_user(session, orcid: Optional[str] = None, email: Optional[str] = No
     if orcid:
         user = user_by_id_or_orcid(session, orcid)
     elif email:
-        user = session.exec(select(User).where(func.lower(User.email) == email.lower())).one_or_none()
+        user = _visible(session.exec(select(User).where(func.lower(User.email) == email.lower())).one_or_none(), False)
     elif username:
-        user = session.exec(select(User).where(User.username == username.lower())).one_or_none()
+        user = _visible(session.exec(select(User).where(User.username == username.lower())).one_or_none(), False)
     else:
         raise HTTPException(status_code=400, detail="One of orcid, email, or username must be provided")
     if user is None:

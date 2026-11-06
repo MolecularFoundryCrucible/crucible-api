@@ -31,7 +31,7 @@ class HubTokenPair:
 
 
 def _may_hold_hub_tokens(user: User | None) -> bool:
-    return user is not None and not user.is_service_account and user.disabled_at is None
+    return user is not None and not user.is_service_account and user.disabled_at is None and user.pending_at is None
 
 
 def _holder(session: Session, family: HubTokenFamily) -> User | None:

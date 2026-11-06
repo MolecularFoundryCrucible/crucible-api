@@ -64,7 +64,7 @@ def test_disabled_refused_at_the_resolver_and_never_continues(db_engine):
     person(db_engine, disabled=True)
     with Session(db_engine) as session, session.begin():
         with pytest.raises(SignInRefused) as caught:
-            resolve_sign_in(session, ISSUER, ORCID, "Ada", "L")
+            resolve_sign_in(session, ISSUER, ORCID, "Ada", "L", registration="open")
     assert caught.value.reason == DISABLED
     with Session(db_engine) as session:
         assert session.exec(select(UserIdentity)).one().verified_at is None

@@ -11,7 +11,8 @@ from sqlmodel import Session
 from app.api.dependencies import get_engine, get_api_root_path
 from app.auth import browser_login
 from app.auth.identity import retry_after_concurrent_first_write
-from app.auth.sign_in import SignInRefused, record_refused_sign_in, resolve_sign_in
+from app.auth.sign_in import AccountPending, SignInRefused, record_refused_sign_in, resolve_sign_in
+from app.api.routes.hub_auth import pending_page
 from app.config import get_settings
 from app.models.response_schemas import ApiKeyRead, AuthMethodRead, LegacyApiKeyRead
 from app.utils.auth_utils import decode_token, find_or_add_api_access
@@ -74,8 +75,12 @@ async def redirect_exchange(request: Request, code: str | None = None, state: st
 
 def _record_signed_in_user(subject: str, user_info: dict) -> tuple[int, str, str | None, str, str]:
     with Session(get_engine()) as session:
-        user = resolve_sign_in(session, get_settings().api.orcid_issuer, subject, user_info.get('given_name'), user_info.get('family_name'))
+        orcid_provider = get_settings().auth.orcid_provider
+        registration = orcid_provider.registration if orcid_provider is not None else "open"
+        user = resolve_sign_in(session, get_settings().api.orcid_issuer, subject, user_info.get('given_name'), user_info.get('family_name'), registration=registration)
         session.commit()
+        if user.pending_at is not None:
+            raise AccountPending
         return user.id, user.unique_id, user.email, user.first_name, user.last_name
 
 
@@ -98,7 +103,10 @@ def get_apikey(request: Request, response: Response):
         return _login_redirect(f"{root}/login", f"{root}/user_apikey")
     orcid = user_info["orcid"]
 
-    user_id, unique_id, user_email, user_first_name, user_last_name = _signed_in_user_or_conflict(orcid, user_info)
+    try:
+        user_id, unique_id, user_email, user_first_name, user_last_name = _signed_in_user_or_conflict(orcid, user_info)
+    except AccountPending:
+        return pending_page(request)
 
     crucible_token = find_or_add_api_access(user_id, get_engine(), regenerate=False)
 
@@ -227,7 +235,10 @@ def regenerate_apikey(request: Request, response: Response):
     if user_info is None:
         return _login_redirect(f"{root}/auth/login", f"{root}/auth/apikey")
     orcid = user_info["orcid"]
-    user_id, *_ = _signed_in_user_or_conflict(orcid, user_info)
+    try:
+        user_id, *_ = _signed_in_user_or_conflict(orcid, user_info)
+    except AccountPending:
+        return pending_page(request)
     crucible_token = find_or_add_api_access(user_id, get_engine(), regenerate=True)
     response.headers["Cache-Control"] = "no-store"
     return {"api_key": crucible_token}

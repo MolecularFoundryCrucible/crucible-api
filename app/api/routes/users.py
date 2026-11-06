@@ -32,10 +32,11 @@ from app.utils.search_utils import (
 )
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_active
 from app.auth.events import AuthEventType, record_event
+from app.auth.registration import NotPending, StillReferenced, approve_pending_user, reject_pending_user
 from app.auth.identity import IdentityTaken, default_orcid_issuer, find_identity
 from app.utils.hub_tokens import revoke_all_hub_tokens
 from app.services.proposals import find_mf_user_proposals, usable_discovered_projects
-from app.utils.user_utils import assert_profile_fields_available, commit_user, profile_conflict, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
+from app.utils.user_utils import assert_profile_fields_available, commit_user, person_by_reference, profile_conflict, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import project_fields, project_leads, resolve_project_reference
 from app.models.pagination import PaginatedResponse
 from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
@@ -218,7 +219,9 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
         except CursorError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    search_cmd = select(User)
+    if params.pending:
+        require_platform_admin(auth_res)
+    search_cmd = select(User).where(User.pending_at != None if params.pending else User.pending_at == None)  # noqa: E711
     if params.unique_id is not None:
         search_cmd = search_cmd.where(or_(
             User.unique_id.in_(params.unique_id),
@@ -368,18 +371,18 @@ def resolve_users(
 
         if orcids:
             linked = select(UserIdentity.user_id).where(UserIdentity.issuer == default_orcid_issuer(), UserIdentity.subject.in_(orcids))
-            for user in session.exec(select(User).where(or_(User.unique_id.in_(orcids), User.id.in_(linked)))).all():
+            for user in session.exec(select(User).where(or_(User.unique_id.in_(orcids), User.id.in_(linked)), User.pending_at == None)).all():  # noqa: E711
                 results[user.unique_id] = UserPublicRead.model_validate(user)
 
         if usernames:
             normalized_usernames = [u.lower() for u in usernames]
-            for user in session.exec(select(User).where(User.username.in_(normalized_usernames))).all():
+            for user in session.exec(select(User).where(User.username.in_(normalized_usernames), User.pending_at == None)).all():  # noqa: E711
                 if user.unique_id not in results:
                     results[user.unique_id] = UserPublicRead.model_validate(user)
 
         if emails:
             normalized_emails = [e.lower() for e in emails]
-            for user in session.exec(select(User).where(func.lower(User.email).in_(normalized_emails))).all():
+            for user in session.exec(select(User).where(func.lower(User.email).in_(normalized_emails), User.pending_at == None)).all():  # noqa: E711
                 if user.unique_id not in results:
                     results[user.unique_id] = UserPublicRead.model_validate(user)
 
@@ -413,7 +416,7 @@ def search_users(
         configure_trigram_search(session, get_trgm_search_threshold())
         fields = (User.first_name, User.last_name, User.username)
         query = apply_trigram_search(
-            select(User),
+            select(User).where(User.pending_at == None),  # noqa: E711
             tokens,
             fields=fields,
             prefix_fields=fields,
@@ -435,7 +438,7 @@ def get_user_by_username(username: str, response: Response,
                          auth_res: Annotated[Principal, Depends(authorize_user)]):
     '''Deprecated: use GET /users/{user_ref}. Email is visible only to self and platform administrators.'''
     with Session(get_engine()) as session:
-        user = session.exec(select(User).where(User.username == username.lower())).one_or_none()
+        user = session.exec(select(User).where(User.username == username.lower(), User.pending_at == None)).one_or_none()  # noqa: E711
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
         response.headers["Content-Location"] = f"/users/{user.unique_id}"
@@ -449,13 +452,17 @@ def _canonical_user_id(user_ref: str) -> str:
     """Map a username, email or linked ORCID path segment to the user's unique_id. MFIDs and
     unresolvable values pass through so the route's own exact lookup and error handling apply
     unchanged."""
-    if is_valid_mfid(user_ref):
-        return user_ref
     with Session(get_engine()) as session:
-        try:
-            return resolve_user_by_identifier(session, user_ref).unique_id
-        except HTTPException:
-            return user_ref
+        if is_valid_mfid(user_ref):
+            unique_id = user_ref
+        else:
+            try:
+                unique_id = resolve_user_by_identifier(session, user_ref).unique_id
+            except HTTPException:
+                unique_id = user_ref
+        if session.exec(select(User.id).where(User.unique_id == unique_id, User.pending_at != None)).first() is not None:  # noqa: E711
+            raise HTTPException(status_code=404, detail="User not found")
+        return unique_id
 
 
 @router.get("/users/{user_ref}", response_model=Union[UserRead, UserPublicRead])
@@ -720,6 +727,46 @@ def _account_to_switch(session: Session, user_ref: str, auth_res: Principal) -> 
     require_human_admin_safeguard(auth_res, user)
     require_recent_authentication(auth_res)
     return user
+
+
+def _pending_account(session: Session, user_ref: str, auth_res: Principal) -> User:
+    require_platform_admin(auth_res)
+    user = person_by_reference(session, user_ref, include_pending=True)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+_PENDING_RESPONSES = {404: {"description": "No such account"}, 409: {"description": "`not_pending`: the account is not waiting for approval"}}
+
+
+@router.post("/users/{user_ref}/approve", response_model=UserRead, responses=_PENDING_RESPONSES)
+def approve_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Let an account that waits for approval in. Platform administrators only."""
+    with Session(get_engine()) as session:
+        user = _pending_account(session, user_ref, auth_res)
+        try:
+            user = approve_pending_user(session, user, actor=caller_row(session, auth_res))
+        except NotPending:
+            raise HTTPException(status_code=409, detail={"code": "not_pending", "message": "This account is not waiting for approval"})
+        session.commit()
+        session.refresh(user)
+        return _user_read(auth_res, user, with_capabilities=True)
+
+
+@router.post("/users/{user_ref}/reject", status_code=204, responses={**_PENDING_RESPONSES, 409: {"description": "`not_pending`, or `still_referenced` when something besides its own group and logins points at the account"}})
+def reject_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Delete an account that waits for approval, freeing its username and login. Active accounts
+    are never deleted. Platform administrators only."""
+    with Session(get_engine()) as session:
+        user = _pending_account(session, user_ref, auth_res)
+        try:
+            reject_pending_user(session, user, actor=caller_row(session, auth_res))
+        except NotPending:
+            raise HTTPException(status_code=409, detail={"code": "not_pending", "message": "This account is not waiting for approval"})
+        except StillReferenced as referenced:
+            raise HTTPException(status_code=409, detail={"code": "still_referenced", "message": "; ".join(referenced.reasons)})
+        session.commit()
 
 
 @router.post("/users/{user_ref}/disable", response_model=UserRead, responses={401: {"description": "A Hub session needs a recent sign-in to change a human administrator"}, 409: {"description": "This is the last active human platform administrator"}})

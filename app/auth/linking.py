@@ -7,7 +7,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import update
+from sqlalchemy import func, update
 from sqlmodel import Session, select
 
 from app.auth.events import AuthEventType, record_event
@@ -19,6 +19,9 @@ from app.utils.hub_login import HubLoginConfig, HubLoginRefused, InvalidHubLogin
 from app.utils.hub_tokens import InvalidHubGrant, hub_access_family, revoke_all_hub_tokens
 
 LINK_LIFETIME = timedelta(minutes=10)
+START_LIFETIME = timedelta(seconds=120)
+LINK_STARTS_ALLOWED = 5
+LINK_START_WINDOW = timedelta(minutes=10)
 LINK_CODE_LIFETIME = timedelta(minutes=10)
 AUTH_TIME_LEEWAY = timedelta(seconds=60)
 
@@ -44,6 +47,14 @@ class LastSignInMethod(Exception):
     pass
 
 
+class TooManyLinks(Exception):
+    """Too many links started recently by one person."""
+
+
+class LinkSessionStale(Exception):
+    """The session confirming a link has no sign-in recent enough."""
+
+
 @dataclass(frozen=True)
 class LinkPreview:
     issuer: str
@@ -61,15 +72,23 @@ def require_linking_available() -> None:
         raise LinkingUnavailable
 
 
-def begin_link(engine, config: HubLoginConfig, user_id: int, client_id: str, provider: OidcProvider, callback_uri: str, hub_state: str, challenge: str, *, code_verifier: str | None = None, now: datetime | None = None) -> str:
-    """Record a link for this person, for the client whose session started it, and return the
-    one-time token of its start address."""
+def begin_link(engine, config: HubLoginConfig, user_id: int, client_id: str, session_family_id: str, provider: OidcProvider, callback_uri: str, hub_state: str, challenge: str, *, code_verifier: str | None = None, now: datetime | None = None) -> str:
+    """Record a link for this person, for the client and the session that started it, and return
+    the one-time token of its start address. Raises TooManyLinks after LINK_STARTS_ALLOWED starts
+    within LINK_START_WINDOW."""
     require_linking_available()
     check_login_request(config, client_id, callback_uri, hub_state, challenge)
     current = _now(now)
     start = secrets.token_urlsafe(32)
     with Session(engine) as session, session.begin():
+        session.exec(select(User.id).where(User.id == user_id).with_for_update()).one()
+        recent = session.exec(select(func.count()).select_from(HubLoginTransaction).where(
+            HubLoginTransaction.user_id == user_id, HubLoginTransaction.purpose == "link", HubLoginTransaction.created_at > current - LINK_START_WINDOW,
+        )).one()
+        if recent >= LINK_STARTS_ALLOWED:
+            raise TooManyLinks
         session.add(HubLoginTransaction(
+            session_family_id=session_family_id,
             state_hash=_digest(start),
             start_hash=_digest(start),
             purpose="link",
@@ -99,7 +118,7 @@ def open_link(engine, start: str, *, now: datetime | None = None) -> tuple[HubLo
         transaction = session.exec(select(HubLoginTransaction).where(HubLoginTransaction.start_hash == _digest(start)).with_for_update()).one_or_none()
         if transaction is None or transaction.purpose != "link" or transaction.browser_secret_hash is not None:
             raise InvalidHubLogin
-        if transaction.consumed_at is not None or current >= _aware(transaction.expires_at):
+        if transaction.consumed_at is not None or current >= _aware(transaction.expires_at) or current >= _aware(transaction.created_at) + START_LIFETIME:
             raise InvalidHubLogin
         transaction.state_hash = _digest(state)
         transaction.browser_secret_hash = _digest(browser_secret)
@@ -138,6 +157,7 @@ def create_link_code(engine, transaction: HubLoginTransaction, provider: OidcPro
             created_at=current,
             expires_at=current + LINK_CODE_LIFETIME,
             auth_time=auth_time,
+            session_family_id=transaction.session_family_id,
         ))
     return code
 
@@ -169,8 +189,12 @@ def _link_grant(session: Session, code: str, verifier: str, client_id: str, call
     if grant.client_id != client_id or grant.callback_uri != callback_uri or not secrets.compare_digest(grant.code_challenge, _challenge(verifier)):
         raise InvalidHubGrant
     family = hub_access_family(session, session_token, now=current)
-    if family.user_id != grant.user_id or family.client_id != client_id:
+    if family.user_id != grant.user_id or family.client_id != client_id or grant.session_family_id is None or family.id != grant.session_family_id:
         raise InvalidHubGrant
+    from app.utils.auth_utils import STEP_UP_MAX_AGE
+
+    if family.auth_time is None or current - _aware(family.auth_time) > timedelta(seconds=STEP_UP_MAX_AGE):
+        raise LinkSessionStale
     return grant, session.get(User, grant.user_id)
 
 

@@ -23,7 +23,7 @@ from app.utils.hub_login import (
     HubLoginRefused, HubLoginUnavailable, InvalidHubLogin, check_login_request, consume_login, create_handoff_code,
     create_login, exchange_handoff_code, hub_auth_enabled, hub_error_destination, load_login_config,
 )
-from app.auth.linking import LinkRefused, LinkingUnavailable, confirm_link, create_link_code, identity_read, open_link, preview_link, provider_fields
+from app.auth.linking import LinkRefused, LinkSessionStale, LinkingUnavailable, confirm_link, create_link_code, identity_read, open_link, preview_link, provider_fields
 from app.config import ORCID_ISSUERS
 from app.models.identities import IdentityRead, LinkCode, LinkPreviewRead
 from app.utils.hub_tokens import InvalidHubGrant, HubTokenPair, refresh_hub_tokens, revoke_hub_tokens
@@ -285,7 +285,7 @@ async def start_hub_link(request: Request, token: str = Query(min_length=1, max_
     return response
 
 
-_LINK_CODE_RESPONSES = {401: {"description": "Invalid client, link code or session"}, 409: {"description": "`identity_lookup_off`: linking waits for the identity lookup setting"}, 503: {"description": "Hub sign-in unavailable"}}
+_LINK_CODE_RESPONSES = {401: {"description": "Invalid client, link code or session, or `insufficient_user_authentication` when the session that started the link has no sign-in within 10 minutes"}, 409: {"description": "`identity_lookup_off`: linking waits for the identity lookup setting"}, 503: {"description": "Hub sign-in unavailable"}}
 
 
 @router.post("/link/preview", response_model=LinkPreviewRead, responses=_LINK_CODE_RESPONSES)
@@ -295,6 +295,8 @@ def preview_hub_link(body: LinkCode, response: Response, client_id: str = Depend
         preview = preview_link(engine, body.code, body.code_verifier, client_id, body.redirect_uri, body.session_token)
     except LinkingUnavailable:
         raise HTTPException(status_code=409, detail={"code": "identity_lookup_off", "message": "Linking is not available yet on this server"})
+    except LinkSessionStale:
+        raise HTTPException(status_code=401, detail={"code": "insufficient_user_authentication", "message": "The session confirming this link needs a sign-in within the last 10 minutes"})
     except InvalidHubGrant:
         raise HTTPException(status_code=401, detail="Invalid or expired link code")
     response.headers["Cache-Control"] = "no-store"
@@ -308,6 +310,8 @@ def confirm_hub_link(body: LinkCode, response: Response, client_id: str = Depend
         identity = confirm_link(engine, body.code, body.code_verifier, client_id, body.redirect_uri, body.session_token)
     except LinkingUnavailable:
         raise HTTPException(status_code=409, detail={"code": "identity_lookup_off", "message": "Linking is not available yet on this server"})
+    except LinkSessionStale:
+        raise HTTPException(status_code=401, detail={"code": "insufficient_user_authentication", "message": "The session confirming this link needs a sign-in within the last 10 minutes"})
     except InvalidHubGrant:
         raise HTTPException(status_code=401, detail="Invalid or expired link code")
     except LinkRefused as refused:

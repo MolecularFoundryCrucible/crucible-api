@@ -424,6 +424,7 @@ class HubLoginTransaction(SQLModel, table=True):
     provider_key: Optional[str] = Field(default=None, max_length=32)
     provider_code_verifier: Optional[str] = Field(default=None, max_length=128)
     required_user: Optional[str] = Field(default=None, max_length=255)
+    session_family_id: Optional[str] = Field(default=None, max_length=64)
     created_at: datetime = Field(sa_type=DateTime(timezone=True))
     expires_at: datetime = Field(sa_type=DateTime(timezone=True))
     consumed_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
@@ -446,6 +447,7 @@ class HubLoginCode(SQLModel, table=True):
     expires_at: datetime = Field(sa_type=DateTime(timezone=True))
     consumed_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     auth_time: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    session_family_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class Project(SQLModel, table=True):

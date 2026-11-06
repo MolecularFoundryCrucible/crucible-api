@@ -31,7 +31,7 @@ def isolated_config(monkeypatch):
 def manager(monkeypatch):
     factory = MagicMock()
     factory.return_value.__enter__.return_value.access_secret_version.return_value = SimpleNamespace(
-        payload=SimpleNamespace(data=b"test-secret-value"),
+        payload=SimpleNamespace(data=b"test-secret-value-padded-to-32-chars00"),
     )
     from google.cloud import secretmanager
 
@@ -40,22 +40,22 @@ def manager(monkeypatch):
 
 
 def test_local_env_needs_no_cloud_access(monkeypatch, manager):
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "local-secret")
-    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "local-secret"
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "local-secret-padded-to-at-least-32-chars")
+    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "local-secret-padded-to-at-least-32-chars"
     manager.assert_not_called()
 
 
 def test_version_cache_and_rotation(monkeypatch, manager):
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
     for _ in range(2):
-        assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value"
+        assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value-padded-to-32-chars00"
     client = manager.return_value.__enter__.return_value
     client.access_secret_version.assert_called_once_with(request={"name": VERSION}, timeout=10, retry=None)
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION[:-1] + "2")
     optional_secret("HUB_AUTH_CLIENT_SECRET")
     assert client.access_secret_version.call_count == 2
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION.replace("/1", "/latest"))
-    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value"
+    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value-padded-to-32-chars00"
     assert client.access_secret_version.call_count == 3
 
 
@@ -77,7 +77,7 @@ def test_cloud_failure_is_not_cached(monkeypatch, manager, error):
     assert str(result.value) == f"HUB_AUTH_CLIENT_SECRET_VERSION could not be read: {error.__class__.__name__}"
     assert result.value.__cause__ is None and result.value.__suppress_context__
     client.access_secret_version.side_effect = None
-    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value"
+    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "test-secret-value-padded-to-32-chars00"
     assert client.access_secret_version.call_count == 2
 
 
@@ -111,7 +111,7 @@ def test_managed_secret_authenticates_client(monkeypatch, manager):
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET_VERSION", VERSION)
     monkeypatch.setenv("HUB_AUTH_CLIENT_ID", "crucible-hub")
-    assert require_hub_client(HTTPBasicCredentials(username="crucible-hub", password="test-secret-value")) == "crucible-hub"
+    assert require_hub_client(HTTPBasicCredentials(username="crucible-hub", password="test-secret-value-padded-to-32-chars00")) == "crucible-hub"
 
 
 def test_disabled_auth_never_fetches_secrets(monkeypatch, manager):
@@ -144,7 +144,7 @@ def test_unavailable_reference_becomes_safe_auth_failure(monkeypatch, manager, o
 def test_provider_reference_failure_does_not_use_older_secret(monkeypatch, manager, orcid_provider_settings):
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://hub.example/callback")
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "hub-secret")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "hub-secret-padded-to-at-least-32-chars00")
     orcid_provider_settings()
     monkeypatch.delenv("OIDC_ORCID_CLIENT_SECRET")
     monkeypatch.setenv("OIDC_ORCID_CLIENT_SECRET_VERSION", VERSION)
@@ -157,9 +157,9 @@ def test_provider_reference_failure_does_not_use_older_secret(monkeypatch, manag
 
 
 def test_hub_secret_from_the_secrets_directory(monkeypatch, manager, tmp_path):
-    (tmp_path / "HUB_AUTH_CLIENT_SECRET").write_text("file-secret\n")
+    (tmp_path / "HUB_AUTH_CLIENT_SECRET").write_text("file-secret-padded-to-at-least-32-chars\n")
     monkeypatch.setenv("CRUCIBLE_SECRETS_DIR", str(tmp_path))
-    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "file-secret"
+    assert optional_secret("HUB_AUTH_CLIENT_SECRET") == "file-secret-padded-to-at-least-32-chars"
     manager.assert_not_called()
 
 
@@ -247,7 +247,7 @@ def test_provider_secret_missing_is_unavailable(monkeypatch, tmp_path, orcid_pro
     monkeypatch.delenv("DB_CONF_FILE", raising=False)
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://hub.example/callback")
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "hub-secret")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "hub-secret-padded-to-at-least-32-chars00")
     orcid_provider_settings()
     monkeypatch.delenv("OIDC_ORCID_CLIENT_SECRET")
     get_settings.cache_clear()

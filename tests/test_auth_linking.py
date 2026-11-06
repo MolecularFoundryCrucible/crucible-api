@@ -22,7 +22,7 @@ ADA_ORCID = "0000-0002-1825-0097"
 BOB_ORCID = "0000-0001-5109-3700"
 SIGN_IN_CALLBACK = "https://crucible.lbl.gov/hub/auth/callback"
 LINK_CALLBACK = "https://crucible.lbl.gov/hub/auth/link/callback"
-HUB = ("crucible-hub", "test-only-secret")
+HUB = ("crucible-hub", "test-only-secret-padded-to-32-characters")
 VERIFIER = "v" * 43
 CHALLENGE = base64.urlsafe_b64encode(hashlib.sha256(VERIFIER.encode()).digest()).rstrip(b"=").decode()
 

@@ -15,7 +15,7 @@ from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant
 
 
 MARKER = "sensitive-test-credential"
-AUTH = ("crucible-hub", "test-client-secret")
+AUTH = ("crucible-hub", "test-client-secret-padded-to-32-chars00")
 
 
 @pytest.fixture

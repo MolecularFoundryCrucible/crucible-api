@@ -91,7 +91,7 @@ def hub(remote, client, db_engine, monkeypatch):
     import app.api.routes.hub_auth as hub_routes
 
     for name, value in {"HUB_AUTH_CALLBACK_URI": SIGN_IN_CALLBACK, "HUB_AUTH_PUBLIC_API_URL": "http://localhost:7777", "HUB_AUTH_ENABLED": "true",
-                        "HUB_AUTH_CLIENT_SECRET": "test-only-secret", "CRUCIBLE_AUTH_IDENTITY_LOOKUP": "true"}.items():
+                        "HUB_AUTH_CLIENT_SECRET": "test-only-secret-padded-to-32-characters", "CRUCIBLE_AUTH_IDENTITY_LOOKUP": "true"}.items():
         monkeypatch.setenv(name, value)
     set_providers(monkeypatch, ORCID_ENTRY, {**LAB_ENTRY, "registration": "approval"})
     monkeypatch.setattr(hub_routes, "get_api_root_path", lambda: "")

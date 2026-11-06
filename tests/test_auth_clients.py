@@ -1,7 +1,6 @@
 import base64
 import hashlib
 import json
-import logging
 from datetime import datetime, timezone
 
 import pytest
@@ -112,7 +111,7 @@ def test_the_older_hub_settings_alone_give_todays_client(monkeypatch, orcid_prov
     orcid_provider_settings()
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "http://localhost:3000/cb, https://hub.example.org/cb")
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "short")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "s" * 40)
     config.get_settings.cache_clear()
     [client] = registered_clients()
     assert (client.client_id, client.redirect_uris, client.secret_name) == ("crucible-hub", ("http://localhost:3000/cb", "https://hub.example.org/cb"), "HUB_AUTH_CLIENT_SECRET")
@@ -151,17 +150,18 @@ def test_both_ways_of_naming_the_hub_are_refused(two_clients, monkeypatch):
         check_settings()
 
 
-def test_a_listed_clients_secret_must_be_given_and_long(two_clients, monkeypatch, caplog):
+def test_a_clients_secret_must_be_given_and_long(two_clients, monkeypatch):
     monkeypatch.delenv("OAUTH_NOTES_CLIENT_SECRET")
     assert "OAUTH_NOTES_CLIENT_SECRET" in config.missing_required_settings()
-    monkeypatch.setenv("OAUTH_NOTES_CLIENT_SECRET", "n" * 31)
-    with pytest.raises(ConfigurationError, match="at least 32 characters"):
-        get_secret("OAUTH_NOTES_CLIENT_SECRET")
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "short")
-    config.get_settings.cache_clear()
-    with caplog.at_level(logging.WARNING):
-        assert get_secret("HUB_AUTH_CLIENT_SECRET") == "short"
-    assert "shorter than 32" in caplog.text and "short" not in caplog.text.replace("shorter", "")
+    for name in ("OAUTH_NOTES_CLIENT_SECRET", "HUB_AUTH_CLIENT_SECRET"):
+        monkeypatch.setenv(name, "n" * 31)
+        config.get_settings.cache_clear()
+        with pytest.raises(ConfigurationError, match=f"{name} must be at least 32 characters") as refused:
+            get_secret(name)
+        assert "n" * 31 not in str(refused.value)
+        monkeypatch.setenv(name, "n" * 32)
+        config.get_settings.cache_clear()
+        assert get_secret(name) == "n" * 32
 
 
 def test_only_api_keys_of_administrators_start_elevated():

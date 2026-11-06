@@ -16,7 +16,7 @@ The routes use exact configured callbacks, OIDC validation, a one-use PKCE-bound
 
 ## The client list
 
-Every field is required, and an unknown field stops the server at startup. A client's secret is `OAUTH_{KEY}_CLIENT_SECRET`, given like any other secret, and must be at least 32 characters. The older `HUB_AUTH_CLIENT_SECRET` is only warned about when shorter.
+Every field is required, and an unknown field stops the server at startup. A client's secret is `OAUTH_{KEY}_CLIENT_SECRET`, given like any other secret. Client secrets, including the older `HUB_AUTH_CLIENT_SECRET`, must be at least 32 characters, or the server refuses to start; `openssl rand -hex 32` gives 64.
 
 ```json
 [{"key": "hub", "client_id": "crucible-hub", "display_name": "Crucible Hub", "type": "confidential",

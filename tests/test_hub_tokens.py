@@ -211,7 +211,7 @@ def test_tokens_are_stored_hashed(engine):
 
 def test_refresh_and_revoke_routes(engine, monkeypatch):
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret-padded-to-32-characters")
     app = FastAPI()
     app.include_router(hub_auth_router)
     app.dependency_overrides[get_engine] = lambda: engine
@@ -225,7 +225,7 @@ def test_refresh_and_revoke_routes(engine, monkeypatch):
 
         refreshed = client.post(
             "/auth/hub/refresh",
-            auth=("crucible-hub", "test-only-secret"),
+            auth=("crucible-hub", "test-only-secret-padded-to-32-characters"),
             json={"refresh_token": pair.refresh_token},
         )
         assert refreshed.status_code == 200
@@ -235,7 +235,7 @@ def test_refresh_and_revoke_routes(engine, monkeypatch):
 
         revoked = client.post(
             "/auth/hub/revoke",
-            auth=("crucible-hub", "test-only-secret"),
+            auth=("crucible-hub", "test-only-secret-padded-to-32-characters"),
             json={"token": pair.refresh_token},
         )
         assert revoked.status_code == 204
@@ -243,11 +243,11 @@ def test_refresh_and_revoke_routes(engine, monkeypatch):
         assert revoked.headers["cache-control"] == "no-store"
         for token in (pair.refresh_token, "chbr_" + "x" * 64):
             assert client.post(
-                "/auth/hub/revoke", auth=("crucible-hub", "test-only-secret"), json={"token": token},
+                "/auth/hub/revoke", auth=("crucible-hub", "test-only-secret-padded-to-32-characters"), json={"token": token},
             ).status_code == 204
         failed = client.post(
             "/auth/hub/refresh",
-            auth=("crucible-hub", "test-only-secret"),
+            auth=("crucible-hub", "test-only-secret-padded-to-32-characters"),
             json={"refresh_token": next_pair["refresh_token"]},
         )
         assert failed.status_code == 401
@@ -322,7 +322,7 @@ def test_browser_login_and_code_exchange_routes(engine, monkeypatch, orcid_provi
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://crucible.lbl.gov/hub/auth/callback")
     monkeypatch.setenv("HUB_AUTH_PUBLIC_API_URL", "http://localhost:7777")
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret-padded-to-32-characters")
     monkeypatch.setattr(routes, "get_api_root_path", lambda: "")
     orcid_provider_settings()
 
@@ -362,7 +362,7 @@ def test_browser_login_and_code_exchange_routes(engine, monkeypatch, orcid_provi
         assert callback.status_code == 302
         from urllib.parse import parse_qs, urlparse
         code = parse_qs(urlparse(callback.headers["location"]).query)["code"][0]
-        exchanged = client.post("/auth/hub/token", auth=("crucible-hub", "test-only-secret"), json={
+        exchanged = client.post("/auth/hub/token", auth=("crucible-hub", "test-only-secret-padded-to-32-characters"), json={
             "code": code,
             "code_verifier": verifier,
             "redirect_uri": "https://crucible.lbl.gov/hub/auth/callback",
@@ -380,7 +380,7 @@ def hub_routes(engine, monkeypatch, orcid_provider_settings):
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "https://crucible.lbl.gov/hub/auth/callback")
     monkeypatch.setenv("HUB_AUTH_PUBLIC_API_URL", "http://localhost:7777")
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret-padded-to-32-characters")
     monkeypatch.setattr(routes, "get_api_root_path", lambda: "")
     orcid_provider_settings()
     fake = FakeProvider()
@@ -488,7 +488,7 @@ def test_login_accepts_only_an_exact_configured_callback(engine, monkeypatch, or
     orcid_provider_settings()
     from app.utils.hub_login import HubLoginUnavailable, load_login_config
     monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
-    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret")
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-only-secret-padded-to-32-characters")
     monkeypatch.setenv("HUB_AUTH_PUBLIC_API_URL", "https://crucible.lbl.gov/testapi-staging")
     monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", "http://localhost:3000/hub/auth/callback, https://hub.example.org/hub/auth/callback")
     config = load_login_config()

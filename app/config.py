@@ -1,5 +1,4 @@
 import json
-import logging
 import os
 import re
 from urllib.parse import urlparse
@@ -16,7 +15,6 @@ DEFAULT_SECRETS_DIR = "/run/secrets"
 _SECRET_VERSION = re.compile(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)")
 _KEYED_SECRET = re.compile(r"(?:OIDC|OAUTH)_[A-Z][A-Z0-9]*_CLIENT_SECRET")
 MIN_CLIENT_SECRET_LENGTH = 32
-_short_secrets_reported: set[str] = set()
 ORCID_ISSUERS = frozenset({"https://orcid.org", "https://sandbox.orcid.org"})
 _loaded_env_files: set[str] = set()
 _fetched_secrets: dict[str, str] = {}
@@ -582,12 +580,8 @@ def get_secret(name: str) -> str:
         value = _fetched_secrets[version]
     if (name in _SINGLE_LINE_SECRETS or _KEYED_SECRET.fullmatch(name)) and not (value.isascii() and value.isprintable()):
         raise ConfigurationError(f"{name} must be one line of printable ASCII")
-    if len(value) < MIN_CLIENT_SECRET_LENGTH:
-        if name.startswith("OAUTH_"):
-            raise ConfigurationError(f"{name} must be at least {MIN_CLIENT_SECRET_LENGTH} characters")
-        if name == "HUB_AUTH_CLIENT_SECRET" and name not in _short_secrets_reported:
-            _short_secrets_reported.add(name)
-            logging.getLogger(__name__).warning("%s is shorter than %d characters; replace it with a longer random value", name, MIN_CLIENT_SECRET_LENGTH)
+    if (name == "HUB_AUTH_CLIENT_SECRET" or name.startswith("OAUTH_")) and len(value) < MIN_CLIENT_SECRET_LENGTH:
+        raise ConfigurationError(f"{name} must be at least {MIN_CLIENT_SECRET_LENGTH} characters")
     return value
 
 

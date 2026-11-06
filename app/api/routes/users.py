@@ -36,7 +36,7 @@ from app.auth.registration import NotPending, StillReferenced, approve_pending_u
 from app.auth.identity import IdentityTaken, default_orcid_issuer, find_identity
 from app.utils.hub_tokens import revoke_all_hub_tokens
 from app.services.proposals import find_mf_user_proposals, usable_discovered_projects
-from app.utils.user_utils import assert_profile_fields_available, commit_user, person_by_reference, profile_conflict, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
+from app.utils.user_utils import assert_profile_fields_available, assert_self_chosen_username_allowed, commit_user, person_by_reference, profile_conflict, provision_user, resolve_user_by_identifier, sql_add_user_to_access_group
 from app.utils.project_utils import project_fields, project_leads, resolve_project_reference
 from app.models.pagination import PaginatedResponse
 from app.services.resource_pagination import execute_resource_page, prepare_resource_pagination
@@ -653,6 +653,8 @@ def update_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(author
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
         update_data = user_update.model_dump(exclude_unset=True)
+        if not auth_res.is_platform_admin:
+            assert_self_chosen_username_allowed(update_data.get("username"), user.username)
         assert_profile_fields_available(session, username=update_data.get("username"), email=update_data.get("email"), exclude_orcid=user_id)
         for key, value in update_data.items():
             setattr(user, key, value)

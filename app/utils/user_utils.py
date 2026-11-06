@@ -70,6 +70,29 @@ def _username_collision_key(username: str) -> str:
     return re.sub(r'[_-]', '', username.lower())
 
 
+RESTRICTED_USERNAMES = frozenset({
+    "admin", "administrator", "root", "system", "support", "security", "staff", "superuser",
+    "crucible", "hub", "api", "me", "help", "account", "login", "logout",
+    "null", "undefined", "anonymous",
+    "search", "resolve", "by-username",
+})
+_RESTRICTED_KEYS = frozenset(_username_collision_key(name) for name in RESTRICTED_USERNAMES)
+
+
+def is_restricted_username(username: str) -> bool:
+    """Reserved names, and their lookalikes under the same case- and separator-insensitive rule."""
+    return _username_collision_key(username) in _RESTRICTED_KEYS
+
+
+def assert_self_chosen_username_allowed(username: Optional[str], current: Optional[str]) -> None:
+    """For a username someone picks for themselves. Administrators can set a reserved one, and
+    keeping the one you already have is always allowed."""
+    if username is None or (current is not None and _username_collision_key(username) == _username_collision_key(current)):
+        return
+    if is_restricted_username(username):
+        raise HTTPException(status_code=409, detail={"code": "username_restricted", "fields": ["username"], "message": "This username is reserved; choose another"})
+
+
 def assert_username_available(session, username: str, exclude_orcid: Optional[str] = None) -> None:
     """Raise 409 if username is already taken by a different user — case-
     and separator-insensitive, so johndoe/john_doe/john-doe collide as one
@@ -205,7 +228,7 @@ def generate_unique_username(session, first_name: str, last_name: str) -> str:
 
     candidate = base
     n = 2
-    while not is_username_available(session, candidate):
+    while is_restricted_username(candidate) or not is_username_available(session, candidate):
         suffix = f"_{n}"
         candidate = f"{base[:_USERNAME_MAX - len(suffix)]}{suffix}"
         n += 1

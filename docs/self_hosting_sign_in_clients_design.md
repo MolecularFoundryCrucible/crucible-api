@@ -124,12 +124,12 @@ Small pull requests, each deployable alone:
 
 Order in Phase 3: after Task 9 step 2, before Task 12, so the password form (Task 12) is built once, on the generic sign-in page, and not first on `/auth/hub`. Tasks 10 and 11 (password hashing and attempt limits) do not depend on it and can go either side.
 
-## Open for the user
+## Decided by the user, 2026-11-06
 
-1. Scopes. RFC 9700 says access tokens SHOULD carry the least privilege needed. API keys today carry the person's full power, and so would sessions at first. A `read` scope for scripts and notebooks would be the first candidate, later.
-2. Session lifetimes for public clients (suggested above).
-3. Whether a `nano-crucible` client is in the Compose bundle by default.
-4. The API's own key page (`/auth/apikey`): keep it as it is until Task 9 step 3, then rebuild it on the generic sign-in, or retire it once the Hub and CLI cover it.
+1. Scopes come later. Sessions carry the person's full power at first, as API keys do; a `read` scope for scripts and notebooks is the first candidate.
+2. Public clients: 15-minute access tokens, refresh tokens 14 days idle and 90 days at most. Confidential clients keep 15 minutes, 7 days and 30 days.
+3. The Compose bundle registers a `nano-crucible` public client by default.
+4. The API's own key page (`/auth/apikey`) stays as it is until Task 9 step 3; rebuilding it on the generic sign-in or retiring it is decided then.
 
 ## Sources
 

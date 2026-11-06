@@ -382,6 +382,9 @@ Decided by the user on 2026-11-06, after the overnight review:
 14. The Hub is not a core part of Crucible: a deployment must work without it. The API signs people in for any registered client, built on Authlib's authorization server parts, following RFC 9700 and the device grant (RFC 8628) for the CLI. This replaces the stance in decision 13; design in `docs/self_hosting_sign_in_clients_design.md`.
 15. Sending and verifying email is not part of this phase.
 16. Step E must not take away anyone's access; its backfill links every account's logins first.
+18. Sign-in for any client: scopes later; public-client sessions 14 days idle and 90 days at most; a `nano-crucible` client in the Compose bundle by default; the API's key page is revisited at key hashing step 3.
+19. Key lists are paginated like the API's other lists (#449).
+20. An API key cannot edit another human administrator through `PATCH /users/{user_ref}` or revoke all their keys (#450). This replaces the earlier rule that let an administrator's key change another administrator's username and email; people editing themselves stay unrestricted.
 17. API keys have names; older keys get the generic name "Default key". Keys are created and revoked one by one; single-key regenerate is deprecated and replaces only the key the older routes show.
 
 ## Left to the builder

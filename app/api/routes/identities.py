@@ -37,7 +37,7 @@ def list_account_identities(auth_res: Annotated[Principal, Depends(authorize_use
 async def start_account_link(provider_key: Annotated[str, Path(max_length=32)], body: LinkStart, auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Start adding another way to sign in. Returns a one-time address on the API to send the
     person's browser to; the provider asks them to sign in, and the Hub then previews and confirms
-    the link with POST /auth/hub/link/preview and /auth/hub/link/confirm."""
+    the link with POST /oauth/link/preview and /oauth/link/confirm."""
     require_recent_hub_session(auth_res, HUB_ONLY)
     try:
         require_linking_available()
@@ -58,7 +58,7 @@ async def start_account_link(provider_key: Annotated[str, Path(max_length=32)], 
         raise HTTPException(status_code=429, detail={"code": "too_many_links", "message": "Too many links started recently; try again in a few minutes"}, headers={"Retry-After": "600"})
     except (ProviderUnavailable, ConfigurationError, httpx.HTTPError):
         raise HTTPException(status_code=503, detail="The provider cannot be reached")
-    return LinkStartRead(authorization_url=f"{config.public_api_url}/auth/hub/link/start?token={start}")
+    return LinkStartRead(authorization_url=f"{config.public_api_url}/oauth/link/start?token={start}")
 
 
 @router.delete("/account/identities/{identity_id}", status_code=204, responses={**_STEP_UP, 404: {"description": "Not one of your logins"}, 409: {"description": "`last_sign_in_method`, or `identity_lookup_off`"}})

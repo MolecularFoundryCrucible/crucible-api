@@ -41,6 +41,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Linking moved to `/oauth/link/start`, `/oauth/link/preview` and `/oauth/link/confirm`; the `/auth/hub/link/*` paths are gone (no client used them). Sign-in and link events record the client they came through. Needs migration `4a3a4e216223`.
 - Linking a login: only the session that started the link can preview or confirm it, that session needs a sign-in within 10 minutes when confirming (401 `insufficient_user_authentication`), the one-time start address works for 2 minutes, and a person can start at most 5 links in 10 minutes (429 `too_many_links`). Needs migration `15eb11ce75fd`.
 - An API key can no longer edit another human administrator through `PATCH /users/{user_ref}` or revoke all their keys; that needs a Hub session with a recent sign-in. People editing themselves are unaffected.
 - Migrations commit one by one and wait at most `ALEMBIC_LOCK_TIMEOUT` (5s by default) for a table lock, so a deploy no longer blocks reads behind a long transaction; rerun the upgrade if one times out.

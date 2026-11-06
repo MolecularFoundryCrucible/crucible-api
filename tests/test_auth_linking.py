@@ -103,11 +103,11 @@ def test_link_adds_a_verified_login_after_a_preview(world):
     _, client, engine = world
     ada = hub_session(engine, ADA)
     code = link_code(provider_sign_in(world, start_link(world, ada), subject="ada-lab"))
-    preview = client.post("/auth/hub/link/preview", auth=HUB, json=code_body(code, ada))
+    preview = client.post("/oauth/link/preview", auth=HUB, json=code_body(code, ada))
     assert preview.status_code == 200, preview.text
     assert {key: preview.json()[key] for key in ("provider_key", "provider_name", "label", "orcid", "status")} == {"provider_key": "lab", "provider_name": "Example Lab", "label": "ada@lab.example", "orcid": None, "status": "available"}
     assert linked(world) == []
-    confirmed = client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, ada))
+    confirmed = client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, ada))
     assert confirmed.status_code == 200, confirmed.text
     assert linked(world) == [(user_id(engine, ADA), "ada-lab", True)]
     listed = client.get("/account/identities", headers=bearer(ada)).json()
@@ -120,7 +120,7 @@ def test_victim_opening_attackers_link_address_writes_nothing(world):
     _, client, engine = world
     attacker, victim = hub_session(engine, BOB), hub_session(engine, ADA)
     code = link_code(provider_sign_in(world, start_link(world, attacker), subject="victim-lab"))
-    assert client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, victim)).status_code == 401
+    assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, victim)).status_code == 401
     assert linked(world) == []
 
 
@@ -129,8 +129,8 @@ def test_attackers_login_cannot_be_linked_to_victims_account(world):
     attacker, victim = hub_session(engine, BOB), hub_session(engine, ADA)
     start_link(world, victim, hub_state="victims-hub-state-01")
     attackers_code = link_code(provider_sign_in(world, start_link(world, attacker, hub_state="attacker-hub-state1"), subject="attacker-lab"))
-    assert client.post("/auth/hub/link/preview", auth=HUB, json=code_body(attackers_code, victim)).status_code == 401
-    assert client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(attackers_code, victim)).status_code == 401
+    assert client.post("/oauth/link/preview", auth=HUB, json=code_body(attackers_code, victim)).status_code == 401
+    assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(attackers_code, victim)).status_code == 401
     assert linked(world) == []
 
 
@@ -153,8 +153,8 @@ def test_link_code_is_single_use_and_cannot_sign_in(world):
     ada = hub_session(engine, ADA)
     code = link_code(provider_sign_in(world, start_link(world, ada), subject="ada-lab"))
     assert client.post("/auth/hub/token", auth=HUB, json={"code": code, "code_verifier": VERIFIER, "redirect_uri": LINK_CALLBACK}).status_code == 401
-    assert client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, ada)).status_code == 200
-    assert client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, ada)).status_code == 401
+    assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, ada)).status_code == 200
+    assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, ada)).status_code == 401
 
 
 def test_sign_in_code_cannot_confirm_a_link(world):
@@ -165,7 +165,7 @@ def test_sign_in_code_cannot_confirm_a_link(world):
     fakes["orcid.org"].claims = {"nonce": query["nonce"][0], "sub": ADA_ORCID}
     finished = client.get("/auth/hub/callback", params={"code": "c", "state": query["state"][0]}, follow_redirects=False)
     sign_in_code = parse_qs(urlparse(finished.headers["location"]).query)["code"][0]
-    assert client.post("/auth/hub/link/confirm", auth=HUB, json={**code_body(sign_in_code, hub_session(engine, ADA)), "redirect_uri": SIGN_IN_CALLBACK}).status_code == 401
+    assert client.post("/oauth/link/confirm", auth=HUB, json={**code_body(sign_in_code, hub_session(engine, ADA)), "redirect_uri": SIGN_IN_CALLBACK}).status_code == 401
 
 
 def test_api_key_and_stale_session_are_refused(world, auth_as):
@@ -199,8 +199,8 @@ def test_preview_names_the_status(world, subject, provider, status):
         session.commit()
     ada = hub_session(engine, ADA)
     code = link_code(provider_sign_in(world, start_link(world, ada, provider), subject=subject, provider=provider))
-    assert client.post("/auth/hub/link/preview", auth=HUB, json=code_body(code, ada)).json()["status"] == status
-    confirm = client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, ada))
+    assert client.post("/oauth/link/preview", auth=HUB, json=code_body(code, ada)).json()["status"] == status
+    confirm = client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, ada))
     assert confirm.status_code == (200 if status == "already_yours" else 409)
 
 
@@ -212,7 +212,7 @@ def test_second_orcid_and_another_persons_unique_id_are_refused(world):
     ada = hub_session(engine, ADA)
     for subject, status in (("0000-0004-0000-0004", "second_orcid"), ("0000-0003-0000-0003", "second_orcid")):
         code = link_code(provider_sign_in(world, start_link(world, ada, "orcid"), subject=subject, provider="orcid"))
-        assert client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, ada)).json()["detail"]["code"] == status
+        assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, ada)).json()["detail"]["code"] == status
 
 
 def test_orcid_of_another_person_is_refused_for_someone_without_an_orcid(world):
@@ -226,7 +226,7 @@ def test_orcid_of_another_person_is_refused_for_someone_without_an_orcid(world):
         session.commit()
     dana = hub_session(engine, "0tmnyhfztdwc1000w2kspzsnh2")
     code = link_code(provider_sign_in(world, start_link(world, dana, "orcid"), subject="0000-0003-0000-0003", provider="orcid"))
-    assert client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, dana)).json()["detail"]["code"] == "orcid_of_another"
+    assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, dana)).json()["detail"]["code"] == "orcid_of_another"
 
 
 def test_linking_an_unverified_orcid_verifies_it(world):
@@ -238,7 +238,7 @@ def test_linking_an_unverified_orcid_verifies_it(world):
         session.commit()
     ada = hub_session(engine, ADA)
     code = link_code(provider_sign_in(world, start_link(world, ada, "orcid"), subject=ADA_ORCID, provider="orcid"))
-    assert client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, ada)).status_code == 200
+    assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, ada)).status_code == 200
     assert (user_id(engine, ADA), ADA_ORCID, True) in linked(world, ORCID_ISSUER)
 
 
@@ -253,13 +253,13 @@ def test_last_method_cannot_be_unlinked(world):
 def test_unlink_ends_other_sessions_keeps_this_one_and_voids_live_links(world):
     _, client, engine = world
     ada, other = hub_session(engine, ADA), hub_session(engine, ADA)
-    client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(link_code(provider_sign_in(world, start_link(world, ada), subject="ada-lab")), ada))
+    client.post("/oauth/link/confirm", auth=HUB, json=code_body(link_code(provider_sign_in(world, start_link(world, ada), subject="ada-lab")), ada))
     pending = link_code(provider_sign_in(world, start_link(world, ada, hub_state="pending-hub-state-01"), subject="ada-second-lab", email="second@lab.example"))
     orcid_row = next(item for item in client.get("/account/identities", headers=bearer(ada)).json() if item["provider_key"] == "orcid")
     assert client.delete(f"/account/identities/{orcid_row['id']}", headers=bearer(ada)).status_code == 204
     assert client.get("/account/identities", headers=bearer(ada)).status_code == 200
     assert client.get("/account/identities", headers=bearer(other)).status_code == 401
-    assert client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(pending, ada)).status_code == 401
+    assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(pending, ada)).status_code == 401
     assert linked(world, ORCID_ISSUER) == [(user_id(engine, BOB), BOB_ORCID, True)]
     with Session(engine) as session:
         assert session.exec(select(AuthEvent.event)).all() == ["identity_linked", "identity_unlinked"]
@@ -288,10 +288,10 @@ def test_a_link_belongs_to_the_client_whose_session_started_it(world, monkeypatc
     hub, other = (HUB[0], "h" * 40), ("other-app", "o" * 40)
     ada = hub_session(engine, ADA)
     code = link_code(provider_sign_in(world, start_link(world, ada), subject="ada-lab"))
-    assert client.post("/auth/hub/link/preview", auth=other, json=code_body(code, ada)).status_code == 401
+    assert client.post("/oauth/link/preview", auth=other, json=code_body(code, ada)).status_code == 401
     other_session = issue_hub_tokens(engine, user_id(engine, ADA), "other-app", auth_time=datetime.now(timezone.utc)).access_token
-    assert client.post("/auth/hub/link/confirm", auth=hub, json=code_body(code, other_session)).status_code == 401
-    assert client.post("/auth/hub/link/confirm", auth=hub, json=code_body(code, ada)).status_code == 200
+    assert client.post("/oauth/link/confirm", auth=hub, json=code_body(code, other_session)).status_code == 401
+    assert client.post("/oauth/link/confirm", auth=hub, json=code_body(code, ada)).status_code == 200
 
 
 def test_only_the_session_that_started_a_link_can_confirm_it(world):
@@ -299,9 +299,9 @@ def test_only_the_session_that_started_a_link_can_confirm_it(world):
     ada = hub_session(engine, ADA)
     code = link_code(provider_sign_in(world, start_link(world, ada), subject="ada-lab"))
     other_tab = hub_session(engine, ADA)
-    assert client.post("/auth/hub/link/preview", auth=HUB, json=code_body(code, other_tab)).status_code == 401
-    assert client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, other_tab)).status_code == 401
-    assert client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, ada)).status_code == 200
+    assert client.post("/oauth/link/preview", auth=HUB, json=code_body(code, other_tab)).status_code == 401
+    assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, other_tab)).status_code == 401
+    assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, ada)).status_code == 200
 
 
 def test_confirming_needs_a_recent_sign_in_again(world):
@@ -313,7 +313,7 @@ def test_confirming_needs_a_recent_sign_in_again(world):
             family.auth_time = datetime.now(timezone.utc) - timedelta(minutes=11)
             session.add(family)
         session.commit()
-    refused = client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, ada))
+    refused = client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, ada))
     assert (refused.status_code, refused.json()["detail"]["code"]) == (401, "insufficient_user_authentication")
     assert linked(world) == []
 
@@ -336,3 +336,16 @@ def test_link_starts_are_limited(world):
         start_link(world, ada, hub_state=f"link-hub-state-{number:04d}")
     refused = client.post("/account/identities/lab/link", headers=bearer(ada), json={"callback_uri": LINK_CALLBACK, "state": "link-hub-state-0099", "code_challenge": CHALLENGE})
     assert (refused.status_code, refused.json()["detail"]["code"], refused.headers["retry-after"]) == (429, "too_many_links", "600")
+
+
+def test_link_routes_live_only_under_oauth_and_record_the_client(world):
+    _, client, engine = world
+    for path in ("/auth/hub/link/preview", "/auth/hub/link/confirm"):
+        assert client.post(path, auth=HUB, json={}).status_code == 404
+    ada = hub_session(engine, ADA)
+    start_url = start_link(world, ada)
+    assert urlparse(start_url).path == "/oauth/link/start"
+    code = link_code(provider_sign_in(world, start_url, subject="ada-lab"))
+    assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, ada)).status_code == 200
+    with Session(engine) as session:
+        assert session.exec(select(AuthEvent.client_id).where(AuthEvent.event == "identity_linked")).all() == [HUB[0]]

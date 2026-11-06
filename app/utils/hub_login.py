@@ -157,7 +157,7 @@ def create_handoff_code(engine, transaction: HubLoginTransaction, provider: Oidc
     def write() -> None:
         pending.clear()
         with Session(engine) as session, session.begin():
-            user = resolve_sign_in(session, provider.issuer, subject, given_name, family_name, registration=provider.registration, required_user=transaction.required_user)
+            user = resolve_sign_in(session, provider.issuer, subject, given_name, family_name, registration=provider.registration, required_user=transaction.required_user, client_id=transaction.client_id)
             if user.pending_at is not None:
                 pending.append(True)
                 return

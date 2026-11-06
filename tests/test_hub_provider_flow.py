@@ -624,3 +624,12 @@ def test_no_metadata_without_clients(oauth_client, monkeypatch):
     monkeypatch.setenv("HUB_AUTH_ENABLED", "false")
     get_settings.cache_clear()
     assert oauth_client.get("/.well-known/oauth-authorization-server").status_code == 404
+
+
+def test_a_sign_in_records_the_client_it_came_through(oauth_client, remote, db_engine):
+    from app.models.core_models import AuthEvent
+
+    link(db_engine, LAB_ISSUER, "lab-user")
+    client_answer(lab_sign_in(oauth_client, remote))
+    with Session(db_engine) as session:
+        assert session.exec(select(AuthEvent.client_id).where(AuthEvent.event == "sign_in")).all() == ["crucible-hub"]

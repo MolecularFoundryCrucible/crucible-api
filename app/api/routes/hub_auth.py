@@ -33,6 +33,7 @@ from app.models.timestamps import UtcDatetime
 
 
 router = APIRouter(prefix="/auth/hub", tags=["auth"])
+link_router = APIRouter(prefix="/oauth/link", tags=["auth"])
 client_security = HTTPBasic(auto_error=False)
 LOGIN_COOKIE = "crucible_hub_login"
 
@@ -308,7 +309,7 @@ async def finish_provider_login(
     return await _finish_sign_in(request, engine, served_by, code, state, error, iss)
 
 
-@router.get("/link/start", response_class=RedirectResponse, status_code=302, responses={302: {"description": "Redirect to the provider, which asks the person to sign in again, or to the Hub with an error"}, 400: {"description": "Unknown, used or expired start address"}})
+@link_router.get("/start", response_class=RedirectResponse, status_code=302, responses={302: {"description": "Redirect to the provider, which asks the person to sign in again, or to the Hub with an error"}, 400: {"description": "Unknown, used or expired start address"}})
 async def start_hub_link(request: Request, token: str = Query(min_length=1, max_length=128), engine=Depends(get_engine)) -> Response:
     """Continue a link the Hub started: opened once, by the person's browser."""
     try:
@@ -332,7 +333,7 @@ async def start_hub_link(request: Request, token: str = Query(min_length=1, max_
 _LINK_CODE_RESPONSES = {401: {"description": "Invalid client, link code or session, or `insufficient_user_authentication` when the session that started the link has no sign-in within 10 minutes"}, 409: {"description": "`identity_lookup_off`: linking waits for the identity lookup setting"}, 503: {"description": "Hub sign-in unavailable"}}
 
 
-@router.post("/link/preview", response_model=LinkPreviewRead, responses=_LINK_CODE_RESPONSES)
+@link_router.post("/preview", response_model=LinkPreviewRead, responses=_LINK_CODE_RESPONSES)
 def preview_hub_link(body: LinkCode, response: Response, client_id: str = Depends(require_hub_client), engine=Depends(get_engine)) -> LinkPreviewRead:
     """Name the login a link code would add, for the confirmation page. Changes nothing."""
     try:
@@ -347,7 +348,7 @@ def preview_hub_link(body: LinkCode, response: Response, client_id: str = Depend
     return LinkPreviewRead(**provider_fields(preview.issuer), label=preview.label, orcid=preview.subject if preview.issuer in ORCID_ISSUERS else None, status=preview.status)
 
 
-@router.post("/link/confirm", response_model=IdentityRead, responses={**_LINK_CODE_RESPONSES, 409: {"description": "`identity_lookup_off`, or the preview status that refuses the link: `linked_elsewhere`, `second_orcid`, `orcid_of_another`"}})
+@link_router.post("/confirm", response_model=IdentityRead, responses={**_LINK_CODE_RESPONSES, 409: {"description": "`identity_lookup_off`, or the preview status that refuses the link: `linked_elsewhere`, `second_orcid`, `orcid_of_another`"}})
 def confirm_hub_link(body: LinkCode, response: Response, client_id: str = Depends(require_hub_client), engine=Depends(get_engine)) -> IdentityRead:
     """Add the login to the account of the person who started the link and is confirming it now."""
     try:

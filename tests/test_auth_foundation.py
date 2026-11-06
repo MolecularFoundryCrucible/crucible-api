@@ -50,8 +50,8 @@ def test_record_event_without_a_user_is_allowed(db_engine):
 
 
 def test_auth_event_never_stores_secrets_by_signature():
-    assert set(inspect.signature(record_event).parameters) == {"session", "event", "user", "actor", "issuer", "client_address"}
-    assert set(AuthEvent.model_fields) == {"id", "at", "event", "user_id", "user_unique_id", "actor_user_id", "issuer", "client_address"}
+    assert set(inspect.signature(record_event).parameters) == {"session", "event", "user", "actor", "issuer", "client_address", "client_id"}
+    assert set(AuthEvent.model_fields) == {"id", "at", "event", "user_id", "user_unique_id", "actor_user_id", "issuer", "client_address", "client_id"}
 
 
 def test_every_event_name_fits_the_column():

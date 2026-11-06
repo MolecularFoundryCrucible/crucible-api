@@ -334,6 +334,7 @@ class AuthEvent(SQLModel, table=True):
     actor_user_id: Optional[int] = Field(default=None, sa_column=Column(Integer, ForeignKey("user.id", ondelete="SET NULL")))
     issuer: Optional[str] = Field(default=None, sa_column=Column(Text))
     client_address: Optional[str] = Field(default=None, sa_column=Column(Text))
+    client_id: Optional[str] = Field(default=None, max_length=100)
 
 
 class ApiToken(SQLModel, table = True):

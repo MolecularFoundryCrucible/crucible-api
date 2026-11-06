@@ -590,9 +590,9 @@ def test_concurrent_first_write_keeps_one_row_and_both_callers_succeed(pg_engine
 
 @pytest.fixture
 def pg_sign_in(pg_engine, monkeypatch):
-    from app.models.core_models import AccessGroup, ApiToken, AuthEvent, HubLoginCode, UserAccessGroupLink
+    from app.models.core_models import AccessGroup, ApiKey, ApiToken, AuthEvent, HubLoginCode, UserAccessGroupLink
 
-    SQLModel.metadata.create_all(pg_engine, tables=[AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, HubLoginCode.__table__, AuthEvent.__table__])
+    SQLModel.metadata.create_all(pg_engine, tables=[AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, ApiKey.__table__, HubLoginCode.__table__, AuthEvent.__table__])
     return pg_engine
 
 

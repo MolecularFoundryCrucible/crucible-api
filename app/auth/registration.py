@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from app.auth.events import AuthEventType, record_event
 from app.auth.linking import holdings
-from app.models.core_models import ApiToken, User, UserAccessGroupLink, UserIdentity
+from app.models.core_models import ApiKey, ApiToken, User, UserAccessGroupLink, UserIdentity
 
 PENDING_LIFETIME = timedelta(days=30)
 logger = logging.getLogger(__name__)
@@ -56,6 +56,7 @@ def reject_pending_user(session: Session, user: User, *, actor: User | None) -> 
     session.execute(delete(UserAccessGroupLink).where(UserAccessGroupLink.user_id == user.id))
     session.execute(delete(UserIdentity).where(UserIdentity.user_id == user.id))
     session.execute(delete(ApiToken).where(ApiToken.user_id == user.id))
+    session.execute(delete(ApiKey).where(ApiKey.user_id == user.id))
     session.flush()
     if group is not None:
         session.delete(group)

@@ -20,7 +20,7 @@ from app.config import check_settings, read_secrets
 from app.api.dependencies import get_api_root_path
 from app.utils.auth_utils import PRIVILEGE_MODE_HEADER
 from app.utils.permissions import PrivilegeMode, PrivilegeModeSource
-from app.api.routes import (account, auth, identities, files, datasets, gcs_storage, resources,
+from app.api.routes import (account, api_keys, auth, identities, files, datasets, gcs_storage, resources,
                             samples, instruments, users, projects,
                             access_groups, entities, misc, deletion,
                             ingestion_requests, join_requests, pipelines, service_accounts,
@@ -313,6 +313,7 @@ Instrumentator(excluded_handlers=["^/metrics$", "^/health(/.*)?$"]).instrument(a
 
 app.include_router(account.router)
 app.include_router(identities.router)
+app.include_router(api_keys.router)
 app.include_router(auth.router)
 app.include_router(hub_auth.router)
 app.include_router(files.router)

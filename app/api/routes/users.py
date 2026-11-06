@@ -1,4 +1,4 @@
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Annotated, Dict, List, Optional, Union
 import logging
 from dataclasses import replace
@@ -15,7 +15,7 @@ from app.api.path_params import DatasetMfid, UserRef
 from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import (
     UserIdentity,
-    AccessGroup, ApiToken, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
+    AccessGroup, ApiKey, ApiToken, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
 )
 from app.utils.auth_utils import caller_row, forget_cached_keys, API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_human_admin_safeguard, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
 from app.utils.cursor_utils import (
@@ -31,7 +31,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_active
-from app.auth.api_keys import revoke_user_keys
+from app.auth.api_keys import key_status, newest_key, revoke_user_keys
 from app.auth.events import AuthEventType, record_event
 from app.auth.registration import NotPending, StillReferenced, approve_pending_user, reject_pending_user
 from app.auth.identity import IdentityTaken, default_orcid_issuer, find_identity
@@ -68,23 +68,8 @@ USER_LIST_DECLARED_PARAMS = {
 }
 
 
-def _key_status(token: Optional[ApiToken]) -> Optional[ServiceAccountKeyStatus]:
-    if token is None:
-        return None
-    created_at = token.token_created
-    if isinstance(created_at, str):
-        created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-    if isinstance(created_at, date) and not isinstance(created_at, datetime):
-        created_at = datetime.combine(created_at, datetime.min.time())
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    expires_at = created_at + timedelta(days=365)
-    return ServiceAccountKeyStatus(
-        valid=expires_at >= datetime.now(timezone.utc),
-        created_at=created_at.date().isoformat(),
-        expires_at=expires_at.date().isoformat(),
-        last_used_at=token.last_used_at,
-    )
+def _key_status(key) -> Optional[ServiceAccountKeyStatus]:
+    return key_status(key)
 
 
 def _user_capabilities(caller: Principal, user: User) -> UserCapabilities:
@@ -315,12 +300,12 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
         key_status_by_user = {}
         if is_admin:
             private_ids = [user.id for user in rows]
-            for token in session.exec(
-                select(ApiToken).where(ApiToken.user_id.in_(private_ids))
-                .order_by(ApiToken.token_created.desc())
+            for key in session.exec(
+                select(ApiKey).where(ApiKey.user_id.in_(private_ids), ApiKey.revoked_at == None)  # noqa: E711
+                .order_by(ApiKey.created_at.desc(), ApiKey.id.desc())
             ).all() if private_ids else []:
-                if token.user_id not in key_status_by_user:
-                    key_status_by_user[token.user_id] = _key_status(token)
+                if key.user_id not in key_status_by_user:
+                    key_status_by_user[key.user_id] = _key_status(key)
         items = [
             _user_read(auth_res, user, key_status=key_status_by_user.get(user.id), with_capabilities=True)
             if is_admin or auth_res.is_user(user)
@@ -483,12 +468,7 @@ def read_user(user_ref: UserRef, response: Response,
 def _admin_key_status(session, caller: Principal, user: User) -> Optional[ServiceAccountKeyStatus]:
     if not caller.is_platform_admin:
         return None
-    token = session.exec(
-        select(ApiToken)
-        .where(ApiToken.user_id == user.id)
-        .order_by(ApiToken.token_created.desc())
-    ).first()
-    return _key_status(token)
+    return _key_status(newest_key(session, user.id))
 
 
 def _admin_user_for_key(user_ref, auth_res):
@@ -637,9 +617,6 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
             raise conflict from None
         session.refresh(user)
 
-    # Mirror the canonical /auth/apikey flow: provisioning a user also mints
-    # their API key (idempotent) so they can authenticate immediately.
-    find_or_add_api_access(user.id, get_engine(), regenerate=False)
     return _user_read(auth_res, user, with_capabilities=True)
 
 

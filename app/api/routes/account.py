@@ -1,4 +1,4 @@
-from datetime import date, timedelta, datetime, timezone
+from datetime import timedelta, datetime, timezone
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, Response
@@ -36,6 +36,7 @@ from app.utils.permissions import (
 )
 from app.api.errors import feature_disabled_response
 from app.config import require_feature
+from app.auth.api_keys import find_api_key, key_status, newest_key
 from app.auth.identity import linked_orcid
 from app.services.proposals import ProposalServiceUnavailable, assign_discovered_projects, lookup_proposals
 from app.utils.user_utils import assert_profile_fields_available, assert_self_chosen_username_allowed, commit_user
@@ -199,23 +200,13 @@ def verify_account_apikey(
     """
     with Session(get_engine()) as session:
         if auth_res.credential == "hub":
-            token = session.exec(
-                select(ApiToken).where(is_caller(ApiToken.user_id, auth_res))
-                .order_by(ApiToken.token_created.desc())
-            ).first()
+            key = newest_key(session, auth_res.internal_user_id) if auth_res.internal_user_id is not None else None
         else:
-            token = session.get(ApiToken, credentials.credentials)
-        if token is None:
+            key = find_api_key(session, credentials.credentials)
+        if key is None:
             raise HTTPException(status_code=404, detail="No API key found")
-
-        created = date.fromisoformat(str(token.token_created)[:10])
-        expires = created + timedelta(days=365)
-        return ApiKeyVerify(
-            valid=date.today() < expires,
-            created_at=created.isoformat(),
-            expires_at=expires.isoformat(),
-            last_used_at=token.last_used_at,
-        )
+        status = key_status(key)
+        return ApiKeyVerify(valid=status.valid, created_at=status.created_at, expires_at=status.expires_at, last_used_at=status.last_used_at)
 
 
 def _merge_patch(target, patch):

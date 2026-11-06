@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session as OrmSession, attributes
 from sqlmodel import Session
 
 from app.general_utils import get_utc_datetime
-from app.models.core_models import ApiToken, Dataset, Instrument, Project, Resource, Sample, User
+from app.models.core_models import ApiKey, ApiToken, Dataset, Instrument, Project, Resource, Sample, User
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,7 @@ def record_caller_activity(engine, user_id: str, api_key: str | None = None) -> 
             if user_due:
                 session.exec(update(User).where(User.unique_id == user_id, _stale(User.last_active_at, USER_ACTIVITY_INTERVAL, now)).values(last_active_at=now))
             if key_due:
+                session.exec(update(ApiKey).where(ApiKey.key_hash == hashlib.sha256(api_key.encode()).hexdigest(), _stale(ApiKey.last_used_at, API_KEY_USE_INTERVAL, now)).values(last_used_at=now))
                 session.exec(update(ApiToken).where(ApiToken.token == api_key, _stale(ApiToken.last_used_at, API_KEY_USE_INTERVAL, now)).values(last_used_at=now))
             session.commit()
     except Exception:

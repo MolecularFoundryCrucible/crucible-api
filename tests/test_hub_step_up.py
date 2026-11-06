@@ -7,6 +7,7 @@ from app.api.main import app
 from app.models.core_models import ApiToken, User
 from app.utils.auth_utils import STEP_UP_MAX_AGE, authenticate_user
 from app.utils.permissions import PlatformRole, Principal
+from app.auth.api_keys import store_key
 from tests.people import internal_id
 
 ORCID = "0000-0000-0000-0001"
@@ -36,6 +37,7 @@ def act_as(db_engine):
 def add_key(engine, orcid, token):
     with Session(engine) as session:
         session.add(ApiToken(user_id=internal_id(session, orcid), user_unique_id=orcid, access_group_id=orcid, token=token, token_created=datetime.now(timezone.utc).date().isoformat()))
+        store_key(session, internal_id(session, orcid), token)
         session.commit()
 
 

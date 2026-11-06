@@ -19,10 +19,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import get_secret
 from app.api.dependencies import get_engine
-from app.models.core_models import ApiToken, User
+from app.models.core_models import ApiKey, ApiToken, User
 from app.models.resource import ResourceCapabilities
 from app.utils.hub_tokens import ACCESS_PREFIX, InvalidHubGrant, hub_access_family
-from app.auth.api_keys import revoke_user_keys, store_key
+from app.auth.api_keys import active as active_key, find_api_key, revoke_user_keys, status_of, store_key
 from app.services.activity import record_caller_activity
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, THRESHOLDS, GroupMembership, Permission, PlatformRole,
@@ -82,15 +82,20 @@ def _auth_cache_key(apikey: str) -> str:
 def _invalidate_auth_cache(apikey: str):
     """Drop a token from this worker's auth cache. Only affects the current
     process; other workers/pods clear the entry when their TTL expires."""
+    forget_cached_key_hash(_auth_cache_key(apikey))
+
+
+def forget_cached_key_hash(digest: str) -> None:
+    """The cache is keyed by the key's SHA-256, so a key known only by its hash can be dropped."""
     with _auth_cache_lock:
-        _auth_cache.pop(_auth_cache_key(apikey), None)
+        _auth_cache.pop(digest, None)
 
 
 def forget_cached_keys(session, user_id: int) -> None:
     """Drop this person's keys from this worker's auth cache. Other workers follow within the
     cache lifetime."""
-    for token in session.exec(select(ApiToken.token).where(ApiToken.user_id == user_id)).all():
-        _invalidate_auth_cache(token)
+    for digest in session.exec(select(ApiKey.key_hash).where(ApiKey.user_id == user_id)).all():
+        forget_cached_key_hash(digest)
 
 
 # ====== Functions
@@ -109,6 +114,7 @@ def find_or_add_api_access(user_id: int, engine, regenerate = False):
         elif api_acct is not None and regenerate == True:
             old_token = api_acct.token
             session.query(ApiToken).filter(ApiToken.user_id == user_id).delete(synchronize_session=False)
+            forget_cached_keys(session, user_id)
             revoke_user_keys(session, user_id)
             new_token = generate_apikey(user, session)
             _invalidate_auth_cache(old_token)
@@ -151,39 +157,20 @@ def decode_token(token: str, secret_key: str | None = None, alg = ALGORITHM):
 
 
 def find_key(credentials, engine):
-    """
-    Find an API token record in the database matching the provided credentials.
-    
-    Args:
-        credentials: HTTPAuthorizationCredentials object containing the API token
-        
-    Returns:
-        ApiToken record if found and not expired (created within last year), None otherwise
-        
-    The function checks if the provided API token exists in the database and was created
-    within the last year. This is used for authenticating API requests.
-    """
-    apikey = credentials.credentials
-    one_year_ago = (date.today()-timedelta(365)).isoformat()
+    """The active ApiKey for the presented key, found by its hash. Raises 401 for a key that is
+    unknown, expired or revoked, alike."""
     with Session(engine) as session:
-        cmd = select(ApiToken).where(and_(ApiToken.token == apikey,
-                                          ApiToken.token_created > one_year_ago))
-        api_acct = session.exec(cmd).one_or_none()
-
-        if api_acct is None:
-            # Return an identical response whether the key never existed or has
-            # expired, so the error can't be used to probe token existence or
-            # leak the exact expiry date. Details go to the server log only.
-            cmd = select(ApiToken).where(ApiToken.token == apikey)
-            expired_api_acct = session.exec(cmd).one_or_none()
-            if expired_api_acct is not None:
-                logger.warning(
-                    "Expired API key presented (user=%s, created=%s)",
-                    expired_api_acct.user_id, expired_api_acct.token_created,
-                )
+        api_acct = find_api_key(session, credentials.credentials)
+        if api_acct is None or status_of(api_acct) != "active":
+            # Return an identical response whether the key never existed, expired or was revoked,
+            # so the error can't be used to probe keys. Details go to the server log only.
+            if api_acct is not None:
+                logger.warning("%s API key presented (user=%s, key=%s)", status_of(api_acct).capitalize(), api_acct.user_id, api_acct.id)
             raise HTTPException(status_code=401, detail="Invalid or expired API key.")
-
-    return(api_acct)
+        session.commit()
+        session.refresh(api_acct)
+        session.expunge(api_acct)
+    return api_acct
 
 
 def authenticate_user(
@@ -724,9 +711,8 @@ def reject_hub_api_key_read(principal: Principal) -> None:
 
 
 def has_active_api_key(user_id: int, engine) -> bool:
-    one_year_ago = (date.today() - timedelta(365)).isoformat()
     with Session(engine) as session:
-        return session.exec(select(ApiToken.token).where(ApiToken.user_id == user_id, ApiToken.token_created > one_year_ago)).first() is not None
+        return session.exec(select(ApiKey.id).where(ApiKey.user_id == user_id, active_key())).first() is not None
 
 
 def require_self_or_platform_admin(principal: Principal, user) -> None:

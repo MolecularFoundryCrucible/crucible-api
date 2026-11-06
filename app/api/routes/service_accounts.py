@@ -1,4 +1,3 @@
-from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -7,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import ServiceAccountRef
-from app.models.core_models import AccessGroup, ApiToken, Resource, User
+from app.models.core_models import AccessGroup, Resource, User
 from app.models.pagination import PaginatedResponse
 from app.models.users import (
     ServiceAccountAdminDetail,
@@ -17,6 +16,7 @@ from app.models.users import (
     ServiceAccountPlatformRoleUpdate,
     ServiceAccountRead,
 )
+from app.auth.api_keys import key_status, newest_key
 from app.utils.auth_utils import authorize_user, find_or_add_api_access, require_platform_admin, require_recent_authentication
 from app.utils.permissions import AccessGroupType, PlatformRole, Principal, Role
 from app.utils.user_utils import assert_username_available, resolve_service_account_reference, sql_add_user_to_access_group
@@ -28,36 +28,17 @@ def _service_account_admin_read(user: User) -> ServiceAccountAdminRead:
     return ServiceAccountAdminRead.model_validate(user)
 
 
-def _key_status(token: Optional[ApiToken]) -> Optional[ServiceAccountKeyStatus]:
-    if token is None:
-        return None
-    created_at = token.token_created
-    if isinstance(created_at, str):
-        created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-    if isinstance(created_at, date) and not isinstance(created_at, datetime):
-        created_at = datetime.combine(created_at, datetime.min.time(), tzinfo=timezone.utc)
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    expires_at = created_at + timedelta(days=365)
-    return ServiceAccountKeyStatus(
-        valid=expires_at >= datetime.now(timezone.utc),
-        created_at=created_at.date().isoformat(),
-        expires_at=expires_at.date().isoformat(),
-    )
+def _key_status(key) -> Optional[ServiceAccountKeyStatus]:
+    return key_status(key)
 
 
 def _service_account_admin_detail(
     session: Session,
     user: User,
 ) -> ServiceAccountAdminDetail:
-    token = session.exec(
-        select(ApiToken)
-        .where(ApiToken.user_id == user.id)
-        .order_by(ApiToken.token_created.desc())
-    ).first()
     return ServiceAccountAdminDetail.model_validate(
         user,
-        update={"api_key_status": _key_status(token)},
+        update={"api_key_status": _key_status(newest_key(session, user.id))},
     )
 
 

@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Several API keys per person: `POST /account/apikeys` (name, optional expiry up to a year; Hub session with a recent sign-in) returns a `crucible_` key once, `GET /account/apikeys` lists keys by name and last four characters, and `DELETE /account/apikeys/{id}` revokes one. Administrators get `GET` and `DELETE /users/{user_ref}/apikeys`. Keys are checked by their hash; older keys keep working.
 - API keys are also stored as SHA-256 hashes in a new `api_key` table, beside the plain one; after deploying, run `migrations/data/20261106_backfill_api_keys.py --commit` once to copy existing keys. Nothing changes for clients yet.
 - `python -m app.cli auth cleanup`, and an hourly `auth-cleanup` service in the Compose bundle, remove expired sign-in records, sign-in history older than `CRUCIBLE_AUTH_EVENT_RETENTION_DAYS` (default 365) and accounts left waiting 30 days. The Foundry's existing Hub cleanup job also removes the old history.
 - A short list of reserved usernames (`admin`, `root`, `support`, `api` and similar, plus lookalikes) cannot be chosen for yourself; administrators can still set one, existing holders keep theirs, and generated usernames avoid them.
@@ -36,6 +37,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `POST /users` no longer creates an API key that no response returned.
 - Dataset and sample `owner_orcid` and `owner` are read from the owner's user record: records that store an owner only by internal reference now show it, and those whose stored owner matches no user show none.
 - The `owner_id` filters on datasets, samples, instruments and facets accept a unique_id, linked ORCID, username or email, matched exactly.
 - Instrument `owner_orcid` can be null: instruments whose stored owner matches no user show no owner, and the `owner` and `owner_id` filters match only people.

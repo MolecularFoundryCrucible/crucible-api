@@ -327,6 +327,9 @@ def move_identity(session: Session, identity: UserIdentity, target: User, *, now
     session.add(identity)
     for token in session.exec(select(ApiToken).where(ApiToken.user_id == source.id)).all():
         session.delete(token)
+    from app.auth.api_keys import revoke_user_keys
+
+    revoke_user_keys(session, source.id, now=current)
     source.disabled_at = current
     session.add(source)
     revoke_all_hub_tokens(session, source.id, now=current)

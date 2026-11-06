@@ -31,6 +31,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_active
+from app.auth.api_keys import revoke_user_keys
 from app.auth.events import AuthEventType, record_event
 from app.auth.registration import NotPending, StillReferenced, approve_pending_user, reject_pending_user
 from app.auth.identity import IdentityTaken, default_orcid_issuer, find_identity
@@ -828,6 +829,7 @@ def delete_user_apikey(
         ).all()
         for token in tokens:
             session.delete(token)
+        revoke_user_keys(session, user.id)
         session.commit()
 
     for token in tokens:

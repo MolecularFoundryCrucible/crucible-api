@@ -345,6 +345,22 @@ class ApiToken(SQLModel, table = True):
     last_used_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
 
 
+class ApiKey(SQLModel, table=True):
+    """An API key, stored only as the SHA-256 of the key: keys are 256-bit random values, so a fast
+    hash is enough, and the key itself cannot be read back. Expired and revoked keys are kept."""
+    __tablename__ = "api_key"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(sa_column=Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True))
+    key_hash: str = Field(sa_column=Column(String(64), nullable=False, unique=True))
+    key_last4: str = Field(sa_column=Column(String(4), nullable=False))
+    name: Optional[str] = Field(default=None, max_length=100)
+    created_at: datetime = Field(sa_type=DateTime(timezone=True))
+    last_used_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    expires_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    revoked_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+
+
 class UserPreferences(SQLModel, table=True):
     user_id: int = Field(sa_column=Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True))
     preferences: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON().with_variant(JSONB(), "postgresql"), nullable=False))

@@ -230,3 +230,23 @@ def test_pending_filter_is_a_declared_parameter(client, auth_as, people):
     auth_as(ADMIN, platform_role=PlatformRole.ADMIN)
     response = client.get("/users", params={"pending": "true"})
     assert response.status_code == 200 and "deprecation" not in response.headers
+
+
+def test_keys_can_be_renamed_and_the_older_routes_key_is_marked(client, auth_as, people):
+    as_hub(auth_as, ADA)
+    named = create(client).json()
+    auth_as(ADA)
+    client.post("/account/apikey/regenerate")
+    listed = {item["name"]: item for item in client.get("/account/apikeys").json()}
+    assert (listed["laptop"]["older_routes"], listed["Default key"]["older_routes"]) == (False, True)
+    renamed = client.patch(f"/account/apikeys/{listed['Default key']['id']}", json={"name": "old scripts"}).json()
+    assert (renamed["name"], renamed["older_routes"]) == ("old scripts", True)
+    auth_as(BOB)
+    assert client.patch(f"/account/apikeys/{named['id']}", json={"name": "mine now"}).status_code == 404
+
+
+def test_a_copied_older_key_is_named(people):
+    plain_key_only(people, ADA, "q" * 64, datetime.now(timezone.utc).date().isoformat())
+    authorize("q" * 64)
+    with Session(people) as session:
+        assert session.exec(select(ApiKey.name)).all() == ["Default key"]

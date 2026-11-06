@@ -177,12 +177,13 @@ def get_account_apikey(
         return ApiKeyRead(api_key=token.token)
 
 
-@router.post("/account/apikey/regenerate", response_model=ApiKeyRead, responses={401: {"description": "Hub sessions need an ORCID sign-in within the last 10 minutes (`insufficient_user_authentication`, RFC 9470 challenge)"}})
+@router.post("/account/apikey/regenerate", response_model=ApiKeyRead, deprecated=True, responses={401: {"description": "Hub sessions need an ORCID sign-in within the last 10 minutes (`insufficient_user_authentication`, RFC 9470 challenge)"}})
 def regenerate_account_apikey(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     response: Response,
 ):
-    """Issue a new API key for the caller and revoke the previous one. The key is returned only once."""
+    """Replace the key the single-key routes show (`older_routes` in GET /account/apikeys) and return the new one once.
+    Deprecated: create keys with POST /account/apikeys and revoke them with DELETE /account/apikeys/{key_id}."""
     require_recent_authentication(auth_res)
     response.headers["Cache-Control"] = "no-store"
     return ApiKeyRead(api_key=find_or_add_api_access(auth_res.internal_user_id, get_engine(), regenerate=True))

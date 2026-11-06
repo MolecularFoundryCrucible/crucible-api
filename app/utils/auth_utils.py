@@ -22,7 +22,7 @@ from app.api.dependencies import get_engine
 from app.models.core_models import ApiKey, ApiToken, User
 from app.models.resource import ResourceCapabilities
 from app.utils.hub_tokens import ACCESS_PREFIX, InvalidHubGrant, hub_access_family
-from app.auth.api_keys import find_api_key, newest_key, replace_plain_keys, status_of, store_key
+from app.auth.api_keys import DEFAULT_KEY_NAME, find_api_key, newest_key, replace_plain_keys, status_of, store_key
 from app.services.activity import record_caller_activity
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, THRESHOLDS, GroupMembership, Permission, PlatformRole,
@@ -127,7 +127,7 @@ def add_apikey(user, session) -> str:
     """Add a new API key for this User row to the session without committing."""
     new_token = secrets.token_hex(32)
     session.add(ApiToken(user_id=user.id, user_unique_id=user.unique_id, access_group_id=user.unique_id, token=new_token, token_created=date.today().isoformat()))
-    store_key(session, user.id, new_token)
+    store_key(session, user.id, new_token, name=DEFAULT_KEY_NAME)
     return new_token
 
 

@@ -496,13 +496,14 @@ def get_or_provision_user_apikey(
     return ApiKeyRead(api_key=find_or_add_api_access(user_id, get_engine(), regenerate=False))
 
 
-@router.post("/users/{user_ref}/apikey/regenerate", response_model=ApiKeyRead, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}})
+@router.post("/users/{user_ref}/apikey/regenerate", response_model=ApiKeyRead, deprecated=True, responses={401: {"description": "Hub sessions need a recent ORCID sign-in (`insufficient_user_authentication`)"}})
 def regenerate_user_apikey(
     user_ref: UserRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
     response: Response,
 ):
-    '''Issue a new API key for the user and revoke the previous one. Admin only. The key is returned only once.'''
+    '''Replace the key the single-key routes show and return the new one once. Admin only.
+    Deprecated: revoke a person's keys one by one with DELETE /users/{user_ref}/apikeys/{key_id}.'''
     user_id = _admin_user_for_key(user_ref, auth_res)
     response.headers["Cache-Control"] = "no-store"
     return ApiKeyRead(api_key=find_or_add_api_access(user_id, get_engine(), regenerate=True))

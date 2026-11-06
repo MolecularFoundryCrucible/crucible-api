@@ -13,6 +13,7 @@ from app.models.core_models import ApiKey, ApiToken, User
 
 KEY_LIFETIME = timedelta(days=365)
 KEY_PREFIX = "crucible_"
+DEFAULT_KEY_NAME = "Default key"
 MAX_ACTIVE_KEYS = 10
 
 
@@ -72,7 +73,7 @@ def _adopt_plain_key(session: Session, presented: str) -> ApiKey | None:
         return None
     try:
         with session.begin_nested():
-            row = store_key(session, token.user_id, presented, created_at=created)
+            row = store_key(session, token.user_id, presented, created_at=created, name=DEFAULT_KEY_NAME)
             row.last_used_at = token.last_used_at
     except IntegrityError:
         return session.exec(select(ApiKey).where(ApiKey.key_hash == key_hash(presented))).one_or_none()
@@ -101,7 +102,7 @@ def newest_keys(session: Session, user_ids, now: datetime | None = None) -> dict
         created = created_at_of(token.token_created)
         digest = key_hash(token.token)
         if created is not None and digest not in known:
-            candidates.append(ApiKey(user_id=token.user_id, key_hash=digest, key_last4=token.token[-4:], created_at=created, expires_at=created + KEY_LIFETIME, last_used_at=token.last_used_at))
+            candidates.append(ApiKey(user_id=token.user_id, key_hash=digest, key_last4=token.token[-4:], name=DEFAULT_KEY_NAME, created_at=created, expires_at=created + KEY_LIFETIME, last_used_at=token.last_used_at))
     best: dict[int, ApiKey] = {}
     for row in candidates:
         rank = (status_of(row, current) == "active", _aware(row.created_at), row.id or 0)
@@ -146,6 +147,11 @@ def revoke_key(session: Session, row: ApiKey, *, actor: User | None, now: dateti
 def revoke_user_keys(session: Session, user_id: int, *, now: datetime | None = None) -> None:
     """Mark every active key of this person revoked, in the caller's transaction. The rows stay."""
     session.execute(update(ApiKey).where(ApiKey.user_id == user_id, ApiKey.revoked_at == None).values(revoked_at=_now(now)))  # noqa: E711
+
+
+def plain_key_hashes(session: Session, user_id: int) -> set[str]:
+    """Hashes of this person's keys that the older key routes still show and regenerate replaces."""
+    return {key_hash(token) for token in session.exec(select(ApiToken.token).where(ApiToken.user_id == user_id)).all()}
 
 
 def replace_plain_keys(session: Session, user_id: int, *, now: datetime | None = None) -> list[str]:

@@ -6,8 +6,8 @@ from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
 from app.api.path_params import UserRef
-from app.auth.api_keys import KEY_LIFETIME, MAX_ACTIVE_KEYS, TooManyKeys, active, create_key, revoke_key, status_of
-from app.models.api_keys import ApiKeyCreate, ApiKeyCreated, ApiKeyListItem
+from app.auth.api_keys import KEY_LIFETIME, MAX_ACTIVE_KEYS, TooManyKeys, active, create_key, plain_key_hashes, revoke_key, status_of
+from app.models.api_keys import ApiKeyCreate, ApiKeyCreated, ApiKeyListItem, ApiKeyRename
 from app.models.core_models import ApiKey
 from app.utils.auth_utils import authorize_user, caller_row, forget_cached_key_hash, require_platform_admin, require_recent_hub_session
 from app.utils.permissions import Principal
@@ -19,14 +19,15 @@ _STEP_UP = {401: {"description": "A Hub session needs a recent sign-in (`insuffi
 State = Literal["active", "inactive"]
 
 
-def list_item(key: ApiKey) -> ApiKeyListItem:
-    return ApiKeyListItem(id=key.id, name=key.name, last4=key.key_last4, status=status_of(key), created_at=key.created_at, last_used_at=key.last_used_at, expires_at=key.expires_at)
+def list_item(key: ApiKey, plain: set[str] = frozenset()) -> ApiKeyListItem:
+    return ApiKeyListItem(id=key.id, name=key.name, last4=key.key_last4, status=status_of(key), created_at=key.created_at, last_used_at=key.last_used_at, expires_at=key.expires_at, older_routes=key.key_hash in plain)
 
 
 def _keys(session: Session, user_id: int, state: State) -> list[ApiKeyListItem]:
     query = select(ApiKey).where(ApiKey.user_id == user_id)
     query = query.where(active()) if state == "active" else query.where(~active())
-    return [list_item(key) for key in session.exec(query.order_by(ApiKey.created_at.desc(), ApiKey.id.desc())).all()]
+    plain = plain_key_hashes(session, user_id)
+    return [list_item(key, plain) for key in session.exec(query.order_by(ApiKey.created_at.desc(), ApiKey.id.desc())).all()]
 
 
 def _revoke(session: Session, user_id: int, key_id: int, actor) -> None:
@@ -78,6 +79,21 @@ def revoke_account_apikey(key_id: int, auth_res: Annotated[Principal, Depends(au
             raise HTTPException(status_code=404, detail="User not found")
         _revoke(session, user.id, key_id, actor=user)
     return Response(status_code=204)
+
+
+@router.patch("/account/apikeys/{key_id}", response_model=ApiKeyListItem, responses={404: {"description": "Not one of your keys"}})
+def rename_account_apikey(key_id: int, body: ApiKeyRename, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Rename one of your API keys."""
+    with Session(get_engine()) as session:
+        user = caller_row(session, auth_res)
+        key = session.get(ApiKey, key_id)
+        if user is None or key is None or key.user_id != user.id:
+            raise HTTPException(status_code=404, detail="No such API key")
+        key.name = body.name
+        session.add(key)
+        session.commit()
+        session.refresh(key)
+        return list_item(key, plain_key_hashes(session, user.id))
 
 
 @router.get("/users/{user_ref}/apikeys", response_model=List[ApiKeyListItem])

@@ -21,6 +21,9 @@ from app.utils.hub_login import (
     HubLoginRefused, HubLoginUnavailable, InvalidHubLogin, check_login_request, consume_login, create_handoff_code,
     create_login, exchange_handoff_code, hub_auth_enabled, hub_error_destination, load_login_config,
 )
+from app.auth.linking import LinkRefused, LinkingUnavailable, confirm_link, create_link_code, identity_read, open_link, preview_link, provider_fields
+from app.config import ORCID_ISSUERS
+from app.models.identities import IdentityRead, LinkCode, LinkPreviewRead
 from app.utils.hub_tokens import InvalidHubGrant, HubTokenPair, refresh_hub_tokens, revoke_hub_tokens
 from app.models.timestamps import UtcDatetime
 
@@ -198,7 +201,11 @@ async def _finish_sign_in(request: Request, engine, served_by, code: str | None,
             if code is None:
                 raise HubLoginRefused("server_error")
             identity = await verified_identity(provider, config.provider_callback_uri(provider), code, transaction.nonce, transaction.provider_code_verifier)
-            _, destination = await run_in_threadpool(create_handoff_code, engine, transaction, provider, identity.subject, identity.given_name, identity.family_name, auth_time=identity.auth_time)
+            if transaction.purpose == "link":
+                link_code = await run_in_threadpool(create_link_code, engine, transaction, provider, identity.subject, identity.auth_time, identity.label)
+                destination = f"{transaction.callback_uri}?{urlencode({'code': link_code, 'state': transaction.hub_state})}"
+            else:
+                _, destination = await run_in_threadpool(create_handoff_code, engine, transaction, provider, identity.subject, identity.given_name, identity.family_name, auth_time=identity.auth_time)
             response = _browser_headers(RedirectResponse(destination, status_code=302))
         except HubLoginRefused as refused:
             logger.warning("Hub sign-in refused: %s", refused.error)
@@ -246,6 +253,58 @@ async def finish_provider_login(
         return provider if provider is not None and not provider.legacy_callback else None
 
     return await _finish_sign_in(request, engine, served_by, code, state, error, iss)
+
+
+@router.get("/link/start", response_class=RedirectResponse, status_code=302, responses={302: {"description": "Redirect to the provider, which asks the person to sign in again, or to the Hub with an error"}, 400: {"description": "Unknown, used or expired start address"}})
+async def start_hub_link(request: Request, token: str = Query(min_length=1, max_length=128), engine=Depends(get_engine)) -> Response:
+    """Continue a link the Hub started: opened once, by the person's browser."""
+    try:
+        config = await run_in_threadpool(load_login_config)
+        transaction, provider_state, browser_secret = await run_in_threadpool(open_link, engine, token)
+    except (HubLoginUnavailable, InvalidHubLogin):
+        return _browser_headers(PlainTextResponse("This link address is not valid any more. Return to the Hub and start again.", status_code=400))
+    provider = get_settings().auth.provider(transaction.provider_key)
+    if provider is None:
+        return _hub_error(transaction.callback_uri, transaction.hub_state, "access_denied")
+    try:
+        destination = await authorization_url(provider, config.provider_callback_uri(provider), provider_state, transaction.nonce, 0, transaction.provider_code_verifier)
+    except (ProviderUnavailable, ConfigurationError, httpx.HTTPError) as error:
+        logger.warning("Linking could not reach provider %s: %s", provider.key, type(error).__name__)
+        return _hub_error(transaction.callback_uri, transaction.hub_state, "temporarily_unavailable")
+    response = _browser_headers(RedirectResponse(destination, status_code=302))
+    response.set_cookie(login_cookie_name(provider_state), browser_secret, max_age=600, path=_cookie_path(), secure=config.public_api_url.startswith("https://"), httponly=True, samesite="lax")
+    return response
+
+
+_LINK_CODE_RESPONSES = {401: {"description": "Invalid client, link code or session"}, 409: {"description": "`identity_lookup_off`: linking waits for the identity lookup setting"}, 503: {"description": "Hub sign-in unavailable"}}
+
+
+@router.post("/link/preview", response_model=LinkPreviewRead, responses=_LINK_CODE_RESPONSES)
+def preview_hub_link(body: LinkCode, response: Response, client_id: str = Depends(require_hub_client), engine=Depends(get_engine)) -> LinkPreviewRead:
+    """Name the login a link code would add, for the confirmation page. Changes nothing."""
+    try:
+        preview = preview_link(engine, body.code, body.code_verifier, client_id, body.redirect_uri, body.session_token)
+    except LinkingUnavailable:
+        raise HTTPException(status_code=409, detail={"code": "identity_lookup_off", "message": "Linking is not available yet on this server"})
+    except InvalidHubGrant:
+        raise HTTPException(status_code=401, detail="Invalid or expired link code")
+    response.headers["Cache-Control"] = "no-store"
+    return LinkPreviewRead(**provider_fields(preview.issuer), label=preview.label, orcid=preview.subject if preview.issuer in ORCID_ISSUERS else None, status=preview.status)
+
+
+@router.post("/link/confirm", response_model=IdentityRead, responses={**_LINK_CODE_RESPONSES, 409: {"description": "`identity_lookup_off`, or the preview status that refuses the link: `linked_elsewhere`, `second_orcid`, `orcid_of_another`"}})
+def confirm_hub_link(body: LinkCode, response: Response, client_id: str = Depends(require_hub_client), engine=Depends(get_engine)) -> IdentityRead:
+    """Add the login to the account of the person who started the link and is confirming it now."""
+    try:
+        identity = confirm_link(engine, body.code, body.code_verifier, client_id, body.redirect_uri, body.session_token)
+    except LinkingUnavailable:
+        raise HTTPException(status_code=409, detail={"code": "identity_lookup_off", "message": "Linking is not available yet on this server"})
+    except InvalidHubGrant:
+        raise HTTPException(status_code=401, detail="Invalid or expired link code")
+    except LinkRefused as refused:
+        raise HTTPException(status_code=409, detail={"code": refused.reason, "message": "This login cannot be added to the account"})
+    response.headers["Cache-Control"] = "no-store"
+    return identity_read(identity)
 
 
 @router.post("/token", response_model=HubTokenResponse, responses={401: {"description": "Invalid client or sign-in code"}, 503: {"description": "Hub sign-in unavailable"}})

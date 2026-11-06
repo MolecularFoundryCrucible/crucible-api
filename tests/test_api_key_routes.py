@@ -33,7 +33,7 @@ def user_id(engine, unique_id):
 
 
 def as_hub(auth_as, unique_id, *, age=timedelta(seconds=5), role=PlatformRole.NONE):
-    auth_as(unique_id, platform_role=role, credential="hub", authenticated_at=datetime.now(timezone.utc) - age)
+    auth_as(unique_id, platform_role=role, credential="session", authenticated_at=datetime.now(timezone.utc) - age)
 
 
 def authorize(key):

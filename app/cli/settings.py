@@ -223,7 +223,7 @@ def _unknown_variables(environment: dict[str, str]) -> list[str]:
     known |= {f"{name}_VERSION" for name in config._SECRETS}
     return sorted(
         name for name in environment
-        if name.upper() not in known and not config._PROVIDER_SECRET.fullmatch(name.upper().removesuffix("_FILE").removesuffix("_VERSION"))
+        if name.upper() not in known and not config._KEYED_SECRET.fullmatch(name.upper().removesuffix("_FILE").removesuffix("_VERSION"))
     )
 
 
@@ -234,7 +234,7 @@ def _pointed_files(container: Container) -> list[str]:
     return [
         f"{name} points to {value}, which no volume in the pod provides"
         for name, value in sorted(container.environment.items())
-        if name.upper().endswith("_FILE") and (name.upper()[:-5] in names or config._PROVIDER_SECRET.fullmatch(name.upper()[:-5])) and value and value != HIDDEN and value not in container.files
+        if name.upper().endswith("_FILE") and (name.upper()[:-5] in names or config._KEYED_SECRET.fullmatch(name.upper()[:-5])) and value and value != HIDDEN and value not in container.files
     ]
 
 
@@ -283,7 +283,9 @@ def check_container(container: Container, profile: str, verify_secrets: bool = F
             if profile == "server":
                 config.check_settings()
                 orcid = settings.auth.orcid_provider
-                if settings.hub.enabled and orcid is not None and orcid.issuer != settings.api.orcid_issuer:
+                from app.auth.clients import sign_in_enabled
+
+                if sign_in_enabled() and orcid is not None and orcid.issuer != settings.api.orcid_issuer:
                     report.warnings.append(f"The ORCID provider's issuer ({orcid.issuer}) and ORCID_ISSUER ({settings.api.orcid_issuer}) differ, so a person signing in through both is refused")
                 names = config.secrets_in_use()
             else:

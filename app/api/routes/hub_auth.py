@@ -15,7 +15,8 @@ from pydantic import BaseModel, Field
 from app.api.dependencies import get_engine
 from app.api.dependencies import get_api_root_path
 from app.auth.providers import TOKEN_FAILURES, IssuerMismatch, ProviderUnavailable, authorization_url, check_response_issuer, new_code_verifier, verified_identity
-from app.config import ConfigurationError, OidcProvider, get_settings, optional_secret
+from app.auth.clients import ClientUnavailable, authenticate_client, require_client_secrets
+from app.config import ConfigurationError, OidcProvider, get_settings
 from app.models.core_models import HubLoginTransaction
 from app.auth.sign_in import AccountPending
 from app.utils.hub_login import (
@@ -71,21 +72,17 @@ class HubTokenResponse(BaseModel):
 
 
 def require_hub_client(credentials: HTTPBasicCredentials | None = Depends(client_security)) -> str:
+    """The registered client these HTTP Basic credentials name, by its client_id."""
     if not hub_auth_enabled():
         raise HTTPException(status_code=503, detail="Hub authentication is unavailable")
-    configured_id = get_settings().hub.client_id
     try:
-        configured_secret = optional_secret("HUB_AUTH_CLIENT_SECRET")
-    except ConfigurationError:
+        require_client_secrets()
+        client = authenticate_client(credentials.username, credentials.password) if credentials is not None else None
+    except ClientUnavailable:
         raise HTTPException(status_code=503, detail="Hub authentication is unavailable") from None
-    if not configured_secret:
-        raise HTTPException(status_code=503, detail="Hub authentication is unavailable")
-    if credentials is None or not (
-        secrets.compare_digest(credentials.username, configured_id)
-        and secrets.compare_digest(credentials.password, configured_secret)
-    ):
+    if client is None:
         raise HTTPException(status_code=401, detail="Invalid client credentials", headers={"WWW-Authenticate": "Basic"})
-    return configured_id
+    return client.client_id
 
 
 def _token_response(pair: HubTokenPair, response: Response) -> HubTokenResponse:

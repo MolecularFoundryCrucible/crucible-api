@@ -42,8 +42,10 @@ def _login_redirect(login_path: str, return_to: str) -> RedirectResponse:
 @router.get("/auth/methods", response_model=list[AuthMethodRead])
 def list_sign_in_methods():
     """The ways to sign in through the Hub on this deployment; empty when Hub sign-in is off."""
+    from app.auth.clients import sign_in_enabled
+
     settings = get_settings()
-    if not settings.hub.enabled:
+    if not sign_in_enabled():
         return []
     return [AuthMethodRead(key=provider.key, display_name=provider.display_name, is_orcid=provider.is_orcid) for provider in settings.auth.providers]
 

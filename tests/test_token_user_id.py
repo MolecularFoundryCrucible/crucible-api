@@ -18,6 +18,8 @@ from app.utils.hub_tokens import hub_access_family, issue_hub_tokens, refresh_hu
 ORCID = "0000-0002-1825-0097"
 MFID = "0tmnyhfztdwc1000w2kspzsnh9"
 
+pytestmark = pytest.mark.usefixtures("hub_client_registered")
+
 
 @pytest.fixture
 def person_with_key_and_hub_session(db_engine, use_engine):

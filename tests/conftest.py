@@ -122,6 +122,18 @@ def orcid_provider_settings(monkeypatch):
     return configure
 
 
+@pytest.fixture
+def hub_client_registered(monkeypatch):
+    """Register the Hub as the one sign-in client, so its sessions are accepted."""
+    from app import config
+    from tests.hub_clients import HUB_TEST_CALLBACK
+
+    monkeypatch.setenv("HUB_AUTH_ENABLED", "true")
+    monkeypatch.setenv("HUB_AUTH_CALLBACK_URI", HUB_TEST_CALLBACK)
+    monkeypatch.setenv("HUB_AUTH_CLIENT_SECRET", "test-hub-secret-that-is-long-enough-0123")
+    config.get_settings.cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def fresh_settings(monkeypatch):
     """Settings are read once per process in production; tests change the environment, so each

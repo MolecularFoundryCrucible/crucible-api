@@ -34,7 +34,7 @@ def as_key(auth_as, client):
 
 def as_hub(auth_as, client, age=timedelta(seconds=5)):
     client.headers["Crucible-Privilege-Mode"] = "elevated"
-    auth_as(ADMIN, platform_role=PlatformRole.ADMIN, credential="hub", authenticated_at=datetime.now(timezone.utc) - age)
+    auth_as(ADMIN, platform_role=PlatformRole.ADMIN, credential="session", authenticated_at=datetime.now(timezone.utc) - age)
 
 
 def role(client, ref, value):

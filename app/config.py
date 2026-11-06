@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from urllib.parse import urlparse
@@ -13,7 +14,9 @@ from app.utils.multipart_config import MultipartStorageConfig
 
 DEFAULT_SECRETS_DIR = "/run/secrets"
 _SECRET_VERSION = re.compile(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)")
-_PROVIDER_SECRET = re.compile(r"OIDC_[A-Z][A-Z0-9]*_CLIENT_SECRET")
+_KEYED_SECRET = re.compile(r"(?:OIDC|OAUTH)_[A-Z][A-Z0-9]*_CLIENT_SECRET")
+MIN_CLIENT_SECRET_LENGTH = 32
+_short_secrets_reported: set[str] = set()
 ORCID_ISSUERS = frozenset({"https://orcid.org", "https://sandbox.orcid.org"})
 _loaded_env_files: set[str] = set()
 _fetched_secrets: dict[str, str] = {}
@@ -252,14 +255,48 @@ class OidcProvider(BaseModel):
         return f"OIDC_{self.key.upper()}_CLIENT_SECRET"
 
 
+def trusted_redirect_uri(value: str) -> bool:
+    """An address a sign-in may return to: https, or http only on localhost, with a host and no user,
+    password, query or fragment. Compared exactly, so no wildcards."""
+    parsed = urlparse(value)
+    if parsed.username or parsed.password or parsed.fragment or parsed.query or not parsed.hostname:
+        return False
+    return parsed.scheme == "https" or (parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1"})
+
+
+class OAuthClient(BaseModel):
+    """One entry of CRUCIBLE_AUTH_CLIENTS: a program that signs people in through this API. Every
+    field is required. The secret stays out of this list, in OAUTH_{KEY}_CLIENT_SECRET."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    key: str = Field(pattern=r"^[a-z][a-z0-9]*$", max_length=32)
+    client_id: str = Field(min_length=1, max_length=100)
+    display_name: str = Field(min_length=1, max_length=100)
+    type: Literal["confidential"]
+    redirect_uris: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("redirect_uris")
+    @classmethod
+    def redirects_are_exact_secure_addresses(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not all(map(trusted_redirect_uri, value)):
+            raise ValueError("must be https:// addresses (http:// only for localhost), with no user, query or fragment")
+        return value
+
+    @property
+    def secret_name(self) -> str:
+        return f"OAUTH_{self.key.upper()}_CLIENT_SECRET"
+
+
 class AuthSettings(SettingsGroup):
     model_config = SettingsConfigDict(env_prefix="CRUCIBLE_AUTH_")
 
     providers: list[OidcProvider] = Field(default_factory=list)
+    clients: list[OAuthClient] = Field(default_factory=list)
     identity_lookup: bool = False
     event_retention_days: int = Field(365, ge=1, description="Days the sign-in history is kept before the cleanup job removes it.")
 
-    @field_validator("providers", mode="before")
+    @field_validator("providers", "clients", mode="before")
     @classmethod
     def parse_json(cls, value):
         if not isinstance(value, str):
@@ -281,6 +318,15 @@ class AuthSettings(SettingsGroup):
             raise ValueError("lists more than one provider with legacy_callback")
         return value
 
+    @field_validator("clients")
+    @classmethod
+    def each_client_once(cls, value: list[OAuthClient]) -> list[OAuthClient]:
+        for field in ("key", "client_id"):
+            names = [getattr(client, field) for client in value]
+            if len(names) != len(set(names)):
+                raise ValueError(f"lists the same {field} twice")
+        return value
+
     @property
     def orcid_provider(self) -> OidcProvider | None:
         return next((provider for provider in self.providers if provider.is_orcid), None)
@@ -294,10 +340,12 @@ class AuthSettings(SettingsGroup):
 
     def problems(self, settings: "Settings") -> list[str]:
         found = []
-        for provider in self.providers:
-            version = optional_env(f"{provider.secret_name}_VERSION")
-            if not (version is not None and _SECRET_VERSION.fullmatch(version)) and configured_secret(provider.secret_name) is None:
-                found.append(provider.secret_name)
+        for name in [provider.secret_name for provider in self.providers] + [client.secret_name for client in self.clients]:
+            version = optional_env(f"{name}_VERSION")
+            if not (version is not None and _SECRET_VERSION.fullmatch(version)) and configured_secret(name) is None:
+                found.append(name)
+        if self.clients and not self.providers:
+            found.append("CRUCIBLE_AUTH_PROVIDERS")
         return found
 
 
@@ -480,15 +528,16 @@ def get_settings() -> Settings:
     return Settings(**groups)
 
 
-def _provider_secret_names() -> list[str]:
-    return [provider.secret_name for provider in get_settings().auth.providers]
+def _keyed_secret_names() -> list[str]:
+    auth = get_settings().auth
+    return [provider.secret_name for provider in auth.providers] + [client.secret_name for client in auth.clients]
 
 
 def configured_secret(name: str) -> str | None:
     """A secret setting given as NAME_FILE, a file in the secrets directory, or NAME, without
     Secret Manager; None when it is not given that way."""
     name = name.upper()
-    if name in _provider_secret_names():
+    if name in _keyed_secret_names():
         secrets_dir = _secrets_dir()
         given = _given_ways(name, True, Path(secrets_dir) if secrets_dir else None)
         return next((value.strip() for value in given.values() if value is not None), None)
@@ -531,8 +580,14 @@ def get_secret(name: str) -> str:
                 raise ConfigurationError(f"{name}_VERSION names an empty secret")
             _fetched_secrets[version] = fetched
         value = _fetched_secrets[version]
-    if (name in _SINGLE_LINE_SECRETS or _PROVIDER_SECRET.fullmatch(name)) and not (value.isascii() and value.isprintable()):
+    if (name in _SINGLE_LINE_SECRETS or _KEYED_SECRET.fullmatch(name)) and not (value.isascii() and value.isprintable()):
         raise ConfigurationError(f"{name} must be one line of printable ASCII")
+    if len(value) < MIN_CLIENT_SECRET_LENGTH:
+        if name.startswith("OAUTH_"):
+            raise ConfigurationError(f"{name} must be at least {MIN_CLIENT_SECRET_LENGTH} characters")
+        if name == "HUB_AUTH_CLIENT_SECRET" and name not in _short_secrets_reported:
+            _short_secrets_reported.add(name)
+            logging.getLogger(__name__).warning("%s is shorter than %d characters; replace it with a longer random value", name, MIN_CLIENT_SECRET_LENGTH)
     return value
 
 
@@ -553,6 +608,9 @@ def check_settings() -> None:
     found = missing_required_settings()
     if found:
         raise ConfigurationError(f"Missing required settings: {', '.join(found)}")
+    settings = get_settings()
+    if settings.auth.clients and settings.hub.enabled:
+        raise ConfigurationError("CRUCIBLE_AUTH_CLIENTS and HUB_AUTH_ENABLED are both set; list the Hub in CRUCIBLE_AUTH_CLIENTS and unset HUB_AUTH_ENABLED, HUB_AUTH_CLIENT_ID, HUB_AUTH_CALLBACK_URI and HUB_AUTH_CLIENT_SECRET")
     try:
         MultipartStorageConfig.from_env()
     except ValueError as error:
@@ -566,7 +624,7 @@ def secrets_in_use() -> list[str]:
         name for name, (group, _field) in _SECRETS.items()
         if getattr(settings, group).in_use() and (configured_secret(name) is not None or optional_env(f"{name}_VERSION") is not None)
     ] + [
-        name for name in _provider_secret_names()
+        name for name in _keyed_secret_names()
         if configured_secret(name) is not None or optional_env(f"{name}_VERSION") is not None
     ]
 

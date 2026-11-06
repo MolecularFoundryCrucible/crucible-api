@@ -6,13 +6,32 @@ The routes use exact configured callbacks, OIDC validation, a one-use PKCE-bound
 
 ## Settings and secrets
 
-- `HUB_AUTH_ENABLED=true` turns the routes on. When it is on, the startup check requires `HUB_AUTH_CLIENT_SECRET`, `HUB_AUTH_CALLBACK_URI`, `CRUCIBLE_AUTH_PROVIDERS` with at least one provider, and each listed provider's secret.
+- `CRUCIBLE_AUTH_CLIENTS` is the JSON list of programs that sign people in through the API, such as the Hub. See [the client list](#the-client-list). Without it, `HUB_AUTH_ENABLED=true` registers the Hub alone from the older settings: the startup check then requires `HUB_AUTH_CLIENT_SECRET`, `HUB_AUTH_CALLBACK_URI`, `CRUCIBLE_AUTH_PROVIDERS` with at least one provider, and each listed provider's secret. Setting both stops the server at startup. The older settings are kept for now and will be removed in a later major version.
 - `CRUCIBLE_AUTH_IDENTITY_LOOKUP` makes ORCID sign-in find people only through `user_identity`. Turn it on after running `migrations/data/20261103_backfill_user_identity.py`; with it on, someone whose `unique_id` is an ORCID but who has no row is refused. It needs a restart to change.
 - `CRUCIBLE_AUTH_PROVIDERS` is the JSON list of sign-in providers. Nothing is implied from other settings, and the older `ORCID_*` settings serve only `/auth/login`. See [the provider list](#the-provider-list).
 - Each secret is given one way only: inline, `NAME_FILE`, a file named `NAME` in the secrets directory, or `NAME_VERSION` (a Secret Manager `projects/.../secrets/.../versions/N` or `versions/latest`). Giving one two ways stops the server at startup. Values must be one line of printable ASCII.
 - Every worker reads its secrets at start and refuses to start if one cannot be read (`get_secret` in `app/config.py`). Successful reads are cached per worker; failures are not. Secret Manager lookups time out after ten seconds without retries, use Application Default Credentials, and stay in worker memory.
 - The Hub client secret is shared only with the Hub server; the Hub never needs the ORCID client secret. Keep local environment files at mode `600`.
 - `HUB_AUTH_CALLBACK_URI` must match the Hub's callback exactly; no wildcards. Register the API's `<public API URL>/auth/hub/callback` with ORCID.
+
+## The client list
+
+Every field is required, and an unknown field stops the server at startup. A client's secret is `OAUTH_{KEY}_CLIENT_SECRET`, given like any other secret, and must be at least 32 characters. The older `HUB_AUTH_CLIENT_SECRET` is only warned about when shorter.
+
+```json
+[{"key": "hub", "client_id": "crucible-hub", "display_name": "Crucible Hub", "type": "confidential",
+  "redirect_uris": ["https://hub.example.org/hub/auth/callback", "https://hub.example.org/hub/auth/link/callback"]}]
+```
+
+| Field | Meaning |
+|---|---|
+| `key` | Lowercase letters and digits; names the secret |
+| `client_id` | What the client sends as its HTTP Basic user name |
+| `display_name` | Shown to people when the client asks to sign them in |
+| `type` | `confidential` (has a secret, runs on a server); the only type for now |
+| `redirect_uris` | Exact addresses the client may receive codes at: https, or http only on `localhost` and `127.0.0.1`, with no user, query or fragment |
+
+Codes, sessions and links belong to the client that started them, and no other client can use them. Removing a client from the list ends its sessions at once.
 
 ## The provider list
 

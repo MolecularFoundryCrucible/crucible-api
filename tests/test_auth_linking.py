@@ -1,3 +1,4 @@
+import json
 import base64
 import hashlib
 import time
@@ -272,3 +273,22 @@ def test_linking_waits_for_the_identity_lookup_setting(world, monkeypatch):
     get_settings.cache_clear()
     response = client.post("/account/identities/lab/link", headers=bearer(ada), json={"callback_uri": LINK_CALLBACK, "state": "link-hub-state-0001", "code_challenge": CHALLENGE})
     assert (response.status_code, response.json()["detail"]["code"]) == (409, "identity_lookup_off")
+
+
+def test_a_link_belongs_to_the_client_whose_session_started_it(world, monkeypatch):
+    _, client, engine = world
+    for name in ("HUB_AUTH_ENABLED", "HUB_AUTH_CLIENT_ID", "HUB_AUTH_CALLBACK_URI", "HUB_AUTH_CLIENT_SECRET"):
+        monkeypatch.delenv(name)
+    clients = [{"key": key, "client_id": client_id, "display_name": key, "type": "confidential", "redirect_uris": [SIGN_IN_CALLBACK, LINK_CALLBACK]} for key, client_id in (("hub", HUB[0]), ("other", "other-app"))]
+    monkeypatch.setenv("CRUCIBLE_AUTH_CLIENTS", json.dumps(clients))
+    monkeypatch.setenv("OAUTH_HUB_CLIENT_SECRET", "h" * 40)
+    monkeypatch.setenv("OAUTH_OTHER_CLIENT_SECRET", "o" * 40)
+    from app.config import get_settings
+    get_settings.cache_clear()
+    hub, other = (HUB[0], "h" * 40), ("other-app", "o" * 40)
+    ada = hub_session(engine, ADA)
+    code = link_code(provider_sign_in(world, start_link(world, ada), subject="ada-lab"))
+    assert client.post("/auth/hub/link/preview", auth=other, json=code_body(code, ada)).status_code == 401
+    other_session = issue_hub_tokens(engine, user_id(engine, ADA), "other-app", auth_time=datetime.now(timezone.utc)).access_token
+    assert client.post("/auth/hub/link/confirm", auth=hub, json=code_body(code, other_session)).status_code == 401
+    assert client.post("/auth/hub/link/confirm", auth=hub, json=code_body(code, ada)).status_code == 200

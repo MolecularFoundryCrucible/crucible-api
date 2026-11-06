@@ -21,7 +21,7 @@ from app.utils.auth_utils import caller_row, forget_cached_keys, API_KEY_READ_DE
 from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor,
 )
-from app.utils.permissions import AccessGroupType, Permission, effective_role, has_global_permission, PlatformRole, Principal, Role
+from app.utils.permissions import SESSION, AccessGroupType, Permission, effective_role, has_global_permission, PlatformRole, Principal, Role
 from app.utils.search_utils import (
     MAX_SEARCH_QUERY_LENGTH,
     SEARCH_QUERY_LIMIT_DESCRIPTION,
@@ -489,7 +489,7 @@ def get_or_provision_user_apikey(
     POST /users/{user_ref}/apikey/regenerate. Hub sessions already receive 409 when a key exists.
     '''
     user_id = _admin_user_for_key(user_ref, auth_res)
-    if auth_res.credential == "hub" and has_active_api_key(user_id, get_engine()):
+    if auth_res.credential == SESSION and has_active_api_key(user_id, get_engine()):
         raise HTTPException(status_code=409, detail={"code": "api_key_exists", "message": "The user already has an API key; regenerate it instead"})
     response.headers["Cache-Control"] = "no-store"
     response.headers["Deprecation"] = API_KEY_READ_DEPRECATION

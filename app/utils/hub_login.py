@@ -55,25 +55,32 @@ class HubLoginConfig:
         return f"{self.public_api_url}{path}"
 
 
-def load_login_config() -> HubLoginConfig:
+def public_api_url() -> str:
+    """The API's public address, which sign-in addresses and OAuth requests are built on."""
     from app.api.dependencies import get_api_url
 
+    value = get_settings().hub.public_api_url or get_api_url()
+    if not trusted_redirect_uri(value):
+        raise HubLoginUnavailable
+    return value.rstrip("/")
+
+
+def load_login_config() -> HubLoginConfig:
     if not hub_auth_enabled():
         raise HubLoginUnavailable
-    settings = get_settings()
-    public_api_url = settings.hub.public_api_url or get_api_url()
-    if not settings.auth.providers:
+    if not get_settings().auth.providers:
         raise HubLoginUnavailable
+    base = public_api_url()
     clients = registered_clients()
     try:
         secrets_present = all(optional_secret(client.secret_name) for client in clients)
     except ConfigurationError:
         raise HubLoginUnavailable from None
-    if not secrets_present or not trusted_redirect_uri(public_api_url):
+    if not secrets_present:
         raise HubLoginUnavailable
     if not all(client.client_id and client.redirect_uris and all(map(trusted_redirect_uri, client.redirect_uris)) for client in clients):
         raise HubLoginUnavailable
-    return HubLoginConfig(clients, public_api_url.rstrip("/"))
+    return HubLoginConfig(clients, base)
 
 
 def _digest(value: str) -> str:

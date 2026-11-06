@@ -168,3 +168,100 @@ def test_only_api_keys_of_administrators_start_elevated():
     for credential, expected in ((API_KEY, PrivilegeMode.ELEVATED), (SESSION, PrivilegeMode.NORMAL)):
         actor = Principal(user_id="0000-0000-0000-0009", platform_role=PlatformRole.ADMIN, credential=credential, internal_user_id=9)
         assert resolve_authorization_context(actor, None).privilege_mode is expected
+
+
+@pytest.fixture
+def api(two_clients, db_engine):
+    from fastapi.testclient import TestClient
+
+    from app.api.main import app
+
+    with TestClient(app, base_url="https://api.example.org") as client:
+        yield client
+
+
+HUB_AUTH = ("crucible-hub", SECRETS["OAUTH_HUB_CLIENT_SECRET"])
+NOTES_AUTH = ("lab-notes", SECRETS["OAUTH_NOTES_CLIENT_SECRET"])
+
+
+def exchange(api, code, auth=HUB_AUTH, **changes):
+    form = {"grant_type": "authorization_code", "code": code, "code_verifier": VERIFIER, "redirect_uri": HUB["redirect_uris"][0], **changes}
+    return api.post("/oauth/token", auth=auth, data={key: value for key, value in form.items() if value is not None})
+
+
+def test_standard_code_exchange_works_once(api, db_engine):
+    code = signed_in(db_engine, HUB)
+    first = exchange(api, code)
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["token_type"] == "Bearer" and 0 < body["expires_in"] <= 900 and body["refresh_token"].startswith("chbr_")
+    assert first.headers["cache-control"] == "no-store"
+    assert (exchange(api, code).status_code, exchange(api, code).json()["error"]) == (400, "invalid_grant")
+    principal = auth_utils._authorize_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=body["access_token"]))
+    assert principal.client_id == "crucible-hub"
+
+
+@pytest.mark.parametrize("changes,error", [
+    ({"code_verifier": None}, "invalid_request"),
+    ({"code_verifier": "w" * 43}, "invalid_grant"),
+    ({"redirect_uri": "https://hub.example.org/other"}, "invalid_grant"),
+    ({"grant_type": "password"}, "unsupported_grant_type"),
+])
+def test_a_code_needs_its_verifier_and_redirect(api, db_engine, changes, error):
+    code = signed_in(db_engine, HUB)
+    refused = exchange(api, code, **changes)
+    assert (refused.status_code, refused.json()["error"]) == (400, error)
+    assert exchange(api, code).status_code == 200
+
+
+def test_repeated_parameters_are_refused(api, db_engine):
+    code = signed_in(db_engine, HUB)
+    form = [("grant_type", "authorization_code"), ("code", code), ("code_verifier", VERIFIER), ("code_verifier", VERIFIER), ("redirect_uri", HUB["redirect_uris"][0])]
+    from urllib.parse import urlencode
+
+    refused = api.post("/oauth/token", auth=HUB_AUTH, content=urlencode(form), headers={"Content-Type": "application/x-www-form-urlencoded"})
+    assert (refused.status_code, refused.json()["error"]) == (400, "invalid_request")
+
+
+def test_wrong_client_is_invalid_client_and_another_clients_code_is_useless(api, db_engine):
+    code = signed_in(db_engine, HUB)
+    assert exchange(api, code, auth=("crucible-hub", "x" * 40)).json()["error"] == "invalid_client"
+    assert exchange(api, code, auth=NOTES_AUTH).json()["error"] == "invalid_grant"
+    assert exchange(api, code).status_code == 200
+
+
+def test_refresh_rotates_and_reuse_ends_the_session(api, db_engine):
+    tokens = exchange(api, signed_in(db_engine, HUB)).json()
+    assert api.post("/oauth/token", auth=NOTES_AUTH, data={"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]}).json()["error"] == "invalid_grant"
+    second = api.post("/oauth/token", auth=HUB_AUTH, data={"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]})
+    assert second.status_code == 200 and second.json()["refresh_token"] != tokens["refresh_token"]
+    reused = api.post("/oauth/token", auth=HUB_AUTH, data={"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]})
+    assert reused.json()["error"] == "invalid_grant"
+    later = api.post("/oauth/token", auth=HUB_AUTH, data={"grant_type": "refresh_token", "refresh_token": second.json()["refresh_token"]})
+    assert later.json()["error"] == "invalid_grant"
+
+
+def test_revocation_answers_alike_for_unknown_and_other_clients_tokens(api, db_engine):
+    tokens = exchange(api, signed_in(db_engine, HUB)).json()
+    for auth, token in ((HUB_AUTH, "chbr_unknown"), (NOTES_AUTH, tokens["refresh_token"])):
+        answer = api.post("/oauth/revoke", auth=auth, data={"token": token})
+        assert (answer.status_code, answer.json()) == (200, {})
+    assert auth_utils._authorize_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=tokens["access_token"])).client_id == "crucible-hub"
+    assert api.post("/oauth/revoke", auth=HUB_AUTH, data={"token": tokens["refresh_token"]}).status_code == 200
+    with pytest.raises(HTTPException):
+        auth_utils._authorize_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=tokens["access_token"]))
+
+
+def test_errors_carry_no_internal_details(api, db_engine):
+    refused = exchange(api, "not-a-code")
+    assert set(refused.json()) <= {"error", "error_description"}
+    assert "Traceback" not in refused.text and "hublogincode" not in refused.text
+
+
+def test_the_hub_routes_and_the_standard_route_share_one_server(api, db_engine):
+    via_hub = api.post("/auth/hub/token", auth=HUB_AUTH, json={"code": signed_in(db_engine, HUB), "code_verifier": VERIFIER, "redirect_uri": HUB["redirect_uris"][0]})
+    assert via_hub.status_code == 200, via_hub.text
+    refreshed = api.post("/oauth/token", auth=HUB_AUTH, data={"grant_type": "refresh_token", "refresh_token": via_hub.json()["refresh_token"]})
+    assert refreshed.status_code == 200
+    again = api.post("/auth/hub/refresh", auth=HUB_AUTH, json={"refresh_token": via_hub.json()["refresh_token"]})
+    assert again.status_code == 401

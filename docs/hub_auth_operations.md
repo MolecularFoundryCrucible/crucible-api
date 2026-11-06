@@ -33,6 +33,8 @@ Every field is required, and an unknown field stops the server at startup. A cli
 
 Codes, sessions and links belong to the client that started them, and no other client can use them. Removing a client from the list ends its sessions at once.
 
+`POST /oauth/token` (RFC 6749: `authorization_code` with PKCE, or `refresh_token`) and `POST /oauth/revoke` (RFC 7009) are the standard token routes, form-encoded, with HTTP Basic client authentication. The Hub's `/auth/hub/token`, `/refresh` and `/revoke` run the same server through Authlib and keep their JSON shapes. Requests are checked against the public API address, so it must be https outside localhost.
+
 ## The provider list
 
 [`deploy/compose/auth-providers.example.json`](../deploy/compose/auth-providers.example.json) is a complete example. Every field is required, and an unknown field stops the server at startup.

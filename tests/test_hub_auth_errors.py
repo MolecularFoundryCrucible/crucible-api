@@ -101,7 +101,10 @@ def test_refresh_errors_do_not_disclose_internal_details(client, monkeypatch, ca
     def fail(*args, **kwargs):
         raise error
 
-    monkeypatch.setattr(hub_auth, "refresh_hub_tokens", fail)
+    from app.auth import oauth_server
+
+    monkeypatch.setattr(oauth_server.RefreshGrant, "authenticate_refresh_token", lambda self, token: oauth_server._Credential(AUTH[0], 1))
+    monkeypatch.setattr(oauth_server, "refresh_hub_tokens", fail)
     with caplog.at_level(logging.INFO):
         response = client.post("/auth/hub/refresh", auth=AUTH, json={"refresh_token": "x" * 64})
     assert response.status_code == status
@@ -133,8 +136,11 @@ def test_browser_failures_are_private(client, monkeypatch):
 def test_successful_credentials_and_revocation_remain_private(client, monkeypatch):
     now = datetime.now(timezone.utc)
     pair = HubTokenPair("a" * 64, "r" * 64, now + timedelta(minutes=15), now + timedelta(days=30), "test-user")
-    monkeypatch.setattr(hub_auth, "refresh_hub_tokens", lambda *args: pair)
-    monkeypatch.setattr(hub_auth, "revoke_hub_tokens", lambda *args: None)
+    from app.auth import oauth_server
+
+    monkeypatch.setattr(oauth_server.RefreshGrant, "authenticate_refresh_token", lambda self, token: oauth_server._Credential(AUTH[0], 1))
+    monkeypatch.setattr(oauth_server, "refresh_hub_tokens", lambda *args: pair)
+    monkeypatch.setattr(oauth_server, "revoke_hub_tokens", lambda *args: None)
     response = client.post("/auth/hub/refresh", auth=AUTH, json={"refresh_token": "r" * 64})
     assert response.status_code == 200
     assert response.json()["access_token"] == pair.access_token

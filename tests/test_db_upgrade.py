@@ -142,3 +142,51 @@ def test_readiness_expects_migration_heads_when_unset(monkeypatch):
     from app.config import get_settings
     get_settings.cache_clear()
     assert misc._expected_schema_revisions() == ["b8f2d6e41c07"]
+
+
+@needs_pg
+def test_a_held_lock_stops_the_upgrade_quickly_and_keeps_earlier_migrations(empty_db, monkeypatch):
+    import time
+
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy.exc import OperationalError
+
+    db.upgrade_database(empty_db)
+    config = Config(str(db.REPO_ROOT / "alembic.ini"))
+    with empty_db.connect() as connection:
+        config.attributes["connection"] = connection
+        command.downgrade(config, "f3a9d1c7b842")
+        connection.commit()
+    monkeypatch.setenv("ALEMBIC_LOCK_TIMEOUT", "300ms")
+    reader = empty_db.connect()
+    reader.execute(text("SET idle_in_transaction_session_timeout = '20s'"))
+    reader.execute(text('LOCK TABLE "user" IN ACCESS SHARE MODE'))
+    started = time.monotonic()
+    try:
+        with pytest.raises(OperationalError, match="lock timeout"):
+            db.upgrade_database(empty_db)
+    finally:
+        try:
+            reader.rollback()
+        finally:
+            reader.close()
+    assert time.monotonic() - started < 4
+    with empty_db.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "a8c2e5f1d903"
+    assert db.upgrade_database(empty_db) == "upgraded"
+    with empty_db.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == HEAD
+
+
+@needs_pg
+def test_lock_limit_is_not_left_on_pooled_connections_and_empty_means_default(empty_db, monkeypatch):
+    monkeypatch.setenv("ALEMBIC_LOCK_TIMEOUT", "")
+    db.upgrade_database(empty_db)
+    pooled = empty_db.pool.checkedin()
+    connections = [empty_db.connect() for _ in range(pooled)]
+    try:
+        assert pooled and [connection.execute(text("SHOW lock_timeout")).scalar() for connection in connections] == ["0"] * pooled
+    finally:
+        for connection in connections:
+            connection.close()

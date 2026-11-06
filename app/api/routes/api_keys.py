@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
-from typing import Annotated, List, Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
@@ -9,7 +10,9 @@ from app.api.path_params import UserRef
 from app.auth.api_keys import KEY_LIFETIME, MAX_ACTIVE_KEYS, TooManyKeys, active, create_key, plain_key_hashes, revoke_key, status_of
 from app.models.api_keys import ApiKeyCreate, ApiKeyCreated, ApiKeyListItem, ApiKeyRename
 from app.models.core_models import ApiKey
+from app.models.pagination import PaginatedResponse
 from app.utils.auth_utils import authorize_user, caller_row, forget_cached_key_hash, require_human_admin_safeguard, require_platform_admin, require_recent_hub_session
+from app.utils.cursor_utils import CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor
 from app.utils.permissions import Principal
 from app.utils.user_utils import resolve_user_by_identifier
 
@@ -17,17 +20,37 @@ router = APIRouter(tags=["account"])
 
 _STEP_UP = {401: {"description": "A Hub session needs a recent sign-in (`insufficient_user_authentication`)"}, 403: {"description": "`hub_session_required`: an API key cannot create keys"}}
 State = Literal["active", "inactive"]
+_STATE = Query("active", description="active, or inactive for expired and revoked keys")
+_LIMIT = Query(50, ge=1, le=200)
+_CURSOR = Query(None, min_length=1, max_length=4096, description="Opaque continuation cursor from next_cursor.")
 
 
 def list_item(key: ApiKey, plain: set[str] = frozenset()) -> ApiKeyListItem:
     return ApiKeyListItem(id=key.id, name=key.name, last4=key.key_last4, status=status_of(key), created_at=key.created_at, last_used_at=key.last_used_at, expires_at=key.expires_at, revoked_at=key.revoked_at, older_routes=key.key_hash in plain)
 
 
-def _keys(session: Session, user_id: int, state: State) -> list[ApiKeyListItem]:
-    query = select(ApiKey).where(ApiKey.user_id == user_id)
-    query = query.where(active()) if state == "active" else query.where(~active())
+def _keys(session: Session, principal: Principal, user_id: int, state: State, limit: int, cursor: str | None) -> PaginatedResponse[ApiKeyListItem]:
+    """Newest first, by creation time and then id, in keyset pages."""
+    digest = filter_fingerprint({"user_id": user_id, "state": state})
+    query = select(ApiKey).where(ApiKey.user_id == user_id, active() if state == "active" else ~active())
+    total = session.exec(select(func.count()).select_from(query.subquery())).one()
+    if cursor is not None:
+        try:
+            decoded = validate_cursor(cursor, kind="api_key", sort="created", direction="desc", filters=digest, user_id=principal.user_id)
+            if decoded is None:
+                raise CursorError("Invalid cursor")
+            created, key_id = cursor_primary_value(decoded), int(decoded.unique_id)
+        except (CursorError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Invalid cursor") from exc
+        query = query.where(or_(ApiKey.created_at < created, and_(ApiKey.created_at == created, ApiKey.id < key_id)))
+    rows = session.exec(query.order_by(ApiKey.created_at.desc(), ApiKey.id.desc()).limit(limit + 1)).all()
+    page = rows[:limit]
+    next_cursor = None
+    if len(rows) > limit:
+        last = page[-1]
+        next_cursor = new_cursor(kind="api_key", sort="created", direction="desc", primary=last.created_at, unique_id=str(last.id), filters=digest, user_id=principal.user_id)
     plain = plain_key_hashes(session, user_id)
-    return [list_item(key, plain) for key in session.exec(query.order_by(ApiKey.created_at.desc(), ApiKey.id.desc())).all()]
+    return PaginatedResponse[ApiKeyListItem](total=total, limit=limit, items=[list_item(key, plain) for key in page], next_cursor=next_cursor)
 
 
 def _revoke(session: Session, user_id: int, key_id: int, actor) -> None:
@@ -60,14 +83,14 @@ def create_account_apikey(body: ApiKeyCreate, response: Response, auth_res: Anno
         return ApiKeyCreated(**list_item(key).model_dump(), api_key=secret)
 
 
-@router.get("/account/apikeys", response_model=List[ApiKeyListItem])
-def list_account_apikeys(auth_res: Annotated[Principal, Depends(authorize_user)], state: State = Query("active", description="active, or inactive for expired and revoked keys")):
+@router.get("/account/apikeys", response_model=PaginatedResponse[ApiKeyListItem], responses={422: {"description": "Invalid cursor"}})
+def list_account_apikeys(auth_res: Annotated[Principal, Depends(authorize_user)], state: State = _STATE, limit: int = _LIMIT, cursor: str | None = _CURSOR):
     """Your API keys, never the keys themselves."""
     with Session(get_engine()) as session:
         user = caller_row(session, auth_res)
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-        return _keys(session, user.id, state)
+        return _keys(session, auth_res, user.id, state, limit, cursor)
 
 
 @router.delete("/account/apikeys/{key_id}", status_code=204, responses={404: {"description": "Not one of your keys"}})
@@ -96,12 +119,12 @@ def rename_account_apikey(key_id: int, body: ApiKeyRename, auth_res: Annotated[P
         return list_item(key, plain_key_hashes(session, user.id))
 
 
-@router.get("/users/{user_ref}/apikeys", response_model=List[ApiKeyListItem])
-def list_user_apikeys(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)], state: State = Query("active", description="active, or inactive for expired and revoked keys")):
+@router.get("/users/{user_ref}/apikeys", response_model=PaginatedResponse[ApiKeyListItem], responses={422: {"description": "Invalid cursor"}})
+def list_user_apikeys(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)], state: State = _STATE, limit: int = _LIMIT, cursor: str | None = _CURSOR):
     """A person's API keys, never the keys themselves. Platform administrators only."""
     require_platform_admin(auth_res)
     with Session(get_engine()) as session:
-        return _keys(session, resolve_user_by_identifier(session, user_ref).id, state)
+        return _keys(session, auth_res, resolve_user_by_identifier(session, user_ref).id, state, limit, cursor)
 
 
 @router.delete("/users/{user_ref}/apikeys/{key_id}", status_code=204, responses={404: {"description": "Not one of this person's keys"}})

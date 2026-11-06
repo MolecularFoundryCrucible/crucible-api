@@ -386,6 +386,7 @@ Decided by the user on 2026-11-06, after the overnight review:
 18. Sign-in for any client: scopes later; public-client sessions 14 days idle and 90 days at most; a `nano-crucible` client in the Compose bundle by default; the API's key page is revisited at key hashing step 3.
 19. Key lists are paginated like the API's other lists (#449).
 20. An API key cannot edit another human administrator through `PATCH /users/{user_ref}` or revoke all their keys (#450). This replaces the earlier rule that let an administrator's key change another administrator's username and email; people editing themselves stay unrestricted.
+21. Email notifications are future work, not this phase (decided 2026-11-06). The plan, when it comes: SMTP settings off by default with `smtplib` and STARTTLS; an outbox table written in the event's transaction and drained by a small sender; notices only to verified addresses, first those a provider asserts with `email_verified`, later one-time verification links; the old address told when the email changes; plain-text notices with no tokens, for a login added or removed, an API key created, an address changed, an account disabled and a role changed. Until then the in-app notice covers NIST SP 800-63C-4 3.8, and the email notice of 63B-4 is a recorded gap.
 
 ## Left to the builder
 

@@ -91,6 +91,19 @@ So the API needs a small adapter: subclass `AuthorizationServer` and implement `
 
 What stays ours: the upstream provider sign-in (already on Authlib's client), the token storage and families, the device page, linking, registration and the throttle. Authlib supplies the protocol checks: parameters, PKCE, redirect matching, grant rules and error responses.
 
+### 7. Library choice
+
+Compared on 2026-11-06, and the user chose to stay with Authlib:
+
+- aioauth (2.0.1, July 2026) is the only one written for async frameworks, but has no device grant, revocation or metadata.
+- oauthlib (4.0.1, October 2026) is mature and has the device grant, but would be a second OAuth library beside Authlib, with a large validator interface to implement and the same FastAPI glue.
+- Ory Hydra (an external service, device grant since v25.4.0) would leave us no protocol code, at the cost of another service and database in every deployment. Worth revisiting if the protocol code grows.
+- Authlib's server core is synchronous, which costs nothing here: the API's routes are mostly synchronous already. Upgrade from 1.9.1 to the current release in its own pull request before building on it, reading the release notes.
+
+### 8. Provider tokens
+
+Crucible keeps no provider tokens: sign-in checks the provider's ID token, keeps who the person is, and discards the provider's access and refresh tokens. If Crucible ever has to call a provider's API for a person, such as ORCID's member API, those refresh tokens must be stored server-side and encrypted with a key kept apart from database backups, like the password pepper. Hashing is not enough for them, because they must be readable to be used.
+
 ## Compatibility
 
 - The current Hub keeps working with no change: same routes (as aliases), same client ID and secret, same token responses.
@@ -127,4 +140,5 @@ Order in Phase 3: after Task 9 step 2, before Task 12, so the password form (Tas
 - OAuth 2.1 draft 16: https://www.ietf.org/archive/id/draft-ietf-oauth-v2-1-16.txt
 - Authlib FastAPI server proposal: https://github.com/lepture/authlib/pull/278
 - Authlib project page: https://authlib.org/projects/authlib/
+- aioauth: https://pypi.org/project/aioauth/ ; oauthlib: https://pypi.org/project/oauthlib/ ; Ory v25.4.0 device grant: https://changelog.ory.com/announcements/ann_Dne2mookJyqgU
 - Authlib 1.9.1 source: `authlib/oauth2/rfc6749/authorization_server.py`, `authlib/oauth2/rfc8628/`, `authlib/integrations/flask_oauth2/`

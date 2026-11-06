@@ -53,7 +53,7 @@ def test_created_key_is_shown_once_with_its_prefix_and_works(client, auth_as, pe
     assert (body["name"], body["status"]) == ("laptop", "active")
     assert response.headers["cache-control"] == "no-store"
     assert authorize(body["api_key"]).user_id == ADA
-    listed = client.get("/account/apikeys").json()
+    listed = client.get("/account/apikeys").json()["items"]
     assert [(item["id"], item["last4"]) for item in listed] == [(body["id"], body["last4"])]
     assert body["api_key"] not in str(listed)
     with Session(people) as session:
@@ -73,7 +73,7 @@ def test_key_cap_of_ten(client, auth_as, people):
         assert create(client, f"key {number}").status_code == 201
     refused = create(client, "one too many")
     assert (refused.status_code, refused.json()["detail"]["code"]) == (409, "too_many_keys")
-    first = client.get("/account/apikeys").json()[-1]["id"]
+    first = client.get("/account/apikeys").json()["items"][-1]["id"]
     assert client.delete(f"/account/apikeys/{first}").status_code == 204
     assert create(client, "after revoking one").status_code == 201
 
@@ -96,8 +96,8 @@ def test_revoked_key_stops_working_and_is_listed_as_inactive(client, auth_as, pe
     with pytest.raises(HTTPException) as caught:
         authorize(body["api_key"])
     assert caught.value.status_code == 401
-    assert client.get("/account/apikeys").json() == []
-    assert [item["status"] for item in client.get("/account/apikeys", params={"state": "inactive"}).json()] == ["revoked"]
+    assert client.get("/account/apikeys").json()["items"] == []
+    assert [item["status"] for item in client.get("/account/apikeys", params={"state": "inactive"}).json()["items"]] == ["revoked"]
 
 
 def test_someone_elses_key_cannot_be_revoked(client, auth_as, people):
@@ -145,7 +145,7 @@ def test_administrators_list_and_revoke_one_key(client, auth_as, people):
     adas = create(client).json()
     client.headers["Crucible-Privilege-Mode"] = "elevated"
     auth_as(ADMIN, platform_role=PlatformRole.ADMIN)
-    assert [item["id"] for item in client.get(f"/users/{ADA}/apikeys").json()] == [adas["id"]]
+    assert [item["id"] for item in client.get(f"/users/{ADA}/apikeys").json()["items"]] == [adas["id"]]
     assert client.delete(f"/users/{BOB}/apikeys/{adas['id']}").status_code == 404
     assert client.delete(f"/users/{ADA}/apikeys/{adas['id']}").status_code == 204
     auth_as(BOB)
@@ -237,7 +237,7 @@ def test_keys_can_be_renamed_and_the_older_routes_key_is_marked(client, auth_as,
     named = create(client).json()
     auth_as(ADA)
     client.post("/account/apikey/regenerate")
-    listed = {item["name"]: item for item in client.get("/account/apikeys").json()}
+    listed = {item["name"]: item for item in client.get("/account/apikeys").json()["items"]}
     assert (listed["laptop"]["older_routes"], listed["Default key"]["older_routes"]) == (False, True)
     renamed = client.patch(f"/account/apikeys/{listed['Default key']['id']}", json={"name": "old scripts"}).json()
     assert (renamed["name"], renamed["older_routes"]) == ("old scripts", True)
@@ -257,7 +257,7 @@ def test_inactive_list_shows_when_a_key_was_revoked(client, auth_as, people):
     key = create(client).json()
     assert key["revoked_at"] is None
     client.delete(f"/account/apikeys/{key['id']}")
-    assert client.get("/account/apikeys", params={"state": "inactive"}).json()[0]["revoked_at"] is not None
+    assert client.get("/account/apikeys", params={"state": "inactive"}).json()["items"][0]["revoked_at"] is not None
 
 
 def test_an_api_key_cannot_revoke_another_administrators_key(client, auth_as, people):
@@ -272,3 +272,23 @@ def test_an_api_key_cannot_revoke_another_administrators_key(client, auth_as, pe
     assert refused.status_code == 403 and authorize(chiefs["api_key"]).user_id == "0tmnyhfztdwc1000w2kspzsnh8"
     as_hub(auth_as, ADMIN, role=PlatformRole.ADMIN)
     assert client.delete(f"/users/0tmnyhfztdwc1000w2kspzsnh8/apikeys/{chiefs['id']}").status_code == 204
+
+
+def test_key_lists_come_in_pages_newest_first(client, auth_as, people):
+    now = datetime.now(timezone.utc)
+    with Session(people) as session:
+        for day in range(5):
+            store_key(session, user_id(people, ADA), f"revoked-{day}-0000", created_at=now - timedelta(days=day)).revoked_at = now
+        session.commit()
+    auth_as(ADA)
+    first = client.get("/account/apikeys", params={"state": "inactive", "limit": 2}).json()
+    assert (first["total"], len(first["items"]), first["next_cursor"] is not None) == (5, 2, True)
+    seen, cursor = [item["created_at"] for item in first["items"]], first["next_cursor"]
+    while cursor:
+        page = client.get("/account/apikeys", params={"state": "inactive", "limit": 2, "cursor": cursor}).json()
+        seen += [item["created_at"] for item in page["items"]]
+        cursor = page["next_cursor"]
+    assert len(seen) == 5 and seen == sorted(seen, reverse=True)
+    assert client.get("/account/apikeys", params={"state": "active", "cursor": first["next_cursor"]}).status_code == 422
+    auth_as(BOB)
+    assert client.get("/account/apikeys", params={"state": "inactive", "cursor": first["next_cursor"]}).status_code == 422

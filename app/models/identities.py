@@ -43,10 +43,3 @@ class LinkPreviewRead(SQLModel):
     status: Literal["available", "already_yours", "linked_elsewhere", "second_orcid", "orcid_of_another"] = Field(
         description="available and already_yours can be confirmed; already_yours marks the login verified. The others are refused."
     )
-
-
-class AdminIdentityCreate(SQLModel):
-    issuer: str = Field(min_length=1, max_length=512, description="The issuer of a listed provider.")
-    subject: str = Field(min_length=1, max_length=255, description="The provider's subject for this person, such as their ORCID.")
-    label: Optional[str] = Field(default=None, max_length=255)
-

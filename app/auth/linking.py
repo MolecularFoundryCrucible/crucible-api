@@ -257,20 +257,6 @@ class MoveRefused(Exception):
         self.reasons = reasons
 
 
-def admin_link(session: Session, user: User, issuer: str, subject: str, *, actor: User, label: str | None = None) -> UserIdentity:
-    """An administrator adds a login to a person, in the caller's transaction. It stays unverified
-    until the person signs in with it. Raises LinkRefused with the status when it cannot be added."""
-    status = link_status(session, user, issuer, subject)
-    if status != AVAILABLE:
-        raise LinkRefused(status)
-    try:
-        identity = ensure_identity(session, user, issuer, subject, label=label, created_by=actor)
-    except IdentityTaken:
-        raise LinkRefused(LINKED_ELSEWHERE) from None
-    record_event(session, AuthEventType.IDENTITY_LINKED, user=user, actor=actor, issuer=issuer)
-    return identity
-
-
 def holdings(session: Session, user: User) -> list[str]:
     """What an account holds besides its own identity group, as reasons it must not be emptied."""
     from sqlalchemy import func

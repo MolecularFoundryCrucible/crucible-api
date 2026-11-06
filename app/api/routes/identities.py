@@ -6,7 +6,7 @@ from fastapi.concurrency import run_in_threadpool
 from sqlmodel import Session
 
 from app.api.dependencies import get_engine
-from app.auth.linking import LastSignInMethod, LinkingUnavailable, begin_link, identity_read, require_linking_available, sign_in_methods, unlink_identity
+from app.auth.linking import LastSignInMethod, LinkingUnavailable, TooManyLinks, begin_link, identity_read, require_linking_available, sign_in_methods, unlink_identity
 from app.auth.providers import ProviderUnavailable, new_code_verifier
 from app.config import ConfigurationError, get_settings
 from app.models.identities import IdentityRead, LinkStart, LinkStartRead
@@ -33,7 +33,7 @@ def list_account_identities(auth_res: Annotated[Principal, Depends(authorize_use
         return [identity_read(identity) for identity in sign_in_methods(session, user)]
 
 
-@router.post("/account/identities/{provider_key}/link", response_model=LinkStartRead, responses={**_STEP_UP, 400: {"description": "Unknown provider or invalid link request"}, 409: {"description": "`identity_lookup_off`"}, 503: {"description": "Hub sign-in unavailable, or the provider cannot be reached"}})
+@router.post("/account/identities/{provider_key}/link", response_model=LinkStartRead, responses={**_STEP_UP, 400: {"description": "Unknown provider or invalid link request"}, 409: {"description": "`identity_lookup_off`"}, 429: {"description": "`too_many_links`: more than 5 links started in 10 minutes"}, 503: {"description": "Hub sign-in unavailable, or the provider cannot be reached"}})
 async def start_account_link(provider_key: Annotated[str, Path(max_length=32)], body: LinkStart, auth_res: Annotated[Principal, Depends(authorize_user)]):
     """Start adding another way to sign in. Returns a one-time address on the API to send the
     person's browser to; the provider asks them to sign in, and the Hub then previews and confirms
@@ -51,9 +51,11 @@ async def start_account_link(provider_key: Annotated[str, Path(max_length=32)], 
         raise HTTPException(status_code=400, detail="Unknown provider")
     try:
         code_verifier = await new_code_verifier(provider)
-        start = await run_in_threadpool(begin_link, get_engine(), config, auth_res.internal_user_id, auth_res.client_id, provider, body.callback_uri, body.state, body.code_challenge, code_verifier=code_verifier)
+        start = await run_in_threadpool(begin_link, get_engine(), config, auth_res.internal_user_id, auth_res.client_id, auth_res.session_family_id, provider, body.callback_uri, body.state, body.code_challenge, code_verifier=code_verifier)
     except InvalidHubLogin:
         raise HTTPException(status_code=400, detail="Invalid link request")
+    except TooManyLinks:
+        raise HTTPException(status_code=429, detail={"code": "too_many_links", "message": "Too many links started recently; try again in a few minutes"}, headers={"Retry-After": "600"})
     except (ProviderUnavailable, ConfigurationError, httpx.HTTPError):
         raise HTTPException(status_code=503, detail="The provider cannot be reached")
     return LinkStartRead(authorization_url=f"{config.public_api_url}/auth/hub/link/start?token={start}")

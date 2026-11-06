@@ -292,3 +292,47 @@ def test_a_link_belongs_to_the_client_whose_session_started_it(world, monkeypatc
     other_session = issue_hub_tokens(engine, user_id(engine, ADA), "other-app", auth_time=datetime.now(timezone.utc)).access_token
     assert client.post("/auth/hub/link/confirm", auth=hub, json=code_body(code, other_session)).status_code == 401
     assert client.post("/auth/hub/link/confirm", auth=hub, json=code_body(code, ada)).status_code == 200
+
+
+def test_only_the_session_that_started_a_link_can_confirm_it(world):
+    _, client, engine = world
+    ada = hub_session(engine, ADA)
+    code = link_code(provider_sign_in(world, start_link(world, ada), subject="ada-lab"))
+    other_tab = hub_session(engine, ADA)
+    assert client.post("/auth/hub/link/preview", auth=HUB, json=code_body(code, other_tab)).status_code == 401
+    assert client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, other_tab)).status_code == 401
+    assert client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, ada)).status_code == 200
+
+
+def test_confirming_needs_a_recent_sign_in_again(world):
+    _, client, engine = world
+    ada = hub_session(engine, ADA)
+    code = link_code(provider_sign_in(world, start_link(world, ada), subject="ada-lab"))
+    with Session(engine) as session:
+        for family in session.exec(select(HubTokenFamily)).all():
+            family.auth_time = datetime.now(timezone.utc) - timedelta(minutes=11)
+            session.add(family)
+        session.commit()
+    refused = client.post("/auth/hub/link/confirm", auth=HUB, json=code_body(code, ada))
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (401, "insufficient_user_authentication")
+    assert linked(world) == []
+
+
+def test_start_address_expires_after_two_minutes(world):
+    _, client, engine = world
+    start_url = start_link(world, hub_session(engine, ADA))
+    with Session(engine) as session:
+        transaction = session.exec(select(HubLoginTransaction).where(HubLoginTransaction.purpose == "link")).one()
+        transaction.created_at = datetime.now(timezone.utc) - timedelta(seconds=121)
+        session.add(transaction)
+        session.commit()
+    assert client.get(urlparse(start_url).path + "?" + urlparse(start_url).query, follow_redirects=False).status_code == 400
+
+
+def test_link_starts_are_limited(world):
+    _, client, engine = world
+    ada = hub_session(engine, ADA)
+    for number in range(5):
+        start_link(world, ada, hub_state=f"link-hub-state-{number:04d}")
+    refused = client.post("/account/identities/lab/link", headers=bearer(ada), json={"callback_uri": LINK_CALLBACK, "state": "link-hub-state-0099", "code_challenge": CHALLENGE})
+    assert (refused.status_code, refused.json()["detail"]["code"], refused.headers["retry-after"]) == (429, "too_many_links", "600")

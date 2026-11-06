@@ -387,6 +387,7 @@ Decided by the user on 2026-11-06, after the overnight review:
 19. Key lists are paginated like the API's other lists (#449).
 20. An API key cannot edit another human administrator through `PATCH /users/{user_ref}` or revoke all their keys (#450). This replaces the earlier rule that let an administrator's key change another administrator's username and email; people editing themselves stay unrestricted.
 21. Email notifications are future work, not this phase (decided 2026-11-06). The plan, when it comes: SMTP settings off by default with `smtplib` and STARTTLS; an outbox table written in the event's transaction and drained by a small sender; notices only to verified addresses, first those a provider asserts with `email_verified`, later one-time verification links; the old address told when the email changes; plain-text notices with no tokens, for a login added or removed, an API key created, an address changed, an account disabled and a role changed. Until then the in-app notice covers NIST SP 800-63C-4 3.8, and the email notice of 63B-4 is a recorded gap.
+22. Passwords are meant for small local deployments; institutions should use their own sign-in through OIDC, and the install guide says so. The minimum length is a setting, `CRUCIBLE_AUTH_PASSWORD_MIN_LENGTH`, 15 by default as NIST SP 800-63B-4 asks for single-factor passwords, and 12 at the lowest for deployments that accept the trade-off (decided 2026-11-06).
 
 ## Left to the builder
 

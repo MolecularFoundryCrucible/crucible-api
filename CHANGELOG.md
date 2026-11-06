@@ -25,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Deleting a key from `apitoken` (older pods during a rollout, a rollback, or by hand) now also revokes its hashed copy, so a revoked key cannot keep working. Needs migration `2b0ab3a4520a`.
 - Editing a dataset no longer re-publishes or un-publishes it.
 - Provider discovery works for issuers with a trailing slash, such as Authentik's.
 - `GET /auth/apikey`, `POST /auth/apikey/regenerate` and `POST /users` return 409, and `admin create` refuses cleanly, when an ORCID is already linked to another user, instead of failing with a 500.

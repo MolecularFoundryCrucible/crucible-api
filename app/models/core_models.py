@@ -319,6 +319,17 @@ class UserIdentity(SQLModel, table=True):
     last_used_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
 
 
+class LocalCredential(SQLModel, table=True):
+    """A person's password, kept apart from `user` so user queries and responses never touch it.
+    A row exists only once a password is set, and never for a service account."""
+    __tablename__ = "local_credential"
+
+    user_id: int = Field(sa_column=Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True))
+    password_hash: str = Field(sa_column=Column(Text, nullable=False))
+    pepper_id: Optional[str] = Field(default=None, max_length=32)
+    password_changed_at: datetime = Field(sa_type=DateTime(timezone=True))
+
+
 class AuthEvent(SQLModel, table=True):
     __tablename__ = "auth_event"
     __table_args__ = (

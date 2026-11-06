@@ -131,6 +131,14 @@ Order in Phase 3: after Task 9 step 2, before Task 12, so the password form (Tas
 3. The Compose bundle registers a `nano-crucible` public client by default.
 4. The API's own key page (`/auth/apikey`) stays as it is until Task 9 step 3; rebuilding it on the generic sign-in or retiring it is decided then.
 
+## Linking, decided by the user 2026-11-06
+
+After a second opinion (Fable), the built linking design stays: the client starts a link with the person's recent session, the provider sign-in is forced fresh, and the link is written only when that same session previews and confirms it. This meets NIST SP 800-63C-4 3.8.1 ("the RP SHALL require an authenticated session with the subscriber account for all linking functions"). A rebuild on Pushed Authorization Requests (RFC 9126) was considered and dropped: neither RFC 9700 nor OAuth 2.1 requires PAR, Authlib has none, and writing the link at the end of the browser flow would bind it more weakly, because the API has no browser session of its own. There is one linking mechanism; step 3 renames its routes under `/oauth` without aliases, since no client uses them yet.
+
+Hardening built with it: only the session that started a link can preview or confirm it, that session needs a sign-in within 10 minutes when confirming, the start address works for 2 minutes, and at most 5 links can be started in 10 minutes. Still to do: an in-app notice when a login is added or removed (63C-4 3.8; the email notice of 63B-4 waits for email), `iss` on the API's own redirects (step 3), and providers that send no `auth_time`, such as Dex (issue #1052), which linking refuses today.
+
+nano-crucible: following RFC 10027 (BCP 247, "Cross-device protocols SHOULD NOT be used for same-device scenarios"), loopback redirects (RFC 8252) where a browser is at hand and the device grant only where none is. Device grant alone is acceptable only as a documented first step.
+
 ## Sources
 
 - RFC 9700, OAuth 2.0 Security Best Current Practice: https://www.rfc-editor.org/rfc/rfc9700.html

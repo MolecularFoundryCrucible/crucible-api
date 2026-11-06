@@ -250,3 +250,88 @@ def identity_read(identity: UserIdentity) -> IdentityRead:
         last_used_at=identity.last_used_at,
     )
 
+
+class MoveRefused(Exception):
+    def __init__(self, reasons: list[str]):
+        super().__init__("; ".join(reasons))
+        self.reasons = reasons
+
+
+def admin_link(session: Session, user: User, issuer: str, subject: str, *, actor: User, label: str | None = None) -> UserIdentity:
+    """An administrator adds a login to a person, in the caller's transaction. It stays unverified
+    until the person signs in with it. Raises LinkRefused with the status when it cannot be added."""
+    status = link_status(session, user, issuer, subject)
+    if status != AVAILABLE:
+        raise LinkRefused(status)
+    try:
+        identity = ensure_identity(session, user, issuer, subject, label=label, created_by=actor)
+    except IdentityTaken:
+        raise LinkRefused(LINKED_ELSEWHERE) from None
+    record_event(session, AuthEventType.IDENTITY_LINKED, user=user, actor=actor, issuer=issuer)
+    return identity
+
+
+def holdings(session: Session, user: User) -> list[str]:
+    """What an account holds besides its own identity group, as reasons it must not be emptied."""
+    from sqlalchemy import func
+
+    from app.models.core_models import (
+        AccessGroupJoinRequest, ApiToken, Dataset, DeletionRequest, Instrument, PostprocessingRun, Project, ResourceACL, Sample, UploadSession,
+        UserAccessGroupLink,
+    )
+    from app.utils.user_utils import identity_group_of
+
+    own_group = identity_group_of(session, user.id)
+    own_group_id = own_group.id if own_group is not None else None
+    checks = (
+        ("datasets", select(func.count()).select_from(Dataset).where(Dataset.owner_user_id == user.id)),
+        ("samples", select(func.count()).select_from(Sample).where(Sample.owner_user_id == user.id)),
+        ("instruments", select(func.count()).select_from(Instrument).where(Instrument.owner_user_id == user.id)),
+        ("projects led", select(func.count()).select_from(Project).where(Project.lead_user_id == user.id)),
+        ("group memberships", select(func.count()).select_from(UserAccessGroupLink).where(UserAccessGroupLink.user_id == user.id, UserAccessGroupLink.accessgroup_id != own_group_id)),
+        ("access grants", select(func.count()).select_from(ResourceACL).where(ResourceACL.accessgroup_id == own_group_id)),
+        ("used API keys", select(func.count()).select_from(ApiToken).where(ApiToken.user_id == user.id, ApiToken.last_used_at != None)),  # noqa: E711
+        ("join requests", select(func.count()).select_from(AccessGroupJoinRequest).where(AccessGroupJoinRequest.requester_user_id == user.id)),
+        ("deletion requests", select(func.count()).select_from(DeletionRequest).where(DeletionRequest.requester_user_id == user.id)),
+        ("postprocessing runs", select(func.count()).select_from(PostprocessingRun).where(PostprocessingRun.requested_by_user_id == user.id)),
+        ("uploads", select(func.count()).select_from(UploadSession).where(UploadSession.user_id == user.id)),
+        ("other logins", select(func.count()).select_from(UserIdentity).where(UserIdentity.user_id == user.id)),
+    )
+    reasons = []
+    for name, query in checks:
+        count = session.exec(query).one()
+        if name == "other logins":
+            count -= 1
+        if count:
+            reasons.append(f"{count} {name}")
+    return reasons
+
+
+def move_identity(session: Session, identity: UserIdentity, target: User, *, now: datetime | None = None) -> User:
+    """Move a login off an account that holds nothing else, onto the right account, and switch the
+    emptied account off. This is not a merge: it refuses when the source holds anything."""
+    from app.models.core_models import ApiToken
+
+    current = _now(now)
+    source = session.get(User, identity.user_id, with_for_update=True)
+    if source.id == target.id:
+        raise MoveRefused(["the login already belongs to that account"])
+    if target.is_service_account or target.disabled_at is not None:
+        raise MoveRefused(["the target is a service account or switched off"])
+    if identity.issuer in ORCID_ISSUERS and session.exec(select(UserIdentity.id).where(UserIdentity.user_id == target.id, UserIdentity.issuer.in_(ORCID_ISSUERS))).first() is not None:
+        raise MoveRefused(["the target already has an ORCID"])
+    reasons = holdings(session, source)
+    if reasons:
+        raise MoveRefused([f"the source account holds {reason}" for reason in reasons])
+    identity.user_id = target.id
+    session.add(identity)
+    for token in session.exec(select(ApiToken).where(ApiToken.user_id == source.id)).all():
+        session.delete(token)
+    source.disabled_at = current
+    session.add(source)
+    revoke_all_hub_tokens(session, source.id, now=current)
+    record_event(session, AuthEventType.IDENTITY_UNLINKED, user=source, issuer=identity.issuer)
+    record_event(session, AuthEventType.IDENTITY_LINKED, user=target, issuer=identity.issuer)
+    record_event(session, AuthEventType.DISABLED, user=source)
+    return source
+

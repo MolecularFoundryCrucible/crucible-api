@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `GET /users/{user_ref}/identities` lists a person's logins, for themselves or administrators. Administrators add and remove logins with `POST /users/{user_ref}/identities` and `DELETE /users/{user_ref}/identities/{id}`, from a Hub session with a recent sign-in; added logins stay unverified until used. `python -m app.cli identity move` moves a login off an empty duplicate account and switches that account off.
 - Linking another sign-in method: `POST /account/identities/{provider}/link` (Hub session, recent sign-in) returns a one-time start address; after the provider asks the person to sign in again, the Hub names the login with `POST /auth/hub/link/preview` and adds it with `POST /auth/hub/link/confirm`. `GET /account/identities` lists your logins and `DELETE /account/identities/{id}` removes one, never the last, ending your other Hub sessions. Linking needs `CRUCIBLE_AUTH_IDENTITY_LOOKUP` on.
 - User objects in responses include `orcid` and `orcid_verified`, the person's linked ORCID and whether it was confirmed by signing in; both are null without one.
 - `POST /users/{user_ref}/disable` and `/enable` switch an account off and on; a disabled account cannot sign in, and its API keys and Hub sessions stop working.

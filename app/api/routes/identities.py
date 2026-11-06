@@ -6,11 +6,13 @@ from fastapi.concurrency import run_in_threadpool
 from sqlmodel import Session
 
 from app.api.dependencies import get_engine
-from app.auth.linking import LastSignInMethod, LinkingUnavailable, begin_link, identity_read, require_linking_available, sign_in_methods, unlink_identity
+from app.auth.linking import LastSignInMethod, LinkRefused, LinkingUnavailable, admin_link, begin_link, identity_read, require_linking_available, sign_in_methods, unlink_identity
 from app.auth.providers import ProviderUnavailable, new_code_verifier
 from app.config import ConfigurationError, get_settings
-from app.models.identities import IdentityRead, LinkStart, LinkStartRead
-from app.utils.auth_utils import authorize_user, caller_row, require_recent_hub_session
+from app.models.identities import AdminIdentityCreate, IdentityRead, LinkStart, LinkStartRead
+from app.api.path_params import UserRef
+from app.utils.auth_utils import authorize_user, caller_row, require_human_admin_safeguard, require_platform_admin, require_recent_hub_session, require_self_or_platform_admin
+from app.utils.user_utils import resolve_user_by_identifier
 from app.utils.hub_login import HubLoginUnavailable, InvalidHubLogin, load_login_config
 from app.utils.permissions import Principal
 
@@ -78,3 +80,63 @@ def unlink_account_identity(identity_id: int, auth_res: Annotated[Principal, Dep
         except LastSignInMethod:
             raise HTTPException(status_code=409, detail={"code": "last_sign_in_method", "message": "This is your last way to sign in; add another first"})
         session.commit()
+
+
+ADMIN_HUB_ONLY = "Changing how someone signs in needs a Hub session, not an API key"
+
+
+def _admin_target(session: Session, user_ref: str, auth_res: Principal):
+    require_platform_admin(auth_res)
+    require_recent_hub_session(auth_res, ADMIN_HUB_ONLY)
+    try:
+        require_linking_available()
+    except LinkingUnavailable:
+        raise HTTPException(status_code=409, detail=LOOKUP_OFF)
+    user = resolve_user_by_identifier(session, user_ref)
+    if user.is_service_account:
+        raise HTTPException(status_code=409, detail={"code": "service_account", "message": "Service accounts sign in with API keys, not logins"})
+    require_human_admin_safeguard(auth_res, user)
+    return user
+
+
+@router.get("/users/{user_ref}/identities", response_model=List[IdentityRead])
+def list_user_identities(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """A person's logins: your own, or anyone's for platform administrators."""
+    with Session(get_engine()) as session:
+        user = resolve_user_by_identifier(session, user_ref)
+        require_self_or_platform_admin(auth_res, user)
+        return [identity_read(identity) for identity in sign_in_methods(session, user)]
+
+
+@router.post("/users/{user_ref}/identities", response_model=IdentityRead, status_code=201, responses={**_STEP_UP, 400: {"description": "Not the issuer of a listed provider"}, 409: {"description": "`linked_elsewhere`, `second_orcid`, `orcid_of_another`, `already_yours`, `service_account`, or `identity_lookup_off`"}})
+def add_user_identity(user_ref: UserRef, body: AdminIdentityCreate, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Add a login to a person, such as the ORCID they gave you. It stays unverified until they sign
+    in with it. Platform administrators, from a Hub session with a recent sign-in."""
+    if body.issuer not in {provider.issuer for provider in get_settings().auth.providers}:
+        raise HTTPException(status_code=400, detail="Not the issuer of a listed provider")
+    with Session(get_engine()) as session:
+        user = _admin_target(session, user_ref, auth_res)
+        try:
+            identity = admin_link(session, user, body.issuer, body.subject.strip(), actor=caller_row(session, auth_res), label=body.label)
+        except LinkRefused as refused:
+            raise HTTPException(status_code=409, detail={"code": refused.reason, "message": "This login cannot be added to the account"})
+        session.commit()
+        session.refresh(identity)
+        return identity_read(identity)
+
+
+@router.delete("/users/{user_ref}/identities/{identity_id}", status_code=204, responses={**_STEP_UP, 404: {"description": "Not one of this person's logins"}, 409: {"description": "`last_sign_in_method`, `service_account`, or `identity_lookup_off`"}})
+def remove_user_identity(user_ref: UserRef, identity_id: int, auth_res: Annotated[Principal, Depends(authorize_user)]):
+    """Remove one of a person's logins, never their last. Ends all their Hub sessions. Platform
+    administrators, from a Hub session with a recent sign-in."""
+    with Session(get_engine()) as session:
+        user = _admin_target(session, user_ref, auth_res)
+        session.refresh(user, with_for_update=True)
+        try:
+            unlink_identity(session, user, identity_id, actor=caller_row(session, auth_res))
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Not one of this person's logins")
+        except LastSignInMethod:
+            raise HTTPException(status_code=409, detail={"code": "last_sign_in_method", "message": "This is the person's last way to sign in"})
+        session.commit()
+

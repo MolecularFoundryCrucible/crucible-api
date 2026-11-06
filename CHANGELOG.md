@@ -38,6 +38,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - `POST /users` no longer creates an API key that no response returned.
+- Regenerating a key replaces only the key the older key routes show; keys created under `/account/apikeys` stay. `api_key_status` and `/account/verify` describe a working key before an expired one.
 - Dataset and sample `owner_orcid` and `owner` are read from the owner's user record: records that store an owner only by internal reference now show it, and those whose stored owner matches no user show none.
 - The `owner_id` filters on datasets, samples, instruments and facets accept a unique_id, linked ORCID, username or email, matched exactly.
 - Instrument `owner_orcid` can be null: instruments whose stored owner matches no user show no owner, and the `owner` and `owner_id` filters match only people.

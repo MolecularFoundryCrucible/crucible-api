@@ -160,3 +160,73 @@ def test_post_users_creates_no_key(client, auth_as, people):
     assert response.status_code == 200, response.text
     with Session(people) as session:
         assert session.exec(select(ApiKey)).all() == [] and session.exec(select(ApiToken)).all() == []
+
+
+def plain_key_only(engine, unique_id, token, created):
+    with Session(engine) as session:
+        session.add(ApiToken(token=token, user_id=user_id(engine, unique_id), user_unique_id=unique_id, access_group_id=unique_id, token_created=created))
+        session.commit()
+
+
+def test_regenerate_replaces_only_the_plain_key(client, auth_as, people):
+    as_hub(auth_as, ADA)
+    named = create(client).json()["api_key"]
+    auth_as(ADA)
+    first = client.post("/account/apikey/regenerate").json()["api_key"]
+    second = client.post("/account/apikey/regenerate").json()["api_key"]
+    assert authorize(named).user_id == ADA and authorize(second).user_id == ADA
+    with pytest.raises(HTTPException):
+        authorize(first)
+    with Session(people) as session:
+        assert len(session.exec(select(ApiKey).where(ApiKey.revoked_at == None)).all()) == 2  # noqa: E711
+
+
+def test_status_counts_a_plain_key_not_yet_copied(client, auth_as, people):
+    plain_key_only(people, ADA, "p" * 64, datetime.now(timezone.utc).date().isoformat())
+    client.headers["Crucible-Privilege-Mode"] = "elevated"
+    as_hub(auth_as, ADMIN, role=PlatformRole.ADMIN)
+    assert client.get(f"/users/{ADA}").json()["api_key_status"]["valid"] is True
+    listed = {user["unique_id"]: user for user in client.get("/users", params={"limit": 50}).json()["items"]}
+    assert listed[ADA]["api_key_status"]["valid"] is True
+    assert client.post(f"/users/{ADA}/apikey").status_code == 409
+    with Session(people) as session:
+        assert session.exec(select(ApiKey)).all() == []
+
+
+def test_status_prefers_a_working_key_over_a_newer_expired_one(client, auth_as, people):
+    now = datetime.now(timezone.utc)
+    with Session(people) as session:
+        store_key(session, user_id(people, ADA), "working-key-0000", created_at=now - timedelta(days=10))
+        store_key(session, user_id(people, ADA), "expired-key-0000", created_at=now - timedelta(days=1), expires_at=now - timedelta(hours=1))
+        session.commit()
+    as_hub(auth_as, ADA)
+    response = client.get("/account/verify", headers={"Authorization": "Bearer chba_session"})
+    assert response.json()["valid"] is True, response.text
+
+
+def test_admin_revoke_all_stops_cached_named_keys_at_once(client, auth_as, people):
+    as_hub(auth_as, ADA)
+    named = create(client).json()["api_key"]
+    assert authorize(named).user_id == ADA
+    client.headers["Crucible-Privilege-Mode"] = "elevated"
+    auth_as(ADMIN, platform_role=PlatformRole.ADMIN)
+    assert client.delete(f"/users/{ADA}/apikey").status_code == 204
+    with pytest.raises(HTTPException):
+        authorize(named)
+
+
+def test_a_used_hashed_key_counts_as_holding(people):
+    from app.auth.linking import holdings
+
+    with Session(people) as session:
+        key = store_key(session, user_id(people, ADA), "used-key-0000")
+        key.last_used_at = datetime.now(timezone.utc)
+        session.commit()
+        assert "1 used API keys" in holdings(session, session.get(User, user_id(people, ADA)))
+
+
+def test_pending_filter_is_a_declared_parameter(client, auth_as, people):
+    client.headers["Crucible-Privilege-Mode"] = "elevated"
+    auth_as(ADMIN, platform_role=PlatformRole.ADMIN)
+    response = client.get("/users", params={"pending": "true"})
+    assert response.status_code == 200 and "deprecation" not in response.headers

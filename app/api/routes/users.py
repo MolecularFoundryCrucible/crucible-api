@@ -15,9 +15,9 @@ from app.api.path_params import DatasetMfid, UserRef
 from app.general_utils import is_orcid, is_valid_mfid
 from app.models.core_models import (
     UserIdentity,
-    AccessGroup, ApiKey, ApiToken, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
+    AccessGroup, Dataset, Project, Resource, Sample, ScientificMetadataBinary, User, UserAccessGroupLink, get_mfid_value,
 )
-from app.utils.auth_utils import caller_row, forget_cached_keys, API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_human_admin_safeguard, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal, _invalidate_auth_cache
+from app.utils.auth_utils import caller_row, forget_cached_keys, API_KEY_READ_DEPRECATION, authorize_user, fetch_acl_rows, find_or_add_api_access, has_active_api_key, permission_filter, require_human_admin_safeguard, require_recent_authentication, require_platform_admin, require_self_or_platform_admin, resolve_access_principal
 from app.utils.cursor_utils import (
     CursorError, cursor_primary_value, filter_fingerprint, new_cursor, validate_cursor,
 )
@@ -31,7 +31,7 @@ from app.utils.search_utils import (
     trigram_rank,
 )
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_active
-from app.auth.api_keys import key_status, newest_key, revoke_user_keys
+from app.auth.api_keys import key_status, newest_key, newest_keys, replace_plain_keys, revoke_user_keys
 from app.auth.events import AuthEventType, record_event
 from app.auth.registration import NotPending, StillReferenced, approve_pending_user, reject_pending_user
 from app.auth.identity import IdentityTaken, default_orcid_issuer, find_identity
@@ -64,7 +64,7 @@ USER_RESOLVE_DEPRECATION = "@1792540800"
 USER_LIST_DECLARED_PARAMS = {
     "unique_id", "username", "email", "permissive", "is_service_account",
     "first_name", "last_name", "q", "search_fields", "platform_role", "include_total",
-    "limit", "cursor", "offset", "sort", "direction", "active_since", "inactive_since", "never_active",
+    "limit", "cursor", "offset", "sort", "direction", "active_since", "inactive_since", "never_active", "pending",
 }
 
 
@@ -299,13 +299,7 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
 
         key_status_by_user = {}
         if is_admin:
-            private_ids = [user.id for user in rows]
-            for key in session.exec(
-                select(ApiKey).where(ApiKey.user_id.in_(private_ids), ApiKey.revoked_at == None)  # noqa: E711
-                .order_by(ApiKey.created_at.desc(), ApiKey.id.desc())
-            ).all() if private_ids else []:
-                if key.user_id not in key_status_by_user:
-                    key_status_by_user[key.user_id] = _key_status(key)
+            key_status_by_user = {user_id: _key_status(key) for user_id, key in newest_keys(session, [user.id for user in rows]).items()}
         items = [
             _user_read(auth_res, user, key_status=key_status_by_user.get(user.id), with_capabilities=True)
             if is_admin or auth_res.is_user(user)
@@ -801,16 +795,10 @@ def delete_user_apikey(
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        tokens = session.exec(
-            select(ApiToken).where(ApiToken.user_id == user.id)
-        ).all()
-        for token in tokens:
-            session.delete(token)
+        replace_plain_keys(session, user.id)
         revoke_user_keys(session, user.id)
         session.commit()
-
-    for token in tokens:
-        _invalidate_auth_cache(token.token)
+        forget_cached_keys(session, user.id)
     return Response(status_code=204)
 
 

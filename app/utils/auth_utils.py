@@ -22,7 +22,7 @@ from app.api.dependencies import get_engine
 from app.models.core_models import ApiKey, ApiToken, User
 from app.models.resource import ResourceCapabilities
 from app.utils.hub_tokens import ACCESS_PREFIX, InvalidHubGrant, hub_access_family
-from app.auth.api_keys import active as active_key, find_api_key, revoke_user_keys, status_of, store_key
+from app.auth.api_keys import find_api_key, newest_key, replace_plain_keys, status_of, store_key
 from app.services.activity import record_caller_activity
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, THRESHOLDS, GroupMembership, Permission, PlatformRole,
@@ -112,12 +112,10 @@ def find_or_add_api_access(user_id: int, engine, regenerate = False):
             return(api_acct.token)
 
         elif api_acct is not None and regenerate == True:
-            old_token = api_acct.token
-            session.query(ApiToken).filter(ApiToken.user_id == user_id).delete(synchronize_session=False)
-            forget_cached_keys(session, user_id)
-            revoke_user_keys(session, user_id)
+            replaced = replace_plain_keys(session, user_id)
             new_token = generate_apikey(user, session)
-            _invalidate_auth_cache(old_token)
+            for digest in replaced:
+                forget_cached_key_hash(digest)
             return(new_token)
 
         else:
@@ -712,7 +710,8 @@ def reject_hub_api_key_read(principal: Principal) -> None:
 
 def has_active_api_key(user_id: int, engine) -> bool:
     with Session(engine) as session:
-        return session.exec(select(ApiKey.id).where(ApiKey.user_id == user_id, active_key())).first() is not None
+        key = newest_key(session, user_id)
+        return key is not None and status_of(key) == "active"
 
 
 def require_self_or_platform_admin(principal: Principal, user) -> None:

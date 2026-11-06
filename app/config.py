@@ -13,8 +13,10 @@ from app.utils.multipart_config import MultipartStorageConfig
 
 DEFAULT_SECRETS_DIR = "/run/secrets"
 _SECRET_VERSION = re.compile(r"projects/[A-Za-z0-9_-]+/secrets/[A-Za-z0-9_-]+/versions/(?:[1-9][0-9]*|latest)")
-_KEYED_SECRET = re.compile(r"(?:OIDC|OAUTH)_[A-Z][A-Z0-9]*_CLIENT_SECRET")
+_KEYED_SECRET = re.compile(r"(?:OIDC|OAUTH)_[A-Z][A-Z0-9]*_CLIENT_SECRET|CRUCIBLE_AUTH_PREVIOUS_PEPPER_[A-Z0-9]+")
 MIN_CLIENT_SECRET_LENGTH = 32
+# OWASP Password Storage Cheat Sheet: Argon2id configurations of equal strength, as (memory KiB, iterations).
+ARGON2_FLOOR = ((47104, 1), (19456, 2), (12288, 3), (9216, 4), (7168, 5))
 ORCID_ISSUERS = frozenset({"https://orcid.org", "https://sandbox.orcid.org"})
 _loaded_env_files: set[str] = set()
 _fetched_secrets: dict[str, str] = {}
@@ -293,6 +295,14 @@ class AuthSettings(SettingsGroup):
     clients: list[OAuthClient] = Field(default_factory=list)
     identity_lookup: bool = False
     event_retention_days: int = Field(365, ge=1, description="Days the sign-in history is kept before the cleanup job removes it.")
+    password_enabled: bool = False
+    password_min_length: int = Field(15, ge=12, le=64, description="NIST SP 800-63B-4 asks 15 for single-factor passwords; 12 is the lowest allowed, for deployments that accept that trade-off.")
+    argon2_memory_kib: int = Field(65536, ge=7168)
+    argon2_time_cost: int = Field(3, ge=1)
+    argon2_parallelism: int = Field(1, ge=1, le=16)
+    pepper: SecretStr | None = None
+    pepper_id: str | None = Field(None, pattern=r"^[a-z0-9]{1,32}$")
+    previous_pepper_ids: list[str] = Field(default_factory=list)
 
     @field_validator("providers", "clients", mode="before")
     @classmethod
@@ -315,6 +325,30 @@ class AuthSettings(SettingsGroup):
         if sum(provider.legacy_callback for provider in value) > 1:
             raise ValueError("lists more than one provider with legacy_callback")
         return value
+
+    @field_validator("previous_pepper_ids", mode="before")
+    @classmethod
+    def comma_separated(cls, value):
+        return [item.strip() for item in value.split(",") if item.strip()] if isinstance(value, str) else value
+
+    @field_validator("previous_pepper_ids")
+    @classmethod
+    def pepper_ids_are_names(cls, value: list[str]) -> list[str]:
+        if not all(re.fullmatch(r"[a-z0-9]{1,32}", item) for item in value) or len(value) != len(set(value)):
+            raise ValueError("must be distinct lowercase letters and digits, at most 32 each")
+        return value
+
+    @model_validator(mode="after")
+    def argon2_meets_the_owasp_floor(self) -> "AuthSettings":
+        if not any(self.argon2_memory_kib >= memory and self.argon2_time_cost >= iterations for memory, iterations in ARGON2_FLOOR):
+            raise ValueError("CRUCIBLE_AUTH_ARGON2_MEMORY_KIB and CRUCIBLE_AUTH_ARGON2_TIME_COST are below OWASP's Argon2id floor (for example 19456 KiB with 2 iterations)")
+        if self.pepper_id is not None and self.pepper_id in self.previous_pepper_ids:
+            raise ValueError("CRUCIBLE_AUTH_PEPPER_ID is also listed in CRUCIBLE_AUTH_PREVIOUS_PEPPER_IDS")
+        return self
+
+    @property
+    def previous_pepper_names(self) -> list[str]:
+        return [f"CRUCIBLE_AUTH_PREVIOUS_PEPPER_{item.upper()}" for item in self.previous_pepper_ids]
 
     @field_validator("clients")
     @classmethod
@@ -344,6 +378,9 @@ class AuthSettings(SettingsGroup):
                 found.append(name)
         if self.clients and not self.providers:
             found.append("CRUCIBLE_AUTH_PROVIDERS")
+        if self.password_enabled:
+            found += self.missing("pepper", "pepper_id")
+            found += [name for name in self.previous_pepper_names if configured_secret(name) is None and optional_env(f"{name}_VERSION") is None]
         return found
 
 
@@ -462,7 +499,7 @@ _SECRETS: dict[str, tuple[str, str]] = {
     if info.annotation == SecretStr | None
 }
 # Sent verbatim in HTTP Basic credentials and ORCID token requests, where a stray newline breaks every sign-in.
-_SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"})
+_SINGLE_LINE_SECRETS = frozenset({"HUB_AUTH_CLIENT_SECRET", "CRUCIBLE_AUTH_PEPPER", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"})
 _FEATURES = {"ingestion": "ingestion", "printing": "printing", "proposal_sync": "proposals"}
 
 
@@ -515,6 +552,9 @@ def get_settings() -> Settings:
             groups[name] = group(_secrets_dir=secrets_dir)
         except ValidationError as error:
             for issue in error.errors():
+                if not issue["loc"]:
+                    problems.append(issue["msg"].removeprefix("Value error, "))
+                    continue
                 location = str(issue["loc"][0])
                 label = group.env_name(location) if location in group.model_fields else location.upper()
                 detail = "".join(f".{step}" for step in issue["loc"][1:])
@@ -528,7 +568,7 @@ def get_settings() -> Settings:
 
 def _keyed_secret_names() -> list[str]:
     auth = get_settings().auth
-    return [provider.secret_name for provider in auth.providers] + [client.secret_name for client in auth.clients]
+    return [provider.secret_name for provider in auth.providers] + [client.secret_name for client in auth.clients] + auth.previous_pepper_names
 
 
 def configured_secret(name: str) -> str | None:
@@ -580,7 +620,7 @@ def get_secret(name: str) -> str:
         value = _fetched_secrets[version]
     if (name in _SINGLE_LINE_SECRETS or _KEYED_SECRET.fullmatch(name)) and not (value.isascii() and value.isprintable()):
         raise ConfigurationError(f"{name} must be one line of printable ASCII")
-    if (name == "HUB_AUTH_CLIENT_SECRET" or name.startswith("OAUTH_")) and len(value) < MIN_CLIENT_SECRET_LENGTH:
+    if (name == "HUB_AUTH_CLIENT_SECRET" or name.startswith(("OAUTH_", "CRUCIBLE_AUTH_PEPPER", "CRUCIBLE_AUTH_PREVIOUS_PEPPER_"))) and len(value) < MIN_CLIENT_SECRET_LENGTH:
         raise ConfigurationError(f"{name} must be at least {MIN_CLIENT_SECRET_LENGTH} characters")
     return value
 

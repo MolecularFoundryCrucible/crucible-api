@@ -14,6 +14,14 @@ The routes use exact configured callbacks, OIDC validation, a one-use PKCE-bound
 - The Hub client secret is shared only with the Hub server; the Hub never needs the ORCID client secret. Keep local environment files at mode `600`.
 - `HUB_AUTH_CALLBACK_URI` must match the Hub's callback exactly; no wildcards. Register the API's `<public API URL>/auth/hub/callback` with ORCID.
 
+## Passwords
+
+Passwords are meant for small local deployments; institutions should sign people in through their own provider (OIDC). Nothing uses them yet: `CRUCIBLE_AUTH_PASSWORD_ENABLED` stays off until the sign-in form exists.
+
+- Storage: Argon2id through `pwdlib`, in `local_credential`, apart from the user table. The password is NFC-normalized, then HMAC-SHA256 with the pepper and base64-encoded, then hashed. `CRUCIBLE_AUTH_ARGON2_MEMORY_KIB`, `_TIME_COST` and `_PARALLELISM` default to 64 MiB, 3 and 1; the server refuses settings below OWASP's floor (19 MiB with 2 iterations, or an equal pair). A hash made with older settings is replaced at the next successful sign-in.
+- Pepper: `CRUCIBLE_AUTH_PEPPER`, a secret of at least 32 characters given like any other, named by `CRUCIBLE_AUTH_PEPPER_ID`. With passwords on, the server refuses to start without both. Back it up apart from database backups: a database leak alone then reveals nothing usable, but losing the pepper invalidates every password (API keys keep working, and an administrator can issue new links). To rotate, give a new pepper and ID, list the old ID in `CRUCIBLE_AUTH_PREVIOUS_PEPPER_IDS`, and keep its secret as `CRUCIBLE_AUTH_PREVIOUS_PEPPER_<ID>` until everyone has signed in again.
+- Rules: at least `CRUCIBLE_AUTH_PASSWORD_MIN_LENGTH` characters (15 by default, as NIST SP 800-63B-4 asks for single-factor passwords; 12 at the lowest), at most 256, counted in Unicode code points. No rules about character kinds. A password matching a list of about 30,000 common ones (from SecLists, `app/auth/data/blocked_passwords.txt`, rebuilt by `scripts/build_password_blocklist.py`), or the person's username, email or names, is refused with the reason.
+
 ## The client list
 
 Every field is required, and an unknown field stops the server at startup. A client's secret is `OAUTH_{KEY}_CLIENT_SECRET`, given like any other secret. Client secrets, including the older `HUB_AUTH_CLIENT_SECRET`, must be at least 32 characters, or the server refuses to start; `openssl rand -hex 32` gives 64.

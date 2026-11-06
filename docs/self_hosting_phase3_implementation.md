@@ -423,6 +423,10 @@ Three pull requests, each deployable alone:
 
 Agreed in direction with the user, 2026-11-06: the Hub is optional, and the API signs people in for any registered client (the Hub, nano-crucible's CLI, others), built on Authlib's authorization server parts. Design, steps and open questions: `docs/self_hosting_sign_in_clients_design.md`. Comes after Task 9 step 2 and before Task 12, so the password form is built once, on the generic sign-in page. Each step is proposed before it is built.
 
+## Order from 2026-11-06
+
+Decided with the user: Task 9b steps 1 to 3 are built (#452, #454, #455, #456). The CLI sign-in waits: Tasks 10, 11 and 12 come first, then Task 9b steps 4 (public clients with loopback redirects) and 5 (device flow), which reuse Task 11's attempt limits and Task 12's sign-in page, then Task 13, then Task 14, which reviews all of it, CLI sign-in included. Key hashing steps 3 and 4 still wait only for a nano-crucible release that uses `/account/apikeys`.
+
 ## Task 10: Password hashing and rules
 
 No routes yet.

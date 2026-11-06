@@ -330,6 +330,8 @@ Agreed with the user, 2026-11-05, after a review of current practice (OWASP Auth
 - [ ] **Step 4: Run the full suite, commit, PR.**
 - [ ] **Step 5: Ask the Hub session** for the sign-in methods page, the confirmation page under `/hub/account/`, and `/hub/auth/link/callback`, sending it the OpenAPI diff. Add that path to `HUB_AUTH_CALLBACK_URI` in the bundle and through the deployment session. The user merges both sides.
 
+Decided by the user, 2026-11-06: administrators do not add logins to accounts. `POST /users/{user_ref}/identities` (#439) is removed, because a login added to someone's account lets its holder sign in as them, which no admin power should include, and OWASP asks for the owner's own session before a login is added. People add logins themselves by linking. Onboarding with a provider is `approval` registration (the person proves the login by signing in, the administrator approves), and creating a person with their ORCID (`POST /users`, `admin create --orcid`) stays. Administrators keep listing and removing a person's logins, and `identity move` stays for operators, since it moves only a login the person already proved.
+
 ## Task 6b: Protect human administrators from API keys
 
 Changes from the security review, section 2.1: refuse for any human administrator target, including the key's own account, since otherwise a leaked admin key can issue itself a reset link. Also cover `PATCH /users/{user_ref}` (username and email) and `DELETE /users/{user}/password`. A stale Hub session on these routes must sign in again.

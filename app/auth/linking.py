@@ -230,7 +230,7 @@ def confirm_link(engine, code: str, verifier: str, client_id: str, callback_uri:
                 if grant.label:
                     identity.label = grant.label
                 session.add(identity)
-                record_event(session, AuthEventType.IDENTITY_LINKED, user=user, actor=user, issuer=grant.issuer)
+                record_event(session, AuthEventType.IDENTITY_LINKED, user=user, actor=user, issuer=grant.issuer, client_id=grant.client_id)
                 session.flush()
                 session.expunge(identity)
                 return identity

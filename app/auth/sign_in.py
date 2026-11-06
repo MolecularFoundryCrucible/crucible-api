@@ -46,7 +46,7 @@ def _existing_person(session: Session, issuer: str, subject: str) -> User | None
     return None
 
 
-def resolve_sign_in(session: Session, issuer: str, subject: str, given_name: str | None, family_name: str | None, *, registration: str, required_user: str | None = None) -> User:
+def resolve_sign_in(session: Session, issuer: str, subject: str, given_name: str | None, family_name: str | None, *, registration: str, required_user: str | None = None, client_id: str | None = None) -> User:
     """The one answer to "who is this person", for every sign-in path. Matches only the exact issuer
     and subject, never email, username or name. Raises SignInRefused. Runs in the caller's transaction.
     `registration` is the provider's rule for someone new: `closed` refuses them, `approval` creates
@@ -83,9 +83,9 @@ def resolve_sign_in(session: Session, issuer: str, subject: str, given_name: str
     session.add(user)
     if user.pending_at is not None:
         if registered:
-            record_event(session, AuthEventType.REGISTERED, user=user, issuer=issuer)
+            record_event(session, AuthEventType.REGISTERED, user=user, issuer=issuer, client_id=client_id)
         return user
-    record_event(session, AuthEventType.SIGN_IN, user=user, issuer=issuer)
+    record_event(session, AuthEventType.SIGN_IN, user=user, issuer=issuer, client_id=client_id)
     return user
 
 

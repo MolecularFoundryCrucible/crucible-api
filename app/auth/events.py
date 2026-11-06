@@ -29,7 +29,7 @@ class AuthEventType(str, Enum):
     ENABLED = "enabled"
 
 
-def record_event(session: Session, event: AuthEventType, *, user: User | None = None, actor: User | None = None, issuer: str | None = None, client_address: str | None = None) -> None:
+def record_event(session: Session, event: AuthEventType, *, user: User | None = None, actor: User | None = None, issuer: str | None = None, client_address: str | None = None, client_id: str | None = None) -> None:
     """Add to the sign-in history in the caller's transaction. The parameters allow no free text,
     so a password or token cannot reach this table."""
     session.add(AuthEvent(
@@ -39,5 +39,6 @@ def record_event(session: Session, event: AuthEventType, *, user: User | None = 
         actor_user_id=actor.id if actor is not None else None,
         issuer=issuer,
         client_address=client_address,
+        client_id=client_id,
     ))
     logger.info("auth event %s user_id=%s actor_user_id=%s", event.value, user.id if user is not None else None, actor.id if actor is not None else None)

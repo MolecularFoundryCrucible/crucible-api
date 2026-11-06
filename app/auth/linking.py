@@ -262,7 +262,7 @@ def holdings(session: Session, user: User) -> list[str]:
     from sqlalchemy import func
 
     from app.models.core_models import (
-        AccessGroupJoinRequest, ApiToken, Dataset, DeletionRequest, Instrument, PostprocessingRun, Project, ResourceACL, Sample, UploadSession,
+        AccessGroupJoinRequest, ApiKey, ApiToken, Dataset, DeletionRequest, Instrument, PostprocessingRun, Project, ResourceACL, Sample, UploadSession,
         UserAccessGroupLink,
     )
     from app.utils.user_utils import identity_group_of
@@ -276,7 +276,7 @@ def holdings(session: Session, user: User) -> list[str]:
         ("projects led", select(func.count()).select_from(Project).where(Project.lead_user_id == user.id)),
         ("group memberships", select(func.count()).select_from(UserAccessGroupLink).where(UserAccessGroupLink.user_id == user.id, UserAccessGroupLink.accessgroup_id != own_group_id)),
         ("access grants", select(func.count()).select_from(ResourceACL).where(ResourceACL.accessgroup_id == own_group_id)),
-        ("used API keys", select(func.count()).select_from(ApiToken).where(ApiToken.user_id == user.id, ApiToken.last_used_at != None)),  # noqa: E711
+        ("used API keys", select(func.count()).select_from(ApiKey).where(ApiKey.user_id == user.id, ApiKey.last_used_at != None)),  # noqa: E711
         ("join requests", select(func.count()).select_from(AccessGroupJoinRequest).where(AccessGroupJoinRequest.requester_user_id == user.id)),
         ("deletion requests", select(func.count()).select_from(DeletionRequest).where(DeletionRequest.requester_user_id == user.id)),
         ("postprocessing runs", select(func.count()).select_from(PostprocessingRun).where(PostprocessingRun.requested_by_user_id == user.id)),
@@ -288,6 +288,8 @@ def holdings(session: Session, user: User) -> list[str]:
         count = session.exec(query).one()
         if name == "other logins":
             count -= 1
+        if name == "used API keys":
+            count = max(count, session.exec(select(func.count()).select_from(ApiToken).where(ApiToken.user_id == user.id, ApiToken.last_used_at != None)).one())  # noqa: E711
         if count:
             reasons.append(f"{count} {name}")
     return reasons

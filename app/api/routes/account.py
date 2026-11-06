@@ -1,4 +1,4 @@
-from datetime import date, timedelta, datetime, timezone
+from datetime import timedelta, datetime, timezone
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, Response
@@ -36,6 +36,7 @@ from app.utils.permissions import (
 )
 from app.api.errors import feature_disabled_response
 from app.config import require_feature
+from app.auth.api_keys import find_api_key, key_status, newest_key
 from app.auth.identity import linked_orcid
 from app.services.proposals import ProposalServiceUnavailable, assign_discovered_projects, lookup_proposals
 from app.utils.user_utils import assert_profile_fields_available, assert_self_chosen_username_allowed, commit_user
@@ -176,12 +177,13 @@ def get_account_apikey(
         return ApiKeyRead(api_key=token.token)
 
 
-@router.post("/account/apikey/regenerate", response_model=ApiKeyRead, responses={401: {"description": "Hub sessions need an ORCID sign-in within the last 10 minutes (`insufficient_user_authentication`, RFC 9470 challenge)"}})
+@router.post("/account/apikey/regenerate", response_model=ApiKeyRead, deprecated=True, responses={401: {"description": "Hub sessions need an ORCID sign-in within the last 10 minutes (`insufficient_user_authentication`, RFC 9470 challenge)"}})
 def regenerate_account_apikey(
     auth_res: Annotated[Principal, Depends(authorize_user)],
     response: Response,
 ):
-    """Issue a new API key for the caller and revoke the previous one. The key is returned only once."""
+    """Replace the key the single-key routes show (`older_routes` in GET /account/apikeys) and return the new one once.
+    Deprecated: create keys with POST /account/apikeys and revoke them with DELETE /account/apikeys/{key_id}."""
     require_recent_authentication(auth_res)
     response.headers["Cache-Control"] = "no-store"
     return ApiKeyRead(api_key=find_or_add_api_access(auth_res.internal_user_id, get_engine(), regenerate=True))
@@ -199,23 +201,13 @@ def verify_account_apikey(
     """
     with Session(get_engine()) as session:
         if auth_res.credential == "hub":
-            token = session.exec(
-                select(ApiToken).where(is_caller(ApiToken.user_id, auth_res))
-                .order_by(ApiToken.token_created.desc())
-            ).first()
+            key = newest_key(session, auth_res.internal_user_id) if auth_res.internal_user_id is not None else None
         else:
-            token = session.get(ApiToken, credentials.credentials)
-        if token is None:
+            key = find_api_key(session, credentials.credentials)
+        if key is None:
             raise HTTPException(status_code=404, detail="No API key found")
-
-        created = date.fromisoformat(str(token.token_created)[:10])
-        expires = created + timedelta(days=365)
-        return ApiKeyVerify(
-            valid=date.today() < expires,
-            created_at=created.isoformat(),
-            expires_at=expires.isoformat(),
-            last_used_at=token.last_used_at,
-        )
+        status = key_status(key)
+        return ApiKeyVerify(valid=status.valid, created_at=status.created_at, expires_at=status.expires_at, last_used_at=status.last_used_at)
 
 
 def _merge_patch(target, patch):

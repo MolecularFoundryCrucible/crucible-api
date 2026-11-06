@@ -3,10 +3,10 @@ from datetime import date, timedelta
 import pytest
 from sqlmodel import Session
 
-from app.models.core_models import ApiToken, User
+from app.models.core_models import User
 from app.utils.auth_utils import authenticate_user
 from app.utils.permissions import Principal
-from tests.people import internal_id
+from tests.people import add_old_style_key, internal_id
 
 ME = "0000-0008-0000-0001"
 OLD_KEY, NEW_KEY = "o" * 64, "n" * 64
@@ -22,7 +22,7 @@ def account(client, db_engine, auth_as):
 
 def add_key(db_engine, token, created):
     with Session(db_engine) as session:
-        session.add(ApiToken(token=token, user_id=internal_id(session, ME), user_unique_id=ME, access_group_id=ME, token_created=created.isoformat()))
+        add_old_style_key(session, internal_id(session, ME), token, created.isoformat())
         session.commit()
 
 

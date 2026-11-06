@@ -5,8 +5,8 @@ from sqlmodel import Session, select
 
 from app.models.core_models import ApiToken, Project, User
 from app.models.query_params import UserListQuery
-from app.utils.permissions import PlatformRole, Role
-from tests.people import internal_id
+from app.utils.permissions import PlatformRole
+from tests.people import internal_id, add_old_style_key
 
 PERSON = "0000-0001-2345-6789"
 OTHER = "0000-0002-3456-7890"
@@ -52,13 +52,7 @@ def _seed(db_engine):
                 platform_role=PlatformRole.ADMIN.value,
             ),
         ])
-        session.add(ApiToken(
-            access_group_id=PERSON,
-            user_id=internal_id(session, PERSON),
-            user_unique_id=PERSON,
-            token="alice-secret-token",
-            token_created="2026-09-16",
-        ))
+        add_old_style_key(session, internal_id(session, PERSON), "alice-secret-token", "2026-09-16")
         session.commit()
 
 

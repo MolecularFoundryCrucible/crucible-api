@@ -12,6 +12,11 @@ guard off for installations without a separate production database.
 `python -m app.cli db upgrade` passes its own connection in
 config.attributes["connection"]; otherwise get_engine() is used.
 
+Each migration commits on its own, and waits at most ALEMBIC_LOCK_TIMEOUT (5s by default, 0 to
+wait forever) for a table lock, so a migration queued behind a long transaction from a running
+pod fails instead of blocking every query on that table behind it. A failed run keeps the
+migrations before it; run the upgrade again.
+
 Usage:
     DB_CONF_FILE=.env alembic revision --autogenerate -m "add a column"
     DB_CONF_FILE=.env alembic upgrade head
@@ -62,14 +67,23 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        transaction_per_migration=True,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
+def _limit_lock_waits(connection) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+    connection.execute(text("SELECT set_config('lock_timeout', :value, false)"), {"value": os.getenv("ALEMBIC_LOCK_TIMEOUT", "5s")})
+    connection.commit()
+
+
 def _run_migrations(connection) -> None:
     _refuse_if_unguarded_production(connection)
-    context.configure(connection=connection, target_metadata=target_metadata)
+    _limit_lock_waits(connection)
+    context.configure(connection=connection, target_metadata=target_metadata, transaction_per_migration=True)
     with context.begin_transaction():
         context.run_migrations()
 

@@ -377,6 +377,13 @@ Decided by the user on 2026-11-02:
 12. An API key can still regenerate itself for now. Revisit when keys gain scopes.
 13. For this phase, the Hub stays a backend-for-frontend, the pattern RFC 10017 ranks most secure, and talks to the API through first-party OAuth 2.0 with PKCE, documented as that and not as OIDC. This is the current state, not a rule: the goal is to unify the Hub-to-API link and upstream sign-in on OIDC when that becomes practical, for example if a maintained OIDC provider library supports FastAPI, or an outside app needs one. New work should not make that harder. Authlib's provider support currently covers only Flask and Django.
 
+Decided by the user on 2026-11-06, after the overnight review:
+
+14. The Hub is not a core part of Crucible: a deployment must work without it. The API signs people in for any registered client, built on Authlib's authorization server parts, following RFC 9700 and the device grant (RFC 8628) for the CLI. This replaces the stance in decision 13; design in `docs/self_hosting_sign_in_clients_design.md`.
+15. Sending and verifying email is not part of this phase.
+16. Step E must not take away anyone's access; its backfill links every account's logins first.
+17. API keys have names; older keys get the generic name "Default key". Keys are created and revoked one by one; single-key regenerate is deprecated and replaces only the key the older routes show.
+
 ## Left to the builder
 
 Exact Argon2id parameters above the floor, the source and size of the blocklist, the per-address limit, the device cookie's lifetime and limit, settings names, and how the bundle gives the API a way to reach a provider at its public address, which the Authentik test showed matters because its issuer follows the address used to reach it.

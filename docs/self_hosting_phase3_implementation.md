@@ -230,6 +230,8 @@ ORCID input, built in #426, is partly temporary. Accepting an ORCID in `owner_id
 
 Built, 2026-11-05, as agreed with the user step by step. PR A (#427): `Principal.internal_user_id` carries `user.id`, self checks use it, and identity groups are found through the owner membership link, so their names are only labels. B1 (#429): API keys, Hub token families and Hub login codes. B2 (#431): project lead and join requests. B3 (#432): deletion requests and the deletion audit, whose text stays as history; responses show the current `unique_id` for linked rows and the stored text otherwise. B4a (#433): instrument owners, upload session owners and postprocessing requesters. Each adds nullable `user_id`-style columns filled from the text, with temporary Postgres triggers for pods from before the change (insert and, where a row changes owner or reviewer, update), writes both columns, and reads the new ones. `Principal.has_user_id` and `is_caller` make ownership checks match nothing for a caller without an internal ID. The text columns referencing `user.orcid` by foreign key (API keys, Hub tokens and codes, project lead, join requests, postprocessing runs) have no `ON UPDATE`, so they must be dropped in D before the rewrite in E can change anyone's `unique_id`. Still to build: B4b (dataset and sample owners, with the production fill), C, D, E.
 
+Decided by the user, 2026-11-06: E must not take away anyone's access. Before it rewrites any `unique_id`, its backfill links every account's logins, so no ORCID that works today is left unlinked, whatever the registration mode.
+
 Decision, 2026-11-05 (my call, accepted by the user): `PostprocessingRunRead.requested_by` and the queue message keep the stored `requested_by` text, a record of who asked at the time, instead of the requester's current `unique_id`. Mapping it through the user row would touch four routes and `start_postprocessing_run`, which the ingestion side shares, and nothing reads the value for a decision; idempotency already uses `requested_by_user_id`. After the rewrite, runs requested before it show the old ID. Revisit when D drops the text column: then the response needs either the user row or a stored copy.
 
 Also decided in B4a: instruments whose `owner` matches no user's `unique_id` exactly (39 of 80 on production: `undefined`, free text, one email) get no `owner_user_id` and show no owner; the free-text `owner` filter now matches only people. Their old values must be saved to a file before D drops `instrument.owner`, so the user can assign owners by hand.
@@ -394,6 +396,8 @@ Agreed with the user, 2026-11-06: steps 1 and 2 now, steps 3 and 4 after a nano-
 
 Where keys are created today (checked 2026-11-06): never at sign-in or registration, including the Hub and accounts waiting for approval. On request: `/auth/apikey`, `POST /account/apikey/regenerate`, `POST /users/{user_ref}/apikey` and `/regenerate`, service account creation and rotation, and `admin create`, which prints it. The one leftover is `POST /users` (`app/api/routes/users.py`, the `find_or_add_api_access` after creating the person): it creates a key that no response returns, readable only through the read-back that hashing removes. Step 2 stops it, with the test `test_post_users_creates_no_key`.
 
+After the overnight review of 2026-11-06, agreed with the user: regenerate replaces only the key the older single-key routes show, never named keys, and needs no Hub session; `POST /account/apikey/regenerate` and `POST /users/{user_ref}/apikey/regenerate` are deprecated in favor of creating and revoking keys one by one. Keys from the older routes, and the backfill, get the generic name "Default key"; `PATCH /account/apikeys/{id}` renames a key, and listed keys carry `older_routes`. Status displays (`api_key_status`, `/account/verify`, the user list) count a key still only in `apitoken`, and describe a working key before an expired one.
+
 Clients first. Do not start until Task 2 has the answers and any client release has shipped; the user sets the date.
 
 **Files:**
@@ -414,6 +418,10 @@ Three pull requests, each deployable alone:
 - [ ] **Step 3: Stop showing keys again.** Only after the agreed client release. `/auth/apikey` and `/user_apikey` stay, and offer "create a new key" by POST, which adds a key and never replaces one; `GET /account/apikey` answers 404 with instructions in `detail`. Tests: `test_apikey_page_never_shows_an_existing_key`, `test_post_adds_a_key_and_shows_it_once`, `test_post_leaves_existing_keys_working`, `test_account_apikey_is_404_with_instructions`, `test_email_prompt_page_still_works`.
 - [ ] **Step 4: Contract.** A later release, with the user's approval: drop `apitoken`. Update the backup note at `README.md:259`, since backups no longer contain usable keys.
 - [ ] **Step 5: crucible-tests on staging at each step, then a production check** through the deployment session.
+
+## Task 9b: Sign-in for any client
+
+Agreed in direction with the user, 2026-11-06: the Hub is optional, and the API signs people in for any registered client (the Hub, nano-crucible's CLI, others), built on Authlib's authorization server parts. Design, steps and open questions: `docs/self_hosting_sign_in_clients_design.md`. Comes after Task 9 step 2 and before Task 12, so the password form is built once, on the generic sign-in page. Each step is proposed before it is built.
 
 ## Task 10: Password hashing and rules
 

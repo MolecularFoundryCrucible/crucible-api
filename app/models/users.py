@@ -75,6 +75,7 @@ class UserRead(SQLModel):
     user_capabilities: Optional[UserCapabilities] = None
     api_key_status: Optional[ServiceAccountKeyStatus] = None
     disabled_at: Optional[UtcDatetime] = Field(default=None, description="When an administrator switched this account off; empty for an active account.")
+    pending_at: Optional[UtcDatetime] = Field(default=None, description="When this account was created waiting for an administrator's approval; empty once approved. Only administrators see waiting accounts.")
     last_active_at: Optional[UtcDatetime] = Field(default=None, description="Last authenticated request, recorded at most hourly. Returned to platform administrators and to the user themselves.")
 
 

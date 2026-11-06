@@ -29,7 +29,7 @@ from app.utils.permissions import (
     effective_role, has_global_permission, has_permission,
     resolve_authorization_context)
 from sqlmodel import Session, select
-from sqlalchemy.sql import and_
+from sqlalchemy.sql import and_, or_
 from datetime import date, timedelta
 
 # ====== Constants
@@ -245,7 +245,7 @@ def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
         raise HTTPException(status_code=401, detail="Invalid or expired API key.")
 
     with Session(engine) as session:
-        if session.exec(select(User.disabled_at).where(User.id == api_acct.user_id)).first() is not None:
+        if session.exec(select(User.id).where(User.id == api_acct.user_id, or_(User.disabled_at != None, User.pending_at != None))).first() is not None:  # noqa: E711
             raise HTTPException(status_code=401, detail="Invalid or expired API key.")
         result = load_principal(session, api_acct.user_id)
 

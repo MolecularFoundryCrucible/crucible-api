@@ -9,7 +9,7 @@ from urllib.parse import urlencode, urlparse
 from sqlmodel import Session, select
 
 from app.auth.identity import retry_after_concurrent_first_write
-from app.auth.sign_in import WRONG_USER, SignInRefused, record_refused_sign_in, resolve_sign_in
+from app.auth.sign_in import WRONG_USER, AccountPending, SignInRefused, record_refused_sign_in, resolve_sign_in
 from app.config import ConfigurationError, OidcProvider, get_settings, optional_secret
 from app.models.core_models import HubLoginCode, HubLoginTransaction
 from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens_in_session
@@ -155,9 +155,15 @@ def create_handoff_code(engine, transaction: HubLoginTransaction, provider: Oidc
     current = _now(now)
     code = secrets.token_urlsafe(48)
 
+    pending = []
+
     def write() -> None:
+        pending.clear()
         with Session(engine) as session, session.begin():
-            user = resolve_sign_in(session, provider.issuer, subject, given_name, family_name, required_user=transaction.required_user)
+            user = resolve_sign_in(session, provider.issuer, subject, given_name, family_name, registration=provider.registration, required_user=transaction.required_user)
+            if user.pending_at is not None:
+                pending.append(True)
+                return
             session.add(HubLoginCode(
                 code_hash=_digest(code),
                 user_id=user.id,
@@ -175,6 +181,8 @@ def create_handoff_code(engine, transaction: HubLoginTransaction, provider: Oidc
     except SignInRefused as refused:
         record_refused_sign_in(engine, provider.issuer)
         raise HubLoginRefused("login_required" if refused.reason == WRONG_USER else "access_denied") from None
+    if pending:
+        raise AccountPending
     return code, f"{transaction.callback_uri}?{urlencode({'code': code, 'state': transaction.hub_state})}"
 
 

@@ -269,6 +269,7 @@ class User(SQLModel, table=True):
     platform_role: Optional[str] = Field(default="none")
     last_active_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), index=True))
     disabled_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    pending_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     accessgroups: List["AccessGroup"] = Relationship(back_populates="users", link_model=UserAccessGroupLink)
     orcid_identity: Optional["UserIdentity"] = Relationship(sa_relationship_kwargs={
         "primaryjoin": f"and_(User.id == foreign(UserIdentity.user_id), UserIdentity.issuer.in_({sorted(ORCID_ISSUERS)!r}))",

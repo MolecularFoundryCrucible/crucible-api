@@ -881,6 +881,10 @@ class UserListQuery(BaseModel):
         default=None,
         description="Restrict results to service accounts or human users.",
     )
+    pending: bool = Field(
+        default=False,
+        description="List only accounts waiting for approval instead of active ones. Platform administrators only.",
+    )
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     q: Optional[str] = Field(

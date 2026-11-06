@@ -37,9 +37,13 @@ def person(db_engine, unique_id=MFID, issuer=None, subject=None, **fields):
     return unique_id
 
 
+def registration_of(issuer):
+    return LAB_ENTRY["registration"] if issuer == LAB_ISSUER else "open"
+
+
 def sign_in(db_engine, issuer, subject, **options):
     with Session(db_engine) as session, session.begin():
-        return resolve_sign_in(session, issuer, subject, "Ada", "Lovelace", **options).unique_id
+        return resolve_sign_in(session, issuer, subject, "Ada", "Lovelace", **{"registration": registration_of(issuer), **options}).unique_id
 
 
 def refused(db_engine, issuer, subject, **options):

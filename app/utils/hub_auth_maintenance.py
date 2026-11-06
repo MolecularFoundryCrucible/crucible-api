@@ -44,4 +44,7 @@ def cleanup_hub_auth(engine, *, commit: bool = False, batch_size: int = 1000, no
         counts[HubTokenFamily.__tablename__] = len(families)
         if commit and families:
             session.execute(delete(HubTokenFamily).where(HubTokenFamily.id.in_(families)))
+    from app.auth.registration import expire_pending_users
+
+    counts["pending_users"] = expire_pending_users(engine, commit=commit, batch_size=batch_size, now=now)
     return counts

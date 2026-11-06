@@ -17,6 +17,7 @@ from app.api.dependencies import get_api_root_path
 from app.auth.providers import TOKEN_FAILURES, IssuerMismatch, ProviderUnavailable, authorization_url, check_response_issuer, new_code_verifier, verified_identity
 from app.config import ConfigurationError, OidcProvider, get_settings, optional_secret
 from app.models.core_models import HubLoginTransaction
+from app.auth.sign_in import AccountPending
 from app.utils.hub_login import (
     HubLoginRefused, HubLoginUnavailable, InvalidHubLogin, check_login_request, consume_login, create_handoff_code,
     create_login, exchange_handoff_code, hub_auth_enabled, hub_error_destination, load_login_config,
@@ -109,6 +110,15 @@ def _browser_headers(response: Response) -> Response:
 
 def _hub_error(callback_uri: str, hub_state: str, error: str) -> Response:
     return _browser_headers(RedirectResponse(hub_error_destination(callback_uri, hub_state, error), status_code=302))
+
+
+def pending_page(request: Request) -> Response:
+    """Shown only after a valid provider sign-in, so it reveals nothing to someone who has not proved who they are."""
+    nonce = secrets.token_urlsafe(16)
+    response = _templates.TemplateResponse(request, "hub_account_pending.html", {"style_nonce": nonce}, status_code=403)
+    response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    response.headers["X-Frame-Options"] = "DENY"
+    return _browser_headers(response)
 
 
 def _chooser(request: Request, listed: list[OidcProvider], hub_request: dict[str, str | int | None]) -> Response:
@@ -207,6 +217,8 @@ async def _finish_sign_in(request: Request, engine, served_by, code: str | None,
             else:
                 _, destination = await run_in_threadpool(create_handoff_code, engine, transaction, provider, identity.subject, identity.given_name, identity.family_name, auth_time=identity.auth_time)
             response = _browser_headers(RedirectResponse(destination, status_code=302))
+        except AccountPending:
+            response = pending_page(request)
         except HubLoginRefused as refused:
             logger.warning("Hub sign-in refused: %s", refused.error)
             response = _hub_error(transaction.callback_uri, transaction.hub_state, refused.error)

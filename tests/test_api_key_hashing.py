@@ -111,3 +111,17 @@ def test_rejected_waiting_account_takes_its_hashed_keys_with_it(db_engine, ada):
         reject_pending_user(session, session.get(User, ada), actor=None)
         session.commit()
     assert keys(db_engine) == []
+
+
+def test_backfill_names_copies_and_earlier_unnamed_rows(db_engine, ada, capsys):
+    from app.auth.api_keys import store_key
+
+    with Session(db_engine) as session:
+        session.add(ApiToken(token="d" * 64, user_id=ada, user_unique_id=ADA, access_group_id=ADA, token_created="2026-06-01"))
+        store_key(session, ada, "e" * 64)
+        session.commit()
+    script = backfill()
+    assert script.main([]) == 0 and {row.name for row in keys(db_engine)} == {None}
+    assert script.main(["--commit"]) == 0
+    assert [row.name for row in keys(db_engine)] == ["Default key", "Default key"]
+    assert "unnamed given a name: 1" in capsys.readouterr().out.splitlines()[-1]

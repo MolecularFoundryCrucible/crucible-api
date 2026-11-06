@@ -35,3 +35,13 @@ def user_id_or_none(session: Session, unique_id) -> int | None:
     if unique_id is None:
         return None
     return session.exec(select(User.id).where(User.unique_id == unique_id)).first()
+
+
+def add_old_style_key(session: Session, user_id, token: str, token_created: str, **fields):
+    """A key as both tables hold it after the backfill: plain in apitoken, hashed in api_key."""
+    from app.auth.api_keys import created_at_of, store_key
+    from app.models.core_models import ApiToken
+
+    owner = session.get(User, user_id)
+    session.add(ApiToken(token=token, user_id=user_id, user_unique_id=owner.unique_id, access_group_id=owner.unique_id, token_created=token_created, **fields))
+    return store_key(session, user_id, token, created_at=created_at_of(token_created))

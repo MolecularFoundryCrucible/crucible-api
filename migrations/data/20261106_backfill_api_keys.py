@@ -1,6 +1,7 @@
 """
 Copy every API key into api_key as its hash, with expires_at one year after it was created, so no
-key's life changes. Only inserts, and is safe to run again. Run after the code that writes both
+key's life changes, named "Default key". Also names copies made before keys had names. Safe to
+run again. Run after the code that writes both
 tables is deployed, so keys created by older pods during the rollout are copied too.
 
 Usage (from inside the pod):
@@ -10,30 +11,17 @@ Usage (from inside the pod):
 import argparse
 import os
 import sys
-from datetime import date, datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from sqlalchemy import func, update
 from sqlmodel import Session, select
 
 from app.api.dependencies import get_engine
-from app.auth.api_keys import key_hash, store_key
+from app.auth.api_keys import DEFAULT_KEY_NAME, created_at_of, key_hash, store_key
 from app.models.core_models import ApiKey, ApiToken
 
 BATCH_SIZE = 1000
-
-
-def created_at(value: str | None) -> datetime | None:
-    """`token_created` holds either a date (`YYYY-MM-DD`) or an ISO timestamp."""
-    if not value:
-        return None
-    try:
-        if len(value) == 10:
-            return datetime.combine(date.fromisoformat(value), datetime.min.time(), tzinfo=timezone.utc)
-        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -56,19 +44,23 @@ def main(argv: list[str] | None = None) -> int:
                 if key_hash(token.token) in known:
                     counts["already"] += 1
                     continue
-                created = created_at(token.token_created)
+                created = created_at_of(token.token_created)
                 if created is None:
                     counts["unreadable_date"] += 1
                     print(f"unreadable token_created for a key of user {token.user_id}: {token.token_created!r}", file=sys.stderr)
                     continue
                 counts["copied"] += 1
                 if args.commit:
-                    row = store_key(session, token.user_id, token.token, created_at=created)
+                    row = store_key(session, token.user_id, token.token, created_at=created, name=DEFAULT_KEY_NAME)
                     row.last_used_at = token.last_used_at
             if args.commit:
                 session.commit()
+        counts["named"] = session.exec(select(func.count()).select_from(ApiKey).where(ApiKey.name == None)).one()  # noqa: E711
+        if args.commit:
+            session.execute(update(ApiKey).where(ApiKey.name == None).values(name=DEFAULT_KEY_NAME))  # noqa: E711
+            session.commit()
     verb = "copied" if args.commit else "dry run, would copy"
-    print(f"{verb}: {counts['copied']}, already copied: {counts['already']}, no owner (skipped): {counts['no_owner']}, unreadable date (skipped): {counts['unreadable_date']}")
+    print(f"{verb}: {counts['copied']}, already copied: {counts['already']}, no owner (skipped): {counts['no_owner']}, unreadable date (skipped): {counts['unreadable_date']}, unnamed given a name: {counts['named']}")
     return 1 if counts["unreadable_date"] else 0
 
 

@@ -22,7 +22,8 @@ Old (3.3.1) pods keep working against the new schema: every new column is nullab
 5. **Deploy the new image** (the deployment repository's approved pull request). Old and new pods run side by side. The triggers cover what old pods write: people recorded by internal number, and a key deleted by an old pod is revoked in the hashed table.
 6. **After the last 3.3.1 pod is gone,** dry run then `--commit`: `20261103_backfill_user_identity.py --issuer https://orcid.org`, then `20261106_backfill_api_keys.py`. Both only insert (the key backfill also names unnamed keys) and are safe to rerun. Check: every person with an ORCID identifier has an identity row, and every owned `apitoken` row has a hashed copy.
 7. **Turn on `CRUCIBLE_AUTH_IDENTITY_LOOKUP`** and restart. Sign-in now reads the identity table, and linking becomes available.
-8. **Checks:** `/health/ready` on every pod; a real Hub sign-in; an existing API key, an older key without the prefix, and a newly created named key all work; crucible-tests against production through the deployment session, without creating users.
+8. **Move the Hub to the client list** (after #452), in one deploy through the deployment repository: add `CRUCIBLE_AUTH_CLIENTS` with the Hub entry, its `redirect_uris` copied exactly from `HUB_AUTH_CALLBACK_URI`, and `OAUTH_HUB_CLIENT_SECRET_VERSION` pointing at the same secret. Remove `HUB_AUTH_ENABLED`, `HUB_AUTH_CLIENT_ID`, `HUB_AUTH_CALLBACK_URI` and `HUB_AUTH_CLIENT_SECRET`, and keep `HUB_AUTH_PUBLIC_API_URL`. Setting both styles stops the server, so this is one change, made only once every pod runs the new image. Staging does it first.
+9. **Checks:** `/health/ready` on every pod; a real Hub sign-in; an existing API key, an older key without the prefix, and a newly created named key all work; crucible-tests against production through the deployment session, without creating users.
 
 ## Rolling back
 

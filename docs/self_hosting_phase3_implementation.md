@@ -388,6 +388,10 @@ From the Phase 3 review:
 - Before Step 1, check what reads `access_group_id`, and the one staging key where it differs from the owner. If nothing does, drop it instead of copying it.
 - New tests: `test_key_cap_of_ten`, `test_new_key_has_prefix`, `test_older_key_without_prefix_still_works`, `test_api_key_cannot_create_a_key`, `test_list_never_contains_the_key`, `test_list_is_active_only_by_default`, `test_expired_and_revoked_keys_are_kept`.
 
+Agreed with the user, 2026-11-06: steps 1 and 2 now, steps 3 and 4 after a nano-crucible release that uses the new routes. Step 1 is #443: the `api_key` table, double writes and revocations, and `migrations/data/20261106_backfill_api_keys.py`, run after deploy. `access_group_id` is not copied; nothing reads it, and it goes with the old table. New keys get the `crucible_` prefix in step 2.
+
+Where keys are created today (checked 2026-11-06): never at sign-in or registration, including the Hub and accounts waiting for approval. On request: `/auth/apikey`, `POST /account/apikey/regenerate`, `POST /users/{user_ref}/apikey` and `/regenerate`, service account creation and rotation, and `admin create`, which prints it. The one leftover is `POST /users` (`app/api/routes/users.py`, the `find_or_add_api_access` after creating the person): it creates a key that no response returns, readable only through the read-back that hashing removes. Step 2 stops it, with the test `test_post_users_creates_no_key`.
+
 Clients first. Do not start until Task 2 has the answers and any client release has shipped; the user sets the date.
 
 **Files:**

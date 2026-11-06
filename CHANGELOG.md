@@ -38,6 +38,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- An API key can no longer edit another human administrator through `PATCH /users/{user_ref}` or revoke all their keys; that needs a Hub session with a recent sign-in. People editing themselves are unaffected.
 - Migrations commit one by one and wait at most `ALEMBIC_LOCK_TIMEOUT` (5s by default) for a table lock, so a deploy no longer blocks reads behind a long transaction; rerun the upgrade if one times out.
 - `POST /users` no longer creates an API key that no response returned.
 - `POST /account/apikey/regenerate` and `POST /users/{user_ref}/apikey/regenerate` are deprecated and replace only the key the older key routes show; keys created under `/account/apikeys` stay. `api_key_status` and `/account/verify` describe a working key before an expired one.

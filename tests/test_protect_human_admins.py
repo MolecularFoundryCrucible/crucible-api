@@ -66,9 +66,9 @@ def test_api_key_cannot_read_or_regenerate_an_admins_key_even_its_own(client, au
 def test_api_key_still_manages_ordinary_users_and_service_accounts(client, auth_as, people):
     as_key(auth_as, client)
     assert client.post(f"/users/{PERSON}/apikey/regenerate").status_code == 200
-    assert client.delete(f"/users/{OTHER_ADMIN}/apikey").status_code == 204
+    assert client.delete(f"/users/{PERSON}/apikey").status_code == 204
     assert client.patch(f"/service_accounts/{ROBOT}", json={"platform_role": "admin"}).status_code == 200
-    assert client.patch(f"/users/{OTHER_ADMIN}", json={"username": "renamed", "email": "renamed@example.com"}).status_code == 200
+    assert client.patch(f"/users/{PERSON}", json={"username": "renamed", "email": "renamed@example.com"}).status_code == 200
     assert client.patch("/account/profile", json={"username": "myself"}).status_code == 200
 
 
@@ -127,3 +127,22 @@ def test_cli_set_role_changes_roles_and_keeps_the_last_admin(people, use_engine,
         events = session.exec(select(AuthEvent.event)).all()
     assert (roles[ADMIN], roles[OTHER_ADMIN], roles[PERSON], roles[ROBOT]) == ("admin", "none", "none", "contributor")
     assert events == ["role_changed"] * 3
+
+
+def test_api_key_cannot_edit_or_revoke_the_keys_of_another_admin(client, auth_as, people):
+    as_key(auth_as, client)
+    assert refused_for_a_key(client.patch(f"/users/{OTHER_ADMIN}", json={"email": "takeover@example.com"}))
+    assert refused_for_a_key(client.delete(f"/users/{OTHER_ADMIN}/apikey"))
+    assert client.patch(f"/users/{PERSON}", json={"first_name": "Changed"}).status_code == 200
+    assert client.delete(f"/users/{PERSON}/apikey").status_code == 204
+    assert client.patch(f"/users/{ADMIN}", json={"email": "mine@example.com"}).status_code == 200
+    with Session(people) as session:
+        assert session.exec(select(User.email).where(User.unique_id == OTHER_ADMIN)).one() == "other@example.com"
+
+
+def test_recent_hub_session_can_edit_another_admin(client, auth_as, people):
+    as_hub(auth_as, client)
+    assert client.patch(f"/users/{OTHER_ADMIN}", json={"first_name": "Renamed"}).status_code == 200
+    assert client.delete(f"/users/{OTHER_ADMIN}/apikey").status_code == 204
+    as_hub(auth_as, client, age=timedelta(hours=1))
+    assert asks_to_sign_in_again(client.patch(f"/users/{OTHER_ADMIN}", json={"first_name": "Again"}))

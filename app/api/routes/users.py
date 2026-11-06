@@ -617,7 +617,7 @@ def create_user(auth_res: Annotated[Principal, Depends(authorize_user)], user_in
 
 @router.patch("/users/{user_ref}", response_model=UserRead, responses={409: {"description": "Username or email already held by another user: `{\"detail\": {\"code\": \"already_in_use\", \"fields\": [\"username\", \"email\"], \"message\": ...}}`, listing every conflicting field"}})
 def update_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)], user_update: UserUpdate):
-    '''Partially update a user record. Only fields provided in the request body are modified.'''
+    '''Partially update a user record. Only fields provided in the request body are modified. Changing another human administrator needs a Hub session with a recent sign-in.'''
     user_id = _canonical_user_id(user_ref)
     with Session(get_engine()) as session:
         user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
@@ -625,6 +625,8 @@ def update_user(user_ref: UserRef, auth_res: Annotated[Principal, Depends(author
 
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
+        if not auth_res.is_user(user):
+            require_human_admin_safeguard(auth_res, user)
         update_data = user_update.model_dump(exclude_unset=True)
         if not auth_res.is_platform_admin:
             assert_self_chosen_username_allowed(update_data.get("username"), user.username)
@@ -787,7 +789,7 @@ def delete_user_apikey(
     user_ref: UserRef,
     auth_res: Annotated[Principal, Depends(authorize_user)],
 ):
-    '''Revoke every API key held by the user. Platform administrators only. 204 on success.'''
+    '''Revoke every API key held by the user. Platform administrators only; another human administrator's keys need a Hub session with a recent sign-in. 204 on success.'''
     user_id = _canonical_user_id(user_ref)
     require_platform_admin(auth_res)
 
@@ -795,6 +797,8 @@ def delete_user_apikey(
         user = session.exec(select(User).where(User.unique_id == user_id)).one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
+        if not auth_res.is_user(user):
+            require_human_admin_safeguard(auth_res, user)
 
         replace_plain_keys(session, user.id)
         revoke_user_keys(session, user.id)

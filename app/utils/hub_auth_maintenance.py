@@ -54,6 +54,13 @@ def cleanup_hub_auth(engine, *, commit: bool = False, batch_size: int = 1000, no
         counts[AuthEvent.__tablename__] = len(events)
         if commit and events:
             session.execute(delete(AuthEvent).where(AuthEvent.id.in_(events)))
+    from app.auth.throttle import delete_address_rows, expired_address_rows
+
+    with Session(engine) as session, session.begin():
+        digests = expired_address_rows(session, cutoff, batch_size, lock=commit)
+        counts["login_throttle"] = len(digests)
+        if commit:
+            delete_address_rows(session, digests)
     from app.auth.registration import expire_pending_users
 
     counts["pending_users"] = expire_pending_users(engine, commit=commit, batch_size=batch_size, now=now)

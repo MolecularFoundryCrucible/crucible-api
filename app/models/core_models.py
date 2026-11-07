@@ -328,6 +328,21 @@ class LocalCredential(SQLModel, table=True):
     password_hash: str = Field(sa_column=Column(Text, nullable=False))
     pepper_id: Optional[str] = Field(default=None, max_length=32)
     password_changed_at: datetime = Field(sa_type=DateTime(timezone=True))
+    failed_attempts: int = Field(default=0, sa_column=Column(Integer, nullable=False, server_default="0"))
+    trusted_failed_attempts: int = Field(default=0, sa_column=Column(Integer, nullable=False, server_default="0"))
+    blocked_until: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    locked_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+
+
+class LoginThrottle(SQLModel, table=True):
+    """Consecutive password failures per client address, by a keyed hash of the address."""
+    __tablename__ = "login_throttle"
+    __table_args__ = (Index("ix_login_throttle_last_failure_at", "last_failure_at"),)
+
+    address_hash: str = Field(primary_key=True, max_length=64)
+    consecutive_failures: int = Field(sa_column=Column(Integer, nullable=False))
+    blocked_until: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    last_failure_at: datetime = Field(sa_type=DateTime(timezone=True))
 
 
 class AuthEvent(SQLModel, table=True):

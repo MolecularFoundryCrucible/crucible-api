@@ -38,10 +38,12 @@ Every field is required, and an unknown field stops the server at startup. A cli
 | `key` | Lowercase letters and digits; names the secret |
 | `client_id` | What the client sends as its HTTP Basic user name |
 | `display_name` | Shown to people when the client asks to sign them in |
-| `type` | `confidential` (has a secret, runs on a server); the only type for now |
-| `redirect_uris` | Exact addresses the client may receive codes at: https, or http only on `localhost` and `127.0.0.1`, with no user, query or fragment |
+| `type` | `confidential` (has a secret, runs on a server, like the Hub) or `public` (runs on people's computers, like the nano-crucible command line, and has no secret) |
+| `redirect_uris` | Exact addresses the client may receive codes at: https, or http only on `localhost`, `127.0.0.1` and `[::1]`, with no user, query or fragment. A public client's `http://127.0.0.1/<path>` or `http://[::1]/<path>`, written without a port, accepts any port at sign-in (RFC 8252 7.3); only public clients may use that form |
 
 Codes, sessions and links belong to the client that started them, and no other client can use them. Removing a client from the list ends its sessions at once.
+
+A public client has no secret: it sends its `client_id` to `/oauth/token` and `/oauth/revoke`, and PKCE proves the code is its own (RFC 9700). It cannot use the Hub's `/auth/hub/token` routes, which need a secret. Because its identity cannot be verified, the person confirms on the API's own page that the program on their computer may sign in, before the code is sent (RFC 8252 8.6); its codes wait 5 minutes instead of 1. Its sessions last 14 days without use and 90 days at most, against 7 and 30 for confidential clients.
 
 `GET /oauth/authorize` is the standard authorization endpoint (`response_type=code`, PKCE with S256, an exact `redirect_uri` and `state`); `/auth/hub/login` is the same handler. Linking a login uses `POST /account/identities/{provider}/link` and then `/oauth/link/start`, `/oauth/link/preview` and `/oauth/link/confirm`. Every answer back to a client, codes and errors alike, carries `iss`, the public API address (RFC 9207). Unknown clients and redirects get 400 and are never redirected to. The metadata (RFC 8414) is at `<public API address>/.well-known/oauth-authorization-server`, under the API rather than the host root, so clients are told where to look; its `issuer` equals `iss`.
 

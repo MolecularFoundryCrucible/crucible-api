@@ -633,3 +633,17 @@ def test_a_sign_in_records_the_client_it_came_through(oauth_client, remote, db_e
     client_answer(lab_sign_in(oauth_client, remote))
     with Session(db_engine) as session:
         assert session.exec(select(AuthEvent.client_id).where(AuthEvent.event == "sign_in")).all() == ["crucible-hub"]
+
+
+def test_a_provider_sign_in_for_a_public_client_waits_for_the_persons_allow(oauth_client, remote, db_engine, monkeypatch):
+    for name in ("HUB_AUTH_ENABLED", "HUB_AUTH_CLIENT_ID", "HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_CALLBACK_URI"):
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("CRUCIBLE_AUTH_CLIENTS", json.dumps([{"key": "nanocrucible", "client_id": "nano-crucible", "display_name": "nano-crucible", "type": "public", "redirect_uris": ["http://127.0.0.1/callback"]}]))
+    get_settings.cache_clear()
+    link(db_engine, LAB_ISSUER, "lab-user")
+    started = authorize(oauth_client, client_id="nano-crucible", redirect_uri="http://127.0.0.1:40123/callback", provider="lab")
+    query = parse_qs(urlparse(started.headers["location"]).query)
+    remote["login.example.org"].claims = {"nonce": query["nonce"][0], "sub": "lab-user"}
+    page = finish(oauth_client, "/auth/hub/oidc/lab/callback", query)
+    assert page.status_code == 200 and "location" not in page.headers and "Allow" in page.text
+    assert "http://127.0.0.1:40123/callback?code=" in page.text

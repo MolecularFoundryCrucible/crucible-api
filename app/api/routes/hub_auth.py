@@ -124,6 +124,27 @@ def _browser_headers(response: Response) -> Response:
     return response
 
 
+def _deliver(request: Request, client_id: str, destination: str, callback_uri: str, hub_state: str, status: int = 302) -> Response:
+    """Send the code back. A public client's identity cannot be verified, and a provider that
+    remembers the person could finish the sign-in unseen, so the person confirms first
+    (RFC 8252 8.6). The code stays in the page until they choose Allow."""
+    from urllib.parse import urlsplit
+
+    from app.auth.clients import client_by_id
+
+    client = client_by_id(client_id)
+    if client is None or not client.is_public:
+        return _browser_headers(RedirectResponse(destination, status_code=status))
+    nonce = secrets.token_urlsafe(16)
+    response = _templates.TemplateResponse(request, "hub_confirm_program.html", {
+        "style_nonce": nonce, "client_name": client.display_name, "where": urlsplit(callback_uri).netloc,
+        "allow": destination, "deny": hub_error_destination(callback_uri, hub_state, "access_denied"),
+    })
+    response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    response.headers["X-Frame-Options"] = "DENY"
+    return _browser_headers(response)
+
+
 def _hub_error(callback_uri: str, hub_state: str, error: str) -> Response:
     return _browser_headers(RedirectResponse(hub_error_destination(callback_uri, hub_state, error), status_code=302))
 
@@ -269,7 +290,7 @@ async def _finish_sign_in(request: Request, engine, served_by, code: str | None,
                 destination = client_redirect(transaction.callback_uri, {"code": link_code, "state": transaction.hub_state})
             else:
                 _, destination = await run_in_threadpool(create_handoff_code, engine, transaction, provider, identity.subject, identity.given_name, identity.family_name, auth_time=identity.auth_time)
-            response = _browser_headers(RedirectResponse(destination, status_code=302))
+            response = _deliver(request, transaction.client_id, destination, transaction.callback_uri, transaction.hub_state) if transaction.purpose != "link" else _browser_headers(RedirectResponse(destination, status_code=302))
         except AccountPending:
             response = pending_page(request)
         except HubLoginRefused as refused:
@@ -523,7 +544,7 @@ async def password_sign_in(
             destination = await run_in_threadpool(create_local_code, engine, state, browser_secret, user_id)
         except InvalidHubLogin:
             return _password_page(request, expired=True, status=400)
-        response = _browser_headers(RedirectResponse(destination, status_code=303))
+        response = _deliver(request, transaction.client_id, destination, transaction.callback_uri, transaction.hub_state, status=303)
     secure = request.url.scheme == "https" or public_api_url().startswith("https://")
     changed = await run_in_threadpool(_password_changed_at, engine, user_id)
     response.set_cookie(DEVICE_COOKIE, issue_device_cookie(user_id, changed), max_age=get_settings().auth.device_cookie_days * 86400, path=_password_path(), secure=secure, httponly=True, samesite="lax")

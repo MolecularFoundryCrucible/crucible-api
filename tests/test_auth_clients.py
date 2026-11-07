@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasicCredentials
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from app import config
 from app.api.routes.hub_auth import require_hub_client
@@ -124,7 +124,8 @@ def test_the_older_hub_settings_alone_give_todays_client(monkeypatch, orcid_prov
     {"redirect_uris": ["http://hub.example.org/cb"]},
     {"redirect_uris": ["https://hub.example.org/cb?x=1"]},
     {"redirect_uris": []},
-    {"type": "public"},
+    {"type": "native"},
+    {"redirect_uris": ["http://127.0.0.1/callback"]},
     {"key": "Hub"},
     {"extra": True},
 ])
@@ -265,3 +266,69 @@ def test_the_hub_routes_and_the_standard_route_share_one_server(api, db_engine):
     assert refreshed.status_code == 200
     again = api.post("/auth/hub/refresh", auth=HUB_AUTH, json={"refresh_token": via_hub.json()["refresh_token"]})
     assert again.status_code == 401
+
+
+CLI = {"key": "nanocrucible", "client_id": "nano-crucible", "display_name": "nano-crucible", "type": "public", "redirect_uris": ["http://127.0.0.1/callback", "http://[::1]/callback"]}
+
+
+@pytest.fixture
+def with_cli(two_clients, monkeypatch):
+    monkeypatch.setenv("CRUCIBLE_AUTH_CLIENTS", json.dumps([HUB, NOTES, CLI]))
+    config.get_settings.cache_clear()
+
+
+def test_a_public_client_needs_no_secret(with_cli):
+    assert "OAUTH_NANOCRUCIBLE_CLIENT_SECRET" not in config.missing_required_settings()
+    check_settings()
+
+
+@pytest.mark.parametrize("uri,allowed", [
+    ("http://127.0.0.1:53817/callback", True), ("http://[::1]:8080/callback", True), ("http://127.0.0.1/callback", True),
+    ("http://127.0.0.1:53817/other", False), ("http://localhost:53817/callback", False), ("http://127.0.0.2:53817/callback", False),
+    ("https://127.0.0.1:53817/callback", False), ("http://127.0.0.1:53817/callback?x=1", False), ("http://user@127.0.0.1:53817/callback", False),
+])
+def test_public_loopback_redirects_accept_any_port_and_nothing_else(with_cli, uri, allowed):
+    from app.auth.clients import client_by_id
+
+    assert client_by_id("nano-crucible").allows_redirect(uri) is allowed
+    assert client_by_id("crucible-hub").allows_redirect("https://hub.example.org:8443/auth/callback") is False
+
+
+def test_public_client_exchanges_its_code_with_pkce_and_no_secret(with_cli, api, db_engine):
+    loopback = {**CLI, "redirect_uris": ["http://127.0.0.1:53817/callback"]}
+    code = signed_in(db_engine, loopback)
+    form = {"grant_type": "authorization_code", "client_id": "nano-crucible", "code": code, "redirect_uri": "http://127.0.0.1:53817/callback"}
+    missing = api.post("/oauth/token", data=form)
+    assert (missing.status_code, missing.json()["error"]) == (400, "invalid_request")
+    tokens = api.post("/oauth/token", data={**form, "code_verifier": VERIFIER})
+    assert tokens.status_code == 200, tokens.text
+    refreshed = api.post("/oauth/token", data={"grant_type": "refresh_token", "client_id": "nano-crucible", "refresh_token": tokens.json()["refresh_token"]})
+    assert refreshed.status_code == 200
+    assert api.post("/oauth/revoke", data={"client_id": "nano-crucible", "token": refreshed.json()["refresh_token"]}).status_code == 200
+
+
+def test_public_client_cannot_use_the_hubs_secret_routes_or_a_secret(with_cli, api, db_engine):
+    code = signed_in(db_engine, {**CLI, "redirect_uris": ["http://127.0.0.1:53817/callback"]})
+    assert api.post("/auth/hub/token", auth=("nano-crucible", "x" * 40), json={"code": code, "code_verifier": VERIFIER, "redirect_uri": "http://127.0.0.1:53817/callback"}).status_code == 401
+    assert api.post("/oauth/token", auth=("nano-crucible", "x" * 40), data={"grant_type": "authorization_code", "code": code, "code_verifier": VERIFIER, "redirect_uri": "http://127.0.0.1:53817/callback"}).json()["error"] == "invalid_client"
+    assert api.post("/oauth/token", data={"grant_type": "authorization_code", "client_id": "crucible-hub", "code": signed_in(db_engine, HUB), "code_verifier": VERIFIER, "redirect_uri": HUB["redirect_uris"][0]}).json()["error"] == "invalid_client"
+
+
+def test_public_sessions_last_longer_and_their_codes_wait_for_the_confirmation(with_cli, db_engine):
+    from datetime import timedelta
+
+    from app.utils.hub_login import code_lifetime
+    from app.utils.hub_tokens import issue_hub_tokens, session_lifetimes
+
+    assert session_lifetimes("nano-crucible") == (timedelta(days=90), timedelta(days=14))
+    assert session_lifetimes("crucible-hub") == (timedelta(days=30), timedelta(days=7))
+    assert (code_lifetime("nano-crucible"), code_lifetime("crucible-hub")) == (timedelta(minutes=5), timedelta(minutes=1))
+    with Session(db_engine) as session:
+        user_id = session.exec(select(User.id)).first()
+    pair = issue_hub_tokens(db_engine, user_id, "nano-crucible", now=NOW)
+    assert abs((pair.refresh_expires_at - NOW) - timedelta(days=90)) < timedelta(seconds=1)
+
+
+def test_metadata_offers_no_secret_for_public_clients(with_cli, api):
+    metadata = api.get("/.well-known/oauth-authorization-server").json()
+    assert metadata["token_endpoint_auth_methods_supported"] == ["client_secret_basic", "none"]

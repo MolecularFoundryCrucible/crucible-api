@@ -4,7 +4,9 @@ import logging
 import secrets
 from dataclasses import dataclass
 
-from app.config import ConfigurationError, get_settings, optional_secret
+from urllib.parse import urlsplit
+
+from app.config import LOOPBACK_HOSTS, ConfigurationError, get_settings, optional_secret
 
 logger = logging.getLogger(__name__)
 
@@ -13,13 +15,34 @@ class RegisteredClient:
     client_id: str
     display_name: str
     redirect_uris: tuple[str, ...]
-    secret_name: str
+    secret_name: str | None
+    type: str = "confidential"
+
+    @property
+    def is_public(self) -> bool:
+        return self.type == "public"
+
+    def allows_redirect(self, uri: str) -> bool:
+        """Exact match, except that a public client's loopback entries accept any port (RFC 8252 7.3)."""
+        if uri in self.redirect_uris:
+            return True
+        if not self.is_public:
+            return False
+        try:
+            parsed = urlsplit(uri)
+            port = parsed.port
+        except ValueError:
+            return False
+        if parsed.scheme != "http" or parsed.hostname not in LOOPBACK_HOSTS or port is None or parsed.query or parsed.fragment or parsed.username:
+            return False
+        host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+        return f"http://{host}{parsed.path}" in self.redirect_uris
 
 
 def registered_clients() -> tuple[RegisteredClient, ...]:
     settings = get_settings()
     if settings.auth.clients:
-        return tuple(RegisteredClient(client.client_id, client.display_name, client.redirect_uris, client.secret_name) for client in settings.auth.clients)
+        return tuple(RegisteredClient(client.client_id, client.display_name, client.redirect_uris, client.secret_name if client.type == "confidential" else None, client.type) for client in settings.auth.clients)
     hub = settings.hub
     if not hub.enabled:
         return ()
@@ -42,6 +65,8 @@ class ClientUnavailable(Exception):
 def require_client_secrets() -> None:
     """Raise ClientUnavailable unless every registered client's secret can be read."""
     for client in registered_clients():
+        if client.is_public:
+            continue
         try:
             present = optional_secret(client.secret_name)
         except ConfigurationError:
@@ -55,6 +80,8 @@ def authenticate_client(client_id: str, presented_secret: str) -> RegisteredClie
     """The client these HTTP Basic credentials name, if its secret matches. The comparison runs even
     for an unknown client, so the time taken does not tell which client IDs exist."""
     client = client_by_id(client_id)
+    if client is not None and client.is_public:
+        client = None
     expected = None
     if client is not None:
         try:

@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from app.auth.identity import retry_after_concurrent_first_write
 from app.auth.sign_in import WRONG_USER, AccountPending, SignInRefused, record_refused_sign_in, resolve_sign_in
-from app.auth.clients import RegisteredClient, registered_clients, sign_in_enabled
+from app.auth.clients import RegisteredClient, client_by_id, registered_clients, sign_in_enabled
 from app.config import ConfigurationError, OidcProvider, get_settings, optional_secret, trusted_redirect_uri
 from app.models.core_models import HubLoginCode, HubLoginTransaction
 from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens_in_session
@@ -18,6 +18,13 @@ from app.utils.hub_tokens import HubTokenPair, InvalidHubGrant, issue_hub_tokens
 
 LOGIN_LIFETIME = timedelta(minutes=10)
 CODE_LIFETIME = timedelta(minutes=1)
+PUBLIC_CODE_LIFETIME = timedelta(minutes=5)
+
+
+def code_lifetime(client_id: str) -> timedelta:
+    """A public client's code waits behind a confirmation page, so it gets a few minutes."""
+    client = client_by_id(client_id)
+    return PUBLIC_CODE_LIFETIME if client is not None and client.is_public else CODE_LIFETIME
 CHALLENGE_PATTERN = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 
 
@@ -73,7 +80,7 @@ def load_login_config() -> HubLoginConfig:
     base = public_api_url()
     clients = registered_clients()
     try:
-        secrets_present = all(optional_secret(client.secret_name) for client in clients)
+        secrets_present = all(optional_secret(client.secret_name) for client in clients if not client.is_public)
     except ConfigurationError:
         raise HubLoginUnavailable from None
     if not secrets_present:
@@ -101,7 +108,7 @@ def valid_challenge(value: str) -> bool:
 
 def check_login_request(config: HubLoginConfig, client_id: str, callback_uri: str, hub_state: str, challenge: str) -> None:
     client = config.client(client_id)
-    if client is None or callback_uri not in client.redirect_uris or not valid_challenge(challenge):
+    if client is None or not client.allows_redirect(callback_uri) or not valid_challenge(challenge):
         raise InvalidHubLogin
     if not 16 <= len(hub_state) <= 256 or not hub_state.isascii():
         raise InvalidHubLogin
@@ -169,7 +176,7 @@ def create_handoff_code(engine, transaction: HubLoginTransaction, provider: Oidc
                 callback_uri=transaction.callback_uri,
                 code_challenge=transaction.code_challenge,
                 created_at=current,
-                expires_at=current + CODE_LIFETIME,
+                expires_at=current + code_lifetime(transaction.client_id),
                 auth_time=auth_time,
             ))
 
@@ -222,7 +229,7 @@ def create_local_code(engine, state: str, browser_secret: str, user_id: int, *, 
         session.add(HubLoginCode(
             code_hash=_digest(code), user_id=user.id, user_unique_id=user.unique_id, client_id=transaction.client_id,
             callback_uri=transaction.callback_uri, code_challenge=transaction.code_challenge,
-            created_at=current, expires_at=current + CODE_LIFETIME, auth_time=current,
+            created_at=current, expires_at=current + code_lifetime(transaction.client_id), auth_time=current,
         ))
         record_event(session, AuthEventType.SIGN_IN, user=user, issuer=public_api_url(), client_id=transaction.client_id)
         callback, hub_state = transaction.callback_uri, transaction.hub_state

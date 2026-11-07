@@ -20,7 +20,7 @@ from app.models.core_models import HubAccessToken, HubLoginCode, HubRefreshToken
 from app.utils.hub_login import exchange_handoff_code
 from app.utils.hub_tokens import ACCESS_PREFIX, REFRESH_PREFIX, HubTokenPair, InvalidHubGrant, refresh_hub_tokens, revoke_hub_tokens
 
-AUTH_METHODS = ["client_secret_basic"]
+AUTH_METHODS = ["client_secret_basic", "none"]
 
 
 def _digest(value: str) -> str:
@@ -103,9 +103,11 @@ class OAuthClient(ClientMixin):
         return ""
 
     def check_redirect_uri(self, redirect_uri):
-        return redirect_uri in self.client.redirect_uris
+        return self.client.allows_redirect(redirect_uri)
 
     def check_client_secret(self, client_secret):
+        if self.client.is_public:
+            return False
         try:
             expected = optional_secret(self.client.secret_name)
         except ConfigurationError:
@@ -115,7 +117,9 @@ class OAuthClient(ClientMixin):
         return secrets.compare_digest(client_secret.encode("utf-8"), expected.encode("utf-8"))
 
     def check_endpoint_auth_method(self, method, endpoint):
-        return method in AUTH_METHODS
+        """A confidential client proves itself with HTTP Basic; a public one cannot, so it sends only
+        its client_id and relies on PKCE (RFC 9700 2.1.1)."""
+        return method == ("none" if self.client.is_public else "client_secret_basic")
 
     def check_response_type(self, response_type):
         return response_type == "code"

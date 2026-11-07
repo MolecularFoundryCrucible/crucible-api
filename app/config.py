@@ -261,7 +261,10 @@ def trusted_redirect_uri(value: str) -> bool:
     parsed = urlparse(value)
     if parsed.username or parsed.password or parsed.fragment or parsed.query or not parsed.hostname:
         return False
-    return parsed.scheme == "https" or (parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1"})
+    return parsed.scheme == "https" or (parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"})
+
+
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
 
 
 class OAuthClient(BaseModel):
@@ -273,7 +276,7 @@ class OAuthClient(BaseModel):
     key: str = Field(pattern=r"^[a-z][a-z0-9]*$", max_length=32)
     client_id: str = Field(min_length=1, max_length=100)
     display_name: str = Field(min_length=1, max_length=100)
-    type: Literal["confidential"]
+    type: Literal["confidential", "public"]
     redirect_uris: tuple[str, ...] = Field(min_length=1)
 
     @field_validator("redirect_uris")
@@ -282,6 +285,16 @@ class OAuthClient(BaseModel):
         if not all(map(trusted_redirect_uri, value)):
             raise ValueError("must be https:// addresses (http:// only for localhost), with no user, query or fragment")
         return value
+
+    @model_validator(mode="after")
+    def loopback_without_port_only_for_public(self) -> "OAuthClient":
+        """RFC 8252 7.3: a public client on someone's computer listens on a port chosen at run time,
+        so its loopback entries name no port. A confidential client lists exact addresses."""
+        for uri in self.redirect_uris:
+            parsed = urlparse(uri)
+            if parsed.hostname in LOOPBACK_HOSTS and parsed.port is None and self.type != "public":
+                raise ValueError("a loopback redirect without a port is only for public clients")
+        return self
 
     @property
     def secret_name(self) -> str:
@@ -374,7 +387,7 @@ class AuthSettings(SettingsGroup):
 
     def problems(self, settings: "Settings") -> list[str]:
         found = []
-        for name in [provider.secret_name for provider in self.providers] + [client.secret_name for client in self.clients]:
+        for name in [provider.secret_name for provider in self.providers] + [client.secret_name for client in self.clients if client.type == "confidential"]:
             version = optional_env(f"{name}_VERSION")
             if not (version is not None and _SECRET_VERSION.fullmatch(version)) and configured_secret(name) is None:
                 found.append(name)
@@ -570,7 +583,7 @@ def get_settings() -> Settings:
 
 def _keyed_secret_names() -> list[str]:
     auth = get_settings().auth
-    return [provider.secret_name for provider in auth.providers] + [client.secret_name for client in auth.clients] + auth.previous_pepper_names
+    return [provider.secret_name for provider in auth.providers] + [client.secret_name for client in auth.clients if client.type == "confidential"] + auth.previous_pepper_names
 
 
 def configured_secret(name: str) -> str | None:

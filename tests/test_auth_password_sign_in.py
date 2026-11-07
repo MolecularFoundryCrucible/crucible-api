@@ -287,3 +287,32 @@ def test_clearing_the_username_of_a_password_account_is_refused(db_engine, clien
     with TestClient(main_app) as main_client:
         refused = main_client.patch("/account/profile", json={"username": None})
     assert (refused.status_code, refused.json()["detail"]["code"]) == (409, "username_required")
+
+
+def test_a_public_client_gets_the_code_only_after_the_person_allows_it(client, db_engine, monkeypatch):
+    import html
+    import json
+
+    loopback = "http://127.0.0.1:53817/callback"
+    for name in ("HUB_AUTH_ENABLED", "HUB_AUTH_CLIENT_SECRET", "HUB_AUTH_CALLBACK_URI"):
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("CRUCIBLE_AUTH_CLIENTS", json.dumps([
+        {"key": "hub", "client_id": "crucible-hub", "display_name": "Crucible Hub", "type": "confidential", "redirect_uris": [CALLBACK]},
+        {"key": "nanocrucible", "client_id": "nano-crucible", "display_name": "nano-crucible", "type": "public", "redirect_uris": ["http://127.0.0.1/callback"]},
+    ]))
+    monkeypatch.setenv("OAUTH_HUB_CLIENT_SECRET", SECRET)
+    config.get_settings.cache_clear()
+    person(db_engine)
+    state = start(client, client_id="nano-crucible", redirect_uri=loopback)
+    page = submit(client, state)
+    assert page.status_code == 200 and "location" not in page.headers
+    assert "nano-crucible" in page.text and "127.0.0.1:53817" in page.text and "frame-ancestors 'none'" in page.headers["content-security-policy"]
+    links = [html.unescape(href) for href in re.findall(r'href="([^"]+)"', page.text)]
+    allow = next(link for link in links if "code=" in link)
+    deny = next(link for link in links if "error=access_denied" in link)
+    assert allow.startswith(loopback + "?") and deny.startswith(loopback + "?")
+    code = parse_qs(urlparse(allow).query)["code"][0]
+    tokens = client.post("/oauth/token", data={"grant_type": "authorization_code", "client_id": "nano-crucible", "code": code, "code_verifier": VERIFIER, "redirect_uri": loopback})
+    assert tokens.status_code == 200, tokens.text
+    hub_state = start(client)
+    answer(submit(client, hub_state))

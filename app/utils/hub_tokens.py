@@ -13,6 +13,17 @@ from app.models.core_models import HubAccessToken, HubRefreshToken, HubTokenFami
 ACCESS_LIFETIME = timedelta(minutes=15)
 REFRESH_ABSOLUTE_LIFETIME = timedelta(days=30)
 REFRESH_IDLE_LIFETIME = timedelta(days=7)
+PUBLIC_REFRESH_ABSOLUTE_LIFETIME = timedelta(days=90)
+PUBLIC_REFRESH_IDLE_LIFETIME = timedelta(days=14)
+
+
+def session_lifetimes(client_id: str) -> tuple[timedelta, timedelta]:
+    """How long a session lasts in all, and without use: longer for a public client such as a CLI on
+    a cluster, which should not have to sign in every week."""
+    client = client_by_id(client_id)
+    if client is not None and client.is_public:
+        return PUBLIC_REFRESH_ABSOLUTE_LIFETIME, PUBLIC_REFRESH_IDLE_LIFETIME
+    return REFRESH_ABSOLUTE_LIFETIME, REFRESH_IDLE_LIFETIME
 ACCESS_PREFIX = "chba_"
 REFRESH_PREFIX = "chbr_"
 
@@ -93,7 +104,7 @@ def issue_hub_tokens_in_session(session: Session, user_id: int, client_id: str, 
         user_unique_id=user.unique_id,
         client_id=client_id,
         created_at=current,
-        expires_at=current + REFRESH_ABSOLUTE_LIFETIME,
+        expires_at=current + session_lifetimes(client_id)[0],
         last_refreshed_at=current,
         auth_time=auth_time,
     )
@@ -146,7 +157,7 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
         if token.spent_at is not None:
             family.revoked_at = current
             replayed = True
-        elif current >= _aware(family.expires_at) or current >= _aware(family.last_refreshed_at) + REFRESH_IDLE_LIFETIME:
+        elif current >= _aware(family.expires_at) or current >= _aware(family.last_refreshed_at) + session_lifetimes(family.client_id)[1]:
             family.revoked_at = current
         else:
             user = _holder(session, family)

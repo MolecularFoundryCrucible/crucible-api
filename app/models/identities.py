@@ -43,3 +43,15 @@ class LinkPreviewRead(SQLModel):
     status: Literal["available", "already_yours", "linked_elsewhere", "second_orcid", "orcid_of_another"] = Field(
         description="available and already_yours can be confirmed; already_yours marks the login verified. The others are refused."
     )
+
+
+class SessionRead(SQLModel):
+    """One signed-in session. Never its tokens."""
+    id: str
+    client_id: str
+    client_name: str
+    created_at: UtcDatetime
+    last_used_at: UtcDatetime = Field(description="When it last got new tokens (it refreshes about every 15 minutes while in use)")
+    expires_at: UtcDatetime
+    signed_in_at: UtcDatetime | None = Field(default=None, description="When the person last signed in for it")
+    current: bool = Field(default=False, description="The session making this request")

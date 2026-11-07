@@ -24,7 +24,7 @@ from app.api.routes import (account, api_keys, auth, identities, files, datasets
                             samples, instruments, users, projects,
                             access_groups, entities, misc, deletion,
                             ingestion_requests, join_requests, pipelines, service_accounts,
-                            resource_graph, hub_auth, oauth, device, print as print_routes)
+                            resource_graph, hub_auth, oauth, device, sessions, print as print_routes)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -321,6 +321,7 @@ app.include_router(hub_auth.password_router)
 app.include_router(oauth.router)
 app.include_router(oauth.discovery)
 app.include_router(device.router)
+app.include_router(sessions.router)
 app.include_router(files.router)
 app.include_router(ingestion_requests.router)
 app.include_router(pipelines.router)

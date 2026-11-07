@@ -27,6 +27,7 @@ class AuthEventType(str, Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     ENABLED = "enabled"
+    SESSIONS_ENDED = "sessions_ended"
 
 
 def record_event(session: Session, event: AuthEventType, *, user: User | None = None, actor: User | None = None, issuer: str | None = None, client_address: str | None = None, client_id: str | None = None) -> None:

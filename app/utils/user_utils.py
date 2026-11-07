@@ -120,6 +120,14 @@ def email_in_use(session, email: Optional[str], exclude_orcid: Optional[str] = N
     return session.exec(q).first() is not None
 
 
+def assert_username_kept_for_password(session, user, update_data: dict) -> None:
+    """A password signs in with the username, so an account with one cannot clear it."""
+    from app.models.core_models import LocalCredential
+
+    if "username" in update_data and not update_data["username"] and session.get(LocalCredential, user.id) is not None:
+        raise HTTPException(status_code=409, detail={"code": "username_required", "message": "This account signs in with a password, so it needs a username"})
+
+
 def assert_profile_fields_available(session, *, username: Optional[str] = None, email: Optional[str] = None, exclude_orcid: Optional[str] = None) -> None:
     """Raise one 409 listing every field (username, email) already held by another user."""
     conflicts = []

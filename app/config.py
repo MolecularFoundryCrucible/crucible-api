@@ -378,7 +378,7 @@ class AuthSettings(SettingsGroup):
             version = optional_env(f"{name}_VERSION")
             if not (version is not None and _SECRET_VERSION.fullmatch(version)) and configured_secret(name) is None:
                 found.append(name)
-        if self.clients and not self.providers:
+        if self.clients and not self.providers and not self.password_enabled:
             found.append("CRUCIBLE_AUTH_PROVIDERS")
         if self.password_enabled:
             found += self.missing("pepper", "pepper_id")
@@ -399,7 +399,7 @@ class HubSettings(SettingsGroup):
         if not self.enabled:
             return []
         found = self.missing("client_secret", "callback_uri")
-        if not settings.auth.providers:
+        if not settings.auth.providers and not settings.auth.password_enabled:
             found.append("CRUCIBLE_AUTH_PROVIDERS")
         return found
 
@@ -645,6 +645,13 @@ def check_settings() -> None:
     if found:
         raise ConfigurationError(f"Missing required settings: {', '.join(found)}")
     settings = get_settings()
+    if settings.auth.password_enabled:
+        from app.utils.hub_login import HubLoginUnavailable, public_api_url
+
+        try:
+            public_api_url()
+        except (HubLoginUnavailable, ConfigurationError):
+            raise ConfigurationError("CRUCIBLE_AUTH_PASSWORD_ENABLED needs an https:// public API address (http:// only on localhost), so passwords never cross the network in the clear") from None
     if settings.auth.clients and settings.hub.enabled:
         raise ConfigurationError("CRUCIBLE_AUTH_CLIENTS and HUB_AUTH_ENABLED are both set; list the Hub in CRUCIBLE_AUTH_CLIENTS and unset HUB_AUTH_ENABLED, HUB_AUTH_CLIENT_ID, HUB_AUTH_CALLBACK_URI and HUB_AUTH_CLIENT_SECRET")
     try:

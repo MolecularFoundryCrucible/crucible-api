@@ -68,7 +68,7 @@ def public_api_url() -> str:
 def load_login_config() -> HubLoginConfig:
     if not hub_auth_enabled():
         raise HubLoginUnavailable
-    if not get_settings().auth.providers:
+    if not get_settings().auth.providers and not get_settings().auth.password_enabled:
         raise HubLoginUnavailable
     base = public_api_url()
     clients = registered_clients()
@@ -181,6 +181,52 @@ def create_handoff_code(engine, transaction: HubLoginTransaction, provider: Oidc
     if pending:
         raise AccountPending
     return code, client_redirect(transaction.callback_uri, {"code": code, "state": transaction.hub_state})
+
+
+LOCAL_PROVIDER = "password"
+
+
+def peek_login(engine, state: str, browser_secret: str | None, *, now: datetime | None = None) -> HubLoginTransaction:
+    """The password sign-in this browser started, without using it up, so a mistyped password keeps
+    the sign-in going. Raises InvalidHubLogin like consume_login."""
+    if not browser_secret or not state or len(state) > 128 or len(browser_secret) > 128:
+        raise InvalidHubLogin
+    current = _now(now)
+    with Session(engine) as session:
+        transaction = session.exec(select(HubLoginTransaction).where(HubLoginTransaction.state_hash == _digest(state))).one_or_none()
+        if transaction is None or transaction.consumed_at is not None or current >= _aware(transaction.expires_at) or transaction.provider_key != LOCAL_PROVIDER:
+            raise InvalidHubLogin
+        if transaction.browser_secret_hash is None or not secrets.compare_digest(transaction.browser_secret_hash, _digest(browser_secret)):
+            raise InvalidHubLogin
+        session.expunge(transaction)
+    return transaction
+
+
+def create_local_code(engine, state: str, browser_secret: str, user_id: int, *, now: datetime | None = None) -> str:
+    """After a correct password: use up the sign-in and issue its code in one transaction, and
+    return the address to send the browser back to."""
+    from app.auth.events import AuthEventType, record_event
+    from app.models.core_models import User
+
+    current = _now(now)
+    code = secrets.token_urlsafe(48)
+    with Session(engine) as session, session.begin():
+        transaction = session.exec(select(HubLoginTransaction).where(HubLoginTransaction.state_hash == _digest(state)).with_for_update()).one_or_none()
+        if transaction is None or transaction.consumed_at is not None or current >= _aware(transaction.expires_at) or transaction.provider_key != LOCAL_PROVIDER:
+            raise InvalidHubLogin
+        if transaction.browser_secret_hash is None or not secrets.compare_digest(transaction.browser_secret_hash, _digest(browser_secret)):
+            raise InvalidHubLogin
+        user = session.get(User, user_id)
+        transaction.consumed_at = current
+        session.add(transaction)
+        session.add(HubLoginCode(
+            code_hash=_digest(code), user_id=user.id, user_unique_id=user.unique_id, client_id=transaction.client_id,
+            callback_uri=transaction.callback_uri, code_challenge=transaction.code_challenge,
+            created_at=current, expires_at=current + CODE_LIFETIME, auth_time=current,
+        ))
+        record_event(session, AuthEventType.SIGN_IN, user=user, issuer=public_api_url(), client_id=transaction.client_id)
+        callback, hub_state = transaction.callback_uri, transaction.hub_state
+    return client_redirect(callback, {"code": code, "state": hub_state})
 
 
 def client_redirect(callback_uri: str, params: dict[str, str]) -> str:

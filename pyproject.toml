@@ -58,4 +58,5 @@ dev = [
     "pytest>=9.2.0",
     "pyflakes>=3.2.0",
     "httpx>=0.28.1",
+    "playwright==1.64.1",
 ]

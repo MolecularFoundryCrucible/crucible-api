@@ -5,9 +5,10 @@ from pathlib import Path as FilePath
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
+from sqlmodel import Session, select
+from fastapi import APIRouter, Depends, Form, HTTPException, Path, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -23,7 +24,7 @@ from app.models.core_models import HubLoginTransaction
 from app.auth.sign_in import AccountPending
 from app.utils.hub_login import (
     HubLoginRefused, HubLoginUnavailable, InvalidHubLogin, check_login_request, consume_login, create_handoff_code,
-    client_redirect, create_login, hub_auth_enabled, hub_error_destination, load_login_config, public_api_url,
+    LOCAL_PROVIDER, client_redirect, create_local_code, create_login, hub_auth_enabled, peek_login, hub_error_destination, load_login_config, public_api_url,
 )
 from app.auth.linking import LinkRefused, LinkSessionStale, LinkingUnavailable, confirm_link, create_link_code, identity_read, open_link, preview_link, provider_fields
 from app.config import ORCID_ISSUERS
@@ -140,6 +141,8 @@ def _chooser(request: Request, listed: list[OidcProvider], hub_request: dict[str
     """Starts nothing: each link returns to this route with a provider, which then starts that sign-in."""
     known = {name: value for name, value in hub_request.items() if value is not None}
     methods = [{"display_name": provider.display_name, "is_orcid": provider.is_orcid, "href": f"?{urlencode({**known, 'provider': provider.key})}"} for provider in listed]
+    if get_settings().auth.password_enabled:
+        methods.append({"display_name": "a password", "is_orcid": False, "href": f"?{urlencode({**known, 'provider': LOCAL_PROVIDER})}"})
     nonce = secrets.token_urlsafe(16)
     response = _templates.TemplateResponse(request, "hub_sign_in_chooser.html", {"methods": methods, "style_nonce": nonce})
     response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -194,12 +197,20 @@ async def start_sign_in(request: Request, engine, *, path: str, response_type: s
             raise HTTPException(status_code=400, detail="Invalid sign-in request")
         return _hub_error(redirect_uri, state, "invalid_request")
     listed = get_settings().auth.providers
-    if provider is None and len(listed) > 1:
+    passwords = get_settings().auth.password_enabled
+    if provider is None and len(listed) + passwords > 1:
         return _chooser(request, listed, {
             "response_type": response_type if path != "/auth/hub/login" else None,
             "client_id": client_id, "redirect_uri": redirect_uri, "state": state, "code_challenge": code_challenge,
             "code_challenge_method": code_challenge_method, "max_age": max_age, "required_user": required_user,
         })
+    if provider == LOCAL_PROVIDER or (provider is None and not listed):
+        if not passwords:
+            raise HTTPException(status_code=400, detail="Invalid sign-in request")
+        provider_state, browser_secret, _ = await run_in_threadpool(create_login, engine, config, client_id, redirect_uri, state, code_challenge, provider_key=LOCAL_PROVIDER, required_user=required_user)
+        response = _browser_headers(RedirectResponse(f"{config.public_api_url}/oauth/password?{urlencode({'state': provider_state})}", status_code=302))
+        response.set_cookie(login_cookie_name(provider_state), browser_secret, max_age=600, path=_password_path(), secure=config.public_api_url.startswith("https://"), httponly=True, samesite="lax")
+        return response
     chosen = listed[0] if provider is None else get_settings().auth.provider(provider)
     if chosen is None:
         raise HTTPException(status_code=400, detail="Invalid sign-in request")
@@ -407,3 +418,121 @@ def revoke_hub_credential(
 ) -> Response:
     authorization_server().create_endpoint_response("revocation", _server_request(request, "/auth/hub/revoke", [("token", body.token)], engine))
     return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+
+password_router = APIRouter(prefix="/oauth", tags=["auth"])
+DEVICE_COOKIE = "crucible_device"
+SIGN_IN_FAILED = "Sign-in failed. Check your details, or try again in a few minutes."
+
+
+def _password_path() -> str:
+    return f"{get_api_root_path()}/oauth/password"
+
+
+def _origin(uri: str) -> str:
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(uri)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def _password_page(request: Request, *, state: str = "", username: str = "", problem: str | None = None, expired: bool = False, callback_uri: str | None = None, status: int = 200) -> Response:
+    """The form posts to itself, then the answer redirects to the client, so form-action names both."""
+    style_nonce, script_nonce = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
+    response = _templates.TemplateResponse(request, "hub_password_form.html", {
+        "style_nonce": style_nonce, "script_nonce": script_nonce, "state": state, "username": username, "problem": problem, "expired": expired,
+    }, status_code=status)
+    targets = "'self'" + (f" {_origin(callback_uri)}" if callback_uri else "")
+    response.headers["Content-Security-Policy"] = f"default-src 'none'; style-src 'nonce-{style_nonce}'; script-src 'nonce-{script_nonce}'; form-action {targets}; base-uri 'none'; frame-ancestors 'none'"
+    response.headers["X-Frame-Options"] = "DENY"
+    return _browser_headers(response)
+
+
+def _password_holder(engine, username: str) -> tuple[int, str, bool] | None:
+    """The account a username names, if it may sign in with a password: its id, unique_id and
+    whether it waits for approval. Usernames match regardless of case and surrounding spaces."""
+    from sqlalchemy import func
+
+    from app.models.core_models import User
+
+    wanted = username.strip().lower()
+    if not wanted:
+        return None
+    with Session(engine) as session:
+        user = session.exec(select(User).where(func.lower(User.username) == wanted)).first()
+    if user is None or user.is_service_account or user.disabled_at is not None:
+        return None
+    return user.id, user.unique_id, user.pending_at is not None
+
+
+def _require_passwords() -> None:
+    if not get_settings().auth.password_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+@password_router.get("/password", response_class=HTMLResponse, responses={400: {"description": "Unknown, used or expired sign-in", "content": {"text/html": {}}}, 404: {"description": "Passwords are off"}})
+def password_form(request: Request, state: str = Query(min_length=1, max_length=128), engine=Depends(get_engine)) -> Response:
+    """The password form for a sign-in started at /oauth/authorize with provider=password."""
+    _require_passwords()
+    try:
+        transaction = peek_login(engine, state, request.cookies.get(login_cookie_name(state)))
+    except InvalidHubLogin:
+        return _password_page(request, expired=True, status=400)
+    return _password_page(request, state=state, callback_uri=transaction.callback_uri)
+
+
+@password_router.post("/password", response_class=RedirectResponse, status_code=303, responses={
+    303: {"description": "Back to the client with code, state and iss"}, 400: {"description": "Unknown, used or expired sign-in", "content": {"text/html": {}}},
+    401: {"description": "Sign-in failed; the same answer for every reason", "content": {"text/html": {}}}, 403: {"description": "The account waits for approval", "content": {"text/html": {}}}, 404: {"description": "Passwords are off"},
+})
+async def password_sign_in(
+    request: Request,
+    username: str = Form(max_length=255),
+    password: str = Form(max_length=1024),
+    state: str = Form(min_length=1, max_length=128),
+    engine=Depends(get_engine),
+) -> Response:
+    """Check a password within the attempt limits. Every failure, for whatever reason, gives the same
+    page, status and time. A typo keeps the sign-in; only a success uses it up."""
+    from app.auth.throttle import HashBusy, attempt_password, client_address, issue_device_cookie, read_device_cookie
+
+    _require_passwords()
+    browser_secret = request.cookies.get(login_cookie_name(state))
+    try:
+        transaction = await run_in_threadpool(peek_login, engine, state, browser_secret)
+    except InvalidHubLogin:
+        return _password_page(request, expired=True, status=400)
+    holder = await run_in_threadpool(_password_holder, engine, username)
+    user_id = holder[0] if holder else None
+    device = read_device_cookie(request.cookies.get(DEVICE_COOKIE), user_id) if user_id is not None else None
+    try:
+        valid = await run_in_threadpool(attempt_password, engine, user_id, password, client_address(request), device_cookie=device)
+    except HashBusy:
+        valid = False
+    if not valid:
+        return _password_page(request, state=state, username=username.strip(), problem=SIGN_IN_FAILED, callback_uri=transaction.callback_uri, status=401)
+    _, unique_id, pending = holder
+    if pending:
+        await run_in_threadpool(consume_login, engine, state, browser_secret)
+        return pending_page(request)
+    if transaction.required_user is not None and transaction.required_user != unique_id:
+        await run_in_threadpool(consume_login, engine, state, browser_secret)
+        response = _browser_headers(RedirectResponse(hub_error_destination(transaction.callback_uri, transaction.hub_state, "login_required"), status_code=303))
+    else:
+        try:
+            destination = await run_in_threadpool(create_local_code, engine, state, browser_secret, user_id)
+        except InvalidHubLogin:
+            return _password_page(request, expired=True, status=400)
+        response = _browser_headers(RedirectResponse(destination, status_code=303))
+    secure = request.url.scheme == "https" or public_api_url().startswith("https://")
+    changed = await run_in_threadpool(_password_changed_at, engine, user_id)
+    response.set_cookie(DEVICE_COOKIE, issue_device_cookie(user_id, changed), max_age=get_settings().auth.device_cookie_days * 86400, path=_password_path(), secure=secure, httponly=True, samesite="lax")
+    response.delete_cookie(login_cookie_name(state), path=_password_path())
+    return response
+
+
+def _password_changed_at(engine, user_id: int):
+    from app.models.core_models import LocalCredential
+
+    with Session(engine) as session:
+        return session.get(LocalCredential, user_id).password_changed_at

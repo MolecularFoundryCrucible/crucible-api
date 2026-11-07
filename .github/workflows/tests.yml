@@ -61,6 +61,25 @@ jobs:
       - run: uv sync --locked
       - run: uv run pytest -q
 
+  browsers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      API_CONF_FILE: app/conf/api_conf_local.yaml
+      CRUCIBLE_SECRET_KEY: ci-only
+      CRUCIBLE_BROWSER_TESTS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.11.16"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run playwright install --with-deps chromium firefox
+      - run: uv run pytest -q -rs tests/test_auth_password_browser.py
+
   storage-s3:
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -303,6 +303,8 @@ class AuthSettings(SettingsGroup):
     pepper: SecretStr | None = None
     pepper_id: str | None = Field(None, pattern=r"^[a-z0-9]{1,32}$")
     previous_pepper_ids: list[str] = Field(default_factory=list)
+    device_cookie_days: int = Field(90, ge=1, le=400, description="How long a browser that signed in with a password stays known, which exempts it from the delays for unknown browsers.")
+    hash_concurrency: int = Field(2, ge=1, le=32, description="Password checks running at once in each worker; each holds CRUCIBLE_AUTH_ARGON2_MEMORY_KIB of memory.")
 
     @field_validator("providers", "clients", mode="before")
     @classmethod

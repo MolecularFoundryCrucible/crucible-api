@@ -85,12 +85,14 @@ def test_exchange_rolls_back_code_and_family_on_issuance_failure(pg_engine, monk
         exchange_handoff_code(pg_engine, code, verifier, "crucible-hub", callback, now=NOW)
 
 
-def test_concurrent_refresh_detects_replay_and_revokes_family(pg_engine):
+def test_concurrent_refresh_keeps_the_session_and_a_later_replay_ends_it(pg_engine):
     first = issue_hub_tokens(pg_engine, internal_id(pg_engine, USER), "crucible-hub", now=NOW)
     barrier = threading.Barrier(2)
+    waited = threading.local()
 
     def after_read(connection, cursor, statement, parameters, context, executemany):
-        if statement.startswith("SELECT") and "FROM hubrefreshtoken" in statement and "FOR UPDATE" not in statement:
+        if statement.startswith("SELECT") and "FROM hubrefreshtoken" in statement and "FOR UPDATE" not in statement and not getattr(waited, "done", False):
+            waited.done = True
             barrier.wait(timeout=10)
 
     def refresh():
@@ -106,12 +108,14 @@ def test_concurrent_refresh_detects_replay_and_revokes_family(pg_engine):
     finally:
         event.remove(pg_engine, "after_cursor_execute", after_read)
     issued = [result for result in results if result is not None]
-    assert len(issued) == 1
+    assert len(issued) == 2
     with Session(pg_engine) as session:
-        with pytest.raises(InvalidHubGrant):
-            hub_access_user(session, issued[0].access_token, now=NOW + timedelta(minutes=1))
+        assert hub_access_user(session, issued[0].access_token, now=NOW + timedelta(minutes=1)) == hub_access_user(session, issued[1].access_token, now=NOW + timedelta(minutes=1))
+    refresh_hub_tokens(pg_engine, issued[0].refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
     with pytest.raises(InvalidHubGrant):
-        refresh_hub_tokens(pg_engine, issued[0].refresh_token, "crucible-hub", now=NOW + timedelta(minutes=2))
+        refresh_hub_tokens(pg_engine, issued[1].refresh_token, "crucible-hub", now=NOW + timedelta(minutes=3))
+    with pytest.raises(InvalidHubGrant):
+        refresh_hub_tokens(pg_engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=3))
 
 
 @pytest.mark.parametrize("first_operation", ["refresh", "revoke"])

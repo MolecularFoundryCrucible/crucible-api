@@ -134,7 +134,7 @@ async def device_signed_in(
     token = _serializer("decision").dumps({"d": device.device_hash, "u": user_id, "t": auth_time.isoformat(), "n": browser["n"]})
     return _page(request, "device_confirm.html", {
         "client_name": client.display_name if client else device.client_id, "person": person, "asked_at": device.created_at.strftime("%H:%M UTC"),
-        "user_code": started.get("c", ""), "token": token,
+        "user_code": started.get("c", ""), "token": token, "requested_from": device.requested_from,
     }, form=True)
 
 

@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Sessions approved with a device code are recorded as such and refused, with 403 `browser_sign_in_required`, wherever a recent sign-in is needed: creating keys, ending sessions, changing logins or administrators. The device approval page shows the network address that asked. Needs migration `1226f8497119`.
 - Signed-in sessions: `GET /account/sessions` lists yours, `DELETE /account/sessions/{id}` and `DELETE /account/sessions` (all but this one) end them with a recent sign-in; administrators use `/users/{user_ref}/sessions`; `auth end-sessions --user|--all` ends them from the server. No migration.
 - Device sign-in (RFC 8628) for public clients on machines without a browser: `POST /oauth/device_authorization`, polling at `/oauth/token`, and the browser pages at `/oauth/device` (enter the code, sign in afresh, approve or deny). Codes last 10 minutes, are stored as hashes, and wrong codes count against the per-address limit. Needs migration `6a97d683a96c`.
 - Public clients in `CRUCIBLE_AUTH_CLIENTS` (`type: public`), such as the nano-crucible command line: no secret, PKCE required, loopback redirects on any port (RFC 8252), a confirmation page before the code is sent, and sessions of 14 days idle and 90 days at most. The Compose Hub overlay now registers the Hub and nano-crucible in the client list instead of `HUB_AUTH_*`, with the same secret file. No migration.
@@ -47,6 +48,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Refresh tokens get a 30-second grace: the token just before the newest can be used again in that time and gets a new pair, so concurrent refreshes and retries no longer end the session. Any older token still ends it.
 - Linking moved to `/oauth/link/start`, `/oauth/link/preview` and `/oauth/link/confirm`; the `/auth/hub/link/*` paths are gone (no client used them). Sign-in and link events record the client they came through. Needs migration `4a3a4e216223`.
 - Linking a login: only the session that started the link can preview or confirm it, that session needs a sign-in within 10 minutes when confirming (401 `insufficient_user_authentication`), the one-time start address works for 2 minutes, and a person can start at most 5 links in 10 minutes (429 `too_many_links`). Needs migration `15eb11ce75fd`.
 - An API key can no longer edit another human administrator through `PATCH /users/{user_ref}` or revoke all their keys; that needs a Hub session with a recent sign-in. People editing themselves are unaffected.

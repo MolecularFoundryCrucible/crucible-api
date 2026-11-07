@@ -99,12 +99,14 @@ def test_a_device_is_approved_in_a_browser_and_gets_its_session_once(client, db_
     page = client.get("/oauth/device", params={"user_code": body["user_code"]})
     assert page.status_code == 200 and body["user_code"] in page.text and "Never enter a code someone sent you" in page.text
     confirm, decided = approve_in_browser(client, " " + body["user_code"].lower().replace("-", " ") + " ")
-    assert "nano-crucible" in confirm.text and "Ada Lovelace" in confirm.text and body["user_code"] in confirm.text
+    assert "nano-crucible" in confirm.text and "Ada Lovelace" in confirm.text and body["user_code"] in confirm.text and "testclient" in confirm.text
     assert decided.status_code == 200 and "approved" in decided.text.lower()
     allow_polling(db_engine)
     tokens = poll(client, body["device_code"])
     assert tokens.status_code == 200, tokens.text
     assert tokens.json()["refresh_token"].startswith("chbr_") and abs(tokens.json()["auth_time"] - datetime.now(timezone.utc).timestamp()) < 30
+    with Session(db_engine) as session:
+        assert session.exec(select(HubTokenFamily.grant_type)).one() == "urn:ietf:params:oauth:grant-type:device_code"
     allow_polling(db_engine)
     assert poll(client, body["device_code"]).status_code == 400
 

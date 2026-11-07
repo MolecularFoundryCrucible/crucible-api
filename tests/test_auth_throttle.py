@@ -11,7 +11,7 @@ from app.auth.throttle import (
     ADDRESS_FREE_FAILURES, KNOWN_LIMIT, TOTAL_LIMIT, UNKNOWN_LIMIT, DeviceCookie, attempt_password, begin_attempt, client_address, finish_attempt,
     issue_device_cookie, read_device_cookie,
 )
-from app.models.core_models import LocalCredential, LoginThrottle, User, UserIdentity
+from app.models.core_models import DeviceAuthorization, LocalCredential, LoginThrottle, User, UserIdentity
 
 NOW = datetime(2026, 11, 6, 12, tzinfo=timezone.utc)
 RIGHT = "violet ladder under quiet rain"
@@ -290,7 +290,7 @@ def test_address_row_removed_after_30_days(engine, use_engine):
     attempt(engine, None, address="203.0.113.7")
     from app.models.core_models import AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily
 
-    SQLModel.metadata.create_all(engine, tables=list(dict.fromkeys(TEST_TABLES + [model.__table__ for model in (AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily)])))
+    SQLModel.metadata.create_all(engine, tables=list(dict.fromkeys(TEST_TABLES + [model.__table__ for model in (AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, DeviceAuthorization)])))
     counts = cleanup_hub_auth(engine, commit=True, now=NOW + timedelta(days=29))
     assert counts["login_throttle"] == 0
     counts = cleanup_hub_auth(engine, commit=True, now=NOW + timedelta(days=31))

@@ -4,14 +4,18 @@ request and shapes the errors; codes, token families and tokens stay in the API'
 are consumed and issued by the functions in app.utils.hub_login and app.utils.hub_tokens."""
 import secrets
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 from authlib.oauth2 import AuthorizationServer
 from authlib.oauth2.rfc6749 import ClientMixin, InvalidGrantError, OAuth2Request
 from authlib.oauth2.rfc6749.requests import BasicOAuth2Payload
 from authlib.oauth2.rfc6749.grants import AuthorizationCodeGrant, RefreshTokenGrant
 from authlib.oauth2.rfc7009 import RevocationEndpoint
+from authlib.oauth2.rfc6749 import UnauthorizedClientError
 from authlib.oauth2.rfc7636 import CodeChallenge
+from authlib.oauth2.rfc8628 import DEVICE_CODE_GRANT_TYPE, DeviceAuthorizationEndpoint, DeviceCodeGrant
+from sqlalchemy import update
 from sqlmodel import Session, select
 
 from app.auth.clients import ClientUnavailable, RegisteredClient, client_by_id
@@ -118,13 +122,20 @@ class OAuthClient(ClientMixin):
 
     def check_endpoint_auth_method(self, method, endpoint):
         """A confidential client proves itself with HTTP Basic; a public one cannot, so it sends only
-        its client_id and relies on PKCE (RFC 9700 2.1.1)."""
+        its client_id and relies on PKCE (RFC 9700 2.1.1). The API's own device-approval client never
+        reaches these endpoints."""
+        if self.client.type == "internal":
+            return False
         return method == ("none" if self.client.is_public else "client_secret_basic")
 
     def check_response_type(self, response_type):
         return response_type == "code"
 
     def check_grant_type(self, grant_type):
+        if self.client.type == "internal":
+            return False
+        if grant_type == DEVICE_CODE_GRANT_TYPE:
+            return self.client.is_public
         return grant_type in ("authorization_code", "refresh_token")
 
 
@@ -248,6 +259,102 @@ class Revocation(RevocationEndpoint):
         revoke_hub_tokens(request.engine, token.raw, request.client.get_client_id())
 
 
+class DeviceAuthorization(DeviceAuthorizationEndpoint):
+    CLIENT_AUTH_METHODS = AUTH_METHODS
+
+    def create_endpoint_response(self, request):
+        """RFC 8628 3.1-3.2. Only clients allowed the device grant get codes."""
+        from app.auth.devices import DEVICE_LIFETIME, POLL_INTERVAL, create_device_authorization
+        from app.utils.hub_login import public_api_url
+
+        client = self.authenticate_client(request)
+        if not client.check_grant_type(DEVICE_CODE_GRANT_TYPE):
+            raise UnauthorizedClientError("This client may not use the device flow")
+        device_code, user_code = create_device_authorization(request.engine, client.get_client_id())
+        verification_uri = f"{public_api_url()}/oauth/device"
+        return 200, {
+            "device_code": device_code, "user_code": user_code, "verification_uri": verification_uri,
+            "verification_uri_complete": f"{verification_uri}?{urlencode({'user_code': user_code})}",
+            "expires_in": int(DEVICE_LIFETIME.total_seconds()), "interval": POLL_INTERVAL,
+        }, [("Content-Type", "application/json"), ("Cache-Control", "no-store"), ("Pragma", "no-cache")]
+
+
+class _DeviceCredential:
+    def __init__(self, row):
+        self.row = row
+
+    def get_client_id(self):
+        return self.row.client_id
+
+    def get_scope(self):
+        return ""
+
+    def get_user_code(self):
+        return self.row
+
+    def is_expired(self):
+        return datetime.now(timezone.utc) >= _aware(self.row.expires_at)
+
+
+class DeviceGrant(DeviceCodeGrant):
+    """Polling with the device code (RFC 8628 3.4-3.5): pending, slow_down, access_denied,
+    expired_token, or tokens once the person approved. The code works once."""
+    TOKEN_ENDPOINT_AUTH_METHODS = AUTH_METHODS
+
+    def query_device_credential(self, device_code):
+        from app.auth.devices import device_code_hash
+        from app.models.core_models import DeviceAuthorization as Row
+
+        with Session(self.request.engine) as session:
+            row = session.get(Row, device_code_hash(device_code))
+            if row is None or row.consumed_at is not None:
+                return None
+            session.expunge(row)
+        return _DeviceCredential(row)
+
+    def query_user_grant(self, row):
+        if row.denied_at is not None:
+            return row.user_id, False
+        if row.approved_at is not None:
+            return row.user_id, True
+        return None
+
+    def should_slow_down(self, credential):
+        """Each poll before the interval has passed adds 5 seconds to it, for this and every later poll."""
+        from app.auth.devices import SLOW_DOWN_STEP
+        from app.models.core_models import DeviceAuthorization as Row
+
+        current = datetime.now(timezone.utc)
+        row = credential.row
+        too_soon = row.last_polled_at is not None and current - _aware(row.last_polled_at) < timedelta(seconds=row.interval)
+        values = {"last_polled_at": current}
+        if too_soon:
+            values["interval"] = Row.interval + SLOW_DOWN_STEP
+        with Session(self.request.engine) as session, session.begin():
+            session.execute(update(Row).where(Row.device_code_hash == row.device_code_hash).values(**values).execution_options(synchronize_session=False))
+        return too_soon
+
+    def create_token_response(self):
+        """Use up the approved device sign-in and issue the session in one transaction."""
+        from app.models.core_models import DeviceAuthorization as Row
+        from app.utils.hub_tokens import issue_hub_tokens_in_session
+
+        row = self.request.credential.row
+        current = datetime.now(timezone.utc)
+        with Session(self.request.engine) as session, session.begin():
+            claimed = session.execute(update(Row).where(
+                Row.device_code_hash == row.device_code_hash, Row.consumed_at.is_(None), Row.approved_at.is_not(None), Row.expires_at > current,
+            ).values(consumed_at=current).execution_options(synchronize_session=False).returning(Row.user_id, Row.auth_time)).first()
+            if claimed is None:
+                raise InvalidGrantError()
+            try:
+                pair = issue_hub_tokens_in_session(session, claimed[0], self.request.client.get_client_id(), now=current, auth_time=_aware(claimed[1]) if claimed[1] else None)
+            except InvalidHubGrant:
+                raise InvalidGrantError() from None
+        self.request.token_pair = pair
+        return 200, token_body(pair), self.TOKEN_RESPONSE_HEADER
+
+
 class CrucibleAuthorizationServer(AuthorizationServer):
     def query_client(self, client_id):
         client = client_by_id(client_id)
@@ -279,5 +386,7 @@ def authorization_server() -> CrucibleAuthorizationServer:
         server.register_grant(CodeGrant, [PkceS256(required=True)])
         server.register_grant(RefreshGrant)
         server.register_endpoint(Revocation)
+        server.register_grant(DeviceGrant)
+        server.register_endpoint(DeviceAuthorization)
         _server = server
     return _server

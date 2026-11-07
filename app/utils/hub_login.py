@@ -80,7 +80,7 @@ def load_login_config() -> HubLoginConfig:
     base = public_api_url()
     clients = registered_clients()
     try:
-        secrets_present = all(optional_secret(client.secret_name) for client in clients if not client.is_public)
+        secrets_present = all(optional_secret(client.secret_name) for client in clients if client.secret_name is not None)
     except ConfigurationError:
         raise HubLoginUnavailable from None
     if not secrets_present:
@@ -248,6 +248,24 @@ def client_redirect(callback_uri: str, params: dict[str, str]) -> str:
 
 def hub_error_destination(callback_uri: str, hub_state: str, error: str) -> str:
     return client_redirect(callback_uri, {"error": error, "state": hub_state})
+
+
+def redeem_approval_code(engine, code: str, verifier: str, client_id: str, callback_uri: str, *, now: datetime | None = None) -> tuple[int, datetime | None]:
+    """Use up a sign-in code issued to one of the API's own pages, with its PKCE verifier, and
+    return who signed in and when, without issuing any session."""
+    if not code or len(code) > 128 or not 43 <= len(verifier) <= 128 or not verifier.isascii():
+        raise InvalidHubGrant
+    current = _now(now)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
+    with Session(engine) as session, session.begin():
+        grant = session.exec(select(HubLoginCode).where(HubLoginCode.code_hash == _digest(code)).with_for_update()).one_or_none()
+        if grant is None or grant.purpose != "sign_in" or grant.consumed_at is not None or current >= _aware(grant.expires_at):
+            raise InvalidHubGrant
+        if grant.client_id != client_id or grant.callback_uri != callback_uri or not secrets.compare_digest(grant.code_challenge, challenge):
+            raise InvalidHubGrant
+        grant.consumed_at = current
+        session.add(grant)
+        return grant.user_id, _aware(grant.auth_time) if grant.auth_time else None
 
 
 def exchange_handoff_code(engine, code: str, verifier: str, client_id: str, callback_uri: str, *, now: datetime | None = None) -> HubTokenPair:

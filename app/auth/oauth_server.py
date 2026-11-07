@@ -50,9 +50,10 @@ class FormRequest(OAuth2Request):
     is the public address, since behind a proxy the request itself may arrive over plain http.
     Every value of a repeated field is kept, so Authlib can refuse repeats."""
 
-    def __init__(self, uri: str, headers: dict[str, str], fields: list[tuple[str, str]], engine):
+    def __init__(self, uri: str, headers: dict[str, str], fields: list[tuple[str, str]], engine, address: str | None = None):
         super().__init__("POST", uri, headers=headers)
         self.engine = engine
+        self.address = address
         self.payload = _FormPayload(fields)
         self._form = self.payload.data
         self.token_pair: HubTokenPair | None = None
@@ -270,7 +271,7 @@ class DeviceAuthorization(DeviceAuthorizationEndpoint):
         client = self.authenticate_client(request)
         if not client.check_grant_type(DEVICE_CODE_GRANT_TYPE):
             raise UnauthorizedClientError("This client may not use the device flow")
-        device_code, user_code = create_device_authorization(request.engine, client.get_client_id())
+        device_code, user_code = create_device_authorization(request.engine, client.get_client_id(), requested_from=request.address)
         verification_uri = f"{public_api_url()}/oauth/device"
         return 200, {
             "device_code": device_code, "user_code": user_code, "verification_uri": verification_uri,
@@ -337,7 +338,7 @@ class DeviceGrant(DeviceCodeGrant):
     def create_token_response(self):
         """Use up the approved device sign-in and issue the session in one transaction."""
         from app.models.core_models import DeviceAuthorization as Row
-        from app.utils.hub_tokens import issue_hub_tokens_in_session
+        from app.utils.hub_tokens import DEVICE_CODE, issue_hub_tokens_in_session
 
         row = self.request.credential.row
         current = datetime.now(timezone.utc)
@@ -348,7 +349,7 @@ class DeviceGrant(DeviceCodeGrant):
             if claimed is None:
                 raise InvalidGrantError()
             try:
-                pair = issue_hub_tokens_in_session(session, claimed[0], self.request.client.get_client_id(), now=current, auth_time=_aware(claimed[1]) if claimed[1] else None)
+                pair = issue_hub_tokens_in_session(session, claimed[0], self.request.client.get_client_id(), now=current, auth_time=_aware(claimed[1]) if claimed[1] else None, grant_type=DEVICE_CODE)
             except InvalidHubGrant:
                 raise InvalidGrantError() from None
         self.request.token_pair = pair

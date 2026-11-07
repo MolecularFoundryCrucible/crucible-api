@@ -1,12 +1,13 @@
 import base64
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasicCredentials
 from sqlalchemy.pool import StaticPool
+from sqlalchemy import update
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app import config
@@ -231,11 +232,18 @@ def test_wrong_client_is_invalid_client_and_another_clients_code_is_useless(api,
     assert exchange(api, code).status_code == 200
 
 
+def past_the_grace(engine):
+    with Session(engine) as session:
+        session.execute(update(HubRefreshToken).where(HubRefreshToken.spent_at.is_not(None)).values(spent_at=datetime.now(timezone.utc) - timedelta(minutes=1)))
+        session.commit()
+
+
 def test_refresh_rotates_and_reuse_ends_the_session(api, db_engine):
     tokens = exchange(api, signed_in(db_engine, HUB)).json()
     assert api.post("/oauth/token", auth=NOTES_AUTH, data={"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]}).json()["error"] == "invalid_grant"
     second = api.post("/oauth/token", auth=HUB_AUTH, data={"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]})
     assert second.status_code == 200 and second.json()["refresh_token"] != tokens["refresh_token"]
+    past_the_grace(db_engine)
     reused = api.post("/oauth/token", auth=HUB_AUTH, data={"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]})
     assert reused.json()["error"] == "invalid_grant"
     later = api.post("/oauth/token", auth=HUB_AUTH, data={"grant_type": "refresh_token", "refresh_token": second.json()["refresh_token"]})
@@ -264,6 +272,7 @@ def test_the_hub_routes_and_the_standard_route_share_one_server(api, db_engine):
     assert via_hub.status_code == 200, via_hub.text
     refreshed = api.post("/oauth/token", auth=HUB_AUTH, data={"grant_type": "refresh_token", "refresh_token": via_hub.json()["refresh_token"]})
     assert refreshed.status_code == 200
+    past_the_grace(db_engine)
     again = api.post("/auth/hub/refresh", auth=HUB_AUTH, json={"refresh_token": via_hub.json()["refresh_token"]})
     assert again.status_code == 401
 

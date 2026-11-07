@@ -11,7 +11,7 @@ from app.cli import auth as auth_cli
 from app.models.core_models import AuthEvent, HubAccessToken, HubRefreshToken, HubTokenFamily, User
 from app.utils import auth_utils
 from app.utils.auth_utils import authenticate_user
-from app.utils.hub_tokens import issue_hub_tokens
+from app.utils.hub_tokens import AUTHORIZATION_CODE, DEVICE_CODE, issue_hub_tokens
 
 ADA, BOB, BOSS, CHIEF = "0tmnyhfztdwc1000w2kspzsnh0", "0tmnyhfztdwc1000w2kspzsnh1", "0tmnyhfztdwc1000w2kspzsnh9", "0tmnyhfztdwc1000w2kspzsnh8"
 
@@ -33,8 +33,8 @@ def user_id(engine, unique_id):
         return session.exec(select(User.id).where(User.unique_id == unique_id)).one()
 
 
-def sign_in(engine, unique_id, *, age=timedelta(seconds=5)):
-    return issue_hub_tokens(engine, user_id(engine, unique_id), "crucible-hub", auth_time=datetime.now(timezone.utc) - age).access_token
+def sign_in(engine, unique_id, *, age=timedelta(seconds=5), grant_type=AUTHORIZATION_CODE):
+    return issue_hub_tokens(engine, user_id(engine, unique_id), "crucible-hub", auth_time=datetime.now(timezone.utc) - age, grant_type=grant_type).access_token
 
 
 def bearer(token, **extra):
@@ -81,6 +81,15 @@ def test_an_api_key_can_list_but_not_end_sessions(client, people, auth_as):
     assert client.get("/account/sessions").status_code == 200
     refused = client.delete("/account/sessions")
     assert (refused.status_code, refused.json()["detail"]["code"]) == (403, "hub_session_required")
+
+
+def test_a_device_session_works_but_cannot_end_sessions_or_create_keys(client, people):
+    device = sign_in(people, ADA, grant_type=DEVICE_CODE)
+    assert client.get("/account/sessions", headers=bearer(device)).status_code == 200
+    for method, path in (("DELETE", "/account/sessions"), ("POST", "/account/apikey/regenerate")):
+        refused = client.request(method, path, headers=bearer(device))
+        assert (refused.status_code, refused.json()["detail"]["code"]) == (403, "browser_sign_in_required")
+    assert works(device)
 
 
 def test_someone_elses_session_cannot_be_ended(client, people):

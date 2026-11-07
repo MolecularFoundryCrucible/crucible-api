@@ -54,7 +54,7 @@ def new_user_code() -> str:
     return f"{letters[:4]}-{letters[4:]}"
 
 
-def create_device_authorization(engine, client_id: str, *, now: datetime | None = None) -> tuple[str, str]:
+def create_device_authorization(engine, client_id: str, *, requested_from: str | None = None, now: datetime | None = None) -> tuple[str, str]:
     """A new device sign-in for this client: its device code and its user code, each shown once."""
     current = _now(now)
     for _ in range(5):
@@ -63,7 +63,7 @@ def create_device_authorization(engine, client_id: str, *, now: datetime | None 
             if session.exec(select(DeviceAuthorization.device_code_hash).where(DeviceAuthorization.user_code_hash == user_code_hash(normalized_user_code(user_code)))).first() is None:
                 session.add(DeviceAuthorization(
                     device_code_hash=device_code_hash(device_code), user_code_hash=user_code_hash(normalized_user_code(user_code)), client_id=client_id,
-                    created_at=current, expires_at=current + DEVICE_LIFETIME, interval=POLL_INTERVAL,
+                    created_at=current, expires_at=current + DEVICE_LIFETIME, interval=POLL_INTERVAL, requested_from=requested_from,
                 ))
                 session.commit()
                 return device_code, user_code
@@ -76,6 +76,7 @@ class PendingDevice:
     client_id: str
     created_at: datetime
     user_code: str
+    requested_from: str | None = None
 
 
 def pending_device(engine, user_code: str | None, *, now: datetime | None = None) -> PendingDevice | None:
@@ -97,7 +98,7 @@ def device_by_hash(engine, device_hash: str, *, now: datetime | None = None) -> 
         row = session.get(DeviceAuthorization, device_hash)
         if row is None or row.approved_at is not None or row.denied_at is not None or row.consumed_at is not None or current >= _aware(row.expires_at):
             return None
-        return PendingDevice(row.device_code_hash, row.client_id, _aware(row.created_at), "")
+        return PendingDevice(row.device_code_hash, row.client_id, _aware(row.created_at), "", row.requested_from)
 
 
 def decide(engine, device_hash: str, *, user_id: int, auth_time: datetime, approve: bool, now: datetime | None = None) -> bool:

@@ -21,7 +21,7 @@ from app.config import get_secret
 from app.api.dependencies import get_engine
 from app.models.core_models import ApiKey, ApiToken, User
 from app.models.resource import ResourceCapabilities
-from app.utils.hub_tokens import ACCESS_PREFIX, InvalidHubGrant, hub_access_family
+from app.utils.hub_tokens import ACCESS_PREFIX, DEVICE_CODE, InvalidHubGrant, hub_access_family
 from app.auth.api_keys import DEFAULT_KEY_NAME, find_api_key, newest_key, replace_plain_keys, status_of, store_key
 from app.services.activity import record_caller_activity
 from app.utils.permissions import (
@@ -216,7 +216,8 @@ def _authorize_user(credentials: HTTPAuthorizationCredentials) -> Principal:
             except InvalidHubGrant:
                 raise HTTPException(status_code=401, detail="Invalid or expired API credential.")
             authenticated_at = family.auth_time.replace(tzinfo=family.auth_time.tzinfo or datetime.timezone.utc) if family.auth_time else None
-            principal = replace(load_principal(session, family.user_id), credential=SESSION, authenticated_at=authenticated_at, session_family_id=family.id, client_id=family.client_id)
+            principal = replace(load_principal(session, family.user_id), credential=SESSION, authenticated_at=authenticated_at, session_family_id=family.id, client_id=family.client_id,
+                                via_device=family.grant_type == DEVICE_CODE)
         record_caller_activity(engine, principal.user_id)
         return principal
 
@@ -673,9 +674,13 @@ API_KEY_READ_DEPRECATION = "@1791763200"
 
 
 def require_recent_authentication(principal: Principal) -> None:
-    """Raise the RFC 9470 step-up challenge unless a Hub session's ORCID sign-in is recent. API keys are exempt."""
+    """Raise the RFC 9470 step-up challenge unless a session's sign-in is recent. API keys are exempt.
+    A session approved with a device code is refused outright: if someone was tricked into approving
+    it, it must not mint keys or change how anyone signs in."""
     if principal.credential != SESSION:
         return
+    if principal.via_device:
+        raise HTTPException(status_code=403, detail={"code": "browser_sign_in_required", "message": "This needs a sign-in in a browser on this device, not a device code"})
     now = datetime.datetime.now(datetime.timezone.utc)
     if principal.authenticated_at is not None and now - principal.authenticated_at <= timedelta(seconds=STEP_UP_MAX_AGE):
         return

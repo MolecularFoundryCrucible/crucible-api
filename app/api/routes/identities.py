@@ -20,7 +20,7 @@ router = APIRouter(tags=["account"])
 
 HUB_ONLY = "Changing how you sign in needs a Hub session, not an API key"
 LOOKUP_OFF = {"code": "identity_lookup_off", "message": "Linking is not available yet on this server"}
-_STEP_UP = {401: {"description": "A Hub session needs a recent sign-in (`insufficient_user_authentication`)"}, 403: {"description": "`hub_session_required`: API keys cannot change how you sign in"}}
+_STEP_UP = {401: {"description": "A Hub session needs a recent sign-in (`insufficient_user_authentication`)"}, 403: {"description": "`hub_session_required`: API keys cannot change how you sign in; `browser_sign_in_required`: nor can a session approved with a device code"}}
 
 
 @router.get("/account/identities", response_model=List[IdentityRead])

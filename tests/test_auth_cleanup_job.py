@@ -6,7 +6,7 @@ from sqlmodel import Session, SQLModel, select
 
 from app.cli import auth as auth_cli
 from app.config import ConfigurationError, get_settings
-from app.models.core_models import LoginThrottle, AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily
+from app.models.core_models import DeviceAuthorization, LoginThrottle, AuthEvent, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily
 from app.utils.hub_auth_maintenance import cleanup_hub_auth
 
 NOW = datetime.now(timezone.utc)
@@ -14,7 +14,7 @@ NOW = datetime.now(timezone.utc)
 
 @pytest.fixture
 def history(db_engine):
-    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginTransaction, HubLoginCode, HubTokenFamily, HubRefreshToken, HubAccessToken, LoginThrottle)])
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginTransaction, HubLoginCode, HubTokenFamily, HubRefreshToken, HubAccessToken, LoginThrottle, DeviceAuthorization)])
     with Session(db_engine) as session:
         for days, event in ((400, "sign_in"), (366, "provider_refused"), (364, "sign_in"), (10, "sign_in_failed"), (0, "identity_linked")):
             session.add(AuthEvent(at=NOW - timedelta(days=days), event=event))

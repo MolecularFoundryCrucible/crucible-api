@@ -169,6 +169,26 @@ def begin_attempt(engine, credential_user_id: int | None, client_address: str | 
     return AttemptDecision(True, user_id, trusted, digest, password_hash, pepper_id, seen)
 
 
+def begin_code_attempt(engine, client_address: str | None, *, now: datetime | None = None) -> tuple[bool, str | None]:
+    """Count a code typed at a sign-in page against the address's limit, before checking it.
+    Returns whether it may be checked, and the address's key for giving the count back."""
+    current = now or datetime.now(timezone.utc)
+    digest = address_hash(client_address)
+    if digest is None:
+        return True, None
+    with Session(engine) as session, session.begin():
+        return _count_address(session, digest, current), digest
+
+
+def give_back(engine, digest: str | None) -> None:
+    """Undo one counted failure for an address, after a correct code."""
+    if digest is None:
+        return
+    with Session(engine) as session, session.begin():
+        session.execute(update(LoginThrottle).where(LoginThrottle.address_hash == digest, LoginThrottle.consecutive_failures > 0)
+                        .values(consecutive_failures=LoginThrottle.consecutive_failures - 1).execution_options(synchronize_session=False))
+
+
 def finish_attempt(engine, decision: AttemptDecision, *, success: bool, new_hash: tuple[str, str | None] | None = None) -> bool:
     """Undo the count of a successful attempt, and store a rehash if one is due. A success stands
     only if the password has not changed since the attempt began."""

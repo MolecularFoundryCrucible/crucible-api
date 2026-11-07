@@ -58,6 +58,21 @@ async def token(request: Request, engine=Depends(get_engine)) -> JSONResponse:
         raise HTTPException(status_code=503, detail="Sign-in is unavailable") from None
 
 
+@router.post("/device_authorization", openapi_extra=_FORM, responses={200: {"description": "device_code, user_code, verification_uri, verification_uri_complete, expires_in and interval (RFC 8628 3.2)", "content": {"application/json": {"schema": {"type": "object"}}}}, 400: {"description": "RFC 6749 error"}, 401: {"description": "`invalid_client`"}, 503: {"description": "Sign-in unavailable"}})
+async def device_authorization(request: Request, engine=Depends(get_engine)) -> JSONResponse:
+    """Start a device sign-in (RFC 8628) for a public client on a machine without a browser: show the
+    person the user code and the verification address, then poll /oauth/token with
+    `grant_type=urn:ietf:params:oauth:grant-type:device_code`, the device code and the client_id."""
+    try:
+        prepared = await oauth_request(request, "/oauth/device_authorization", engine)
+    except RepeatedParameter:
+        return repeated()
+    try:
+        return answer(*await run_in_threadpool(authorization_server().create_endpoint_response, "device_authorization", prepared))
+    except ClientUnavailable:
+        raise HTTPException(status_code=503, detail="Sign-in is unavailable") from None
+
+
 @router.post("/revoke", openapi_extra=_FORM, responses={200: {"description": "Processed; unknown tokens and other clients' tokens are treated alike", "content": {"application/json": {"schema": {"type": "object"}}}}, 401: {"description": "`invalid_client`"}, 503: {"description": "Sign-in unavailable"}})
 async def revoke(request: Request, engine=Depends(get_engine)) -> JSONResponse:
     """Token revocation (RFC 7009): `token`, and optionally `token_type_hint`. Ends the whole session
@@ -110,9 +125,10 @@ def authorization_server_metadata() -> JSONResponse:
         "authorization_endpoint": f"{issuer}/oauth/authorize",
         "token_endpoint": f"{issuer}/oauth/token",
         "revocation_endpoint": f"{issuer}/oauth/revoke",
+        "device_authorization_endpoint": f"{issuer}/oauth/device_authorization",
         "response_types_supported": ["code"],
         "response_modes_supported": ["query"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "grant_types_supported": ["authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "none"],
         "revocation_endpoint_auth_methods_supported": ["client_secret_basic", "none"],

@@ -418,6 +418,25 @@ class HubTokenFamily(SQLModel, table=True):
     auth_time: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
 
 
+class DeviceAuthorization(SQLModel, table=True):
+    """A device sign-in (RFC 8628) waiting for, or given, a person's approval in a browser."""
+    __tablename__ = "device_authorization"
+    __table_args__ = (Index("ix_device_authorization_expires_at", "expires_at"),)
+
+    device_code_hash: str = Field(primary_key=True, max_length=64)
+    user_code_hash: str = Field(max_length=64, unique=True)
+    client_id: str = Field(max_length=100)
+    created_at: datetime = Field(sa_type=DateTime(timezone=True))
+    expires_at: datetime = Field(sa_type=DateTime(timezone=True))
+    interval: int = Field(default=5, sa_column=Column(Integer, nullable=False, server_default="5"))
+    last_polled_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    user_id: Optional[int] = Field(default=None, sa_column=Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=True))
+    auth_time: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    approved_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    denied_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    consumed_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+
+
 class HubRefreshToken(SQLModel, table=True):
     token_hash: str = Field(primary_key=True, max_length=64)
     family_id: str = Field(foreign_key="hubtokenfamily.id", index=True)

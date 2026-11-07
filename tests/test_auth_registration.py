@@ -10,6 +10,7 @@ from app.api.main import app
 from app.auth.registration import expire_pending_users
 from app.auth.sign_in import NOT_LINKED, SignInRefused, resolve_sign_in
 from app.models.core_models import (
+    DeviceAuthorization,
     LoginThrottle,
     AccessGroup, AuthEvent, Dataset, HubAccessToken, HubLoginCode, HubLoginTransaction, HubRefreshToken, HubTokenFamily, User, UserAccessGroupLink, UserIdentity,
 )
@@ -74,7 +75,7 @@ def test_waiting_accounts_get_no_hub_tokens_or_api_key(db_engine, use_engine):
     from app.utils import auth_utils
 
     use_engine(db_engine)
-    SQLModel.metadata.create_all(db_engine, tables=[LoginThrottle.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__])
+    SQLModel.metadata.create_all(db_engine, tables=[LoginThrottle.__table__, DeviceAuthorization.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__])
     unique_id, _ = sign_in(db_engine, LAB_ISSUER, "newcomer", "approval")
     user = people(db_engine)[unique_id]
     with pytest.raises(InvalidHubGrant):
@@ -227,7 +228,7 @@ def test_stale_waiting_accounts_expire_through_the_same_function(db_engine):
 def test_cleanup_job_reports_and_removes_stale_waiting_accounts(db_engine):
     from app.utils.hub_auth_maintenance import cleanup_hub_auth
 
-    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginTransaction, HubLoginCode, HubTokenFamily, HubRefreshToken, HubAccessToken, LoginThrottle)])
+    SQLModel.metadata.create_all(db_engine, tables=[model.__table__ for model in (HubLoginTransaction, HubLoginCode, HubTokenFamily, HubRefreshToken, HubAccessToken, LoginThrottle, DeviceAuthorization)])
     waiting(db_engine)
     later = datetime.now(timezone.utc) + timedelta(days=31)
     assert cleanup_hub_auth(db_engine, now=later)["pending_users"] == 1

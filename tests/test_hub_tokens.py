@@ -155,6 +155,30 @@ def test_spent_refresh_revokes_family(engine):
         access_user(engine, second.access_token, now=NOW + timedelta(minutes=3))
 
 
+def test_a_just_spent_token_works_again_for_thirty_seconds(engine):
+    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    second = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
+    retried = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1, seconds=30))
+    assert retried.refresh_token != second.refresh_token
+    later = NOW + timedelta(minutes=1, seconds=31)
+    assert access_user(engine, second.access_token, now=later) == access_user(engine, retried.access_token, now=later)
+    third = refresh_hub_tokens(engine, retried.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=5))
+    with pytest.raises(InvalidHubGrant):
+        refresh_hub_tokens(engine, second.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=6))
+    with pytest.raises(InvalidHubGrant):
+        access_user(engine, third.access_token, now=NOW + timedelta(minutes=6))
+
+
+def test_the_grace_covers_only_the_token_just_before_the_newest(engine):
+    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    second = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(seconds=1))
+    third = refresh_hub_tokens(engine, second.refresh_token, "crucible-hub", now=NOW + timedelta(seconds=2))
+    with pytest.raises(InvalidHubGrant):
+        refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(seconds=3))
+    with pytest.raises(InvalidHubGrant):
+        access_user(engine, third.access_token, now=NOW + timedelta(seconds=3))
+
+
 def test_client_binding_and_expiry(engine):
     pair = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
     with pytest.raises(InvalidHubGrant):

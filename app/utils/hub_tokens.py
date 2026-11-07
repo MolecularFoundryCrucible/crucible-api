@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import func, update
 from sqlmodel import Session, select
 
 from app.auth.clients import client_by_id
@@ -15,6 +16,9 @@ REFRESH_ABSOLUTE_LIFETIME = timedelta(days=30)
 REFRESH_IDLE_LIFETIME = timedelta(days=7)
 PUBLIC_REFRESH_ABSOLUTE_LIFETIME = timedelta(days=90)
 PUBLIC_REFRESH_IDLE_LIFETIME = timedelta(days=14)
+REUSE_GRACE = timedelta(seconds=30)
+AUTHORIZATION_CODE = "authorization_code"
+DEVICE_CODE = "urn:ietf:params:oauth:grant-type:device_code"
 
 
 def session_lifetimes(client_id: str) -> tuple[timedelta, timedelta]:
@@ -88,12 +92,14 @@ def _issue_access(session: Session, family: HubTokenFamily, now: datetime) -> tu
     return token, expires_at
 
 
-def issue_hub_tokens(engine, user_id: int, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None) -> HubTokenPair:
+def issue_hub_tokens(engine, user_id: int, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None, grant_type: str = AUTHORIZATION_CODE) -> HubTokenPair:
     with Session(engine) as session, session.begin():
-        return issue_hub_tokens_in_session(session, user_id, client_id, now=now, auth_time=auth_time)
+        return issue_hub_tokens_in_session(session, user_id, client_id, now=now, auth_time=auth_time, grant_type=grant_type)
 
 
-def issue_hub_tokens_in_session(session: Session, user_id: int, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None) -> HubTokenPair:
+def issue_hub_tokens_in_session(
+    session: Session, user_id: int, client_id: str, *, now: datetime | None = None, auth_time: datetime | None = None, grant_type: str = AUTHORIZATION_CODE,
+) -> HubTokenPair:
     current = _now(now)
     user = session.get(User, user_id)
     if not _may_hold_hub_tokens(user):
@@ -107,6 +113,7 @@ def issue_hub_tokens_in_session(session: Session, user_id: int, client_id: str, 
         expires_at=current + session_lifetimes(client_id)[0],
         last_refreshed_at=current,
         auth_time=auth_time,
+        grant_type=grant_type,
     )
     session.add(family)
     session.flush()
@@ -128,6 +135,16 @@ def issue_hub_tokens_in_session(session: Session, user_id: int, client_id: str, 
         user_unique_id=user.unique_id,
         auth_time=auth_time,
     )
+
+
+def _reusable(session: Session, token: HubRefreshToken, now: datetime) -> bool:
+    """A spent token may be used again for REUSE_GRACE if it is the one just before the newest, so
+    two processes refreshing at once, or a retry after a lost response, do not end the session. Any
+    older token still ends it."""
+    if now - _aware(token.spent_at) > REUSE_GRACE:
+        return False
+    newest = session.exec(select(func.max(HubRefreshToken.generation)).where(HubRefreshToken.family_id == token.family_id)).one()
+    return token.generation == newest - 1
 
 
 def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datetime | None = None) -> HubTokenPair:
@@ -154,7 +171,7 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
             .with_for_update()
             .execution_options(populate_existing=True)
         ).one()
-        if token.spent_at is not None:
+        if token.spent_at is not None and not _reusable(session, token, current):
             family.revoked_at = current
             replayed = True
         elif current >= _aware(family.expires_at) or current >= _aware(family.last_refreshed_at) + session_lifetimes(family.client_id)[1]:
@@ -164,7 +181,13 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
             if not _may_hold_hub_tokens(user):
                 family.revoked_at = current
             else:
-                token.spent_at = current
+                if token.spent_at is None:
+                    token.spent_at = current
+                    # Tokens issued in the grace window share a generation: using one retires the rest.
+                    session.execute(update(HubRefreshToken).where(
+                        HubRefreshToken.family_id == family.id, HubRefreshToken.generation == token.generation, HubRefreshToken.spent_at == None,  # noqa: E711
+                        HubRefreshToken.token_hash != token.token_hash,
+                    ).values(spent_at=current).execution_options(synchronize_session=False))
                 family.last_refreshed_at = current
                 next_refresh = _token(REFRESH_PREFIX)
                 session.add(

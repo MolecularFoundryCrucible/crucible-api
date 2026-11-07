@@ -114,6 +114,7 @@ class Principal:
     session_family_id: Optional[str] = None
     client_id: Optional[str] = None
     internal_user_id: Optional[int] = None
+    via_device: bool = False
 
     def is_user(self, user) -> bool:
         """Whether `user`, a User row, is the caller. Compares the internal key, which never

@@ -416,6 +416,7 @@ class HubTokenFamily(SQLModel, table=True):
     last_refreshed_at: datetime = Field(sa_type=DateTime(timezone=True))
     revoked_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     auth_time: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    grant_type: Optional[str] = Field(default=None, max_length=64)
 
 
 class DeviceAuthorization(SQLModel, table=True):
@@ -435,6 +436,7 @@ class DeviceAuthorization(SQLModel, table=True):
     approved_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     denied_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
     consumed_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    requested_from: Optional[str] = Field(default=None, max_length=45)
 
 
 class HubRefreshToken(SQLModel, table=True):

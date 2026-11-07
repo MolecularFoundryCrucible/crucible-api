@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from app.api.dependencies import get_engine
 from app.auth.clients import ClientUnavailable, sign_in_enabled
 from app.auth.oauth_server import FormRequest, authorization_server
+from app.auth.throttle import client_address
 from app.utils.hub_login import HubLoginUnavailable, public_api_url
 
 router = APIRouter(prefix="/oauth", tags=["auth"])
@@ -32,7 +33,7 @@ async def oauth_request(request: Request, path: str, engine) -> FormRequest:
     if len(names) != len(set(names)):
         raise RepeatedParameter
     headers = {"Authorization": request.headers["authorization"]} if "authorization" in request.headers else {}
-    return FormRequest(public_uri(path), headers, fields, engine)
+    return FormRequest(public_uri(path), headers, fields, engine, client_address(request))
 
 
 def repeated() -> JSONResponse:

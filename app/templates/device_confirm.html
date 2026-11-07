@@ -10,7 +10,7 @@
 {% endblock %}
 {% block content %}
     <p>Sign in <strong>{{ client_name }}</strong> on another device as <strong>{{ person }}</strong>?</p>
-    <p>It asked at {{ asked_at }} with the code <span class="code">{{ user_code }}</span>. Only approve if you started it yourself, just now. If someone sent you this code, deny.</p>
+    <p>It asked at {{ asked_at }}{% if requested_from %} from the network address <span class="code">{{ requested_from }}</span>{% endif %} with the code <span class="code">{{ user_code }}</span>. Only approve if you started it yourself, just now. If someone sent you this code, deny.</p>
     <form method="post" action="approve">
       <input type="hidden" name="decision_token" value="{{ token }}">
       <button class="allow" type="submit" name="decision" value="approve">Approve</button>

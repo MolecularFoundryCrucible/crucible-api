@@ -17,7 +17,7 @@ router = APIRouter(tags=["account"])
 
 _LIMIT = Query(50, ge=1, le=200)
 _CURSOR = Query(None, min_length=1, max_length=4096, description="Opaque continuation cursor from next_cursor.")
-_STEP_UP = {401: {"description": "A session needs a sign-in within the last 10 minutes (`insufficient_user_authentication`)"}, 403: {"description": "`hub_session_required`: an API key cannot end sessions"}}
+_STEP_UP = {401: {"description": "A session needs a sign-in within the last 10 minutes (`insufficient_user_authentication`)"}, 403: {"description": "`hub_session_required`: an API key cannot end sessions; `browser_sign_in_required`: nor can a session approved with a device code"}}
 SIGN_IN_AGAIN = "Ending sessions needs a signed-in session with a recent sign-in, not an API key"
 
 

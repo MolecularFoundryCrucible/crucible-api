@@ -18,7 +18,7 @@ from app.utils.user_utils import resolve_user_by_identifier
 
 router = APIRouter(tags=["account"])
 
-_STEP_UP = {401: {"description": "A Hub session needs a recent sign-in (`insufficient_user_authentication`)"}, 403: {"description": "`hub_session_required`: an API key cannot create keys"}}
+_STEP_UP = {401: {"description": "A Hub session needs a recent sign-in (`insufficient_user_authentication`)"}, 403: {"description": "`hub_session_required`: an API key cannot create keys; `browser_sign_in_required`: nor can a session approved with a device code"}}
 State = Literal["active", "inactive"]
 _STATE = Query("active", description="active, or inactive for expired and revoked keys")
 _LIMIT = Query(50, ge=1, le=200)

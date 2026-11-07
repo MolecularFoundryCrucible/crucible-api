@@ -40,7 +40,7 @@ from app.config import require_feature
 from app.auth.api_keys import find_api_key, key_status, newest_key
 from app.auth.identity import linked_orcid
 from app.services.proposals import ProposalServiceUnavailable, assign_discovered_projects, lookup_proposals
-from app.utils.user_utils import assert_profile_fields_available, assert_self_chosen_username_allowed, commit_user
+from app.utils.user_utils import assert_profile_fields_available, assert_username_kept_for_password, assert_self_chosen_username_allowed, commit_user
 
 router = APIRouter(tags=["account"])
 
@@ -116,6 +116,7 @@ def update_account_profile(auth_res: Annotated[Principal, Depends(authorize_user
         if not auth_res.is_platform_admin:
             assert_self_chosen_username_allowed(update_data.get("username"), user.username)
         assert_profile_fields_available(session, username=update_data.get("username"), email=update_data.get("email"), exclude_orcid=user.unique_id)
+        assert_username_kept_for_password(session, user, update_data)
         for key, value in update_data.items():
             setattr(user, key, value)
         session.add(user)

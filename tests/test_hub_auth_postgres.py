@@ -19,7 +19,7 @@ from app.models.core_models import DeviceAuthorization, LoginThrottle, HubAccess
 from app.utils.hub_login import exchange_handoff_code
 from app.utils.hub_tokens import InvalidHubGrant, hub_access_user, issue_hub_tokens, refresh_hub_tokens, revoke_hub_tokens
 from tests.people import internal_id
-from app.models.core_models import AuthEvent, UserIdentity
+from app.models.core_models import AuthEvent, PasswordToken, UserIdentity
 
 pytestmark = pytest.mark.usefixtures("hub_client_registered")
 
@@ -44,7 +44,7 @@ def pg_engine():
     try:
         SQLModel.metadata.create_all(engine, tables=[
             User.__table__, UserIdentity.__table__, AuthEvent.__table__, LoginThrottle.__table__, DeviceAuthorization.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__,
-            HubAccessToken.__table__, HubLoginCode.__table__, HubLoginTransaction.__table__,
+            HubAccessToken.__table__, HubLoginCode.__table__, HubLoginTransaction.__table__, PasswordToken.__table__,
         ])
         with Session(engine) as session, session.begin():
             session.add(User(unique_id=USER, first_name="Test", last_name="Human"))

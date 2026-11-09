@@ -12,7 +12,7 @@ from app.config import ConfigurationError, get_settings
 from app.models.identities import IdentityRead, LinkStart, LinkStartRead
 from app.api.path_params import UserRef
 from app.utils.auth_utils import authorize_user, caller_row, require_human_admin_safeguard, require_platform_admin, require_recent_hub_session, require_self_or_platform_admin
-from app.utils.user_utils import resolve_user_by_identifier
+from app.utils.user_utils import person_by_reference, resolve_user_by_identifier
 from app.utils.hub_login import HubLoginUnavailable, InvalidHubLogin, load_login_config
 from app.utils.permissions import Principal
 
@@ -105,7 +105,8 @@ def _admin_target(session: Session, user_ref: str, auth_res: Principal):
 def list_user_identities(user_ref: UserRef, auth_res: Annotated[Principal, Depends(authorize_user)]):
     """A person's logins: your own, or anyone's for platform administrators."""
     with Session(get_engine()) as session:
-        user = resolve_user_by_identifier(session, user_ref)
+        user = person_by_reference(session, user_ref, include_pending=True) if auth_res.is_platform_admin else None
+        user = user or resolve_user_by_identifier(session, user_ref)
         require_self_or_platform_admin(auth_res, user)
         return [identity_read(identity) for identity in sign_in_methods(session, user)]
 

@@ -239,6 +239,24 @@ def confirm_link(engine, code: str, verifier: str, client_id: str, callback_uri:
     raise refusal
 
 
+def sign_in_labels(session: Session, user_ids: list[int]) -> dict[int, list[str]]:
+    """How each person signs in, for administrators: `password` when they have one, then each
+    login's provider by display name (its issuer when no listed provider matches)."""
+    from app.models.core_models import LocalCredential
+
+    names = {provider.issuer.rstrip("/"): provider.display_name for provider in get_settings().auth.providers}
+    labels: dict[int, list[str]] = {user_id: [] for user_id in user_ids}
+    if not user_ids:
+        return labels
+    for user_id in session.exec(select(LocalCredential.user_id).where(LocalCredential.user_id.in_(user_ids))).all():
+        labels[user_id].append("password")
+    for user_id, issuer in session.exec(select(UserIdentity.user_id, UserIdentity.issuer).where(UserIdentity.user_id.in_(user_ids)).order_by(UserIdentity.id)).all():
+        label = names.get(issuer.rstrip("/"), "ORCID" if issuer in ORCID_ISSUERS else issuer)
+        if label not in labels[user_id]:
+            labels[user_id].append(label)
+    return labels
+
+
 def sign_in_methods(session: Session, user: User) -> list[UserIdentity]:
     return session.exec(select(UserIdentity).where(UserIdentity.user_id == user.id).order_by(UserIdentity.id)).all()
 

@@ -41,13 +41,26 @@ def _login_redirect(login_path: str, return_to: str) -> RedirectResponse:
 
 @router.get("/auth/methods", response_model=list[AuthMethodRead])
 def list_sign_in_methods():
-    """The ways to sign in through the Hub on this deployment; empty when Hub sign-in is off."""
+    """The ways to sign in on this deployment, each a `provider` value for the sign-in routes; empty
+    when sign-in is off. With passwords on, the last entry is `password`, which carries
+    `registration_url` while people can ask for an account."""
     from app.auth.clients import sign_in_enabled
+    from app.auth.password_registration import registration_open
+    from app.utils.hub_login import LOCAL_PROVIDER, HubLoginUnavailable, public_api_url
 
     settings = get_settings()
     if not sign_in_enabled():
         return []
-    return [AuthMethodRead(key=provider.key, display_name=provider.display_name, is_orcid=provider.is_orcid) for provider in settings.auth.providers]
+    methods = [AuthMethodRead(key=provider.key, display_name=provider.display_name, is_orcid=provider.is_orcid) for provider in settings.auth.providers]
+    if settings.auth.password_enabled:
+        registration_url = None
+        if registration_open():
+            try:
+                registration_url = f"{public_api_url()}/oauth/register"
+            except HubLoginUnavailable:
+                registration_url = None
+        methods.append(AuthMethodRead(key=LOCAL_PROVIDER, display_name="Password", kind="password", is_orcid=False, registration_url=registration_url))
+    return methods
 
 
 @router.get("/auth/login", response_class=RedirectResponse, status_code=302, responses={302: {"description": "Redirect to the ORCID sign-in page"}, 502: {"description": "ORCID cannot be reached"}})

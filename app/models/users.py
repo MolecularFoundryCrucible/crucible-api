@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 from pydantic import MISSING, AliasChoices, ConfigDict, Field, field_validator
 from sqlmodel import SQLModel
 from app.general_utils import is_orcid, is_valid_mfid
@@ -76,6 +76,7 @@ class UserRead(SQLModel):
     api_key_status: Optional[ServiceAccountKeyStatus] = None
     disabled_at: Optional[UtcDatetime] = Field(default=None, description="When an administrator switched this account off; empty for an active account.")
     pending_at: Optional[UtcDatetime] = Field(default=None, description="When this account was created waiting for an administrator's approval; empty once approved. Only administrators see waiting accounts.")
+    sign_in_methods: Optional[List[str]] = Field(default=None, description="Administrators only, on GET /users/{user_ref} and GET /users?pending=true: how this person signs in, as `password` and the providers' display names.")
     last_active_at: Optional[UtcDatetime] = Field(default=None, description="Last authenticated request, recorded at most hourly. Returned to platform administrators and to the user themselves.")
 
 

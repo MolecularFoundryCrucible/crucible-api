@@ -49,6 +49,15 @@ def register(groups: argparse._SubParsersAction) -> None:
     )
     password_link.add_argument("user", help="unique_id, linked ORCID, username or email")
     password_link.set_defaults(handler=_run_password_link)
+    pending = commands.add_parser("pending", help="List accounts waiting for approval, oldest first")
+    pending.add_argument("--json", action="store_true", help="One JSON object per line instead of a table")
+    pending.set_defaults(handler=_run_pending)
+    approve = commands.add_parser("approve", help="Let a waiting account in")
+    approve.add_argument("user", help="unique_id, username or email of the waiting account")
+    approve.set_defaults(handler=_run_decide, approve=True)
+    reject = commands.add_parser("reject", help="Delete a waiting account, freeing its username and login")
+    reject.add_argument("user", help="unique_id, username or email of the waiting account")
+    reject.set_defaults(handler=_run_decide, approve=False)
 
 
 def _name(value: str) -> str:
@@ -267,4 +276,65 @@ def _run_password_link(args: argparse.Namespace) -> int:
         return 1
     print(f"A link to {'set' if purpose == 'setup' else 'reset'} the password of {name}, valid once until {expires_at}. Pass it on privately:", file=sys.stderr)
     print(url)
+    return 0
+
+
+def _pending_accounts() -> list[dict]:
+    from app.api.dependencies import get_engine
+    from app.auth.linking import sign_in_labels
+    from app.models.core_models import User
+
+    with Session(get_engine()) as session:
+        users = session.exec(select(User).where(User.pending_at != None).order_by(User.pending_at, User.id)).all()  # noqa: E711
+        labels = sign_in_labels(session, [user.id for user in users])
+        return [{
+            "unique_id": user.unique_id, "username": user.username, "name": " ".join(part for part in (user.first_name, user.last_name) if part),
+            "email": user.email, "asked_at": user.pending_at.isoformat(timespec="minutes"), "sign_in_methods": labels[user.id],
+        } for user in users]
+
+
+def _run_pending(args: argparse.Namespace) -> int:
+    accounts = _pending_accounts()
+    if args.json:
+        for account in accounts:
+            print(json.dumps(account))
+        return 0
+    if not accounts:
+        print("No accounts are waiting for approval", file=sys.stderr)
+        return 0
+    for account in accounts:
+        print(f"{account['asked_at']}  {account['username'] or '-'}  {account['name']}  {account['email'] or '-'}  {', '.join(account['sign_in_methods']) or '-'}  {account['unique_id']}")
+    return 0
+
+
+def _decide(user_ref: str, approve: bool) -> str:
+    from app.api.dependencies import get_engine
+    from app.auth.registration import NotPending, StillReferenced, approve_pending_user, reject_pending_user
+    from app.utils.user_utils import person_by_reference
+
+    with Session(get_engine()) as session:
+        user = person_by_reference(session, user_ref, include_pending=True)
+        if user is None:
+            raise Refused(f"No account matches {user_ref}")
+        name = user.username or user.unique_id
+        try:
+            if approve:
+                approve_pending_user(session, user, actor=None)
+            else:
+                reject_pending_user(session, user, actor=None)
+        except NotPending:
+            raise Refused(f"{name} is not waiting for approval; nothing changed") from None
+        except StillReferenced as referenced:
+            raise Refused(f"{name} cannot be rejected: {'; '.join(referenced.reasons)}") from None
+        session.commit()
+        return name
+
+
+def _run_decide(args: argparse.Namespace) -> int:
+    try:
+        name = _decide(args.user, args.approve)
+    except Refused as error:
+        print(error, file=sys.stderr)
+        return 1
+    print(f"{'Approved' if args.approve else 'Rejected and deleted'} {name}", file=sys.stderr)
     return 0

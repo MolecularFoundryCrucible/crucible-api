@@ -34,6 +34,7 @@ from app.utils.search_utils import (
 from app.utils.sql_utils import assert_not_pending_deletion, deletion_filter_for, select_active
 from app.auth.api_keys import key_status, newest_key, newest_keys, replace_plain_keys, revoke_user_keys
 from app.auth.events import AuthEventType, record_event
+from app.auth.linking import sign_in_labels
 from app.auth.password_links import void_links
 from app.auth.registration import NotPending, StillReferenced, approve_pending_user, reject_pending_user
 from app.auth.identity import IdentityTaken, default_orcid_issuer, find_identity
@@ -91,7 +92,7 @@ def _user_capabilities(caller: Principal, user: User) -> UserCapabilities:
 
 
 def _user_read(caller: Principal, user: User, *, key_status: Optional[ServiceAccountKeyStatus] = None,
-               with_capabilities: bool = False) -> UserRead:
+               with_capabilities: bool = False, sign_in: Optional[list[str]] = None) -> UserRead:
     role = None
     if user.platform_role is not None:
         try:
@@ -104,6 +105,7 @@ def _user_read(caller: Principal, user: User, *, key_status: Optional[ServiceAcc
             "platform_role": role,
             "user_capabilities": _user_capabilities(caller, user) if with_capabilities else None,
             "api_key_status": key_status,
+            "sign_in_methods": sign_in if caller.is_platform_admin else None,
         },
     )
 
@@ -302,8 +304,9 @@ def list_users(auth_res: Annotated[Principal, Depends(authorize_user)], request:
         key_status_by_user = {}
         if is_admin:
             key_status_by_user = {user_id: _key_status(key) for user_id, key in newest_keys(session, [user.id for user in rows]).items()}
+        labels = sign_in_labels(session, [user.id for user in rows]) if is_admin and params.pending else {}
         items = [
-            _user_read(auth_res, user, key_status=key_status_by_user.get(user.id), with_capabilities=True)
+            _user_read(auth_res, user, key_status=key_status_by_user.get(user.id), with_capabilities=True, sign_in=labels.get(user.id))
             if is_admin or auth_res.is_user(user)
             else _user_public_read(auth_res, user, with_capabilities=True)
             for user in rows
@@ -451,13 +454,15 @@ def _canonical_user_id(user_ref: str) -> str:
 def read_user(user_ref: UserRef, response: Response,
               auth_res: Annotated[Principal, Depends(authorize_user)]):
     with Session(get_engine()) as session:
-        user = resolve_user_by_identifier(session, user_ref)
         is_admin = auth_res.is_platform_admin
+        user = person_by_reference(session, user_ref, include_pending=True) if is_admin else None
+        user = user or resolve_user_by_identifier(session, user_ref)
         if user_ref != user.unique_id:
             response.headers["Content-Location"] = f"/users/{user.unique_id}"
         if auth_res.is_user(user) or is_admin:
             key_status = _admin_key_status(session, auth_res, user)
-            return _user_read(auth_res, user, key_status=key_status, with_capabilities=True)
+            labels = sign_in_labels(session, [user.id]).get(user.id) if is_admin else None
+            return _user_read(auth_res, user, key_status=key_status, with_capabilities=True, sign_in=labels)
         return _user_public_read(auth_res, user, with_capabilities=True)
 
 

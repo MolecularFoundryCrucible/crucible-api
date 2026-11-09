@@ -22,7 +22,7 @@ from app.api.dependencies import get_engine
 from app.models.core_models import ApiKey, ApiToken, User
 from app.models.resource import ResourceCapabilities
 from app.utils.hub_tokens import ACCESS_PREFIX, DEVICE_CODE, InvalidHubGrant, hub_access_family
-from app.auth.api_keys import DEFAULT_KEY_NAME, find_api_key, newest_key, replace_plain_keys, status_of, store_key
+from app.auth.api_keys import DEFAULT_KEY_NAME, find_api_key, replace_plain_keys, status_of, store_key
 from app.services.activity import record_caller_activity
 from app.utils.permissions import (
     PUBLIC_GROUP_NAME, SESSION, THRESHOLDS, GroupMembership, Permission, PlatformRole,
@@ -670,9 +670,6 @@ def require_platform_admin(principal: Principal) -> None:
 
 
 STEP_UP_MAX_AGE = 600
-API_KEY_READ_DEPRECATION = "@1791763200"
-
-
 def require_recent_authentication(principal: Principal) -> None:
     """Raise the RFC 9470 step-up challenge unless a session's sign-in is recent. API keys are exempt.
     A session approved with a device code is refused outright: if someone was tricked into approving
@@ -706,17 +703,6 @@ def require_recent_hub_session(principal: Principal, message: str) -> None:
     if principal.credential != SESSION:
         raise HTTPException(status_code=403, detail={"code": "hub_session_required", "message": message})
     require_recent_authentication(principal)
-
-
-def reject_hub_api_key_read(principal: Principal) -> None:
-    if principal.credential == SESSION:
-        raise HTTPException(status_code=403, detail={"code": "api_key_read_not_allowed", "message": "Hub sessions cannot read API keys; regenerate a key instead"})
-
-
-def has_active_api_key(user_id: int, engine) -> bool:
-    with Session(engine) as session:
-        key = newest_key(session, user_id)
-        return key is not None and status_of(key) == "active"
 
 
 def require_self_or_platform_admin(principal: Principal, user) -> None:

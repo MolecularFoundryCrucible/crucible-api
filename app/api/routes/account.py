@@ -10,15 +10,16 @@ from sqlalchemy import delete, exists, func, or_
 from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
+from app.api.removed import REMOVED_RESPONSE, removed
 from app.api.dependencies import get_engine
 from app.general_utils import get_utc_datetime, if_match_satisfied
-from app.models.core_models import ApiToken, Dataset, DeletionRequest, Instrument, Project, Resource, Sample, User, UserPreferences, UserRecentResource
+from app.models.core_models import Dataset, DeletionRequest, Instrument, Project, Resource, Sample, User, UserPreferences, UserRecentResource
 from app.models.preferences import MAX_DOCUMENT_BYTES, PREFERENCES_SCHEMA_VERSION, PreferencesDocument, PreferencesRead, RecentResourceRead, RecentResourceRecord, serialized_size
 from app.api.routes.join_requests import join_request_filters, list_join_requests_page
 from app.models.join_requests import JoinRequestRead, JoinRequestScope, JoinRequestSort, JoinRequestStatus
 from app.models.query_params import SortDirection
 from app.models.pagination import PaginatedResponse
-from app.models.response_schemas import AccountInfo, ApiKeyRead, ApiKeyVerify, ProjectSyncResult
+from app.models.response_schemas import AccountInfo, ApiKeyVerify, ProjectSyncResult
 from app.models.users import (
     AccountAuthorizationRead,
     AccountCapabilities,
@@ -26,7 +27,7 @@ from app.models.users import (
     AccountProfileUpdate,
     UserRead,
 )
-from app.utils.auth_utils import caller_row, is_caller, API_KEY_READ_DEPRECATION, authorize_user, find_or_add_api_access, security, permission_filter, reject_hub_api_key_read, require_recent_authentication
+from app.utils.auth_utils import caller_row, authorize_user, security, permission_filter
 from app.utils.permissions import (
     Permission,
     PlatformRole,
@@ -156,39 +157,16 @@ def get_account_join_requests(
         return list_join_requests_page(session, auth_res, filters, JoinRequestSort.REQUEST_TIME, SortDirection.DESC, limit, None, offset)
 
 
-@router.get("/account/apikey", response_model=ApiKeyRead, deprecated=True, responses={403: {"description": "Hub sessions cannot read API keys (`api_key_read_not_allowed`)"}})
-def get_account_apikey(
-    auth_res: Annotated[Principal, Depends(authorize_user)],
-    response: Response,
-):
-    """Return the authenticated caller's current API key.
-
-    Deprecated: API keys will be stored hashed and become unreadable. Use
-    POST /account/apikey/regenerate, which returns a new key once.
-    """
-    reject_hub_api_key_read(auth_res)
-    response.headers["Deprecation"] = API_KEY_READ_DEPRECATION
-    with Session(get_engine()) as session:
-        token = session.exec(
-            select(ApiToken).where(is_caller(ApiToken.user_id, auth_res))
-            .order_by(ApiToken.token_created.desc())
-        ).first()
-        if token is None:
-            raise HTTPException(status_code=404, detail="No API key found")
-        response.headers["Cache-Control"] = "no-store"
-        return ApiKeyRead(api_key=token.token)
+@router.get("/account/apikey", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
+def get_account_apikey():
+    """Removed: API keys are stored hashed and cannot be read back. Use POST /account/apikeys."""
+    removed("Reading or regenerating a single API key was removed. Create a named key with POST /account/apikeys (it is shown once), list them with GET /account/apikeys and revoke one with DELETE /account/apikeys/{key_id}.")
 
 
-@router.post("/account/apikey/regenerate", response_model=ApiKeyRead, deprecated=True, responses={401: {"description": "Hub sessions need an ORCID sign-in within the last 10 minutes (`insufficient_user_authentication`, RFC 9470 challenge)"}})
-def regenerate_account_apikey(
-    auth_res: Annotated[Principal, Depends(authorize_user)],
-    response: Response,
-):
-    """Replace the key the single-key routes show (`older_routes` in GET /account/apikeys) and return the new one once.
-    Deprecated: create keys with POST /account/apikeys and revoke them with DELETE /account/apikeys/{key_id}."""
-    require_recent_authentication(auth_res)
-    response.headers["Cache-Control"] = "no-store"
-    return ApiKeyRead(api_key=find_or_add_api_access(auth_res.internal_user_id, get_engine(), regenerate=True))
+@router.post("/account/apikey/regenerate", deprecated=True, status_code=410, responses=REMOVED_RESPONSE)
+def regenerate_account_apikey():
+    """Removed: create keys with POST /account/apikeys and revoke them with DELETE /account/apikeys/{key_id}."""
+    removed("Reading or regenerating a single API key was removed. Create a named key with POST /account/apikeys (it is shown once), list them with GET /account/apikeys and revoke one with DELETE /account/apikeys/{key_id}.")
 
 
 @router.get("/account/verify", response_model=ApiKeyVerify, responses={404: {"description": "A Hub session's account has no API key"}})

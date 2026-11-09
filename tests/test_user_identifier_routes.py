@@ -196,7 +196,6 @@ def test_user_routes_document_user_ref(client):
     operations = (
         ("/users/{user_ref}", "get"),
         ("/users/{user_ref}", "patch"),
-        ("/users/{user_ref}/apikey", "post"),
         ("/users/{user_ref}/apikey/verify", "get"),
         ("/users/{user_ref}/apikey", "delete"),
         ("/users/{user_ref}/platform_role", "patch"),

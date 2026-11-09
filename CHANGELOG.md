@@ -72,6 +72,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Hub sign-in failures after a valid request redirect to the Hub with `state` and a standard OAuth `error`, instead of a 400 or 503 page.
 - `settings check` warns when the ORCID provider's issuer and `ORCID_ISSUER` differ.
 
+### Removed
+
+- `GET /account/apikey`, `POST /account/apikey/regenerate`, `POST /users/{user_ref}/apikey` and `POST /users/{user_ref}/apikey/regenerate` now answer 410 Gone (`route_removed`, naming the replacement): keys cannot be read back, and an API key can no longer renew itself or read someone else's. Use `POST`, `GET` and `DELETE /account/apikeys`, and for administrators `GET` and `DELETE /users/{user_ref}/apikeys`. Hub releases before the next one and nano-crucible 2.1 to 3.3 (`crucible account api-key`) call some of them, so deploy with the client releases.
+
 ### Security
 
 - Removed four finished data scripts from May and June 2026 (storage paths, file MFIDs, usernames, personal access groups) that wrote to the database without a `--commit` flag; they remain in git history.

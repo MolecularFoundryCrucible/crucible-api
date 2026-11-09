@@ -73,6 +73,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- Removed four finished data scripts from May and June 2026 (storage paths, file MFIDs, usernames, personal access groups) that wrote to the database without a `--commit` flag; they remain in git history.
 - Authlib 1.9.5, with its four security releases since 1.9.1 (GHSA-f3fg-34g9-v7jx, GHSA-gp2m-377p-m4j3, GHSA-9qr6-8289-9j56, GHSA-f7j6-p4qx-gq99). None affects the sign-in code in use; the upgrade comes before building on Authlib's server parts.
 - Hub sign-in uses one browser cookie per sign-in, so parallel tabs no longer break each other and an unmatched callback no longer cancels a sign-in in progress, and refuses provider responses whose RFC 9207 `iss` names another issuer.
 - Changing whether a human is a platform administrator, and reading or regenerating a human administrator's API key, need a Hub session with a recent sign-in; API keys get 403 `hub_session_required`. `python -m app.cli admin set-role` changes roles from inside the pod.

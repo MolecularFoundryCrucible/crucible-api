@@ -15,6 +15,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # On a pull request, run each slower job only when the pull request touches what it tests. Pushes
+  # to main run everything, since staging deploys from main.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      browsers: ${{ steps.areas.outputs.browsers }}
+      storage: ${{ steps.areas.outputs.storage }}
+      oidc: ${{ steps.areas.outputs.oidc }}
+      bundle: ${{ steps.areas.outputs.bundle }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: areas
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          areas="browsers storage oidc bundle"
+          if [ "$EVENT" != "pull_request" ]; then
+            for area in $areas; do echo "$area=true" >> "$GITHUB_OUTPUT"; done
+            exit 0
+          fi
+          # A pull request is checked out as its merge with the base branch: the first parent is the base.
+          changed=$(git diff --name-only HEAD^1 HEAD)
+          printf '%s\n' "$changed"
+          shared='^(pyproject\.toml|uv\.lock|\.python-version|app/config\.py|app/api/main\.py|app/api/dependencies\.py|\.github/workflows/tests\.yml)$'
+          declare -A pattern=(
+            [browsers]='^app/auth/|^app/templates/|^app/api/routes/(hub_auth|oauth|device|passwords)\.py$|^tests/test_auth_password_browser\.py$'
+            [storage]='^app/storage/|^app/services/(multipart|storage_cleanup|storage_downloads|file_versions)\.py$|^app/api/routes/(files|multipart|gcs_storage)\.py$|^app/cli/storage\.py$|^tests/test_s3_store_integration\.py$'
+            [oidc]='^app/auth/|^app/api/routes/(hub_auth|oauth|identities)\.py$|^app/utils/hub_(login|tokens)\.py$|^tests/test_auth_oidc_integration\.py$|^tests/fixtures/dex\.yaml$'
+            [bundle]='^Dockerfile$|^\.dockerignore$|^alembic\.ini$|^deploy/|^app/|^migrations/|^scripts/'
+          )
+          for area in $areas; do
+            if printf '%s\n' "$changed" | grep -Eq "$shared|${pattern[$area]}"; then answer=true; else answer=false; fi
+            echo "$area=$answer" | tee -a "$GITHUB_OUTPUT"
+          done
+
   pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -62,6 +101,8 @@ jobs:
       - run: uv run pytest -q
 
   browsers:
+    needs: changes
+    if: needs.changes.outputs.browsers == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -81,6 +122,8 @@ jobs:
       - run: uv run pytest -q -rs tests/test_auth_password_browser.py
 
   storage-s3:
+    needs: changes
+    if: needs.changes.outputs.storage == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -136,6 +179,8 @@ jobs:
           docker logs versitygw 2>&1 | tail -100
 
   oidc-dex:
+    needs: changes
+    if: needs.changes.outputs.oidc == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -179,6 +224,8 @@ jobs:
           docker logs dex-second 2>&1 | tail -100
 
   compose-smoke:
+    needs: changes
+    if: needs.changes.outputs.bundle == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     defaults:
@@ -232,6 +279,8 @@ jobs:
           rm -f "$RUNNER_TEMP/admin.json"
 
   compose-hub:
+    needs: changes
+    if: needs.changes.outputs.bundle == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:

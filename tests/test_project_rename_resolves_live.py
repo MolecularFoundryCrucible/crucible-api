@@ -5,7 +5,7 @@ would leave every dataset/sample created before the rename showing a name
 that no longer resolves to anything. resolve_project_mfids_to_ids batch
 -resolves project_mfid -> live project_id at every read path.
 """
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.models.core_models import AccessGroup, Dataset, Project, Resource, ResourceACL, Sample, User, UserAccessGroupLink
 from app.utils.permissions import PlatformRole

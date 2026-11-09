@@ -1,5 +1,3 @@
-import logging
-
 from sqlalchemy import delete, exists, func, or_
 from sqlmodel import Session, select
 
@@ -11,10 +9,7 @@ from app.models.core_models import (
     Thumbnail, UploadSession, UserAccessGroupLink,
 )
 
-logger = logging.getLogger(__name__)
-
 from app.utils.permissions import AccessGroupType
-from app.services.storage_downloads import StorageNotConfigured, upload_bucket
 
 
 def _nonzero(counts: dict) -> dict:
@@ -158,39 +153,6 @@ def _deleted_group_grants(session: Session, group: AccessGroup) -> list[dict]:
         {"resource_mfid": mfid, "resource_type": resource_type, "permission": permission}
         for mfid, resource_type, permission in rows
     ]
-
-
-def _delete_gcs_blobs_for_dataset(dataset_unique_id: str, associated_files: list) -> None:
-    """Delete GCS blobs for a dataset's associated files. Logs but never raises."""
-    try:
-        bucket_name = upload_bucket()
-    except StorageNotConfigured:
-        return
-    try:
-        from app.storage.gcs import server_client
-        client = server_client()
-        bucket = client.bucket(bucket_name)
-    except Exception:
-        logger.exception(
-            "GCS client init failed for dataset %s — DB deletion will still proceed",
-            dataset_unique_id,
-        )
-        return
-
-    for af in associated_files:
-        if not af.storage_path:
-            continue
-        try:
-            blob_name = af.storage_path.partition("/")[2]
-            blob = bucket.blob(blob_name)
-            if blob.exists():
-                blob.delete()
-                logger.info("Deleted GCS blob %s", blob_name)
-        except Exception:
-            logger.exception(
-                "Failed to delete GCS blob for file %s (dataset %s) — continuing",
-                af.storage_path, dataset_unique_id,
-            )
 
 
 def _hard_delete_dataset(dataset_unique_id: str, session: Session, resource: Resource) -> None:

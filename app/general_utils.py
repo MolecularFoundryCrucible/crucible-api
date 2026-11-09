@@ -1,10 +1,5 @@
-import os
 import re
 from datetime import datetime, timezone
-import hashlib
-
-def remove_file(filepath):
-    os.remove(filepath)
 
 def refuse_public_change(data):
     """For update models: whether a record is public changes only through its access routes, so a
@@ -48,21 +43,6 @@ def get_utc_isoformat():
 
 def get_utc_datetime():
     return datetime.now(timezone.utc)
-
-
-def checkhash(file):
-    """Calculate SHA256 hash of a file.
-    
-    Args:
-        file (str): Path to the file to hash
-        
-    Returns:
-        str: Hexadecimal SHA256 hash of the file
-    """
-    with open(file,"rb") as f:
-        fdata = f.read() 
-        readable_hash = hashlib.sha256(fdata).hexdigest()
-    return(readable_hash)
 
 
 def if_match_satisfied(if_match, current_etag):

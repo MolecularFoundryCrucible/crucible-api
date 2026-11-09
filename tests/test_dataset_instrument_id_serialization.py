@@ -12,7 +12,7 @@ instrument reference. Covers every read path that serializes a Dataset
 nested under a Sample response: GET /resources/{mfid}, GET /samples/{id},
 GET /samples (list).
 """
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.models.core_models import Dataset, DatasetSampleLink, Instrument, Resource, Sample, User
 from app.utils.permissions import PlatformRole

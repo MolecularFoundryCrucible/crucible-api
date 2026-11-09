@@ -35,12 +35,6 @@ def setup_engine(env_file=None):
     return(engine)
 
 
-def get_any(d, keys, default=None):
-    for k in keys: 
-        if k in d:
-           return d[k]
-    return default
-
 def only_update(session, cls, where, **kwargs):
     statement = select(cls).where(where)
     obj = session.exec(statement).first()
@@ -85,13 +79,6 @@ def assert_mfid_available(session, mfid: str, resource_type: str) -> None:
     raise HTTPException(status_code=409,
                         detail=f"'{mfid}' is already in use by a {existing.resource_type}.")
 
-
-
-def delete_link(table, dataset_id, session):
-    statement = select(table).where(table.dataset_id == dataset_id)
-    found_records = session.exec(statement).all()
-    for rec in found_records:
-        session.delete(rec)
 
 
 def touch_resource_modification_time(session, mfid):

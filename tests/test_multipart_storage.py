@@ -9,7 +9,6 @@ from google.auth.exceptions import DefaultCredentialsError, RefreshError
 from google.oauth2 import service_account
 
 from app.storage import Part, StorageFailure, UploadMissing
-from app.config import get_settings
 from app.storage import gcs
 from app.storage.gcs import GoogleStore
 from app.services.multipart import now

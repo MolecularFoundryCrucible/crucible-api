@@ -263,13 +263,6 @@ def project_standing_by_mfid(user_id: int, project_mfid: str, session) -> "Role 
     return Role.from_db(row) if row else None
 
 
-def project_standing(user_id: int, proj_id: str, session) -> "Role | None":
-    project_mfid = resolve_project_id_to_mfid(proj_id, session)
-    if project_mfid is None:
-        return None
-    return project_standing_by_mfid(user_id, project_mfid, session)
-
-
 def sql_get_projects_for_user(orcid, session, options=None):
     """Get all projects for a user by ORCID from their project access group standing. Returns None if the user is not found."""
     user = session.exec(select(User).where(User.unique_id == orcid)).one_or_none()

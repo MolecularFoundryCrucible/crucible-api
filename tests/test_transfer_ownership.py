@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from app.models.core_models import (
     AccessGroup, Dataset, Project, Resource, ResourceACL, User, UserAccessGroupLink)
-from app.utils.permissions import AccessGroupType, PlatformRole, Role
+from app.utils.permissions import AccessGroupType, Role
 
 
 def _user(session, orcid, username=None, email=None):

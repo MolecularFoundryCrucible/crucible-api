@@ -190,7 +190,7 @@ def test_file_detail_uses_authorized_dataset_without_lazy_load(db_engine):
 
 
 def _grants_world(db_engine, people, projects):
-    from app.models.core_models import AccessGroupJoinRequest, ResourceACL, Resource, User, UserAccessGroupLink
+    from app.models.core_models import ResourceACL, Resource, User
     with Session(db_engine) as session:
         session.add(Resource(mfid="shared-ds", resource_type="dataset"))
         session.add(Dataset(unique_id="shared-ds", dataset_name="shared"))

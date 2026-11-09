@@ -3,7 +3,6 @@ import logging
 import os
 import hashlib
 import threading
-import requests
 import secrets
 import datetime
 from dataclasses import replace
@@ -77,12 +76,6 @@ def _platform_role(value) -> PlatformRole:
 
 def _auth_cache_key(apikey: str) -> str:
     return hashlib.sha256(apikey.encode()).hexdigest()
-
-
-def _invalidate_auth_cache(apikey: str):
-    """Drop a token from this worker's auth cache. Only affects the current
-    process; other workers/pods clear the entry when their TTL expires."""
-    forget_cached_key_hash(_auth_cache_key(apikey))
 
 
 def forget_cached_key_hash(digest: str) -> None:

@@ -207,6 +207,8 @@ class ApiSettings(SettingsGroup):
     orcid_client_id: str | None = Field(None, validation_alias="ORCID_CLIENT_ID")
     orcid_issuer: str = Field("https://orcid.org", validation_alias="ORCID_ISSUER")
     orcid_client_secret: SecretStr | None = Field(None, validation_alias="ORCID_CLIENT_SECRET")
+    max_body_mib: int = Field(10, ge=1, le=1024, description="Largest request body the API accepts, in MiB; files go to storage through signed URLs, not through the API.")
+    max_thumbnail_body_mib: int = Field(20, ge=1, le=1024, description="Largest body for creating or replacing a thumbnail, sent as base64 JSON, in MiB.")
 
 
 class OidcProvider(BaseModel):

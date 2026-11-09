@@ -16,6 +16,7 @@ from app.auth.browser_login import login_session_middleware
 from app.api.routes import multipart
 from app.build_info import api_version
 from app.api.errors import register_error_handlers
+from app.api.body_limit import BodySizeLimit
 from app.config import check_settings, read_secrets
 from app.api.dependencies import get_api_root_path
 from app.utils.auth_utils import PRIVILEGE_MODE_HEADER
@@ -433,3 +434,7 @@ async def multipart_no_store(request: Request, call_next):
     if "/upload/multipart/" in request.url.path:
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+# Added last, so it runs first: before reject_unstorable_json reads any body.
+app.add_middleware(BodySizeLimit)

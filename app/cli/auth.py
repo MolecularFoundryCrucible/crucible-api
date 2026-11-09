@@ -28,6 +28,44 @@ def register(groups: argparse._SubParsersAction) -> None:
     who.add_argument("--all", action="store_true", help="Everyone")
     end.add_argument("--commit", action="store_true", help="End them; without it only counts")
     end.set_defaults(handler=_run_end_sessions)
+    revoke = commands.add_parser(
+        "revoke-passwords",
+        help="Remove every password, after a breach",
+        description="Removes every password, cancels password links and ends the sessions of everyone who had one. People with another login keep it; the others need a new link (admin password-link). API keys are not affected. A dry run unless --commit is given.",
+    )
+    revoke.add_argument("--commit", action="store_true", help="Remove them; without it only counts")
+    revoke.set_defaults(handler=_run_revoke_passwords)
+    rewrite = commands.add_parser(
+        "rewrite-issuer",
+        help="Move logins to a provider's new issuer address",
+        description="For a provider whose issuer address changed: list the new issuer in CRUCIBLE_AUTH_PROVIDERS and restart, then run this to move every login from the old issuer to the new one. Refuses if any login is already linked under the new issuer. A dry run unless --commit is given.",
+    )
+    rewrite.add_argument("--from", dest="old", required=True, help="The old issuer, exactly as stored")
+    rewrite.add_argument("--to", dest="new", required=True, help="The new issuer, as listed in CRUCIBLE_AUTH_PROVIDERS")
+    rewrite.add_argument("--commit", action="store_true", help="Move them; without it only counts")
+    rewrite.set_defaults(handler=_run_rewrite_issuer)
+
+
+def _run_revoke_passwords(args: argparse.Namespace) -> int:
+    from app.api.dependencies import get_engine
+    from app.auth.passwords import revoke_all_passwords
+
+    counts = revoke_all_passwords(get_engine(), commit=args.commit)
+    print(json.dumps({"mode": "commit" if args.commit else "dry-run", **counts}))
+    return 0
+
+
+def _run_rewrite_issuer(args: argparse.Namespace) -> int:
+    from app.api.dependencies import get_engine
+    from app.auth.identity import IssuerRewriteRefused, rewrite_issuer
+
+    try:
+        counts = rewrite_issuer(get_engine(), args.old, args.new, commit=args.commit)
+    except IssuerRewriteRefused as error:
+        print(error, file=sys.stderr)
+        return 1
+    print(json.dumps({"mode": "commit" if args.commit else "dry-run", **counts}))
+    return 0
 
 
 def _run_end_sessions(args: argparse.Namespace) -> int:

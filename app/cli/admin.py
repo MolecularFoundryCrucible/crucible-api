@@ -193,8 +193,19 @@ def _run_create(args: argparse.Namespace) -> int:
     except (EOFError, KeyboardInterrupt):
         print("\nCancelled; nothing created", file=sys.stderr)
         return 1
+    created = {"unique_id": unique_id, "username": username, "api_key": api_key}
     print(f"Created platform administrator {username}. The API key below signs in as this administrator; keep it secret.", file=sys.stderr)
-    print(json.dumps({"unique_id": unique_id, "username": username, "api_key": api_key}))
+    from app.config import get_settings
+
+    if get_settings().auth.password_enabled:
+        try:
+            _, _, expires_at, url = _password_link(unique_id)
+        except Refused as error:
+            print(f"No password link: {error}", file=sys.stderr)
+        else:
+            created.update(password_link=url, password_link_expires_at=expires_at)
+            print("Open password_link in a browser to set this administrator's password; it works once.", file=sys.stderr)
+    print(json.dumps(created))
     return 0
 
 

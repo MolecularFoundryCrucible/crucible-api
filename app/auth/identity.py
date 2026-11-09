@@ -76,3 +76,28 @@ def ensure_identity(session: Session, user: User, issuer: str, subject: str, *, 
             return existing
         raise IdentityTaken from None
     return row
+
+
+class IssuerRewriteRefused(ValueError):
+    pass
+
+
+def rewrite_issuer(engine, old: str, new: str, *, commit: bool) -> dict[str, int]:
+    """Move every login from one issuer to another, for a provider whose address changed. The new
+    issuer must already be a listed provider, and nothing changes if any subject is already linked
+    under it. Without `commit`, only counts."""
+    from sqlalchemy import update
+
+    if old == new:
+        raise IssuerRewriteRefused("The two issuers are the same")
+    listed = {provider.issuer for provider in get_settings().auth.providers}
+    if new not in listed:
+        raise IssuerRewriteRefused(f"{new} is not the issuer of any provider in CRUCIBLE_AUTH_PROVIDERS; list it first, then rewrite")
+    with Session(engine) as session, session.begin():
+        subjects = session.exec(select(UserIdentity.subject).where(UserIdentity.issuer == old)).all()
+        taken = session.exec(select(UserIdentity.subject).where(UserIdentity.issuer == new, UserIdentity.subject.in_(subjects))).all() if subjects else []
+        if taken:
+            raise IssuerRewriteRefused(f"{len(taken)} of these logins are already linked under {new}; nothing changed")
+        if commit and subjects:
+            session.execute(update(UserIdentity).where(UserIdentity.issuer == old).values(issuer=new).execution_options(synchronize_session=False))
+        return {"logins": len(subjects)}

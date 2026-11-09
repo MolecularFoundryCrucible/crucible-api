@@ -196,3 +196,11 @@ def test_ordinary_people_cannot_remove_someone_elses_password(client, people):
 def test_removing_your_own_only_way_in_is_refused(client, people):
     answer = client.delete(f"/users/{ADA}/password", headers=bearer(sign_in(people, ADA)))
     assert (answer.status_code, answer.json()["detail"]["code"]) == (409, "last_sign_in_method")
+
+
+def test_people_see_their_own_ways_to_sign_in_and_nobody_elses(client, people):
+    ada, newcomer = sign_in(people, ADA), sign_in(people, NEWCOMER)
+    assert client.get("/account/profile", headers=bearer(ada)).json()["sign_in_methods"] == ["password"]
+    assert client.get(f"/users/{ADA}", headers=bearer(ada)).json()["sign_in_methods"] == ["password"]
+    assert client.get("/account/profile", headers=bearer(newcomer)).json()["sign_in_methods"] == []
+    assert "sign_in_methods" not in client.get(f"/users/{ADA}", headers=bearer(newcomer)).json()

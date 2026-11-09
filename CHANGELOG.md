@@ -74,9 +74,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- Removed four finished data scripts from May and June 2026 (storage paths, file MFIDs, usernames, personal access groups) that wrote to the database without a `--commit` flag; they remain in git history.
 - `ingestion_class` on the ingest routes must be 1 to 128 letters, digits, dots, hyphens or underscores (422 otherwise), and `PATCH /ingestion_requests/{id}` now changes only `status`, `time_completed` and `ingestion_githash`, ignoring other fields, so a caller can no longer rewrite the stored file location or ingestor.
 - The per-address attempt limit now slows guessing for at most a minute instead of up to 15, and a browser that already signed in to the account skips it, so one person behind a shared address can no longer lock everyone there out of passwords, device codes and password links.
 - API keys can no longer reach the server log: the database engine hides statement parameters, the activity update no longer matches the plain key table by key value, and its failures log only the error class.
+- The Compose guide warns that plain HTTP sends API keys unencrypted to the whole network, and its backup and upgrade commands now encrypt the database dump with age, since it holds every API key.
+- Request bodies are limited before anything reads them: 10 MiB in general (`API_MAX_BODY_MIB`) and 20 MiB for creating or replacing a thumbnail (`API_MAX_THUMBNAIL_BODY_MIB`), answering 413 `body_too_large`; the accepted thumbnail source drops from 50 to 14 MiB (`THUMBNAIL_MAX_SOURCE_BYTES`), and the bundle's Caddy applies the same limits.
 - Authlib 1.9.5, with its four security releases since 1.9.1 (GHSA-f3fg-34g9-v7jx, GHSA-gp2m-377p-m4j3, GHSA-9qr6-8289-9j56, GHSA-f7j6-p4qx-gq99). None affects the sign-in code in use; the upgrade comes before building on Authlib's server parts.
 - Hub sign-in uses one browser cookie per sign-in, so parallel tabs no longer break each other and an unmatched callback no longer cancels a sign-in in progress, and refuses provider responses whose RFC 9207 `iss` names another issuer.
 - Changing whether a human is a platform administrator, and reading or regenerating a human administrator's API key, need a Hub session with a recent sign-in; API keys get 403 `hub_session_required`. `python -m app.cli admin set-role` changes roles from inside the pod.

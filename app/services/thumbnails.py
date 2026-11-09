@@ -7,7 +7,7 @@ import warnings
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 
-MAX_SOURCE_BYTES = int(os.environ.get("THUMBNAIL_MAX_SOURCE_BYTES", 50 * 1024**2))
+MAX_SOURCE_BYTES = int(os.environ.get("THUMBNAIL_MAX_SOURCE_BYTES", 14 * 1024**2))
 MAX_SOURCE_PIXELS = int(os.environ.get("THUMBNAIL_MAX_SOURCE_PIXELS", 50_000_000))
 MAX_ENCODED_CHARACTERS = 4 * ((MAX_SOURCE_BYTES + 2) // 3)
 ALLOWED_FORMATS = ("JPEG", "PNG", "WEBP", "TIFF", "BMP", "GIF")

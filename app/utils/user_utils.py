@@ -222,9 +222,8 @@ def is_username_available(session, username: str) -> bool:
 def generate_unique_username(session, first_name: str, last_name: str) -> str:
     """A memorable username for a user who doesn't have one yet (e.g. first
     login, before username was required) — derived from their name, with a
-    numeric suffix (_2, _3, ...) on collision. Same deconflict shape as
-    migrations/data/20260603_backfill_username_from_email.py, generalized to
-    the separator-insensitive collision check.
+    numeric suffix (_2, _3, ...) on collision, checked regardless of
+    separators.
 
     Falls back to a generic prefix if name sanitizes to nothing usable
     (e.g. a name with no ASCII letters) — this must always return something

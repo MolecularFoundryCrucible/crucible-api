@@ -575,6 +575,10 @@ A gate, not code.
 - [ ] **Step 2: Fix or record every finding,** with the user deciding anything left open.
 - [ ] **Step 3: Check the spec's "Tests that must exist" list** against the suite, line by line.
 
+Done on 2026-11-09: three independent reviewers; results, status and decisions in `docs/self_hosting_phase3_review.md`. Fixes in #478 and the next PR.
+
+Later decisions the spec text now reflects: registration is a required per-provider field, not a deployment-wide `CRUCIBLE_AUTH_REGISTRATION`, and password registration has its own `CRUCIBLE_AUTH_PASSWORD_REGISTRATION` (`closed` or `approval`); the password registration form asks for a required, unverified email, with one shared answer for a username or email in use; refresh tokens have a 30-second grace for the token just before the newest, used by its holder; sessions approved with a device code are refused wherever a recent sign-in is needed; the authorization server metadata is served under the API path; the deprecated single-key routes answer 410.
+
 ## Task 15: Compose default and release
 
 Production settings for the provider list (PR #418): the Foundry's deployments wire each setting into the container by key, so `CRUCIBLE_AUTH_PROVIDERS` and `OIDC_ORCID_CLIENT_SECRET_VERSION` must be added to `foundry/main/deployment.yaml` as well as its ConfigMap, or the new image's settings check fails. Remove `HUB_AUTH_ORCID_*` only after the new image is verified.

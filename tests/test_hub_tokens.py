@@ -170,6 +170,17 @@ def test_a_just_spent_token_works_again_for_thirty_seconds(engine):
         access_user(engine, third.access_token, now=NOW + timedelta(minutes=6))
 
 
+def test_a_copied_token_cannot_keep_renewing_itself_beside_the_owner(engine):
+    first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
+    owners = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1))
+    thiefs = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=1, seconds=10))
+    owners = refresh_hub_tokens(engine, owners.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=15))
+    with pytest.raises(InvalidHubGrant):
+        refresh_hub_tokens(engine, thiefs.refresh_token, "crucible-hub", now=NOW + timedelta(minutes=15, seconds=5))
+    with pytest.raises(InvalidHubGrant):
+        access_user(engine, owners.access_token, now=NOW + timedelta(minutes=15, seconds=6))
+
+
 def test_the_grace_covers_only_the_token_just_before_the_newest(engine):
     first = issue_hub_tokens(engine, internal_id(engine, "0000-0000-0000-0001"), "crucible-hub", now=NOW)
     second = refresh_hub_tokens(engine, first.refresh_token, "crucible-hub", now=NOW + timedelta(seconds=1))

@@ -263,13 +263,15 @@ def sign_in_methods(session: Session, user: User) -> list[UserIdentity]:
 
 def unlink_identity(session: Session, user: User, identity_id: int, *, actor: User, keep_family_id: str | None = None, now: datetime | None = None) -> UserIdentity:
     """Remove one of the person's logins in the caller's transaction. Refuses their last way to sign
-    in, ends their other Hub sessions and cancels links still in progress."""
+    in, a password included, ends their other Hub sessions and cancels links still in progress."""
+    from app.models.core_models import LocalCredential
+
     current = _now(now)
     methods = sign_in_methods(session, user)
     identity = next((method for method in methods if method.id == identity_id), None)
     if identity is None:
         raise LookupError(identity_id)
-    if len(methods) <= 1:
+    if len(methods) + (session.get(LocalCredential, user.id) is not None) <= 1:
         raise LastSignInMethod
     session.delete(identity)
     revoke_all_hub_tokens(session, user.id, now=current, except_family_id=keep_family_id)

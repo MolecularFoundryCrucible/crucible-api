@@ -153,10 +153,11 @@ def test_hub_sign_in_uses_the_hub_issuer(db_engine, hub_tables, monkeypatch, orc
     assert identities(db_engine) == [(SANDBOX, ORCID)]
 
 
-def test_apikey_page_writes_the_identity_row_with_the_older_flows_issuer(db_engine, monkeypatch):
+def test_apikey_page_writes_the_identity_row_with_the_older_flows_issuer(db_engine, monkeypatch, orcid_provider_settings):
     import time
 
     monkeypatch.setenv("ORCID_ISSUER", SANDBOX)
+    orcid_provider_settings(issuer=SANDBOX)
     browser = TestClient(app, base_url="https://testserver", follow_redirects=False)
     browser.cookies.set("crucible_user_token", encode_token({"sub": ORCID, "orcid": ORCID, "given_name": "Ada", "exp": int(time.time()) + 60}))
     assert browser.get("/auth/apikey").status_code == 200
@@ -233,8 +234,10 @@ def test_regenerate_refuses_a_second_orcid_issuer_for_the_same_person(db_engine)
     assert signed_in_browser().post("/auth/apikey/regenerate").status_code == 409
 
 
-def test_apikey_page_retries_when_a_simultaneous_sign_in_got_there_first(db_engine, monkeypatch):
+def test_apikey_page_retries_when_a_simultaneous_sign_in_got_there_first(db_engine, monkeypatch, orcid_provider_settings):
     from app.auth import sign_in as sign_in_module
+
+    orcid_provider_settings()
 
     calls = []
     real = sign_in_module.ensure_identity
@@ -618,7 +621,8 @@ def assert_one_person(engine):
     assert identities(engine) == [(ISSUER, ORCID)]
 
 
-def test_simultaneous_first_apikey_sign_ins_create_one_person_on_postgres(pg_sign_in, monkeypatch):
+def test_simultaneous_first_apikey_sign_ins_create_one_person_on_postgres(pg_sign_in, monkeypatch, orcid_provider_settings):
+    orcid_provider_settings()
     from threading import Barrier, BrokenBarrierError
 
     from app.api.routes import auth as auth_routes
@@ -642,7 +646,8 @@ def test_simultaneous_first_apikey_sign_ins_create_one_person_on_postgres(pg_sig
     assert_one_person(pg_sign_in)
 
 
-def test_two_new_people_with_the_same_name_get_different_usernames_on_postgres(pg_sign_in, monkeypatch):
+def test_two_new_people_with_the_same_name_get_different_usernames_on_postgres(pg_sign_in, monkeypatch, orcid_provider_settings):
+    orcid_provider_settings()
     from threading import Barrier, BrokenBarrierError
 
     from app.api.routes import auth as auth_routes

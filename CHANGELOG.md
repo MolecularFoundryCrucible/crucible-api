@@ -81,6 +81,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- From the review against the spec: the 30-second refresh grace now applies only to a token its holder used, so a copied token can no longer keep renewing itself beside the owner's (new column `hubrefreshtoken.retired_at`, migration `208288a60073`); a password now counts as a way to sign in when unlinking a login; approving and rejecting waiting accounts from a session needs a recent sign-in; the older ORCID browser flow registers nobody new when no ORCID provider is listed (closed, not open); the bundle's Caddy limits the API's sign-in forms (`/oauth/password`, `/oauth/password-link`, `/oauth/register`, `/oauth/device`) to 8 KB.
 - Removed four finished data scripts from May and June 2026 (storage paths, file MFIDs, usernames, personal access groups) that wrote to the database without a `--commit` flag; they remain in git history.
 - `ingestion_class` on the ingest routes must be 1 to 128 letters, digits, dots, hyphens or underscores (422 otherwise), and `PATCH /ingestion_requests/{id}` now changes only `status`, `time_completed` and `ingestion_githash`, ignoring other fields, so a caller can no longer rewrite the stored file location or ingestor.
 - The per-address attempt limit now slows guessing for at most a minute instead of up to 15, and a browser that already signed in to the account skips it, so one person behind a shared address can no longer lock everyone there out of passwords, device codes and password links.

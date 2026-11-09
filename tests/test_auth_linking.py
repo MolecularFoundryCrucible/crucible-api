@@ -349,3 +349,19 @@ def test_link_routes_live_only_under_oauth_and_record_the_client(world):
     assert client.post("/oauth/link/confirm", auth=HUB, json=code_body(code, ada)).status_code == 200
     with Session(engine) as session:
         assert session.exec(select(AuthEvent.client_id).where(AuthEvent.event == "identity_linked")).all() == [HUB[0]]
+
+
+def test_a_password_counts_as_a_way_to_sign_in_when_unlinking(world, monkeypatch):
+    from app.auth.passwords import store_password
+    from app.config import get_settings
+
+    _, client, engine = world
+    for name, value in {"CRUCIBLE_AUTH_PEPPER": "p" * 40, "CRUCIBLE_AUTH_PEPPER_ID": "one", "CRUCIBLE_AUTH_ARGON2_MEMORY_KIB": "19456", "CRUCIBLE_AUTH_ARGON2_TIME_COST": "2"}.items():
+        monkeypatch.setenv(name, value)
+    get_settings.cache_clear()
+    with Session(engine) as session:
+        store_password(session, session.get(User, user_id(engine, ADA)), "violet ladder under quiet rain")
+        session.commit()
+    ada = hub_session(engine, ADA)
+    only = client.get("/account/identities", headers=bearer(ada)).json()[0]["id"]
+    assert client.delete(f"/account/identities/{only}", headers=bearer(ada)).status_code == 204

@@ -528,3 +528,15 @@ def test_callback_sets_a_session_cookie_that_decodes(browser, orcid):
     assert claims["given_name"] == "Ada"
     assert "family_name" not in claims
     assert "nonce" not in claims
+
+
+def test_the_older_orcid_flow_registers_nobody_new_without_a_listed_orcid_provider(db_engine, monkeypatch):
+    from app.api.routes import auth as auth_routes
+    from app.auth.sign_in import SignInRefused
+    from app.config import get_settings
+
+    monkeypatch.delenv("CRUCIBLE_AUTH_PROVIDERS", raising=False)
+    get_settings.cache_clear()
+    assert get_settings().auth.orcid_provider is None
+    with pytest.raises(SignInRefused):
+        auth_routes._record_signed_in_user("0000-0002-1825-0097", {"given_name": "New", "family_name": "Person"})

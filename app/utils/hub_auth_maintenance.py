@@ -58,8 +58,12 @@ def cleanup_hub_auth(engine, *, commit: bool = False, batch_size: int = 1000, no
 
     from app.auth.devices import remove_expired
 
+    from app.auth.password_links import remove_expired as remove_expired_links
+
     with Session(engine) as session, session.begin():
         counts["device_authorization"] = remove_expired(session, cutoff, batch_size, commit=commit)
+    with Session(engine) as session, session.begin():
+        counts["password_token"] = remove_expired_links(session, cutoff, batch_size, commit=commit)
     with Session(engine) as session, session.begin():
         digests = expired_address_rows(session, cutoff, batch_size, lock=commit)
         counts["login_throttle"] = len(digests)

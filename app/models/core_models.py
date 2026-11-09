@@ -334,6 +334,27 @@ class LocalCredential(SQLModel, table=True):
     locked_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
 
 
+class PasswordToken(SQLModel, table=True):
+    """A one-time link to set or reset a password. Only the token's hash is stored, and each person
+    has at most one live link."""
+    __tablename__ = "password_token"
+    __table_args__ = (
+        Index("uq_password_token_live_user", "user_id", unique=True,
+              postgresql_where=text("consumed_at IS NULL AND voided_at IS NULL"), sqlite_where=text("consumed_at IS NULL AND voided_at IS NULL")),
+        Index("ix_password_token_expires_at", "expires_at"),
+        CheckConstraint("purpose IN ('setup', 'reset')", name="ck_password_token_purpose"),
+    )
+
+    token_hash: str = Field(primary_key=True, max_length=64)
+    user_id: int = Field(sa_column=Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False))
+    purpose: str = Field(sa_column=Column(String(16), nullable=False))
+    created_by_user_id: Optional[int] = Field(default=None, sa_column=Column(Integer, ForeignKey("user.id", ondelete="SET NULL"), nullable=True))
+    created_at: datetime = Field(sa_type=DateTime(timezone=True))
+    expires_at: datetime = Field(sa_type=DateTime(timezone=True))
+    consumed_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    voided_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+
+
 class LoginThrottle(SQLModel, table=True):
     """Consecutive password failures per client address, by a keyed hash of the address."""
     __tablename__ = "login_throttle"

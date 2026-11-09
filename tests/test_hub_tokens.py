@@ -12,6 +12,7 @@ from app.api.dependencies import get_engine
 from app.api.routes.hub_auth import router as hub_auth_router
 from app.models.core_models import (
     DeviceAuthorization,
+    PasswordToken,
     LoginThrottle,
     AccessGroup,
     ApiKey,
@@ -91,7 +92,7 @@ def engine():
         tables=[
             User.__table__, AccessGroup.__table__, UserAccessGroupLink.__table__, ApiToken.__table__, ApiKey.__table__, AuthEvent.__table__,
             LoginThrottle.__table__, DeviceAuthorization.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__,
-            HubLoginTransaction.__table__, HubLoginCode.__table__, UserIdentity.__table__,
+            HubLoginTransaction.__table__, HubLoginCode.__table__, UserIdentity.__table__, PasswordToken.__table__,
         ],
     )
     with Session(engine) as session:
@@ -131,7 +132,7 @@ def test_issue_and_refresh_with_foreign_keys_enforced():
 
     SQLModel.metadata.create_all(
         engine,
-        tables=[User.__table__, UserIdentity.__table__, LoginThrottle.__table__, DeviceAuthorization.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__],
+        tables=[User.__table__, UserIdentity.__table__, LoginThrottle.__table__, DeviceAuthorization.__table__, HubTokenFamily.__table__, HubRefreshToken.__table__, HubAccessToken.__table__, PasswordToken.__table__],
     )
     try:
         with Session(engine) as session:

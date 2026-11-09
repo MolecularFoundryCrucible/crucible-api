@@ -7,7 +7,8 @@ from sqlmodel import Session, select
 import app.services.activity as activity
 import app.utils.auth_utils as auth_utils
 from app.general_utils import get_utc_datetime
-from app.models.core_models import ApiToken, Dataset, Instrument, Project, Resource, Sample, User
+from app.auth.api_keys import key_hash, store_key
+from app.models.core_models import ApiKey, ApiToken, Dataset, Instrument, Project, Resource, Sample, User
 from app.utils.permissions import PlatformRole
 from tests.people import internal_id
 
@@ -30,6 +31,7 @@ def people(db_engine):
         for orcid, name in ((ADMIN, "admin"), (ALICE, "alice"), (BOB, "bob")):
             session.add(User(first_name=name, last_name=name, email=None, unique_id=orcid, username=name))
         session.add(ApiToken(token=KEY, user_id=internal_id(session, ALICE), user_unique_id=ALICE, access_group_id=ALICE, token_created=get_utc_datetime().date().isoformat()))
+        store_key(session, internal_id(session, ALICE), KEY)
         session.commit()
     return db_engine
 
@@ -41,7 +43,7 @@ def user_field(engine, orcid, field="last_active_at"):
 
 def key_last_used(engine):
     with Session(engine) as session:
-        return session.get(ApiToken, KEY).last_used_at
+        return session.exec(select(ApiKey).where(ApiKey.key_hash == key_hash(KEY))).one().last_used_at
 
 
 def shift(engine, model, where, field, delta):
@@ -62,7 +64,7 @@ def test_caller_activity_is_throttled(people):
     assert user_field(people, ALICE) == first_user
     assert key_last_used(people) == first_key
 
-    shift(people, ApiToken, ApiToken.token == KEY, "last_used_at", timedelta(minutes=11))
+    shift(people, ApiKey, ApiKey.key_hash == key_hash(KEY), "last_used_at", timedelta(minutes=11))
     shift(people, User, User.unique_id == ALICE, "last_active_at", timedelta(minutes=30))
     activity._recently_recorded.clear()
     activity.record_caller_activity(people, ALICE, KEY)
@@ -73,6 +75,25 @@ def test_caller_activity_is_throttled(people):
     activity._recently_recorded.clear()
     activity.record_caller_activity(people, ALICE)
     assert user_field(people, ALICE) > first_user - timedelta(minutes=61)
+
+
+def test_a_database_error_never_puts_the_key_in_the_log(people, monkeypatch, caplog):
+    def broken(*args, **kwargs):
+        raise RuntimeError(f"cannot run with {KEY}")
+
+    monkeypatch.setattr(Session, "exec", broken)
+    activity.record_caller_activity(people, ALICE, KEY)
+    assert "Could not record activity" in caplog.text and KEY not in caplog.text
+
+
+def test_the_server_engine_hides_statement_parameters(monkeypatch):
+    from app.utils import sql_utils
+
+    seen = {}
+    monkeypatch.setattr(sql_utils, "get_secret", lambda name: "pw")
+    monkeypatch.setattr(sql_utils, "create_engine", lambda url, **kwargs: seen.update(kwargs))
+    sql_utils.setup_engine()
+    assert seen.get("hide_parameters") is True
 
 
 def test_api_key_authentication_records_activity(use_engine, people, monkeypatch):

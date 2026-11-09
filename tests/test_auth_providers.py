@@ -208,9 +208,9 @@ def test_published_example_is_accepted(monkeypatch):
 
 
 def test_compose_bundle_lists_orcid_explicitly(monkeypatch):
-    environment = yaml.safe_load((REPO / "deploy/compose/compose.hub.yaml").read_text())["services"]["api"]["environment"]
+    environment = yaml.safe_load((REPO / "deploy/compose/compose.orcid.yaml").read_text())["services"]["api"]["environment"]
     value = re.sub(r"\$\{ORCID_CLIENT_ID:\?[^}]*\}", "APP-TEST", environment["CRUCIBLE_AUTH_PROVIDERS"])
-    value = re.sub(r"\$\{ORCID_ISSUER:-([^}]*)\}", r"\1", value)
+    value = re.sub(r"\$\{ORCID_(?:ISSUER|REGISTRATION):-([^}]*)\}", r"\1", value)
     monkeypatch.setenv("CRUCIBLE_AUTH_PROVIDERS", value)
     provider = get_settings().auth.providers[0]
     assert (provider.key, provider.client_id, provider.issuer, provider.token_endpoint_auth_method) == ("orcid", "APP-TEST", "https://orcid.org", "client_secret_post")

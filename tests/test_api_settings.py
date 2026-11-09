@@ -91,3 +91,19 @@ def test_import_needs_no_settings(tmp_path):
         cwd=tmp_path, env=env, capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("address,warned", [
+    ("http://localhost:8080", False), ("http://127.0.0.1:8080", False), ("https://crucible.mylab.org", False),
+    ("http://crucible.mylab.org", True), ("http://192.168.1.20:8080", True),
+])
+def test_a_plain_http_public_address_off_localhost_is_warned_about(monkeypatch, caplog, address, warned):
+    import logging
+
+    from app import config
+
+    monkeypatch.setenv("API_PUBLIC_URL", address)
+    config.get_settings.cache_clear()
+    with caplog.at_level(logging.WARNING, logger="app.config"):
+        config._warn_about_plain_http(config.get_settings())
+    assert ("plain HTTP" in caplog.text) is warned

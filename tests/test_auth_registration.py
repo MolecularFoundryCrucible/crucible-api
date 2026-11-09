@@ -245,3 +245,16 @@ def test_legacy_browser_sign_in_shows_the_waiting_page(db_engine, use_engine, mo
     with pytest.raises(AccountPending):
         auth_routes._record_signed_in_user("0000-0002-1825-0097", {"orcid": "0000-0002-1825-0097", "given_name": "Ada"})
     assert people(db_engine)["0000-0002-1825-0097"].pending_at is not None
+
+
+def test_approving_or_rejecting_from_a_session_needs_a_recent_sign_in(client, db_engine, auth_as):
+    from datetime import datetime, timedelta, timezone
+
+    waiting_one = waiting(db_engine, "late")
+    admin(db_engine, auth_as, client)
+    auth_as(ADMIN, platform_role=PlatformRole.ADMIN, credential="session", authenticated_at=datetime.now(timezone.utc) - timedelta(hours=1))
+    for route in ("approve", "reject"):
+        refused = client.post(f"/users/{waiting_one}/{route}")
+        assert (refused.status_code, refused.json()["detail"]["code"]) == (401, "insufficient_user_authentication")
+    auth_as(ADMIN, platform_role=PlatformRole.ADMIN, credential="session", authenticated_at=datetime.now(timezone.utc))
+    assert client.post(f"/users/{waiting_one}/approve").status_code == 200

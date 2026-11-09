@@ -91,7 +91,7 @@ async def redirect_exchange(request: Request, code: str | None = None, state: st
 def _record_signed_in_user(subject: str, user_info: dict) -> tuple[int, str, str | None, str, str]:
     with Session(get_engine()) as session:
         orcid_provider = get_settings().auth.orcid_provider
-        registration = orcid_provider.registration if orcid_provider is not None else "open"
+        registration = orcid_provider.registration if orcid_provider is not None else "closed"
         user = resolve_sign_in(session, get_settings().api.orcid_issuer, subject, user_info.get('given_name'), user_info.get('family_name'), registration=registration)
         session.commit()
         if user.pending_at is not None:

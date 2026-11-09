@@ -684,13 +684,14 @@ def _account_to_switch(session: Session, user_ref: str, auth_res: Principal) -> 
 
 def _pending_account(session: Session, user_ref: str, auth_res: Principal) -> User:
     require_platform_admin(auth_res)
+    require_recent_authentication(auth_res)
     user = person_by_reference(session, user_ref, include_pending=True)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
 
-_PENDING_RESPONSES = {404: {"description": "No such account"}, 409: {"description": "`not_pending`: the account is not waiting for approval"}}
+_PENDING_RESPONSES = {401: {"description": "A session needs a recent sign-in (`insufficient_user_authentication`)"}, 403: {"description": "Not a platform administrator, or `browser_sign_in_required` for a session approved with a device code"}, 404: {"description": "No such account"}, 409: {"description": "`not_pending`: the account is not waiting for approval"}}
 
 
 @router.post("/users/{user_ref}/approve", response_model=UserRead, responses=_PENDING_RESPONSES)

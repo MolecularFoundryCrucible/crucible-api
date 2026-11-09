@@ -125,3 +125,26 @@ def test_backfill_names_copies_and_earlier_unnamed_rows(db_engine, ada, capsys):
     assert script.main(["--commit"]) == 0
     assert [row.name for row in keys(db_engine)] == ["Default key", "Default key"]
     assert "unnamed given a name: 1" in capsys.readouterr().out.splitlines()[-1]
+
+
+def test_a_service_account_key_authenticates_through_its_hash(client, auth_as, db_engine, ada):
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    client.headers["Crucible-Privilege-Mode"] = "elevated"
+    auth_as("0000-0000-0000-0042", platform_role=PlatformRole.ADMIN)
+    created = client.post("/service_accounts", json={"username": "robot"})
+    assert created.status_code == 200, created.text
+    key = created.json()["api_key"]
+    with Session(db_engine) as session:
+        assert session.exec(select(ApiKey).where(ApiKey.key_hash == hashlib.sha256(key.encode()).hexdigest())).one() is not None
+    assert auth_utils._authorize_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=key)).is_service_account
+
+
+def test_an_invalid_key_is_401_and_never_a_redirect(client, db_engine, ada):
+    from app.api.main import app
+    from app.utils.auth_utils import authenticate_user
+
+    app.dependency_overrides.pop(authenticate_user, None)
+    for path in ("/account/profile", "/datasets", "/users"):
+        answer = client.get(path, headers={"Authorization": "Bearer not-a-real-key"}, follow_redirects=False)
+        assert answer.status_code == 401 and "location" not in answer.headers, (path, answer.status_code)

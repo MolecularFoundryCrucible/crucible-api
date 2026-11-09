@@ -466,6 +466,7 @@ class HubRefreshToken(SQLModel, table=True):
     generation: int
     issued_at: datetime = Field(sa_type=DateTime(timezone=True))
     spent_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
+    retired_at: Optional[datetime] = Field(default=None, sa_type=DateTime(timezone=True))
 
 
 class HubAccessToken(SQLModel, table=True):

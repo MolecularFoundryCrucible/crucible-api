@@ -138,10 +138,11 @@ def issue_hub_tokens_in_session(
 
 
 def _reusable(session: Session, token: HubRefreshToken, now: datetime) -> bool:
-    """A spent token may be used again for REUSE_GRACE if it is the one just before the newest, so
-    two processes refreshing at once, or a retry after a lost response, do not end the session. Any
-    older token still ends it."""
-    if now - _aware(token.spent_at) > REUSE_GRACE:
+    """A spent token may be used again for REUSE_GRACE if its holder used it and it is the one just
+    before the newest, so two processes refreshing at once, or a retry after a lost response, do not
+    end the session. A token retired because a sibling was used gets no grace, so a copied token
+    cannot keep renewing itself beside the owner's. Any older token still ends the session."""
+    if token.retired_at is not None or now - _aware(token.spent_at) > REUSE_GRACE:
         return False
     newest = session.exec(select(func.max(HubRefreshToken.generation)).where(HubRefreshToken.family_id == token.family_id)).one()
     return token.generation == newest - 1
@@ -187,7 +188,7 @@ def refresh_hub_tokens(engine, refresh_token: str, client_id: str, *, now: datet
                     session.execute(update(HubRefreshToken).where(
                         HubRefreshToken.family_id == family.id, HubRefreshToken.generation == token.generation, HubRefreshToken.spent_at == None,  # noqa: E711
                         HubRefreshToken.token_hash != token.token_hash,
-                    ).values(spent_at=current).execution_options(synchronize_session=False))
+                    ).values(spent_at=current, retired_at=current).execution_options(synchronize_session=False))
                 family.last_refreshed_at = current
                 next_refresh = _token(REFRESH_PREFIX)
                 session.add(
